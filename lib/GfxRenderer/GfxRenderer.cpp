@@ -1,9 +1,11 @@
 #include "GfxRenderer.h"
 
+#include <ArabicShaper.h>
 #include <BidiUtils.h>
 #include <FontDecompressor.h>
 #include <HalGPIO.h>
 #include <Logging.h>
+#include <ScriptDetector.h>
 #include <SdCardFont.h>
 #include <Utf8.h>
 
@@ -365,6 +367,13 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
     return 0;
   }
 
+  // Arabic needs contextual shaping, not just bidi reordering -- dispatch before
+  // resolveVisualText() so the (already visual-order) shaped codepoints aren't
+  // run through MiniBidi's reordering a second time.
+  if (ScriptDetector::containsArabic(text)) {
+    return getArabicTextWidth(fontId, text, style);
+  }
+
   const auto fontIt = fontMap.find(fontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", fontId);
@@ -379,16 +388,71 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   return w;
 }
 
+int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0') return 0;
+
+  const auto fontIt = fontMap.find(arabicFontId_);
+  if (fontIt == fontMap.end()) {
+    // No Arabic font loaded yet (Settings -> System -> Arabic Font) -- nothing to
+    // measure against. Matches EpdFont::getGlyph's existing missing-glyph
+    // behaviour elsewhere: skip silently rather than fall back to fontId's
+    // (Arabic-less) font.
+    return 0;
+  }
+  const auto& font = fontIt->second;
+
+  int width = 0;
+  for (const uint32_t cp : ArabicShaper::shapeText(text)) {
+    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    if (glyph) {
+      width += fp4::toPixel(glyph->advanceX);
+    }
+  }
+  return width;
+}
+
 void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* text, const bool black,
                                    const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
   const int x = (getScreenWidth() - getTextWidth(fontId, text, style, baseDir)) / 2;
   drawText(fontId, x, y, text, black, style, baseDir);
 }
 
+void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, const char* text, const bool black,
+                                 const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0') return;
+
+  const auto fontIt = fontMap.find(arabicFontId_);
+  if (fontIt == fontMap.end()) {
+    // No Arabic font loaded -- nothing we can draw with. Matches the width path above.
+    return;
+  }
+  const auto& font = fontIt->second;
+
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) {
+    // Cache-prewarm scanning is scoped to fontId's own font; the Arabic path always
+    // renders from arabicFontId_ instead, so there's nothing meaningful to record here.
+    return;
+  }
+
+  const int yPos = y + getFontAscenderSize(arabicFontId_);
+  int cursorX = x;
+  for (const uint32_t cp : ArabicShaper::shapeText(text)) {
+    const EpdGlyph* glyph = font.getGlyph(cp, style);
+    if (!glyph) continue;
+    renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, cursorX, yPos, black, style);
+    cursorX += fp4::toPixel(glyph->advanceX);
+  }
+}
+
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
                            const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
+    return;
+  }
+
+  if (ScriptDetector::containsArabic(text)) {
+    drawArabicText(fontId, x, y, text, black, style);
     return;
   }
 

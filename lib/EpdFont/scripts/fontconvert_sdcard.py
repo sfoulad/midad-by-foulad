@@ -45,6 +45,12 @@ INTERVAL_PRESETS = {
     "greek":       [(0x0370, 0x03FF), (0x1F00, 0x1FFF)],
     "cyrillic":    [(0x0400, 0x04FF), (0x0500, 0x052F)],
     "hebrew":      [(0x0590, 0x05FF), (0xFB1D, 0xFB4F)],
+    # Arabic block, Supplement, and Presentation Forms-B (the contextual
+    # isolated/initial/medial/final glyph forms ArabicShaper.cpp maps codepoints
+    # to at render time -- without these the shaper produces codepoints with no
+    # matching glyph in the font). Combine with a base preset for ASCII/digits/
+    # punctuation, e.g. --intervals reading,arabic
+    "arabic":      [(0x0600, 0x06FF), (0x0750, 0x077F), (0xFE70, 0xFEFF)],
     "georgian":    [(0x10A0, 0x10FF), (0x2D00, 0x2D2F)],
     "armenian":    [(0x0530, 0x058F)],
     "ethiopic":    [(0x1200, 0x137F), (0x1380, 0x139F), (0x2D80, 0x2DDF)],

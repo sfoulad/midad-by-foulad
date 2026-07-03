@@ -261,6 +261,11 @@ class CrossPointSettings {
   uint8_t focusReadingEnabled = 0;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
+  // SD card font family supplying Arabic glyphs for drawArabicText (empty = none loaded,
+  // Arabic text doesn't render). Independent of sdFontFamilyName/fontFamily -- see
+  // ArabicFontSystem. No built-in font carries Arabic glyphs, so unlike the reading font
+  // there's no non-empty default to fall back to.
+  char sdArabicFontFamilyName[32] = "";
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)

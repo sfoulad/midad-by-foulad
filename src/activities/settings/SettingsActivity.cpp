@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "ArabicFontSelectionActivity.h"
+#include "ArabicFontSystem.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
 #include "CrossPointSettings.h"
@@ -73,6 +75,7 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_ARABIC_FONT, SettingAction::ArabicFont));
   // Only offer logout once an account is actually stored; nothing to log out of otherwise.
   const auto& opdsServers = OPDS_STORE.getServers();
   const bool hasFouladEbooksAccount = std::any_of(
@@ -314,6 +317,11 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::FileTransfer:
         startActivityForResult(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::ArabicFont:
+        startActivityForResult(
+            std::make_unique<ArabicFontSelectionActivity>(renderer, mappedInput, &arabicFontSystem.registry()),
+            resultHandler);
         break;
       case SettingAction::FouladEbooksLogout: {
         auto logoutHandler = [this](const ActivityResult& result) {

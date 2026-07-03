@@ -51,6 +51,7 @@ class GfxRenderer {
   uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
+  int arabicFontId_ = 0;  // 0 = no Arabic font loaded; see setArabicFontId()
   // Mutable because ensureSdCardFontReady() is const (called from layout code
   // that holds a const GfxRenderer&) but triggers SD card reads and heap
   // allocation inside the SdCardFont objects. Same pragmatic compromise as
@@ -112,6 +113,12 @@ class GfxRenderer {
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   bool isFontCacheScanning() const;
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
+  // fontId of the currently loaded Arabic SD font (0 = none loaded). Set by
+  // ArabicFontSystem once the user's chosen Arabic font is loaded via insertFont();
+  // drawArabicText/getArabicTextWidth always render from this font, regardless of
+  // which fontId the caller originally asked for, since none of the built-in fonts
+  // carry Arabic glyphs.
+  void setArabicFontId(int fontId) { arabicFontId_ = fontId; }
   void registerSdCardFont(int fontId, SdCardFont* font) { sdCardFonts_[fontId] = font; }
   void unregisterSdCardFont(int fontId) { removeFont(fontId); }
   void clearSdCardFonts() { sdCardFonts_.clear(); }
@@ -198,6 +205,15 @@ class GfxRenderer {
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                 BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+  /// Arabic-script text path: contextual shaping (isolated/initial/medial/final forms) +
+  /// Lam-Alef ligatures via ArabicShaper, then rendered in the already-visual-order the
+  /// shaper returns (bypasses MiniBidi entirely -- shaping already reorders). Glyphs come
+  /// from a dedicated Arabic font (ArabicFontSystem), not the fontId passed in, since none
+  /// of the built-in fonts carry Arabic glyphs. drawText/getTextWidth dispatch here
+  /// automatically via ScriptDetector::containsArabic() -- not normally called directly.
+  int getArabicTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  void drawArabicText(int fontId, int x, int y, const char* text, bool black = true,
+                      EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   int getSpaceWidth(int fontId, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// Returns the total inter-word advance: fp4::toPixel(spaceAdvance + kern(leftCp,' ') + kern(' ',rightCp)).
   /// Using a single snap avoids the +/-1 px rounding error that arises when space advance and kern are

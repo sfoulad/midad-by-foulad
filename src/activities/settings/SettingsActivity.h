@@ -27,6 +27,7 @@ enum class SettingAction {
   BrowseFiles,
   FileTransfer,
   FouladEbooksLogout,
+  ArabicFont,
 };
 
 struct SettingInfo {
