@@ -7,6 +7,8 @@ on:
 jobs:
   build-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -40,6 +42,19 @@ jobs:
         with:
           name: CrossPoint-${{ github.ref_name }}
           path: |
+            .pio/build/gh_release/bootloader.bin
+            .pio/build/gh_release/firmware.bin
+            .pio/build/gh_release/firmware.elf
+            .pio/build/gh_release/firmware.map
+            .pio/build/gh_release/partitions.bin
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # OtaUpdater.cpp looks up releases/latest and matches an asset named
+          # exactly "firmware.bin" (ReleaseJsonParser.cpp:47) — devices only see
+          # an update once this step runs, the CI artifact above is not enough.
+          files: |
             .pio/build/gh_release/bootloader.bin
             .pio/build/gh_release/firmware.bin
             .pio/build/gh_release/firmware.elf

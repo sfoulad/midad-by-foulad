@@ -5,9 +5,11 @@
 
 #include <algorithm>
 
+#include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
+#include "browser/FouladEbooksSetupActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
@@ -193,6 +195,19 @@ void ActivityManager::goToBrowser() {
   } else {
     replaceActivity(std::make_unique<OpdsServerListActivity>(renderer, mappedInput, true));
   }
+}
+
+void ActivityManager::goToFouladEbooks() {
+  const auto& servers = OPDS_STORE.getServers();
+  const auto it = std::find_if(servers.begin(), servers.end(),
+                               [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
+  if (it != servers.end()) {
+    // Already set up on this device — skip straight to browsing.
+    replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, *it));
+    return;
+  }
+  // First time on this device — collect username/password before browsing.
+  replaceActivity(std::make_unique<FouladEbooksSetupActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToReader(std::string path) {
