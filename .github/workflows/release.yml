@@ -54,9 +54,7 @@ jobs:
           # OtaUpdater.cpp looks up releases/latest and matches an asset named
           # exactly "firmware.bin" (ReleaseJsonParser.cpp:47) — devices only see
           # an update once this step runs, the CI artifact above is not enough.
-          files: |
-            .pio/build/gh_release/bootloader.bin
-            .pio/build/gh_release/firmware.bin
-            .pio/build/gh_release/firmware.elf
-            .pio/build/gh_release/firmware.map
-            .pio/build/gh_release/partitions.bin
+          # Only firmware.bin is attached here; bootloader.bin/firmware.elf/
+          # firmware.map/partitions.bin are still available via the CI artifact
+          # above for local debugging, just not cluttering the public release.
+          files: .pio/build/gh_release/firmware.bin
