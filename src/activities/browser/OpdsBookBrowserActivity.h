@@ -46,10 +46,10 @@ class OpdsBookBrowserActivity final : public Activity {
   // cover grid instead of a text list. NAVIGATION entries on the same page
   // (the synthetic PREV_PAGE/NEXT_PAGE entries fetchFeed() may insert) render
   // as slim strips above/below the grid instead of grid cells.
-  static constexpr int GRID_COVER_WIDTH = 100;
-  static constexpr int GRID_COVER_HEIGHT = 150;
-  static constexpr int GRID_CELL_WIDTH = 130;    // target cell width incl. spacing -> derives column count
-  static constexpr int GRID_CELL_HEIGHT = 190;   // target cell height incl. spacing + title row
+  static constexpr int GRID_COVER_WIDTH = 150;
+  static constexpr int GRID_COVER_HEIGHT = 225;
+  static constexpr int GRID_CELL_WIDTH = 180;    // target cell width incl. spacing -> derives column count (3 cols)
+  static constexpr int GRID_CELL_HEIGHT = 270;   // target cell height incl. spacing + title row
   static constexpr int GRID_CONTENT_TOP = 60;    // matches the existing list's content start y
   static constexpr int GRID_BOTTOM_MARGIN = 40;  // reserved for button hints
   static constexpr int NO_GRID_PAGE_LOADED = -1;

@@ -17,11 +17,12 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "activities/settings/OtaUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 5;  // File Browser, Recents, Foulad eBooks, File transfer, Settings
+  int count = 4;  // Recents, Foulad eBooks, Settings, Check for Update
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -185,9 +186,6 @@ void HomeActivity::loop() {
     } else {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
       switch (indexToMenuItem(menuIndex, hasOpdsServers)) {
-        case HomeMenuItem::FILE_BROWSER:
-          onFileBrowserOpen();
-          break;
         case HomeMenuItem::RECENTS:
           onRecentsOpen();
           break;
@@ -197,11 +195,11 @@ void HomeActivity::loop() {
         case HomeMenuItem::FOULAD_EBOOKS:
           onFouladEbooksOpen();
           break;
-        case HomeMenuItem::FILE_TRANSFER:
-          onFileTransferOpen();
-          break;
         case HomeMenuItem::SETTINGS_MENU:
           onSettingsOpen();
+          break;
+        case HomeMenuItem::CHECK_UPDATE:
+          onCheckUpdateOpen();
           break;
         default:
           break;
@@ -234,13 +232,13 @@ void HomeActivity::render(RenderLock&&) {
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FOULAD_EBOOKS),
-                                        tr(STR_FILE_TRANSFER), tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Library, Transfer, Settings};
+  std::vector<const char*> menuItems = {tr(STR_MENU_RECENT_BOOKS), tr(STR_FOULAD_EBOOKS), tr(STR_SETTINGS_TITLE),
+                                        tr(STR_CHECK_UPDATES)};
+  std::vector<UIIcon> menuIcons = {Recent, Library, Settings, Transfer};
 
   if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 3, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 3, Library);
+    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
+    menuIcons.insert(menuIcons.begin() + 2, Library);
   }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -275,14 +273,14 @@ void HomeActivity::render(RenderLock&&) {
 
 void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
 
-void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
-
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
-void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
-
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onFouladEbooksOpen() { activityManager.goToFouladEbooks(); }
+
+void HomeActivity::onCheckUpdateOpen() {
+  activityManager.replaceActivity(std::make_unique<OtaUpdateActivity>(renderer, mappedInput));
+}

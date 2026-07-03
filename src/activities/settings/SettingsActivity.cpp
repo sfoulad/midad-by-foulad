@@ -12,16 +12,21 @@
 #include "CrossPointSettings.h"
 #include "FontDownloadActivity.h"
 #include "FontSelectionActivity.h"
+#include "FouladEbooksConfig.h"
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
+#include "OpdsServerStore.h"
 #include "OtaUpdateActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
 #include "StatusBarSettingsActivity.h"
+#include "activities/home/FileBrowserActivity.h"
+#include "activities/network/CrossPointWebServerActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -66,6 +71,15 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
+  // Only offer logout once an account is actually stored; nothing to log out of otherwise.
+  const auto& opdsServers = OPDS_STORE.getServers();
+  const bool hasFouladEbooksAccount = std::any_of(
+      opdsServers.begin(), opdsServers.end(), [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
+  if (hasFouladEbooksAccount) {
+    systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGOUT, SettingAction::FouladEbooksLogout));
+  }
   // Insert "Manage Fonts" right after the font family setting so users discover it naturally
   readerSettings.insert(readerSettings.begin() + 1,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
@@ -295,6 +309,31 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::Language:
         startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::BrowseFiles:
+        startActivityForResult(std::make_unique<FileBrowserActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::FileTransfer:
+        startActivityForResult(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput), resultHandler);
+        break;
+      case SettingAction::FouladEbooksLogout: {
+        auto logoutHandler = [this](const ActivityResult& result) {
+          if (!result.isCancelled) {
+            auto& servers = OPDS_STORE.getServers();
+            for (size_t i = 0; i < servers.size(); i++) {
+              if (servers[i].url == FOULAD_EBOOKS_URL) {
+                OPDS_STORE.removeServer(i);
+                break;
+              }
+            }
+          }
+          rebuildSettingsLists();
+          selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+        };
+        startActivityForResult(
+            std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_FOULAD_EBOOKS_LOGOUT_CONFIRM), ""),
+            logoutHandler);
+        break;
+      }
       case SettingAction::None:
         // Do nothing
         break;

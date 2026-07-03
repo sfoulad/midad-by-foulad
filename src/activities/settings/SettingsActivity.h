@@ -24,6 +24,9 @@ enum class SettingAction {
   SdFirmwareUpdate,
   Language,
   DownloadFonts,
+  BrowseFiles,
+  FileTransfer,
+  FouladEbooksLogout,
 };
 
 struct SettingInfo {

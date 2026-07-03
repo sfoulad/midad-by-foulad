@@ -17,7 +17,19 @@
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
 
-enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, OPDS_BROWSER, FOULAD_EBOOKS, FILE_TRANSFER, SETTINGS_MENU };
+// FILE_BROWSER/FILE_TRANSFER are kept for source compatibility with any saved/serialized
+// state, but Home no longer renders or navigates to them directly (moved under Settings ->
+// System); see HomeActivity's menuItemToIndex/indexToMenuItem.
+enum class HomeMenuItem {
+  NONE,
+  FILE_BROWSER,
+  RECENTS,
+  OPDS_BROWSER,
+  FOULAD_EBOOKS,
+  FILE_TRANSFER,
+  SETTINGS_MENU,
+  CHECK_UPDATE
+};
 
 /**
  * ActivityManager
