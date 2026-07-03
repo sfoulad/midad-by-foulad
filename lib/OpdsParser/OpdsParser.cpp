@@ -125,6 +125,14 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
             self->currentEntry.type = OpdsEntryType::NAVIGATION;
             self->currentEntry.href = href;
           }
+        } else if (rel && strstr(rel, "opds-spec.org/image") != nullptr) {
+          // Matches both ".../image" and ".../image/thumbnail". Prefer the
+          // thumbnail-specific link if one is present; first-seen otherwise.
+          const bool isThumbnail = strstr(rel, "thumbnail") != nullptr;
+          if (self->currentEntry.coverUrl.empty() || isThumbnail) {
+            self->currentEntry.coverUrl = href;
+            self->currentEntry.coverType = type ? type : "";
+          }
         }
       }
     }

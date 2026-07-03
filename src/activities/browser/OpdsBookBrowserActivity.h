@@ -42,6 +42,31 @@ class OpdsBookBrowserActivity final : public Activity {
 
   OpdsServer server;  // Copied at construction — safe even if the store changes during browsing
 
+  // Book-listing pages (any page with at least one BOOK entry) render as a
+  // cover grid instead of a text list. NAVIGATION entries on the same page
+  // (the synthetic PREV_PAGE/NEXT_PAGE entries fetchFeed() may insert) render
+  // as slim strips above/below the grid instead of grid cells.
+  static constexpr int GRID_COVER_WIDTH = 100;
+  static constexpr int GRID_COVER_HEIGHT = 150;
+  static constexpr int GRID_CELL_WIDTH = 130;    // target cell width incl. spacing -> derives column count
+  static constexpr int GRID_CELL_HEIGHT = 190;   // target cell height incl. spacing + title row
+  static constexpr int GRID_CONTENT_TOP = 60;    // matches the existing list's content start y
+  static constexpr int GRID_BOTTOM_MARGIN = 40;  // reserved for button hints
+  static constexpr int NO_GRID_PAGE_LOADED = -1;
+  int loadedGridPageStart = NO_GRID_PAGE_LOADED;
+
+  struct GridLayout {
+    bool isGridPage = false;
+    int topNavCount = 0;  // entries[0, topNavCount) -> nav strip above the grid
+    int bookStart = 0;    // entries[bookStart, bookStart+bookCount) -> the grid
+    int bookCount = 0;
+    int bottomNavStart = 0;  // entries[bottomNavStart, entries.size()) -> nav strip below the grid
+    int columns = 1;
+    int itemsPerPage = 1;
+  };
+  GridLayout computeGridLayout() const;
+  void loadGridPageCovers(const GridLayout& layout, int pageStart);
+
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);

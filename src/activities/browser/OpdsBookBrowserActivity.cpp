@@ -1,16 +1,22 @@
 #include "OpdsBookBrowserActivity.h"
 
+#include <Bitmap.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <OpdsStream.h>
 #include <WiFi.h>
 
+#include <algorithm>
+
 #include "MappedInputManager.h"
+#include "OpdsCoverCache.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
+#include "components/icons/book.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
@@ -19,7 +25,66 @@
 
 namespace {
 constexpr int PAGE_ITEMS = 23;
+
+int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
+  if (totalItems <= 0) return 0;
+  return moveRight ? ButtonNavigator::nextIndex(currentIndex, totalItems)
+                   : ButtonNavigator::previousIndex(currentIndex, totalItems);
 }
+
+// Ported from CrossInk's RecentBooksGridActivity (github.com/uxjulia/CrossInk) — flat index <-> row/col
+// with page-aware wraparound. currentIndex/totalItems are scoped to just the book sub-range of entries.
+int moveVerticalInGrid(const int currentIndex, const int totalItems, const int columns, const int itemsPerPage,
+                       const bool moveDown) {
+  if (totalItems <= 0 || columns <= 0) return 0;
+
+  const int safeItemsPerPage = std::max(columns, itemsPerPage);
+  if (safeItemsPerPage % columns != 0) {
+    LOG_ERR("OPDS", "moveVerticalInGrid requires whole rows (itemsPerPage=%d columns=%d)", safeItemsPerPage, columns);
+    return currentIndex;
+  }
+  const int totalPages = (totalItems + safeItemsPerPage - 1) / safeItemsPerPage;
+  const int currentPage = currentIndex / safeItemsPerPage;
+  const int indexInPage = currentIndex % safeItemsPerPage;
+  const int currentRow = indexInPage / columns;
+  const int currentColumn = indexInPage % columns;
+  const int rowsPerPage = safeItemsPerPage / columns;
+
+  if (moveDown) {
+    if (currentRow < rowsPerPage - 1) {
+      const int nextRowCandidate = currentIndex + columns;
+      if (nextRowCandidate < totalItems && (nextRowCandidate / safeItemsPerPage) == currentPage) {
+        return nextRowCandidate;
+      }
+    }
+
+    const int nextPage = (currentPage + 1) % totalPages;
+    const int nextPageStart = nextPage * safeItemsPerPage;
+    const int nextPageCount = std::min(safeItemsPerPage, totalItems - nextPageStart);
+    if (nextPageCount <= 0) return currentIndex;
+
+    if (currentColumn < nextPageCount) {
+      return nextPageStart + currentColumn;
+    }
+    return nextPageStart + nextPageCount - 1;
+  }
+
+  if (currentRow > 0) {
+    return currentIndex - columns;
+  }
+
+  const int previousPage = (currentPage - 1 + totalPages) % totalPages;
+  const int previousPageStart = previousPage * safeItemsPerPage;
+  const int previousPageCount = std::min(safeItemsPerPage, totalItems - previousPageStart);
+  if (previousPageCount <= 0) return currentIndex;
+
+  int previousPageCandidate = previousPageStart + ((previousPageCount - 1) / columns) * columns + currentColumn;
+  while (previousPageCandidate >= previousPageStart + previousPageCount) {
+    previousPageCandidate -= columns;
+  }
+  return std::max(previousPageStart, previousPageCandidate);
+}
+}  // namespace
 
 void OpdsBookBrowserActivity::onEnter() {
   Activity::onEnter();
@@ -91,6 +156,9 @@ void OpdsBookBrowserActivity::loop() {
   if (state == BrowserState::DOWNLOADING) return;
 
   if (state == BrowserState::BROWSING) {
+    const GridLayout layout = computeGridLayout();
+    const bool onBook = !entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK;
+
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!entries.empty()) {
         const auto& entry = entries[selectorIndex];
@@ -98,11 +166,14 @@ void OpdsBookBrowserActivity::loop() {
       }
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       navigateBack();
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Left) && !onBook) {
       if (!searchTemplate.empty() && selectorIndex == 0) launchSearch();
     }
 
-    if (!entries.empty()) {
+    if (entries.empty()) {
+      // nothing to navigate
+    } else if (!layout.isGridPage) {
+      // Plain list navigation (category/navigation-only pages) — unchanged.
       buttonNavigator.onNextRelease([this] {
         selectorIndex = ButtonNavigator::nextIndex(selectorIndex, entries.size());
         requestUpdate();
@@ -118,6 +189,74 @@ void OpdsBookBrowserActivity::loop() {
       buttonNavigator.onPreviousContinuous([this] {
         selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, entries.size(), PAGE_ITEMS);
         requestUpdate();
+      });
+    } else if (onBook) {
+      // Inside the cover grid: Left/Right cycle through books; Up/Down move by
+      // row, escaping to the nav strip above/below at the grid's true edges.
+      auto moveUp = [this, layout] {
+        if (selectorIndex == layout.bookStart && layout.topNavCount > 0) {
+          selectorIndex = 0;
+        } else {
+          selectorIndex = layout.bookStart + moveVerticalInGrid(selectorIndex - layout.bookStart, layout.bookCount,
+                                                                layout.columns, layout.itemsPerPage, false);
+        }
+        requestUpdate();
+      };
+      auto moveDown = [this, layout] {
+        if (selectorIndex == layout.bookStart + layout.bookCount - 1 &&
+            layout.bottomNavStart < static_cast<int>(entries.size())) {
+          selectorIndex = layout.bottomNavStart;
+        } else {
+          selectorIndex = layout.bookStart + moveVerticalInGrid(selectorIndex - layout.bookStart, layout.bookCount,
+                                                                layout.columns, layout.itemsPerPage, true);
+        }
+        requestUpdate();
+      };
+      auto moveLeft = [this, layout] {
+        selectorIndex =
+            layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, false);
+        requestUpdate();
+      };
+      auto moveRight = [this, layout] {
+        selectorIndex =
+            layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, true);
+        requestUpdate();
+      };
+
+      buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveUp);
+      buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveDown);
+      buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveRight);
+      buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveLeft);
+      buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveUp);
+      buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveDown);
+      buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveRight);
+      buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveLeft);
+    } else {
+      // Selection is in a nav strip (top or bottom) of a grid page: a small
+      // flat list scoped to that strip; Up/Down hand off to/from the grid.
+      const bool inTopStrip = selectorIndex < layout.bookStart;
+      const int stripStart = inTopStrip ? 0 : layout.bottomNavStart;
+      const int stripCount = inTopStrip ? layout.topNavCount : static_cast<int>(entries.size()) - layout.bottomNavStart;
+
+      buttonNavigator.onRelease({MappedInputManager::Button::Right}, [this, stripStart, stripCount] {
+        selectorIndex = stripStart + moveHorizontalInGrid(selectorIndex - stripStart, stripCount, true);
+        requestUpdate();
+      });
+      buttonNavigator.onRelease({MappedInputManager::Button::Left}, [this, stripStart, stripCount] {
+        selectorIndex = stripStart + moveHorizontalInGrid(selectorIndex - stripStart, stripCount, false);
+        requestUpdate();
+      });
+      buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, layout, inTopStrip] {
+        if (inTopStrip) {
+          selectorIndex = layout.bookStart;
+          requestUpdate();
+        }
+      });
+      buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, layout, inTopStrip] {
+        if (!inTopStrip) {
+          selectorIndex = layout.bookStart + layout.bookCount - 1;
+          requestUpdate();
+        }
       });
     }
   }
@@ -161,15 +300,27 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     return;
   }
 
-  const char* confirmLabel =
-      (!entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK) ? tr(STR_DOWNLOAD) : tr(STR_OPEN);
-  const char* searchLabel = (!searchTemplate.empty() && selectorIndex == 0) ? tr(STR_SEARCH) : tr(STR_DIR_UP);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, searchLabel, tr(STR_DIR_DOWN));
+  const GridLayout layout = computeGridLayout();
+  const bool onBook = !entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK;
+
+  const char* confirmLabel = onBook ? tr(STR_DOWNLOAD) : tr(STR_OPEN);
+  const char* leftLabel;
+  const char* rightLabel;
+  if (layout.isGridPage && onBook) {
+    leftLabel = tr(STR_DIR_LEFT);
+    rightLabel = tr(STR_DIR_RIGHT);
+  } else {
+    leftLabel = (!searchTemplate.empty() && selectorIndex == 0) ? tr(STR_SEARCH) : tr(STR_DIR_UP);
+    rightLabel = tr(STR_DIR_DOWN);
+  }
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, leftLabel, rightLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
+  int gridPageStart = 0;
   if (entries.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_NO_ENTRIES));
-  } else {
+  } else if (!layout.isGridPage) {
+    // Plain text list (category/navigation-only pages) — unchanged.
     const auto pageStartIndex = selectorIndex / PAGE_ITEMS * PAGE_ITEMS;
     renderer.fillRect(0, 60 + (selectorIndex % PAGE_ITEMS) * 30 - 2, pageWidth - 1, 30);
 
@@ -181,11 +332,156 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       renderer.drawText(UI_10_FONT_ID, 20, 60 + (i % PAGE_ITEMS) * 30, item.c_str(),
                         i != static_cast<size_t>(selectorIndex));
     }
+  } else {
+    // Nav strip above the grid (e.g. a "Prev Page" entry).
+    int y = GRID_CONTENT_TOP;
+    for (int i = 0; i < layout.topNavCount; i++) {
+      const auto& entry = entries[i];
+      auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
+      if (i == selectorIndex) renderer.fillRect(0, y - 2, pageWidth - 1, 30);
+      renderer.drawText(UI_10_FONT_ID, 20, y, item.c_str(), i != selectorIndex);
+      y += 30;
+    }
+    const int gridTop = y + (layout.topNavCount > 0 ? 10 : 0);
+
+    const bool selectionInGrid = onBook;
+    const int localSelector = selectionInGrid ? selectorIndex - layout.bookStart : 0;
+    gridPageStart = (localSelector / layout.itemsPerPage) * layout.itemsPerPage;
+    const int pageCount = std::min(layout.itemsPerPage, layout.bookCount - gridPageStart);
+    const int totalGridWidth = layout.columns * (GRID_COVER_WIDTH + 10) - 10;
+    const int gridStartX = std::max(0, (pageWidth - totalGridWidth) / 2);
+
+    for (int i = 0; i < pageCount; i++) {
+      const int bookIdx = layout.bookStart + gridPageStart + i;
+      const auto& entry = entries[bookIdx];
+      const int col = i % layout.columns;
+      const int row = i / layout.columns;
+      const int cellX = gridStartX + col * (GRID_COVER_WIDTH + 10);
+      const int cellY = gridTop + row * (GRID_COVER_HEIGHT + 40);
+
+      bool drawn = false;
+      if (!entry.coverUrl.empty()) {
+        const std::string coverPath = getOpdsCoverCachePath(entry.id, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+        if (Storage.exists(coverPath.c_str())) {
+          HalFile file;
+          if (Storage.openFileForRead("OPDS", coverPath, file)) {
+            Bitmap bitmap(file);
+            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+              renderer.drawBitmap(bitmap, cellX, cellY, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+              drawn = true;
+            }
+          }
+        }
+      }
+      renderer.drawRect(cellX, cellY, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+      if (!drawn) {
+        renderer.drawIcon(BookIcon, cellX + (GRID_COVER_WIDTH - 32) / 2, cellY + (GRID_COVER_HEIGHT - 32) / 2, 32);
+      }
+      if (bookIdx == selectorIndex) {
+        renderer.drawRect(cellX - 3, cellY - 3, GRID_COVER_WIDTH + 6, GRID_COVER_HEIGHT + 6, true);
+      }
+
+      auto title = renderer.truncatedText(SMALL_FONT_ID, entry.title.c_str(), GRID_COVER_WIDTH);
+      renderer.drawText(SMALL_FONT_ID, cellX, cellY + GRID_COVER_HEIGHT + 4, title.c_str());
+    }
+
+    // Nav strip below the grid (e.g. a "Next Page" entry).
+    const int bottomCount = static_cast<int>(entries.size()) - layout.bottomNavStart;
+    if (bottomCount > 0) {
+      int by = pageHeight - GRID_BOTTOM_MARGIN - bottomCount * 30;
+      for (int i = layout.bottomNavStart; i < static_cast<int>(entries.size()); i++) {
+        const auto& entry = entries[i];
+        auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
+        if (i == selectorIndex) renderer.fillRect(0, by - 2, pageWidth - 1, 30);
+        renderer.drawText(UI_10_FONT_ID, 20, by, item.c_str(), i != selectorIndex);
+        by += 30;
+      }
+    }
   }
   renderer.displayBuffer();
+
+  if (layout.isGridPage && !entries.empty() && loadedGridPageStart != gridPageStart) {
+    loadGridPageCovers(layout, gridPageStart);
+  }
+}
+
+OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout() const {
+  GridLayout layout;
+
+  int firstBookIndex = -1;
+  int lastBookIndex = -1;
+  for (size_t i = 0; i < entries.size(); i++) {
+    if (entries[i].type == OpdsEntryType::BOOK) {
+      if (firstBookIndex < 0) firstBookIndex = static_cast<int>(i);
+      lastBookIndex = static_cast<int>(i);
+    }
+  }
+
+  if (firstBookIndex < 0) {
+    return layout;  // isGridPage stays false: pure navigation/category page
+  }
+
+  layout.isGridPage = true;
+  layout.topNavCount = firstBookIndex;
+  layout.bookStart = firstBookIndex;
+  layout.bookCount = lastBookIndex - firstBookIndex + 1;
+  layout.bottomNavStart = lastBookIndex + 1;
+
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  layout.columns = std::max(1, pageWidth / GRID_CELL_WIDTH);
+  const int contentHeight = pageHeight - GRID_CONTENT_TOP - GRID_BOTTOM_MARGIN;
+  const int rows = std::max(1, contentHeight / GRID_CELL_HEIGHT);
+  layout.itemsPerPage = layout.columns * rows;
+
+  return layout;
+}
+
+void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const int pageStart) {
+  const int pageEnd = std::min(pageStart + layout.itemsPerPage, layout.bookCount);
+
+  bool needsFetch = false;
+  for (int i = pageStart; i < pageEnd; i++) {
+    const auto& entry = entries[layout.bookStart + i];
+    if (entry.coverUrl.empty()) continue;
+    if (!Storage.exists(getOpdsCoverCachePath(entry.id, GRID_COVER_WIDTH, GRID_COVER_HEIGHT).c_str())) {
+      needsFetch = true;
+      break;
+    }
+  }
+  if (!needsFetch) {
+    loadedGridPageStart = pageStart;
+    return;
+  }
+
+  bool showingLoading = false;
+  Rect popupRect;
+  const int totalToProcess = pageEnd - pageStart;
+  int processedCount = 0;
+
+  for (int i = pageStart; i < pageEnd; i++) {
+    const auto& entry = entries[layout.bookStart + i];
+    if (!entry.coverUrl.empty() &&
+        !Storage.exists(getOpdsCoverCachePath(entry.id, GRID_COVER_WIDTH, GRID_COVER_HEIGHT).c_str())) {
+      if (!showingLoading) {
+        showingLoading = true;
+        popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      }
+      GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
+      ensureOpdsCoverCached(entry, server.username, server.password, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+    }
+    processedCount++;
+  }
+
+  loadedGridPageStart = pageStart;
+  if (showingLoading) {
+    requestUpdate();
+  }
 }
 
 void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
+  loadedGridPageStart = NO_GRID_PAGE_LOADED;
+
   if (server.url.empty()) {
     state = BrowserState::ERROR;
     errorMessage = tr(STR_NO_SERVER_URL);
