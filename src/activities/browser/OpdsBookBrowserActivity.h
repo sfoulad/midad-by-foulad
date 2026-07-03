@@ -46,12 +46,24 @@ class OpdsBookBrowserActivity final : public Activity {
   // cover grid instead of a text list. NAVIGATION entries on the same page
   // (the synthetic PREV_PAGE/NEXT_PAGE entries fetchFeed() may insert) render
   // as slim strips above/below the grid instead of grid cells.
-  static constexpr int GRID_COVER_WIDTH = 150;
-  static constexpr int GRID_COVER_HEIGHT = 225;
-  static constexpr int GRID_CELL_WIDTH = 180;    // target cell width incl. spacing -> derives column count (3 cols)
-  static constexpr int GRID_CELL_HEIGHT = 270;   // target cell height incl. spacing + title row
-  static constexpr int GRID_CONTENT_TOP = 60;    // matches the existing list's content start y
-  static constexpr int GRID_BOTTOM_MARGIN = 40;  // reserved for button hints
+  //
+  // Cover size is NOT a fixed constant: covers must fill the actual screen
+  // width edge-to-edge (minus gutters), which differs by device (X3 portrait
+  // logical width 528, X4 portrait 480) and orientation. GRID_MIN_CELL_WIDTH
+  // only decides how many columns fit; computeGridLayout() derives the real
+  // per-cover pixel size from renderer.getScreenWidth() every time, so cover
+  // size and column count can never drift apart the way two independent
+  // fixed constants did previously (covers rendering much smaller than the
+  // grid cells they sat in, leaving dead space).
+  // 140 reliably yields 3 columns on both X3 portrait (528px logical width) and
+  // X4 portrait (480px) -- 150 only reached 3 columns on the X3, giving just 2 on
+  // the X4 (verified by computing actual column counts for both device widths).
+  static constexpr int GRID_MIN_CELL_WIDTH = 140;  // decides column count, not the rendered cover size
+  static constexpr int GRID_GUTTER = 12;
+  static constexpr float GRID_COVER_ASPECT = 1.5f;  // coverHeight = coverWidth * aspect
+  static constexpr int GRID_TITLE_ROW_HEIGHT = 36;  // space reserved below the cover for the title
+  static constexpr int GRID_CONTENT_TOP = 60;       // matches the existing list's content start y
+  static constexpr int GRID_BOTTOM_MARGIN = 40;     // reserved for button hints
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
 
@@ -63,6 +75,8 @@ class OpdsBookBrowserActivity final : public Activity {
     int bottomNavStart = 0;  // entries[bottomNavStart, entries.size()) -> nav strip below the grid
     int columns = 1;
     int itemsPerPage = 1;
+    int coverWidth = 0;  // fills the actual screen width -- see GRID_MIN_CELL_WIDTH comment above
+    int coverHeight = 0;
   };
   GridLayout computeGridLayout() const;
   void loadGridPageCovers(const GridLayout& layout, int pageStart);

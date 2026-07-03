@@ -26,17 +26,28 @@ class RecentBooksActivity final : public Activity {
   // consistency between the two "grid" screens). Covers come from the same
   // per-book thumbnail cache HomeActivity's Continue Reading tile already uses
   // (Epub::generateThumbBmp / Xtc::generateThumbBmp), just requested at this
-  // grid's cell size instead of the home tile's size.
-  static constexpr int GRID_COVER_WIDTH = 150;
-  static constexpr int GRID_COVER_HEIGHT = 225;
-  static constexpr int GRID_CELL_WIDTH = 180;   // target cell width incl. spacing -> derives column count (3 cols)
-  static constexpr int GRID_CELL_HEIGHT = 270;  // target cell height incl. spacing + title row
+  // grid's computed cell size instead of the home tile's size.
+  //
+  // Cover size is NOT a fixed constant: covers must fill the actual screen
+  // width edge-to-edge (minus gutters), which differs by device (X3 portrait
+  // logical width 528, X4 portrait 480) and orientation. GRID_MIN_CELL_WIDTH
+  // only decides how many columns fit; computeGridGeometry() derives the
+  // real per-cover pixel size from renderer.getScreenWidth() every time.
+  // 140 reliably yields 3 columns on both X3 portrait (528px logical width) and
+  // X4 portrait (480px) -- 150 only reached 3 columns on the X3, giving just 2 on
+  // the X4 (verified by computing actual column counts for both device widths).
+  static constexpr int GRID_MIN_CELL_WIDTH = 140;
+  static constexpr int GRID_GUTTER = 12;
+  static constexpr float GRID_COVER_ASPECT = 1.5f;
+  static constexpr int GRID_TITLE_ROW_HEIGHT = 36;
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
 
   struct GridGeometry {
     int columns = 1;
     int itemsPerPage = 1;
+    int coverWidth = 0;
+    int coverHeight = 0;
   };
   GridGeometry computeGridGeometry() const;
   void loadGridPageCovers(int pageStart);

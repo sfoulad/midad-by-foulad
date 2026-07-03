@@ -299,7 +299,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     const int localSelector = selectionInGrid ? selectorIndex - layout.bookStart : 0;
     gridPageStart = (localSelector / layout.itemsPerPage) * layout.itemsPerPage;
     const int pageCount = std::min(layout.itemsPerPage, layout.bookCount - gridPageStart);
-    const int totalGridWidth = layout.columns * (GRID_COVER_WIDTH + 10) - 10;
+    const int totalGridWidth = layout.columns * (layout.coverWidth + GRID_GUTTER) - GRID_GUTTER;
     const int gridStartX = std::max(0, (pageWidth - totalGridWidth) / 2);
 
     for (int i = 0; i < pageCount; i++) {
@@ -307,33 +307,33 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       const auto& entry = entries[bookIdx];
       const int col = i % layout.columns;
       const int row = i / layout.columns;
-      const int cellX = gridStartX + col * (GRID_COVER_WIDTH + 10);
-      const int cellY = gridTop + row * (GRID_COVER_HEIGHT + 40);
+      const int cellX = gridStartX + col * (layout.coverWidth + GRID_GUTTER);
+      const int cellY = gridTop + row * (layout.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER);
 
       bool drawn = false;
       if (!entry.coverUrl.empty()) {
-        const std::string coverPath = getOpdsCoverCachePath(entry.id, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+        const std::string coverPath = getOpdsCoverCachePath(entry.id, layout.coverWidth, layout.coverHeight);
         if (Storage.exists(coverPath.c_str())) {
           HalFile file;
           if (Storage.openFileForRead("OPDS", coverPath, file)) {
             Bitmap bitmap(file);
             if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-              renderer.drawBitmap(bitmap, cellX, cellY, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+              renderer.drawBitmap(bitmap, cellX, cellY, layout.coverWidth, layout.coverHeight);
               drawn = true;
             }
           }
         }
       }
-      renderer.drawRect(cellX, cellY, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+      renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
       if (!drawn) {
-        renderer.drawIcon(BookIcon, cellX + (GRID_COVER_WIDTH - 32) / 2, cellY + (GRID_COVER_HEIGHT - 32) / 2, 32);
+        renderer.drawIcon(BookIcon, cellX + (layout.coverWidth - 32) / 2, cellY + (layout.coverHeight - 32) / 2, 32);
       }
       if (bookIdx == selectorIndex) {
-        renderer.drawRect(cellX - 3, cellY - 3, GRID_COVER_WIDTH + 6, GRID_COVER_HEIGHT + 6, true);
+        renderer.drawRect(cellX - 3, cellY - 3, layout.coverWidth + 6, layout.coverHeight + 6, true);
       }
 
-      auto title = renderer.truncatedText(SMALL_FONT_ID, entry.title.c_str(), GRID_COVER_WIDTH);
-      renderer.drawText(SMALL_FONT_ID, cellX, cellY + GRID_COVER_HEIGHT + 4, title.c_str());
+      auto title = renderer.truncatedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth);
+      renderer.drawText(SMALL_FONT_ID, cellX, cellY + layout.coverHeight + 4, title.c_str());
     }
 
     // Nav strip below the grid (e.g. a "Next Page" entry).
@@ -380,9 +380,18 @@ OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout()
 
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  layout.columns = std::max(1, pageWidth / GRID_CELL_WIDTH);
+
+  // Column count first, from a target minimum cell width -- then the cover
+  // size is derived to fill the resulting columns edge-to-edge, so covers
+  // are always as big as the actual screen allows rather than a fixed size
+  // that may be much smaller than the cell it sits in.
+  layout.columns = std::max(1, (pageWidth - GRID_GUTTER) / (GRID_MIN_CELL_WIDTH + GRID_GUTTER));
+  layout.coverWidth = (pageWidth - GRID_GUTTER * (layout.columns + 1)) / layout.columns;
+  layout.coverHeight = static_cast<int>(layout.coverWidth * GRID_COVER_ASPECT);
+
   const int contentHeight = pageHeight - GRID_CONTENT_TOP - GRID_BOTTOM_MARGIN;
-  const int rows = std::max(1, contentHeight / GRID_CELL_HEIGHT);
+  const int rowHeight = layout.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER;
+  const int rows = std::max(1, contentHeight / rowHeight);
   layout.itemsPerPage = layout.columns * rows;
 
   return layout;
@@ -395,7 +404,7 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
   for (int i = pageStart; i < pageEnd; i++) {
     const auto& entry = entries[layout.bookStart + i];
     if (entry.coverUrl.empty()) continue;
-    if (!Storage.exists(getOpdsCoverCachePath(entry.id, GRID_COVER_WIDTH, GRID_COVER_HEIGHT).c_str())) {
+    if (!Storage.exists(getOpdsCoverCachePath(entry.id, layout.coverWidth, layout.coverHeight).c_str())) {
       needsFetch = true;
       break;
     }
@@ -413,13 +422,13 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
   for (int i = pageStart; i < pageEnd; i++) {
     const auto& entry = entries[layout.bookStart + i];
     if (!entry.coverUrl.empty() &&
-        !Storage.exists(getOpdsCoverCachePath(entry.id, GRID_COVER_WIDTH, GRID_COVER_HEIGHT).c_str())) {
+        !Storage.exists(getOpdsCoverCachePath(entry.id, layout.coverWidth, layout.coverHeight).c_str())) {
       if (!showingLoading) {
         showingLoading = true;
         popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       }
       GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-      ensureOpdsCoverCached(entry, server.username, server.password, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+      ensureOpdsCoverCached(entry, server.username, server.password, layout.coverWidth, layout.coverHeight);
     }
     processedCount++;
   }

@@ -147,8 +147,18 @@ RecentBooksActivity::GridGeometry RecentBooksActivity::computeGridGeometry() con
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
-  geometry.columns = std::max(1, pageWidth / GRID_CELL_WIDTH);
-  const int rows = std::max(1, contentHeight / GRID_CELL_HEIGHT);
+  // Column count first, from a target minimum cell width -- then the cover
+  // size is derived to fill the resulting columns edge-to-edge. Height is
+  // requested at width/0.6 (the exact inverse of Epub::generateThumbBmp's own
+  // internal width = height * 0.6 derivation) so the bitmap it actually
+  // generates comes out at this cell's width, not a mismatched size that
+  // would then get letterboxed by drawBitmap's aspect-fit scaling.
+  geometry.columns = std::max(1, (pageWidth - GRID_GUTTER) / (GRID_MIN_CELL_WIDTH + GRID_GUTTER));
+  geometry.coverWidth = (pageWidth - GRID_GUTTER * (geometry.columns + 1)) / geometry.columns;
+  geometry.coverHeight = static_cast<int>(geometry.coverWidth / 0.6f);
+
+  const int rowHeight = geometry.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER;
+  const int rows = std::max(1, contentHeight / rowHeight);
   geometry.itemsPerPage = geometry.columns * rows;
   return geometry;
 }
@@ -161,7 +171,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
   for (int i = pageStart; i < pageEnd; i++) {
     const RecentBook& book = recentBooks[i];
     if (book.coverBmpPath.empty()) continue;
-    if (!Storage.exists(UITheme::getCoverThumbPath(book.coverBmpPath, GRID_COVER_HEIGHT).c_str())) {
+    if (!Storage.exists(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight).c_str())) {
       needsGeneration = true;
       break;
     }
@@ -179,7 +189,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
   for (int i = pageStart; i < pageEnd; i++) {
     RecentBook& book = recentBooks[i];
     if (!book.coverBmpPath.empty()) {
-      const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, GRID_COVER_HEIGHT);
+      const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight);
       if (!Storage.exists(coverPath.c_str())) {
         bool success = false;
         if (FsHelpers::hasEpubExtension(book.path)) {
@@ -190,7 +200,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            success = epub.generateThumbBmp(GRID_COVER_HEIGHT);
+            success = epub.generateThumbBmp(geometry.coverHeight);
           }
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           Xtc xtc(book.path, "/.crosspoint");
@@ -200,7 +210,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            success = xtc.generateThumbBmp(GRID_COVER_HEIGHT);
+            success = xtc.generateThumbBmp(geometry.coverHeight);
           }
         }
         if (!success) {
@@ -238,7 +248,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     const GridGeometry geometry = computeGridGeometry();
     gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
     const int pageCount = std::min(geometry.itemsPerPage, static_cast<int>(recentBooks.size()) - gridPageStart);
-    const int totalGridWidth = geometry.columns * (GRID_COVER_WIDTH + 10) - 10;
+    const int totalGridWidth = geometry.columns * (geometry.coverWidth + GRID_GUTTER) - GRID_GUTTER;
     const int gridStartX = std::max(0, (static_cast<int>(pageWidth) - totalGridWidth) / 2);
 
     for (int i = 0; i < pageCount; i++) {
@@ -246,33 +256,34 @@ void RecentBooksActivity::render(RenderLock&&) {
       const auto& book = recentBooks[bookIdx];
       const int col = i % geometry.columns;
       const int row = i / geometry.columns;
-      const int cellX = gridStartX + col * (GRID_COVER_WIDTH + 10);
-      const int cellY = contentTop + row * (GRID_COVER_HEIGHT + 40);
+      const int cellX = gridStartX + col * (geometry.coverWidth + GRID_GUTTER);
+      const int cellY = contentTop + row * (geometry.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER);
 
       bool drawn = false;
       if (!book.coverBmpPath.empty()) {
-        const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, GRID_COVER_HEIGHT);
+        const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight);
         if (Storage.exists(coverPath.c_str())) {
           HalFile file;
           if (Storage.openFileForRead("RBA", coverPath, file)) {
             Bitmap bitmap(file);
             if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-              renderer.drawBitmap(bitmap, cellX, cellY, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+              renderer.drawBitmap(bitmap, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
               drawn = true;
             }
           }
         }
       }
-      renderer.drawRect(cellX, cellY, GRID_COVER_WIDTH, GRID_COVER_HEIGHT);
+      renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
       if (!drawn) {
-        renderer.drawIcon(BookIcon, cellX + (GRID_COVER_WIDTH - 32) / 2, cellY + (GRID_COVER_HEIGHT - 32) / 2, 32);
+        renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
+                          32);
       }
       if (bookIdx == static_cast<int>(selectorIndex)) {
-        renderer.drawRect(cellX - 3, cellY - 3, GRID_COVER_WIDTH + 6, GRID_COVER_HEIGHT + 6, true);
+        renderer.drawRect(cellX - 3, cellY - 3, geometry.coverWidth + 6, geometry.coverHeight + 6, true);
       }
 
-      auto title = renderer.truncatedText(SMALL_FONT_ID, book.title.c_str(), GRID_COVER_WIDTH);
-      renderer.drawText(SMALL_FONT_ID, cellX, cellY + GRID_COVER_HEIGHT + 4, title.c_str());
+      auto title = renderer.truncatedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth);
+      renderer.drawText(SMALL_FONT_ID, cellX, cellY + geometry.coverHeight + 4, title.c_str());
     }
   }
 
