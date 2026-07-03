@@ -53,15 +53,22 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
 
-# Dedicated built-in Arabic font (ArabicFontSystem's zero-setup default). Size 14
-# matches CrossPointSettings::MEDIUM, the fixed size Arabic text always renders at
-# regardless of the surrounding UI font's size (see src/ArabicFontSystem.cpp).
-# --script arabic swaps fontconvert.py's default Latin/Cyrillic interval set for a
-# minimal one sized for this font alone (basic Latin + Arabic blocks only).
-python fontconvert.py notosansarabic_14_regular 14 \
-  ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
-  --2bit --compress --script arabic > ../builtinFonts/notosansarabic_14_regular.h
-echo "Generated ../builtinFonts/notosansarabic_14_regular.h"
+# Dedicated built-in Arabic font (ArabicFontSystem's zero-setup default), bundled at
+# the three sizes actually used for Arabic-eligible UI text (book titles, authors,
+# filenames, chapter titles) -- SMALL_FONT_ID=8pt, UI_10_FONT_ID=10pt,
+# UI_12_FONT_ID=12pt (see fontIds.h). GfxRenderer::drawArabicText/getArabicTextWidth
+# pick whichever of these three matches the caller's requested fontId, so Arabic text
+# renders at the same size/baseline as the surrounding Latin text instead of a single
+# fixed size that overflows small rows or grid cells. --script arabic swaps
+# fontconvert.py's default Latin/Cyrillic interval set for a minimal one sized for
+# this font alone (basic Latin + Arabic blocks only).
+ARABIC_UI_FONT_SIZES=(8 10 12)
+for size in ${ARABIC_UI_FONT_SIZES[@]}; do
+  python fontconvert.py notosansarabic_${size}_regular ${size} \
+    ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
+    --2bit --compress --script arabic > ../builtinFonts/notosansarabic_${size}_regular.h
+  echo "Generated ../builtinFonts/notosansarabic_${size}_regular.h"
+done
 
 echo ""
 echo "Running compression verification..."

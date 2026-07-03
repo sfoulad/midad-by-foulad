@@ -52,6 +52,11 @@ class GfxRenderer {
   std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
   int arabicFontId_ = 0;  // 0 = no Arabic font loaded; see setArabicFontId()
+  // Per-caller-fontId Arabic font overrides (e.g. SMALL_FONT_ID -> the 8pt Arabic
+  // font), so Arabic text renders at the same size/baseline as whatever Latin font
+  // the caller requested instead of always falling back to arabicFontId_'s single
+  // fixed size. See setArabicFontIdForFontId()/resolveArabicFontId().
+  std::map<int, int> arabicFontIdByFontId_;
   // Mutable because ensureSdCardFontReady() is const (called from layout code
   // that holds a const GfxRenderer&) but triggers SD card reads and heap
   // allocation inside the SdCardFont objects. Same pragmatic compromise as
@@ -77,6 +82,13 @@ class GfxRenderer {
 
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
+  // Arabic font to actually use for a caller-requested fontId: the specific
+  // per-fontId override if one was registered via setArabicFontIdForFontId(),
+  // otherwise the single default arabicFontId_.
+  int resolveArabicFontId(int fontId) const {
+    const auto it = arabicFontIdByFontId_.find(fontId);
+    return it != arabicFontIdByFontId_.end() ? it->second : arabicFontId_;
+  }
   void freeBwBufferChunks();
   template <Color color>
   void drawPixelDither(int x, int y) const;
@@ -113,12 +125,20 @@ class GfxRenderer {
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
   bool isFontCacheScanning() const;
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
-  // fontId of the currently loaded Arabic SD font (0 = none loaded). Set by
-  // ArabicFontSystem once the user's chosen Arabic font is loaded via insertFont();
-  // drawArabicText/getArabicTextWidth always render from this font, regardless of
-  // which fontId the caller originally asked for, since none of the built-in fonts
-  // carry Arabic glyphs.
+  // Default Arabic font (0 = none loaded), used for any fontId with no specific
+  // override registered via setArabicFontIdForFontId() below. Set by ArabicFontSystem
+  // once an Arabic font is loaded via insertFont(); drawArabicText/getArabicTextWidth
+  // render from this font for callers with no per-fontId mapping, since none of the
+  // built-in Latin fonts carry Arabic glyphs.
   void setArabicFontId(int fontId) { arabicFontId_ = fontId; }
+  // Registers an Arabic font to use specifically when the caller requests `fontId`
+  // (e.g. SMALL_FONT_ID -> the 8pt Arabic font), so Arabic text matches the size and
+  // baseline of whatever Latin font the caller asked for instead of always rendering
+  // at arabicFontId_'s single fixed size. ArabicFontSystem registers these for the
+  // built-in default; cleared when an SD-card Arabic font override is active so that
+  // override applies uniformly via arabicFontId_ instead.
+  void setArabicFontIdForFontId(int fontId, int arabicFontId) { arabicFontIdByFontId_[fontId] = arabicFontId; }
+  void clearArabicFontIdMappings() { arabicFontIdByFontId_.clear(); }
   void registerSdCardFont(int fontId, SdCardFont* font) { sdCardFonts_[fontId] = font; }
   void unregisterSdCardFont(int fontId) { removeFont(fontId); }
   void clearSdCardFonts() { sdCardFonts_.clear(); }

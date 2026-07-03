@@ -138,6 +138,9 @@ If you'd prefer a different Arabic typeface, you can override the built-in defau
 4. On the device: **Settings → System → Arabic Font** → select the family you just installed. Selecting **None**
    reverts to the built-in default.
 
+Note: the built-in default is bundled at three sizes so it matches whichever UI text it's replacing (grid cover
+titles vs. headers, etc.); a custom SD-card override applies at one fixed size everywhere instead.
+
 ---
 
 ## Documentation

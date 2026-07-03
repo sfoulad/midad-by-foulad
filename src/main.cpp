@@ -110,10 +110,17 @@ EpdFont ui12BoldFont(&ubuntu_12_bold);
 EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 
 // Built-in default for ArabicFontSystem -- always present in flash so Arabic titles
-// render out of the box with no SD card setup. Users can still override it with a
-// custom SD font family via Settings -> System -> Arabic Font.
-EpdFont notosansarabic14RegularFont(&notosansarabic_14_regular);
-EpdFontFamily notosansarabicFontFamily(&notosansarabic14RegularFont);
+// render out of the box with no SD card setup. Bundled at the three sizes actually
+// used for Arabic-eligible UI text (SMALL_FONT_ID=8pt, UI_10_FONT_ID=10pt,
+// UI_12_FONT_ID=12pt) so Arabic renders at the same size/baseline as the Latin text
+// around it instead of one fixed size that overflows small rows/grid cells. Users can
+// still override with a custom SD font family via Settings -> System -> Arabic Font.
+EpdFont notosansarabic8RegularFont(&notosansarabic_8_regular);
+EpdFontFamily notosansarabic8FontFamily(&notosansarabic8RegularFont);
+EpdFont notosansarabic10RegularFont(&notosansarabic_10_regular);
+EpdFontFamily notosansarabic10FontFamily(&notosansarabic10RegularFont);
+EpdFont notosansarabic12RegularFont(&notosansarabic_12_regular);
+EpdFontFamily notosansarabic12FontFamily(&notosansarabic12RegularFont);
 
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
@@ -303,7 +310,9 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
-  renderer.insertFont(NOTOSANSARABIC_14_FONT_ID, notosansarabicFontFamily);
+  renderer.insertFont(NOTOSANSARABIC_8_FONT_ID, notosansarabic8FontFamily);
+  renderer.insertFont(NOTOSANSARABIC_10_FONT_ID, notosansarabic10FontFamily);
+  renderer.insertFont(NOTOSANSARABIC_12_FONT_ID, notosansarabic12FontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

@@ -391,7 +391,7 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
   if (text == nullptr || *text == '\0') return 0;
 
-  const auto fontIt = fontMap.find(arabicFontId_);
+  const auto fontIt = fontMap.find(resolveArabicFontId(fontId));
   if (fontIt == fontMap.end()) {
     // ArabicFontSystem::begin() always sets arabicFontId_ to a valid font (the
     // built-in Noto Sans Arabic, or an SD override) before any activity can render
@@ -422,7 +422,8 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
                                  const EpdFontFamily::Style style) const {
   if (text == nullptr || *text == '\0') return;
 
-  const auto fontIt = fontMap.find(arabicFontId_);
+  const int resolvedArabicFontId = resolveArabicFontId(fontId);
+  const auto fontIt = fontMap.find(resolvedArabicFontId);
   if (fontIt == fontMap.end()) {
     // No Arabic font loaded -- nothing we can draw with. Matches the width path above.
     return;
@@ -431,11 +432,12 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     // Cache-prewarm scanning is scoped to fontId's own font; the Arabic path always
-    // renders from arabicFontId_ instead, so there's nothing meaningful to record here.
+    // renders from the resolved Arabic font instead, so there's nothing meaningful to
+    // record here.
     return;
   }
 
-  const int yPos = y + getFontAscenderSize(arabicFontId_);
+  const int yPos = y + getFontAscenderSize(resolvedArabicFontId);
   int cursorX = x;
   for (const uint32_t cp : ArabicShaper::shapeText(text)) {
     const EpdGlyph* glyph = font.getGlyph(cp, style);

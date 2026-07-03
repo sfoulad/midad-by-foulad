@@ -100,8 +100,20 @@ ruby -rdigest -e 'puts [
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
 
-echo "#define NOTOSANSARABIC_14_FONT_ID ($(
+echo "#define NOTOSANSARABIC_8_FONT_ID ($(
 ruby -rdigest -e 'puts [
-  "./notosansarabic_14_regular.h",
+  "./notosansarabic_8_regular.h",
+].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
+))"
+
+echo "#define NOTOSANSARABIC_10_FONT_ID ($(
+ruby -rdigest -e 'puts [
+  "./notosansarabic_10_regular.h",
+].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
+))"
+
+echo "#define NOTOSANSARABIC_12_FONT_ID ($(
+ruby -rdigest -e 'puts [
+  "./notosansarabic_12_regular.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
