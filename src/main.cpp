@@ -109,6 +109,12 @@ EpdFont ui12RegularFont(&ubuntu_12_regular);
 EpdFont ui12BoldFont(&ubuntu_12_bold);
 EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 
+// Built-in default for ArabicFontSystem -- always present in flash so Arabic titles
+// render out of the box with no SD card setup. Users can still override it with a
+// custom SD font family via Settings -> System -> Arabic Font.
+EpdFont notosansarabic14RegularFont(&notosansarabic_14_regular);
+EpdFontFamily notosansarabicFontFamily(&notosansarabic14RegularFont);
+
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
 unsigned long t2 = 0;
@@ -297,6 +303,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.insertFont(NOTOSANSARABIC_14_FONT_ID, notosansarabicFontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

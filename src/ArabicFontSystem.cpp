@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include "CrossPointSettings.h"
+#include "fontIds.h"
 
 namespace {
 // Arabic text renders at a fixed size regardless of the surrounding UI font's own
@@ -28,10 +29,14 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
   const std::string& currentFamily = manager_.currentFamilyName();
 
   if (wantedFamily[0] == '\0') {
+    // No SD override selected -- fall back to the built-in Noto Sans Arabic font
+    // bundled in flash (see main.cpp), so Arabic renders out of the box with zero
+    // setup. This differs from the reading-font system: there is always a usable
+    // Arabic font, never an empty/off state.
     if (!currentFamily.empty()) {
       manager_.unloadAll(renderer);
-      renderer.setArabicFontId(0);
     }
+    renderer.setArabicFontId(NOTOSANSARABIC_14_FONT_ID);
     return;
   }
 
@@ -42,7 +47,6 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
 
   if (!currentFamily.empty()) {
     manager_.unloadAll(renderer);
-    renderer.setArabicFontId(0);
   }
 
   const auto* family = registry_.findFamily(wantedFamily);
@@ -50,7 +54,8 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
     LOG_DBG("ARFS", "Loaded Arabic font family: %s", wantedFamily);
     renderer.setArabicFontId(manager_.getFontId(wantedFamily));
   } else {
-    LOG_ERR("ARFS", "Failed to load Arabic font family: %s (clearing)", wantedFamily);
+    LOG_ERR("ARFS", "Failed to load Arabic font family: %s (falling back to built-in)", wantedFamily);
     SETTINGS.sdArabicFontFamilyName[0] = '\0';
+    renderer.setArabicFontId(NOTOSANSARABIC_14_FONT_ID);
   }
 }

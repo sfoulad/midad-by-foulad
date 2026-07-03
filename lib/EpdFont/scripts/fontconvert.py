@@ -23,6 +23,7 @@ parser.add_argument("--additional-intervals", dest="additional_intervals", actio
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
+parser.add_argument("--script", dest="script", choices=["latin", "arabic"], default="latin", help="Base code point interval set to export. 'latin' (default) is the existing Latin/Cyrillic/etc. set used by all bundled reading fonts. 'arabic' swaps in a minimal set (basic Latin punctuation/digits + Arabic blocks) sized for a dedicated Arabic-only font, not the full multi-script coverage.")
 args = parser.parse_args()
 
 import freetype
@@ -134,6 +135,21 @@ intervals = [
     # Replacement Character
     (0xFFFD, 0xFFFD),
 ]
+
+if args.script == "arabic":
+    # Minimal set for a dedicated Arabic-only font (ArabicFontSystem): digits/space/
+    # ASCII punctuation that can appear inline in mixed Arabic-Latin titles, the
+    # ellipsis truncatedText() appends, and the three Arabic Unicode blocks
+    # ArabicShaper's shaping tables target (matches the SD-card Arabic preset in
+    # fontconvert_sdcard.py's INTERVAL_PRESETS["arabic"]). Deliberately excludes the
+    # Cyrillic/Greek/CJK ranges above -- this font is never used for non-Arabic text.
+    intervals = [
+        (0x0020, 0x007E),  # Basic Latin: digits, space, ASCII punctuation
+        (0x2010, 0x2027),  # General Punctuation: dashes, quotes, ellipsis
+        (0x0600, 0x06FF),  # Arabic
+        (0x0750, 0x077F),  # Arabic Supplement
+        (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
+    ]
 
 add_ints = []
 if args.additional_intervals:

@@ -33,6 +33,7 @@
 #include <builtinFonts/notosans_18_bolditalic.h>
 #include <builtinFonts/notosans_18_italic.h>
 #include <builtinFonts/notosans_18_regular.h>
+#include <builtinFonts/notosansarabic_14_regular.h>
 #include <builtinFonts/ubuntu_10_bold.h>
 #include <builtinFonts/ubuntu_10_regular.h>
 #include <builtinFonts/ubuntu_12_bold.h>

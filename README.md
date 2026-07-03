@@ -122,20 +122,21 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 ### Arabic support
 
 Book titles, author names, filenames, and chapter titles render Arabic script correctly (contextual letter shaping +
-right-to-left order), but — to keep flash usage unchanged for everyone who doesn't need it — no Arabic-capable font
-ships in the firmware itself. You need to supply one:
+right-to-left order) out of the box — a Noto Sans Arabic font ships built into the firmware, so there's no setup
+required. This is independent of the regular reading-font selection — the Arabic font is used automatically anywhere
+Arabic text appears, regardless of which font you've chosen for reading.
 
-1. Download an Arabic-capable TTF/OTF (e.g. [Noto Sans Arabic](https://fonts.google.com/noto/specimen/Noto+Sans+Arabic) or [IBM Plex Sans Arabic](https://fonts.google.com/specimen/IBM+Plex+Sans+Arabic)).
+If you'd prefer a different Arabic typeface, you can override the built-in default with your own SD-card font:
+
+1. Download an Arabic-capable TTF/OTF (e.g. [IBM Plex Sans Arabic](https://fonts.google.com/specimen/IBM+Plex+Sans+Arabic)).
 2. Convert it locally (the hosted web font builder doesn't know about this fork's Arabic support, so run the script directly):
    ```bash
    cd lib/EpdFont/scripts
-   python3 fontconvert_sdcard.py --intervals reading,arabic --name "NotoSansArabic" /path/to/NotoSansArabic-Regular.ttf
+   python3 fontconvert_sdcard.py --intervals reading,arabic --name "PlexArabic" /path/to/IBMPlexSansArabic-Regular.ttf
    ```
-3. Copy the generated `.cpfont` files to your SD card under `/fonts/NotoSansArabic/` (or `/.fonts/NotoSansArabic/`).
-4. On the device: **Settings → System → Arabic Font** → select the family you just installed.
-
-This is independent of the regular reading-font selection — the Arabic font is used automatically anywhere Arabic
-text appears, regardless of which font you've chosen for reading.
+3. Copy the generated `.cpfont` files to your SD card under `/fonts/PlexArabic/` (or `/.fonts/PlexArabic/`).
+4. On the device: **Settings → System → Arabic Font** → select the family you just installed. Selecting **None**
+   reverts to the built-in default.
 
 ---
 

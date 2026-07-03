@@ -393,10 +393,11 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
 
   const auto fontIt = fontMap.find(arabicFontId_);
   if (fontIt == fontMap.end()) {
-    // No Arabic font loaded yet (Settings -> System -> Arabic Font) -- nothing to
-    // measure against. Matches EpdFont::getGlyph's existing missing-glyph
-    // behaviour elsewhere: skip silently rather than fall back to fontId's
-    // (Arabic-less) font.
+    // ArabicFontSystem::begin() always sets arabicFontId_ to a valid font (the
+    // built-in Noto Sans Arabic, or an SD override) before any activity can render
+    // text, so this only fires in the brief pre-begin() window. Matches
+    // EpdFont::getGlyph's existing missing-glyph behaviour elsewhere: skip silently
+    // rather than fall back to fontId's (Arabic-less) font.
     return 0;
   }
   const auto& font = fontIt->second;

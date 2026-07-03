@@ -53,6 +53,16 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
 
+# Dedicated built-in Arabic font (ArabicFontSystem's zero-setup default). Size 14
+# matches CrossPointSettings::MEDIUM, the fixed size Arabic text always renders at
+# regardless of the surrounding UI font's size (see src/ArabicFontSystem.cpp).
+# --script arabic swaps fontconvert.py's default Latin/Cyrillic interval set for a
+# minimal one sized for this font alone (basic Latin + Arabic blocks only).
+python fontconvert.py notosansarabic_14_regular 14 \
+  ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
+  --2bit --compress --script arabic > ../builtinFonts/notosansarabic_14_regular.h
+echo "Generated ../builtinFonts/notosansarabic_14_regular.h"
+
 echo ""
 echo "Running compression verification..."
 python verify_compression.py ../builtinFonts/
