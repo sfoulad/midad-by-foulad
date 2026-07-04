@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 
 #include <algorithm>
 
@@ -9,8 +10,32 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+// Extra headroom above/below the tallest glyph in a row, matching the ~6px cushion the
+// previous fixed 30px row height gave the Latin font (24px advanceY).
+constexpr int ROW_VERTICAL_PADDING = 6;
+}  // namespace
+
+int XtcReaderChapterSelectionActivity::getRowHeight() const {
+  const int latinLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  if (!xtc) return latinLineHeight + ROW_VERTICAL_PADDING;
+
+  bool hasArabic = false;
+  for (const auto& chapter : xtc->getChapters()) {
+    const char* title = chapter.name.empty() ? tr(STR_UNNAMED) : chapter.name.c_str();
+    if (ScriptDetector::containsArabic(title)) {
+      hasArabic = true;
+      break;
+    }
+  }
+  if (!hasArabic) return latinLineHeight + ROW_VERTICAL_PADDING;
+
+  const int arabicLineHeight = renderer.getLineHeight(NOTOSANSARABIC_10_FONT_ID);
+  return std::max(latinLineHeight, arabicLineHeight) + ROW_VERTICAL_PADDING;
+}
+
 int XtcReaderChapterSelectionActivity::getPageItems() const {
-  constexpr int lineHeight = 30;
+  const int lineHeight = getRowHeight();
 
   const int screenHeight = renderer.getScreenHeight();
   const auto orientation = renderer.getOrientation();
@@ -121,14 +146,15 @@ void XtcReaderChapterSelectionActivity::render(RenderLock&&) {
     return;
   }
 
+  const int rowHeight = getRowHeight();
   const auto pageStartIndex = selectorIndex / pageItems * pageItems;
   // Highlight only the content area, not the hint gutters.
-  renderer.fillRect(contentX, 60 + contentY + (selectorIndex % pageItems) * 30 - 2, contentWidth - 1, 30);
+  renderer.fillRect(contentX, 60 + contentY + (selectorIndex % pageItems) * rowHeight - 2, contentWidth - 1, rowHeight);
   for (int i = pageStartIndex; i < static_cast<int>(chapters.size()) && i < pageStartIndex + pageItems; i++) {
     const auto& chapter = chapters[i];
     const char* title = chapter.name.empty() ? tr(STR_UNNAMED) : chapter.name.c_str();
-    renderer.drawTextInWidth(UI_10_FONT_ID, contentX + 20, 60 + contentY + (i % pageItems) * 30, contentWidth - 40,
-                             title, i != selectorIndex);
+    renderer.drawTextInWidth(UI_10_FONT_ID, contentX + 20, 60 + contentY + (i % pageItems) * rowHeight,
+                             contentWidth - 40, title, i != selectorIndex);
   }
 
   // Skip button hints in landscape CW mode (they overlap content)

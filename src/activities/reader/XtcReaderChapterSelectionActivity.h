@@ -13,6 +13,12 @@ class XtcReaderChapterSelectionActivity final : public Activity {
   int selectorIndex = 0;
 
   int getPageItems() const;
+  // Row height in pixels: Arabic chapter titles need noticeably more vertical space than
+  // Latin ones (the Arabic font's ascender+descender is roughly double, so a Latin-sized
+  // row clips Arabic glyph tops/tails). Checks whether any chapter title is Arabic and
+  // sizes every row for the tallest font actually in use, so getPageItems()'s pagination
+  // and render()'s highlight/text placement always agree on the same row height.
+  int getRowHeight() const;
   int findChapterIndexForPage(uint32_t page) const;
 
  public:
