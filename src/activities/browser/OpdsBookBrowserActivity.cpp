@@ -37,6 +37,26 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
                        const bool moveDown) {
   return GridNav::moveVertical(currentIndex, totalItems, columns, itemsPerPage, moveDown);
 }
+
+// Mirrors HalSystem::checkPanic's crash_report.txt mechanism, but for an OPDS feed
+// fetch/parse failure instead of a device panic: dumps the same rolling log ring
+// buffer (getLastLogs(), last 16 lines -- HttpDownloader's LOG_ERR lines survive in
+// release builds since LOG_ERR is always compiled in) to an SD file. Lets the user
+// grab a diagnostic log via File Browser/File Transfer without needing a live serial
+// connection, the same way they already can for a crash.
+void saveOpdsDiagnosticLog(const std::string& context) {
+  std::string info = "CrossPoint version: " CROSSPOINT_VERSION;
+  info += "\n\nContext: " + context;
+  info += "\n\nLast logs:\n" + getLastLogs();
+
+  HalFile file;
+  if (Storage.openFileForWrite("OPDS", "/opds_error_log.txt", file)) {
+    file.write(reinterpret_cast<const uint8_t*>(info.data()), info.size());
+    LOG_INF("OPDS", "Saved diagnostic log to /opds_error_log.txt");
+  } else {
+    LOG_ERR("OPDS", "Failed to open opds_error_log.txt for writing");
+  }
+}
 }  // namespace
 
 void OpdsBookBrowserActivity::onEnter() {
@@ -504,6 +524,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   if (!fetchOk) {
+    saveOpdsDiagnosticLog("Fetch failed after " + std::to_string(MAX_FETCH_ATTEMPTS) + " attempts: " + url);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_FETCH_FEED_FAILED);
     requestUpdate();
@@ -511,6 +532,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   if (!*parser) {
+    saveOpdsDiagnosticLog("Parse failed: " + url);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_PARSE_FEED_FAILED);
     requestUpdate();
