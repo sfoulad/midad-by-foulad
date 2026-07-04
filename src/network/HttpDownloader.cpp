@@ -26,6 +26,14 @@ constexpr int HTTP_TX_BUF = 1024;
 constexpr int HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 2048;
 
+// The simulator's esp_http_client.h stub (crosspoint-simulator, an external repo)
+// doesn't implement esp_http_client_get_errno -- only real ESP-IDF has it.
+#ifdef SIMULATOR
+int getHttpClientErrno(esp_http_client_handle_t) { return 0; }
+#else
+int getHttpClientErrno(esp_http_client_handle_t client) { return esp_http_client_get_errno(client); }
+#endif
+
 struct Sink {
   std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
   HttpDownloader::ProgressCallback progress;
@@ -78,12 +86,14 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // both redirect.
   esp_err_t err = esp_http_client_open(client, 0);
   if (err != ESP_OK) {
-    // TLS handshake + esp_crt_bundle_attach cert-chain verification need a meaningful
-    // chunk of contiguous heap; ESP_ERR_HTTP_CONNECT with no other detail has been
-    // reported after heavy prior activity (font/image decode) in the same session.
-    // Logging free heap here lets a future crash report confirm or rule out heap
-    // pressure as the cause instead of guessing.
-    LOG_ERR("HTTP", "open failed: %s (free heap: %u bytes)", esp_err_to_name(err), ESP.getFreeHeap());
+    // ESP_ERR_HTTP_CONNECT alone doesn't say whether this was heap pressure, DNS
+    // failure, TCP-level rejection/timeout, or a TLS handshake problem. Free heap
+    // ruled out (confirmed a healthy ~59KB free on a real device that still hit this),
+    // so also surface the underlying socket errno -- ETIMEDOUT/ECONNREFUSED/
+    // EHOSTUNREACH/etc. point at the network path itself; an mbedTLS-range negative
+    // value points at the TLS handshake instead.
+    LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err), getHttpClientErrno(client),
+            ESP.getFreeHeap());
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
@@ -93,7 +103,8 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
-      LOG_ERR("HTTP", "redirect open failed: %s (free heap: %u bytes)", esp_err_to_name(err), ESP.getFreeHeap());
+      LOG_ERR("HTTP", "redirect open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
+              getHttpClientErrno(client), ESP.getFreeHeap());
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }

@@ -43,6 +43,20 @@ class HalClock {
   // so the HAL stays free of any app-layer settings dependency.
   bool syncFromNTP();
 
+  // True if the system clock (time(nullptr)) looks like a real calendar date rather
+  // than the ESP-IDF post-boot default (epoch 0 / Jan 1 1970). Device-independent --
+  // works whether or not a DS3231 is present.
+  static bool isSystemTimeValid();
+
+  // Sets the system clock via SNTP, independent of any RTC hardware. Blocks for up
+  // to ~5s while waiting for SNTP response. Requires WiFi to be connected.
+  // Needed because neither the DS3231 (hour/minute only, no calendar date) nor X4
+  // (no RTC at all) can preserve the date across a reboot -- without re-syncing,
+  // mbedTLS certificate validation silently fails on every HTTPS request (OPDS,
+  // OTA checks, font downloads) until something calls this. Safe/cheap to call
+  // whenever isSystemTimeValid() is false; a no-op if WiFi isn't connected yet.
+  static bool quickSyncSystemTime();
+
  private:
   bool writeTimeToRTC(uint8_t hour, uint8_t minute, uint8_t second);
 };

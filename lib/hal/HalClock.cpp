@@ -152,6 +152,27 @@ bool HalClock::writeTimeToRTC(uint8_t hour, uint8_t minute, uint8_t second) {
 bool HalClock::syncFromNTP() {
   if (!_available) return false;
 
+  if (!quickSyncSystemTime()) return false;
+
+  time_t now = time(nullptr);
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+
+  if (writeTimeToRTC(timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec)) {
+    LOG_INF("CLK", "RTC set to %02d:%02d:%02d UTC", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    return true;
+  }
+  return false;
+}
+
+bool HalClock::isSystemTimeValid() {
+  // Jan 1 2024 00:00:00 UTC -- comfortably before this feature existed, comfortably
+  // after the ESP-IDF post-boot default (epoch 0) and any unsynced-clock artifact.
+  constexpr time_t MIN_PLAUSIBLE_EPOCH = 1704067200;
+  return time(nullptr) >= MIN_PLAUSIBLE_EPOCH;
+}
+
+bool HalClock::quickSyncSystemTime() {
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
     return false;
@@ -164,15 +185,7 @@ bool HalClock::syncFromNTP() {
   constexpr int maxAttempts = 50;
   for (int i = 0; i < maxAttempts; i++) {
     if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-      time_t now = time(nullptr);
-      struct tm timeinfo;
-      gmtime_r(&now, &timeinfo);
-
-      if (writeTimeToRTC(timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec)) {
-        LOG_INF("CLK", "RTC set to %02d:%02d:%02d UTC", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-        return true;
-      }
-      return false;
+      return true;
     }
     delay(100);
   }

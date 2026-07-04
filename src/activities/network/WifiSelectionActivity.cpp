@@ -244,6 +244,25 @@ void WifiSelectionActivity::checkConnectionStatus() {
     connectedIP = ipStr;
     autoConnecting = false;
 
+    // System time must be roughly correct for TLS certificate validation -- OPDS
+    // fetches, OTA update checks, and font downloads are all HTTPS. Neither the
+    // DS3231 (X3 -- hour/minute only, no calendar date) nor X4 (no RTC at all) can
+    // preserve the date across a reboot, so without re-syncing here every HTTPS
+    // request silently fails cert validation after every restart (confirmed via a
+    // real device: "Foulad eBooks" repeatedly failed with a bare ESP_ERR_HTTP_CONNECT
+    // right after boot, with healthy heap and a healthy server -- the system clock
+    // was the missing piece). Cheap to check on every connection: skipped entirely
+    // once time is already valid, so this doesn't add the ~5s SNTP wait on every
+    // WiFi connect, only right after a cold boot/OTA restart.
+    // Guarded out of the simulator build: crosspoint-simulator's own HalClock stub
+    // doesn't implement these (its network stack isn't real ESP-IDF/mbedTLS, so the
+    // cert-validation clock issue this works around doesn't apply there).
+#ifndef SIMULATOR
+    if (!HalClock::isSystemTimeValid()) {
+      HalClock::quickSyncSystemTime();
+    }
+#endif
+
     // Sync RTC from NTP on the first successful WiFi connection only. The DS3231
     // drifts ~2 ppm so one sync is enough; users can force a re-sync from
     // Settings > Customise Status Bar > Sync clock now.
