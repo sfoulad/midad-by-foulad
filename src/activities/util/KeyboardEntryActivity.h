@@ -22,12 +22,15 @@ class KeyboardEntryActivity : public Activity {
  public:
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                  std::string title = "Enter Text", std::string initialText = "",
-                                 const size_t maxLength = 0, InputType inputType = InputType::Text)
+                                 const size_t maxLength = 0, InputType inputType = InputType::Text,
+                                 std::string customTip = "", bool numericOnly = false)
       : Activity("KeyboardEntry", renderer, mappedInput),
         title(std::move(title)),
         text(std::move(initialText)),
         maxLength(maxLength),
-        inputType(inputType) {}
+        inputType(inputType),
+        customTip(std::move(customTip)),
+        numericOnly(numericOnly) {}
 
   void onEnter() override;
   void onExit() override;
@@ -39,6 +42,15 @@ class KeyboardEntryActivity : public Activity {
   std::string text;
   size_t maxLength;
   InputType inputType;
+  // When non-empty, shown as the sole "Tips:" line instead of the normal mode-dependent
+  // hints -- lets a specific caller (e.g. Foulad eBooks login) give context-specific
+  // guidance without hardcoding that context into this generic widget.
+  std::string customTip;
+  // Swaps the full QWERTY layout for a compact digit-only keypad (mirrors urlMode's flat
+  // restricted grid). Orthogonal to InputType -- e.g. Foulad eBooks' password field is
+  // both Password (masked) AND numericOnly (foulad-ebooks enforces numeric-only
+  // credentials server-side), which a single enum value couldn't express cleanly.
+  bool numericOnly = false;
   bool passwordVisible = false;
 
   ButtonNavigator buttonNavigator;
@@ -66,6 +78,12 @@ class KeyboardEntryActivity : public Activity {
   static constexpr int URL_SNIPPET_COUNT = 9;
   static constexpr const char* const urlSnippets[URL_SNIPPET_COUNT] = {
       "https://", "www.", ".com", "http://", "192.168.", ".org", "/opds", ":8080", ".net"};
+
+  // Flat 3-column digit grid for InputType::Numeric, same indexing scheme as urlSnippets
+  // (idx = col + row * NUMERIC_COLS): rows of 1-2-3 / 4-5-6 / 7-8-9 / 0.
+  static constexpr int NUMERIC_COLS = 3;
+  static constexpr int NUMERIC_KEY_COUNT = 10;
+  static constexpr char numericKeys[NUMERIC_KEY_COUNT] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'};
 
   int delPressCount = 0;
   bool hintVisible = false;

@@ -36,11 +36,13 @@ void KeyboardEntryActivity::onExit() { Activity::onExit(); }
 
 int KeyboardEntryActivity::getContentRowCount() const {
   if (urlMode) return 3;
+  if (numericOnly) return (NUMERIC_KEY_COUNT + NUMERIC_COLS - 1) / NUMERIC_COLS;
   return ABC_ROWS;
 }
 
 int KeyboardEntryActivity::getContentColCount() const {
   if (urlMode) return 3;
+  if (numericOnly) return NUMERIC_COLS;
   return COLS;
 }
 
@@ -49,6 +51,11 @@ int KeyboardEntryActivity::getTotalRowCount() const { return getContentRowCount(
 bool KeyboardEntryActivity::isBottomRow(const int row) const { return row == getContentRowCount(); }
 
 char KeyboardEntryActivity::getSelectedChar() const {
+  if (numericOnly) {
+    const int idx = selectedCol + selectedRow * NUMERIC_COLS;
+    return (idx >= 0 && idx < NUMERIC_KEY_COUNT) ? numericKeys[idx] : '\0';
+  }
+
   const KeyDef(*layout)[COLS] = symMode ? symLayout : (inputType == InputType::Url ? urlLayout : abcLayout);
 
   if (selectedRow < 0 || selectedRow >= getContentRowCount()) return '\0';
@@ -59,7 +66,7 @@ char KeyboardEntryActivity::getSelectedChar() const {
 }
 
 char KeyboardEntryActivity::getAlternativeChar() const {
-  if (symMode || urlMode) return '\0';
+  if (symMode || urlMode || numericOnly) return '\0';
   if (inputType == InputType::Url && selectedRow > 0) return '\0';
 
   const KeyDef(*layout)[COLS] = abcLayout;
@@ -99,15 +106,18 @@ bool KeyboardEntryActivity::handleKeyPress() {
       case SpecialKeyType::Shift:
         delPressCount = 0;
         hintVisible = false;
-        // Shift is meaningless in the URL-snippet panel and the symbol layout, but
-        // must work for the URL letter layout so uppercase letters can be entered (#2178).
+        // Shift is meaningless in the URL-snippet panel, the symbol layout, and the
+        // digit-only numeric panel, but must work for the URL letter layout so uppercase
+        // letters can be entered (#2178).
         if (urlMode) return true;
         if (symMode) return true;
+        if (numericOnly) return true;
         shiftState = (shiftState + 1) % 2;
         return true;
       case SpecialKeyType::Mode: {
         delPressCount = 0;
         hintVisible = false;
+        if (numericOnly) return true;  // no other panel to switch to
         if (urlMode) {
           urlMode = false;
           symMode = false;
@@ -129,7 +139,9 @@ bool KeyboardEntryActivity::handleKeyPress() {
       case SpecialKeyType::Space:
         delPressCount = 0;
         hintVisible = false;
-        if (inputType == InputType::Url) {
+        if (numericOnly) {
+          return true;  // no spaces in a digit-only field
+        } else if (inputType == InputType::Url) {
           urlMode = !urlMode;
           if (urlMode) {
             symMode = false;
@@ -179,7 +191,7 @@ bool KeyboardEntryActivity::handleKeyPress() {
 }
 
 void KeyboardEntryActivity::mapColContentBottom(int& col, bool goingUp) const {
-  if (urlMode) {
+  if (urlMode || numericOnly) {
     col = goingUp ? col - 1 : col + 1;
     if (col < 0) col = 0;
     if (col >= 3) col = 2;
@@ -571,6 +583,10 @@ void KeyboardEntryActivity::render(RenderLock&&) {
   int tipCount = 0;
   if (cursorMode) {
     tipCount = 1;
+  } else if (!customTip.empty()) {
+    // Caller-supplied context (e.g. Foulad eBooks login) replaces the normal
+    // mode-dependent hints entirely, rather than trying to merge with them.
+    tipCount = 1;
   } else if (urlMode) {
     tipCount = 1 + (!text.empty() ? 1 : 0);
   } else if (symMode) {
@@ -585,6 +601,8 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     y += tipsLh;
     if (cursorMode) {
       drawTip(tr(STR_KB_HINT_RETURN_KEYBOARD), y);
+    } else if (!customTip.empty()) {
+      drawTip(customTip.c_str(), y);
     } else if (urlMode) {
       drawTip(tr(STR_KB_HINT_EXIT_URL_MODE), y);
       y += tipsLh;
@@ -649,6 +667,12 @@ void KeyboardEntryActivity::render(RenderLock&&) {
           GUI.drawKeyboardKey(renderer, Rect{keyX, rowY, keyWidth, keyHeight}, urlSnippets[snippetIdx],
                               activeKeySelected, nullptr);
         }
+      } else if (numericOnly) {
+        const int idx = col + row * NUMERIC_COLS;
+        if (idx < NUMERIC_KEY_COUNT) {
+          const char digitBuf[2] = {numericKeys[idx], '\0'};
+          GUI.drawKeyboardKey(renderer, Rect{keyX, rowY, keyWidth, keyHeight}, digitBuf, activeKeySelected, nullptr);
+        }
       } else {
         const KeyDef& key = layout[row][col];
 
@@ -677,10 +701,13 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     const char* label;
   };
   const BottomKeyInfo bottomKeys[BOTTOM_KEY_COUNT] = {
-      {(symMode || urlMode) ? KeyboardKeyType::Disabled : KeyboardKeyType::Shift,
-       (symMode || urlMode) ? shiftString[0] : shiftString[shiftState]},
-      {KeyboardKeyType::Mode, urlMode ? "abc" : (symMode ? "abc" : "#@!")},
-      {inputType == InputType::Url ? KeyboardKeyType::Mode : KeyboardKeyType::Space,
+      {(symMode || urlMode || numericOnly) ? KeyboardKeyType::Disabled : KeyboardKeyType::Shift,
+       (symMode || urlMode || numericOnly) ? shiftString[0] : shiftString[shiftState]},
+      {numericOnly ? KeyboardKeyType::Disabled : KeyboardKeyType::Mode,
+       urlMode ? "abc" : (symMode ? "abc" : (numericOnly ? "" : "#@!"))},
+      {numericOnly                   ? KeyboardKeyType::Disabled
+       : inputType == InputType::Url ? KeyboardKeyType::Mode
+                                     : KeyboardKeyType::Space,
        inputType == InputType::Url ? "URL" : nullptr},
       {KeyboardKeyType::Del, nullptr},
       {KeyboardKeyType::Ok, tr(STR_OK_BUTTON)},
@@ -716,6 +743,13 @@ void KeyboardEntryActivity::render(RenderLock&&) {
       const int idx = selectedCol + selectedRow * 3;
       if (idx < URL_SNIPPET_COUNT) {
         GUI.drawKeyboardKey(renderer, Rect{selKeyX, selKeyY, selKeyW, selKeyH}, urlSnippets[idx], true, nullptr,
+                            KeyboardKeyType::Normal, true);
+      }
+    } else if (numericOnly) {
+      const int idx = selectedCol + selectedRow * NUMERIC_COLS;
+      if (idx < NUMERIC_KEY_COUNT) {
+        const char selDigitBuf[2] = {numericKeys[idx], '\0'};
+        GUI.drawKeyboardKey(renderer, Rect{selKeyX, selKeyY, selKeyW, selKeyH}, selDigitBuf, true, nullptr,
                             KeyboardKeyType::Normal, true);
       }
     } else {

@@ -27,7 +27,8 @@ void FouladEbooksSetupActivity::launchUsernameEntry() {
     launchPasswordEntry();
   };
   startActivityForResult(
-      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_USERNAME), "", 63, InputType::Text),
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_USERNAME), "", 63, InputType::Text,
+                                              tr(STR_FOULAD_EBOOKS_LOGIN_HINT), /*numericOnly=*/true),
       handler);
 }
 
@@ -48,7 +49,8 @@ void FouladEbooksSetupActivity::launchPasswordEntry() {
     activityManager.replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, server));
   };
   startActivityForResult(
-      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_PASSWORD), "", 63, InputType::Password),
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_PASSWORD), "", 63, InputType::Password,
+                                              tr(STR_FOULAD_EBOOKS_LOGIN_HINT), /*numericOnly=*/true),
       handler);
 }
 
