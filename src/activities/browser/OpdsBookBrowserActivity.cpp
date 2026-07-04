@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "OpdsCoverCache.h"
 #include "SilentRestart.h"
@@ -63,7 +64,14 @@ void OpdsBookBrowserActivity::onExit() {
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestart();
+    if (!pendingReaderPath.empty()) {
+      // Leaving to open a specific book (see downloadBook()) -- resume there after the
+      // restart, not at Home.
+      APP_STATE.openEpubPath = pendingReaderPath;
+      silentRestartToReader();
+    } else {
+      silentRestart();
+    }
   }
 }
 
@@ -251,8 +259,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         renderer.truncatedText(UI_10_FONT_ID, statusMessage.c_str(), pageWidth - metrics.contentSidePadding * 2);
     renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing, title.c_str());
 
+    int y = top + (height + metrics.verticalSpacing) * 2;
     if (downloadTotal > 0) {
-      int y = top + (height + metrics.verticalSpacing) * 2;
       GUI.drawProgressBar(
           renderer,
           Rect{metrics.contentSidePadding, y, pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
@@ -264,6 +272,11 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       y += height + metrics.verticalSpacing;
       renderer.drawCenteredText(UI_10_FONT_ID, y,
                                 (std::to_string(downloadProgress) + " / " + std::to_string(downloadTotal)).c_str());
+    } else if (downloadProgress > 0) {
+      // Total size is unknown (chunked transfer, no Content-Length) -- no percentage to
+      // show, but the downloaded count still proves the transfer is alive rather than
+      // stuck, which a bare "Downloading..." label can't.
+      renderer.drawCenteredText(UI_10_FONT_ID, y, (std::to_string(downloadProgress / 1024) + " KB downloaded").c_str());
     }
     renderer.displayBuffer();
     return;
@@ -545,6 +558,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
 
   if (Storage.exists(filename.c_str())) {
     // Already downloaded -- open it directly rather than downloading again.
+    pendingReaderPath = filename;
     activityManager.goToReader(filename);
     return;
   }
@@ -553,6 +567,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   statusMessage = book.title;
   downloadProgress = downloadTotal = 0;
   lastDownloadPercentage = -1;
+  lastDownloadBytesShown = 0;
   requestUpdate(true);
 
   // Build full download URL relative to the current feed, not the root server URL
@@ -560,17 +575,24 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   std::string downloadUrl = UrlUtils::buildUrl(feedUrl, book.href);
   LOG_DBG("OPDS", "Downloading: %s -> %s", downloadUrl.c_str(), filename.c_str());
 
+  // foulad-ebooks' download endpoints respond with Transfer-Encoding: chunked (no
+  // Content-Length), so `total` is 0 for every real download today -- redraw by a byte-count
+  // step in that case instead of skipping the throttle entirely (which forced an e-ink
+  // refresh on every single 2KB HTTP chunk, making a multi-MB book look stuck for minutes).
+  constexpr size_t UNKNOWN_TOTAL_REDRAW_STEP = 32 * 1024;
+
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
       [this](const size_t downloaded, const size_t total) {
         downloadProgress = downloaded;
         downloadTotal = total;
-        // Throttle redraws to ~1% steps -- e-ink refreshes are slow, so forcing one on
-        // every HTTP chunk (every 2KB) would make the progress bar itself the bottleneck.
         if (total > 0) {
           const int percentage = static_cast<int>(downloaded * 100 / total);
           if (percentage == lastDownloadPercentage) return;
           lastDownloadPercentage = percentage;
+        } else {
+          if (downloaded - lastDownloadBytesShown < UNKNOWN_TOTAL_REDRAW_STEP) return;
+          lastDownloadBytesShown = downloaded;
         }
         requestUpdate(true);
       },
@@ -578,6 +600,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
+    pendingReaderPath = filename;
     activityManager.goToReader(filename);
     return;
   }

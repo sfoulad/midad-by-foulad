@@ -41,7 +41,21 @@ class OpdsBookBrowserActivity final : public Activity {
   size_t downloadTotal = 0;
   // Last redrawn percentage during download, so the progress callback (fired once per
   // HTTP chunk) only forces an e-ink refresh on ~1% steps instead of on every chunk.
+  // Only meaningful when downloadTotal > 0 -- foulad-ebooks' download endpoints respond
+  // with Transfer-Encoding: chunked (no Content-Length), so downloadTotal is 0 for every
+  // real download today; see lastDownloadBytesShown below for that case.
   int lastDownloadPercentage = -1;
+  // Last redrawn byte count during a download of unknown total size (downloadTotal == 0).
+  // Redraws every ~32KB instead of on every 2KB HTTP chunk, for the same reason as
+  // lastDownloadPercentage -- forcing an e-ink refresh per chunk made a several-MB
+  // download look stuck for minutes.
+  size_t lastDownloadBytesShown = 0;
+  // Set just before calling activityManager.goToReader() from downloadBook(), so onExit()
+  // can silentRestartToReader() instead of the default silentRestart()-to-Home if WiFi is
+  // still connected when this activity is torn down (the deferred Replace action runs
+  // onExit() before the new ReaderActivity is constructed, so a plain silentRestart()
+  // would silently discard the pending "open this book" transition).
+  std::string pendingReaderPath;
 
   OpdsServer server;  // Copied at construction — safe even if the store changes during browsing
 
