@@ -148,6 +148,9 @@ if args.script == "arabic":
         (0x2010, 0x2027),  # General Punctuation: dashes, quotes, ellipsis
         (0x0600, 0x06FF),  # Arabic
         (0x0750, 0x077F),  # Arabic Supplement
+        (0xFDF2, 0xFDF2),  # Arabic Ligature Allah Isolated Form (Presentation Forms-A) --
+                           # a single codepoint, not the full FB50-FDFF block, so ArabicShaper
+                           # can special-case the four-letter "الله" sequence into one glyph.
         (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
     ]
 

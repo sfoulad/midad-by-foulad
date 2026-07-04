@@ -117,6 +117,66 @@ std::vector<uint32_t> shapeText(const char* text) {
 
   if (codepoints.empty()) return {};
 
+  // Step 1.5: Detect the "الله" (Allah) ligature -- Alef, Lam, Lam, Heh, skipping any
+  // diacritics between letters (they'd be dropped in step 3 anyway). Unicode defines
+  // only one presentation form for this specific ligature (U+FDF2), and it's
+  // "isolated" -- no connection point on either side. It only applies when nothing
+  // connects into the Alef from before (e.g. "بالله" keeps the Beh joined normally,
+  // no ligature) and nothing connects out of the Heh afterward (e.g. "اللهجة",
+  // "اللهم" are different words entirely, not "Allah" + a suffix). Matches
+  // arabic_reshaper's behavior exactly (verified against a real 30k-word book). The
+  // bundled Noto Sans Arabic font has this glyph via its own GSUB rules, but
+  // fontconvert.py's generic 2-glyph ligature extractor can't emit a 4-letter chain,
+  // so it's special-cased here instead.
+  {
+    std::vector<uint32_t> afterAllah;
+    afterAllah.reserve(codepoints.size());
+    size_t i = 0;
+    while (i < codepoints.size()) {
+      if (codepoints[i] == 0x0627) {  // Alef
+        size_t j = i + 1;
+        auto skipDiacritics = [&]() {
+          while (j < codepoints.size() && isArabicDiacritic(codepoints[j])) j++;
+        };
+        skipDiacritics();
+        bool isAllahSequence = false;
+        if (j < codepoints.size() && codepoints[j] == 0x0644) {  // Lam
+          j++;
+          skipDiacritics();
+          if (j < codepoints.size() && codepoints[j] == 0x0644) {  // Lam
+            j++;
+            skipDiacritics();
+            if (j < codepoints.size() && codepoints[j] == 0x0647) {  // Heh
+              isAllahSequence = true;
+            }
+          }
+        }
+
+        if (isAllahSequence) {
+          bool prevConnects = false;
+          for (int p = static_cast<int>(afterAllah.size()) - 1; p >= 0; p--) {
+            JoiningType pjt = getJoiningType(afterAllah[p]);
+            if (pjt == JoiningType::TRANSPARENT) continue;
+            prevConnects = joinsToLeft(pjt);
+            break;
+          }
+          size_t afterHeh = j + 1;
+          while (afterHeh < codepoints.size() && isArabicDiacritic(codepoints[afterHeh])) afterHeh++;
+          const bool nextExists = afterHeh < codepoints.size() && isArabicBaseChar(codepoints[afterHeh]);
+
+          if (!prevConnects && !nextExists) {
+            afterAllah.push_back(0xFDF2);
+            i = afterHeh;
+            continue;
+          }
+        }
+      }
+      afterAllah.push_back(codepoints[i]);
+      i++;
+    }
+    codepoints.swap(afterAllah);
+  }
+
   // Step 2: Apply Lam-Alef ligatures
   std::vector<uint32_t> afterLigatures;
   afterLigatures.reserve(codepoints.size());
@@ -202,12 +262,21 @@ std::vector<uint32_t> shapeText(const char* text) {
   const size_t len = shaped.size();
   std::vector<BidiDir> dirs(len);
 
+  // Arabic-Indic / Extended Arabic-Indic digits (AN), tracked separately from western
+  // 0-9 digits (EN). UAX#9 rule W4 merges a single separator between two EN runs into
+  // that same EN run (so "1990-2020" stays as typed), but that rule is EN-specific --
+  // it does not apply to AN. Per rule N1, AN acts like R for neutral resolution, so a
+  // hyphen between two AN digit runs (e.g. a footnote year range "١٨٧٩-١٩٧٠") resolves
+  // RTL instead, and the two runs swap visual position. Confirmed against
+  // arabic_reshaper + python-bidi on a real book (see ArabicShaper tests).
+  std::vector<bool> isArabicIndicDigit(len, false);
   for (size_t i = 0; i < len; i++) {
     uint32_t c = shaped[i];
     // Digits (EN + AN) — European, Arabic-Indic, Extended Arabic-Indic (Persian/Urdu).
     // Checked before the Arabic range so AN digits (U+0660-0669) don't get swept into RTL.
     if ((c >= '0' && c <= '9') || (c >= 0x0660 && c <= 0x0669) || (c >= 0x06F0 && c <= 0x06F9)) {
       dirs[i] = BidiDir::LTR;
+      isArabicIndicDigit[i] = c >= 0x0660;
     } else if ((c >= 0x0600 && c <= 0x06FF) || (c >= 0x0750 && c <= 0x077F) || (c >= 0xFB50 && c <= 0xFDFF) ||
                (c >= 0xFE70 && c <= 0xFEFF)) {
       dirs[i] = BidiDir::RTL;
@@ -256,19 +325,34 @@ std::vector<uint32_t> shapeText(const char* text) {
     } else {
       // Other neutrals: if both neighbors agree, use that; else base direction (RTL)
       BidiDir left = BidiDir::RTL, right = BidiDir::RTL;
+      int leftIdx = -1;
+      size_t rightIdx = len;
       for (int j = static_cast<int>(i) - 1; j >= 0; j--) {
         if (dirs[j] != BidiDir::NEUTRAL) {
           left = dirs[j];
+          leftIdx = j;
           break;
         }
       }
       for (size_t j = i + 1; j < len; j++) {
         if (dirs[j] != BidiDir::NEUTRAL) {
           right = dirs[j];
+          rightIdx = j;
           break;
         }
       }
-      dirs[i] = (left == right) ? left : BidiDir::RTL;
+      if (c == '-' && leftIdx >= 0 && rightIdx < len && left == BidiDir::LTR && right == BidiDir::LTR &&
+          isArabicIndicDigit[leftIdx] && isArabicIndicDigit[rightIdx]) {
+        // A hyphen-minus directly between two Arabic-Indic digit runs (e.g. a year
+        // range) isn't absorbed by W4 (that rule's ES-merge clause is EN-only) and
+        // resolves as RTL per N1, swapping the two runs' order. A period or comma
+        // (CS) between two numbers of the same type DOES merge per W4's second
+        // clause -- e.g. a decimal "٤٣.٥" (43.5) must stay together -- so this only
+        // narrows to '-' specifically, not every neutral.
+        dirs[i] = BidiDir::RTL;
+      } else {
+        dirs[i] = (left == right) ? left : BidiDir::RTL;
+      }
     }
   }
 
