@@ -90,11 +90,17 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 28
+### Version 29
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 29 is a pure cache-bust (no structural change from v28): it forces
+sections cached under earlier, incorrect Arabic layout logic (word width
+measurement, word-order reordering, tashkeel/ligature/digit-range shaping) to
+rebuild after upgrading, since none of those fixes touched a cache-busting
+settings field.
 
 Version 28 includes:
 

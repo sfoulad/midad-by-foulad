@@ -10,8 +10,12 @@
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
-// v28: text decoration bits now include line-through in serialized wordStyles.
-constexpr uint8_t SECTION_FILE_VERSION = 28;
+// v29: force-invalidates sections cached under earlier, incorrect Arabic layout logic
+// (word width measurement, word-order reordering, tashkeel/ligature/digit-range
+// shaping) shipped across 1.5.9-1.6.0. None of those fixes changed a cache-busting
+// settings field, so a book already read on an older build would otherwise keep
+// serving stale, incorrectly-laid-out Arabic text after upgrading.
+constexpr uint8_t SECTION_FILE_VERSION = 29;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
