@@ -9,6 +9,7 @@
 #include <WiFi.h>
 
 #include <algorithm>
+#include <memory>
 
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
@@ -482,28 +483,44 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
 
   std::string url = (path.find("http") == 0) ? path : UrlUtils::buildUrl(server.url, path);
   LOG_DBG("OPDS", "Fetching: %s", url.c_str());
-  OpdsParser parser;
-  {
-    OpdsParserStream stream{parser};
-    if (!HttpDownloader::fetchUrl(url, stream, server.username, server.password)) {
-      state = BrowserState::ERROR;
-      errorMessage = tr(STR_FETCH_FEED_FAILED);
-      requestUpdate();
-      return;
+
+  // Larger catalogs (e.g. a category with hundreds of books, even paginated) take longer
+  // to transfer over WiFi than a handful of KB, which makes a one-off mid-transfer hiccup
+  // more likely purely by taking more time -- not necessarily a real fault. Retry the whole
+  // fetch a couple of times before surfacing an error, rather than failing on the first blip.
+  // Each attempt gets its own fresh OpdsParser -- reusing one across a failed attempt would
+  // leave it permanently in its post-failure error state (clear() doesn't reset that).
+  constexpr int MAX_FETCH_ATTEMPTS = 3;
+  std::unique_ptr<OpdsParser> parser;
+  bool fetchOk = false;
+  for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS && !fetchOk; attempt++) {
+    if (attempt > 1) {
+      LOG_DBG("OPDS", "Retrying feed fetch (attempt %d/%d): %s", attempt, MAX_FETCH_ATTEMPTS, url.c_str());
+      delay(500);
     }
+    parser = std::make_unique<OpdsParser>();
+    OpdsParserStream stream{*parser};
+    fetchOk = HttpDownloader::fetchUrl(url, stream, server.username, server.password);
   }
 
-  if (!parser) {
+  if (!fetchOk) {
+    state = BrowserState::ERROR;
+    errorMessage = tr(STR_FETCH_FEED_FAILED);
+    requestUpdate();
+    return;
+  }
+
+  if (!*parser) {
     state = BrowserState::ERROR;
     errorMessage = tr(STR_PARSE_FEED_FAILED);
     requestUpdate();
     return;
   }
 
-  searchTemplate = parser.getSearchTemplate();
-  const auto& nextUrl = parser.getNextPageUrl();
-  const auto& prevUrl = parser.getPrevPageUrl();
-  entries = std::move(parser).getEntries();
+  searchTemplate = parser->getSearchTemplate();
+  const auto& nextUrl = parser->getNextPageUrl();
+  const auto& prevUrl = parser->getPrevPageUrl();
+  entries = std::move(*parser).getEntries();
 
   if (!prevUrl.empty()) {
     entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_PREV_PAGE), "", prevUrl, ""});
