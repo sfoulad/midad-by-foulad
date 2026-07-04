@@ -29,29 +29,32 @@ class HomeActivity final : public Activity {
   std::vector<RecentBook> recentBooks;
   const HomeMenuItem initialMenuItem;
 
-  // Convert HomeMenuItem to menu index (used in onEnter)
+  // Convert HomeMenuItem to menu index (used in onEnter). Order matches render()'s
+  // menuItems construction: Foulad eBooks, Recent Books, [Browse Library], Check for
+  // Update, Settings ("Continue Reading" isn't a HomeMenuItem -- it's a prepended
+  // label tied to the recentBooks selection range, handled separately in loop()).
   static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl) {
     int i = 0;
-    if (item == HomeMenuItem::RECENTS) return i;
-    ++i;
     if (item == HomeMenuItem::FOULAD_EBOOKS) return i;
+    ++i;
+    if (item == HomeMenuItem::RECENTS) return i;
     ++i;
     if (item == HomeMenuItem::OPDS_BROWSER) return hasOpdsUrl ? i : 0;
     if (hasOpdsUrl) ++i;
-    if (item == HomeMenuItem::SETTINGS_MENU) return i;
-    ++i;
     if (item == HomeMenuItem::CHECK_UPDATE) return i;
+    ++i;
+    if (item == HomeMenuItem::SETTINGS_MENU) return i;
     return 0;
   }
 
   // Convert menu index to HomeMenuItem (used in loop)
   static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl) {
     int i = 0;
-    if (idx == i++) return HomeMenuItem::RECENTS;
     if (idx == i++) return HomeMenuItem::FOULAD_EBOOKS;
+    if (idx == i++) return HomeMenuItem::RECENTS;
     if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
-    if (idx == i++) return HomeMenuItem::SETTINGS_MENU;
-    if (idx == i) return HomeMenuItem::CHECK_UPDATE;
+    if (idx == i++) return HomeMenuItem::CHECK_UPDATE;
+    if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
   }
   void onSelectBook(const std::string& path);

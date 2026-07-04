@@ -231,10 +231,11 @@ void HomeActivity::render(RenderLock&&) {
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
-  // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_MENU_RECENT_BOOKS), tr(STR_FOULAD_EBOOKS), tr(STR_SETTINGS_TITLE),
-                                        tr(STR_CHECK_UPDATES)};
-  std::vector<UIIcon> menuIcons = {Recent, Library, Settings, Transfer};
+  // Build menu items dynamically. Order: Foulad eBooks, Recent Books, [Browse
+  // Library], Check for Update, Settings -- matches menuItemToIndex/indexToMenuItem.
+  std::vector<const char*> menuItems = {tr(STR_FOULAD_EBOOKS), tr(STR_MENU_RECENT_BOOKS), tr(STR_CHECK_UPDATES),
+                                        tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Library, Recent, Transfer, Settings};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
