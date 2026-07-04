@@ -1696,6 +1696,16 @@ int GfxRenderer::getKerning(const int fontId, const uint32_t leftCp, const uint3
 }
 
 int GfxRenderer::getTextAdvanceX(const int fontId, const char* text, EpdFontFamily::Style style) const {
+  // EPUB layout (ParsedText::measureWordWidth) is the caller here, so this must agree with
+  // drawText's dispatch: Arabic codepoints don't exist in fontId's (Latin) font, so without
+  // this check every Arabic word would measure as 0px wide, collapsing the whole paragraph
+  // onto one line-break group while drawArabicText still draws it at full width -- the words
+  // would render on top of each other. getArabicTextWidth already sums shaped-glyph advances,
+  // which is exactly this function's contract for an Arabic word.
+  if (ScriptDetector::containsArabic(text)) {
+    return getArabicTextWidth(fontId, text, style);
+  }
+
   // Advance table fast-path for SD card fonts during layout.
   // No kerning/ligature lookup — consistent with previous metadataOnly behavior
   // where kern/lig data was not loaded.
