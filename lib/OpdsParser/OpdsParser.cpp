@@ -11,6 +11,15 @@ OpdsParser::OpdsParser() {
     errorOccured = true;
     LOG_DBG("OPDS", "Couldn't allocate memory for parser");
   }
+  // Pre-reserve so entries.push_back() in endElement() doesn't trigger repeated
+  // reallocate-copy-free growth cycles while the HTTP/TLS session is still active
+  // and competing for the same heap. Confirmed via a real device crash: operator new
+  // inside std::vector<OpdsEntry>::_M_realloc_append aborted (no exceptions to catch
+  // under -fno-exceptions) well under the MAX_ENTRIES=200 cap -- the cap bounds the
+  // final size, not the number/timing of reallocation events on the way there. 64
+  // covers real category feeds seen so far (up to 26 entries) with no reallocation at
+  // all; larger feeds still grow automatically (doubling) up to MAX_ENTRIES.
+  entries.reserve(64);
 }
 
 OpdsParser::~OpdsParser() { destroyXmlParser(parser); }
