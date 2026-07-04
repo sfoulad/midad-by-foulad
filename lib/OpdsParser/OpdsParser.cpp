@@ -70,6 +70,7 @@ void OpdsParser::clear() {
   currentEntry = OpdsEntry{};
   currentText.clear();
   inEntry = inTitle = inAuthor = inAuthorName = inId = false;
+  truncated = false;
 }
 
 std::vector<OpdsEntry> OpdsParser::getBooks() const {
@@ -169,7 +170,15 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
 
   if (strcmp(name, "entry") == 0 || strstr(name, ":entry") != nullptr) {
     if (!self->currentEntry.title.empty() && !self->currentEntry.href.empty()) {
-      self->entries.push_back(self->currentEntry);
+      if (self->entries.size() < MAX_ENTRIES) {
+        self->entries.push_back(self->currentEntry);
+      } else {
+        if (!self->truncated) {
+          LOG_ERR("OPDS", "Feed has more than %u entries; truncating (server should paginate)",
+                  static_cast<unsigned>(MAX_ENTRIES));
+        }
+        self->truncated = true;
+      }
     }
     self->inEntry = false;
   } else if (self->inEntry) {

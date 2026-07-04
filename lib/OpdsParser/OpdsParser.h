@@ -50,6 +50,16 @@ using OpdsBook = OpdsEntry;
  */
 class OpdsParser final : public Print {
  public:
+  // Hard cap on how many entries a single feed response can add to `entries`. A feed
+  // server that doesn't paginate (returns every book in a category in one response) can
+  // otherwise grow this vector until operator new fails -- with -fno-exceptions that's an
+  // immediate abort(), not a catchable error (confirmed via a real device crash: hundreds
+  // of books in one unpaginated OPDS feed exhausted the ~380KB heap while appending
+  // OpdsEntry objects during XML parsing). Silently truncating is a safety net; the real
+  // fix for a feed this large is server-side pagination (rel="next"/"previous" links,
+  // which this parser already understands -- see nextPageUrl/prevPageUrl below).
+  static constexpr size_t MAX_ENTRIES = 200;
+
   OpdsParser();
   ~OpdsParser();
 
@@ -75,6 +85,10 @@ class OpdsParser final : public Print {
    */
   const std::vector<OpdsEntry>& getEntries() const& { return entries; }
   std::vector<OpdsEntry> getEntries() && { return std::move(entries); }
+
+  // True if this feed had more entries than MAX_ENTRIES and got truncated. Lets the UI
+  // tell the user their view is incomplete instead of silently dropping books.
+  bool wasTruncated() const { return truncated; }
 
   /**
    * Get only book entries (legacy compatibility).
@@ -112,4 +126,5 @@ class OpdsParser final : public Print {
   bool inId = false;
 
   bool errorOccured = false;
+  bool truncated = false;
 };
