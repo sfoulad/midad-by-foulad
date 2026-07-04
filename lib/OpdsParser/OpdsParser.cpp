@@ -110,7 +110,11 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
 
       if (self->inEntry) {
         const bool isEpubAcquisition = type && strcmp(type, "application/epub+zip") == 0;
-        const bool isXtcAcquisition = type && strcmp(type, "application/x-xtc") == 0;
+        // foulad-ebooks derives this MIME type from the stored file's own extension
+        // (application/x-xtc or application/x-xtch) -- accept either, mirroring
+        // FsHelpers::hasXtcExtension's "either spelling" treatment on the read side.
+        const bool isXtcAcquisition =
+            type && (strcmp(type, "application/x-xtc") == 0 || strcmp(type, "application/x-xtch") == 0);
         if (rel && strstr(rel, "opds-spec.org/acquisition") != nullptr && (isEpubAcquisition || isXtcAcquisition)) {
           // Prefer plain EPUB links over derived/other formats when multiple
           // acquisition links are present for one entry.

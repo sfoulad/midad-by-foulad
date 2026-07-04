@@ -550,11 +550,18 @@ void OpdsBookBrowserActivity::navigateBack() {
 void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   // Pick the file extension from the acquisition link's actual format instead of always
   // assuming EPUB -- matters now that XTC-only books (Arabic/PDF-sourced, per foulad-ebooks'
-  // one-format-per-book rule) are recognized as downloadable BOOK entries too.
-  const bool isXtc = book.acquisitionType == "application/x-xtc";
+  // one-format-per-book rule) are recognized as downloadable BOOK entries too. foulad-ebooks
+  // derives this MIME type from the stored file's own extension, so mirror it back exactly
+  // (.xtch vs .xtc) rather than assuming one -- both are recognized identically for local
+  // file-type detection (FsHelpers::hasXtcExtension), so either is safe to save as.
+  std::string extension = ".epub";
+  if (book.acquisitionType == "application/x-xtch") {
+    extension = ".xtch";
+  } else if (book.acquisitionType == "application/x-xtc") {
+    extension = ".xtc";
+  }
   const std::string filename =
-      "/" + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) +
-      (isXtc ? ".xtc" : ".epub");
+      "/" + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + extension;
 
   if (Storage.exists(filename.c_str())) {
     // Already downloaded -- open it directly rather than downloading again.
