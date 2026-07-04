@@ -13,6 +13,13 @@
 constexpr bool USE_ATKINSON = true;  // Use Atkinson dithering instead of Floyd-Steinberg
 // ============================================================================
 
+bool Bitmap::isValidCachedBmp(const std::string& path) {
+  HalFile file;
+  if (!Storage.openFileForRead("BMP", path, file)) return false;
+  Bitmap bitmap(file);
+  return bitmap.parseHeaders() == BmpReaderError::Ok;
+}
+
 Bitmap::~Bitmap() {
   delete[] errorCurRow;
   delete[] errorNextRow;

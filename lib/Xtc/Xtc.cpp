@@ -264,9 +264,14 @@ std::string Xtc::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].b
 std::string Xtc::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
 
 bool Xtc::generateThumbBmp(int height) const {
-  // Already generated
-  if (Storage.exists(getThumbBmpPath(height).c_str())) {
-    return true;
+  const std::string thumbPath = getThumbBmpPath(height);
+  if (Storage.exists(thumbPath.c_str())) {
+    // Already generated -- but confirm it's a complete, well-formed BMP first. A partial file
+    // left behind by an interrupted write (power loss mid-generation) would otherwise look
+    // "already generated" forever and never get a chance to regenerate.
+    if (Bitmap::isValidCachedBmp(thumbPath)) return true;
+    LOG_ERR("XTC", "Cached thumb BMP is corrupt, regenerating: %s", thumbPath.c_str());
+    Storage.remove(thumbPath.c_str());
   }
 
   if (!loaded || !parser) {

@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 
 #include <cstdint>
+#include <string>
 
 #include "BitmapHelpers.h"
 
@@ -63,6 +64,12 @@ enum class BmpReaderError : uint8_t {
 class Bitmap {
  public:
   static const char* errorToString(BmpReaderError err);
+  // Opens `path` and checks it parses as a well-formed BMP. Thumbnail cache lookups use this
+  // instead of a bare Storage.exists() check, so a partial/corrupt file left behind by an
+  // interrupted write (e.g. power loss mid-generation) doesn't get treated as "already
+  // generated" forever -- that would leave the cover permanently stuck as a placeholder until
+  // the whole cache directory is wiped, since nothing else ever re-validates it.
+  static bool isValidCachedBmp(const std::string& path);
 
   explicit Bitmap(HalFile& file, bool dithering = false) : file(file), dithering(dithering) {}
   ~Bitmap();

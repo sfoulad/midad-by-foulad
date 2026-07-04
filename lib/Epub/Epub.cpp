@@ -1,5 +1,6 @@
 #include "Epub.h"
 
+#include <Bitmap.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
@@ -656,9 +657,14 @@ std::string Epub::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].
 std::string Epub::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
 
 bool Epub::generateThumbBmp(int height) const {
-  // Already generated, return true
-  if (Storage.exists(getThumbBmpPath(height).c_str())) {
-    return true;
+  const std::string thumbPath = getThumbBmpPath(height);
+  if (Storage.exists(thumbPath.c_str())) {
+    // Already generated -- but confirm it's a complete, well-formed BMP first. A partial file
+    // left behind by an interrupted write (power loss mid-generation) would otherwise look
+    // "already generated" forever and never get a chance to regenerate.
+    if (Bitmap::isValidCachedBmp(thumbPath)) return true;
+    LOG_ERR("EBP", "Cached thumb BMP is corrupt, regenerating: %s", thumbPath.c_str());
+    Storage.remove(thumbPath.c_str());
   }
 
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {

@@ -1,5 +1,6 @@
 #include "OpdsCoverCache.h"
 
+#include <Bitmap.h>
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
 #include <Logging.h>
@@ -27,7 +28,12 @@ bool ensureOpdsCoverCached(const OpdsEntry& entry, const std::string& username, 
 
   const std::string cachePath = getOpdsCoverCachePath(entry.id, width, height);
   if (Storage.exists(cachePath.c_str())) {
-    return true;
+    // Already cached -- but confirm it's a complete, well-formed BMP first. A partial file
+    // left behind by an interrupted download/conversion would otherwise look "already cached"
+    // forever and never get a chance to re-download.
+    if (Bitmap::isValidCachedBmp(cachePath)) return true;
+    LOG_ERR("OPDSCOVER", "Cached cover BMP is corrupt, re-fetching: %s", cachePath.c_str());
+    Storage.remove(cachePath.c_str());
   }
 
   Storage.mkdir(CACHE_DIR);
