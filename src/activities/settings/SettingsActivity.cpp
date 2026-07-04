@@ -75,7 +75,6 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_ARABIC_FONT, SettingAction::ArabicFont));
   // Only offer logout once an account is actually stored; nothing to log out of otherwise.
   const auto& opdsServers = OPDS_STORE.getServers();
   const bool hasFouladEbooksAccount = std::any_of(
@@ -86,6 +85,11 @@ void SettingsActivity::rebuildSettingsLists() {
   // Insert "Manage Fonts" right after the font family setting so users discover it naturally
   readerSettings.insert(readerSettings.begin() + 1,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
+  // Insert "Arabic Font" right after "Arabic Font Size" (list order: Font Family,
+  // Manage Fonts, Font Size, Arabic Font Size, [Arabic Font here], ...) so the two
+  // Arabic reading settings sit together, mirroring the Latin font family/size pair.
+  readerSettings.insert(readerSettings.begin() + 4,
+                        SettingInfo::Action(StrId::STR_ARABIC_FONT, SettingAction::ArabicFont));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
   // Update currentSettings pointer and count for the active category
@@ -210,6 +214,7 @@ void SettingsActivity::toggleCurrentSetting() {
   const auto& setting = (*currentSettings)[selectedSetting];
   const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
   const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
+  const bool arabicFontSizeChanged = setting.valuePtr == &CrossPointSettings::arabicFontSize;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
@@ -225,9 +230,16 @@ void SettingsActivity::toggleCurrentSetting() {
     if (setting.enumValues.size() > 2) {
       const auto valuePtr = setting.valuePtr;
       optionPopup.show(setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()),
-                       currentValue, [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
+                       currentValue,
+                       [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged, arabicFontSizeChanged](int idx) {
                          SETTINGS.*valuePtr = idx;
                          syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
+                         if (arabicFontSizeChanged) {
+                           // Re-resolve the built-in Arabic reading font at the new size (only
+                           // takes effect when no SD Arabic font override is active -- see
+                           // ArabicFontSystem::ensureLoaded).
+                           arabicFontSystem.ensureLoaded(renderer);
+                         }
                          SETTINGS.saveToFile();
                          rebuildSettingsLists();
                        });

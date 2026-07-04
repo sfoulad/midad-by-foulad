@@ -121,12 +121,23 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 
 ### Arabic support
 
-Book titles, author names, filenames, and chapter titles render Arabic script correctly (contextual letter shaping +
-right-to-left order) out of the box — a Noto Sans Arabic font ships built into the firmware, so there's no setup
-required. This is independent of the regular reading-font selection — the Arabic font is used automatically anywhere
-Arabic text appears, regardless of which font you've chosen for reading.
+Book titles, author names, filenames, chapter titles, and full EPUB body text render Arabic script correctly
+(contextual letter shaping, right-to-left word/line order, and bidi handling for numbers and mixed punctuation) out of
+the box — five Arabic fonts ship built into the firmware, so there's no setup required:
 
-If you'd prefer a different Arabic typeface, you can override the built-in default with your own SD-card font:
+- **Noto Sans Arabic** (default) — clean, modern, Google's general-purpose Arabic sans.
+- **Noto Naskh Arabic** — traditional Naskh book-printing style.
+- **Amiri** — classical Naskh, based on the typefaces used in the Amiri Quran; excellent for long-form reading.
+- **Scheherazade New** — SIL font designed specifically for readability of Arabic body text.
+- **Cairo** — modern geometric sans, comfortable at a range of sizes.
+
+Pick a family and reading size from **Settings → Reader → Arabic Font** / **Arabic Font Size**, independent of
+whichever Latin font/size you've chosen for reading — Arabic text always uses its own family and size. UI-context
+Arabic text (grid titles, chapter lists) always renders in Noto Sans Arabic at a small fixed size, regardless of your
+reading-font choice, matching how the Latin reading font/size don't affect UI text either.
+
+If you'd prefer a different Arabic typeface than the five bundled ones, you can still override with your own SD-card
+font:
 
 1. Download an Arabic-capable TTF/OTF (e.g. [IBM Plex Sans Arabic](https://fonts.google.com/specimen/IBM+Plex+Sans+Arabic)).
 2. Convert it locally (the hosted web font builder doesn't know about this fork's Arabic support, so run the script directly):
@@ -135,11 +146,12 @@ If you'd prefer a different Arabic typeface, you can override the built-in defau
    python3 fontconvert_sdcard.py --intervals reading,arabic --name "PlexArabic" /path/to/IBMPlexSansArabic-Regular.ttf
    ```
 3. Copy the generated `.cpfont` files to your SD card under `/fonts/PlexArabic/` (or `/.fonts/PlexArabic/`).
-4. On the device: **Settings → System → Arabic Font** → select the family you just installed. Selecting **None**
-   reverts to the built-in default.
+4. On the device: **Settings → Reader → Arabic Font** → select the family you just installed from the list (it
+   appears alongside the five built-in options). Selecting one of the built-in fonts again reverts to it.
 
-Note: the built-in default is bundled at three sizes so it matches whichever UI text it's replacing (grid cover
-titles vs. headers, etc.); a custom SD-card override applies at one fixed size everywhere instead.
+Note: the five built-in fonts are bundled at both UI sizes (8/10/12pt, Noto Sans Arabic only) and reading sizes
+(12/14/16/18pt, all five fonts) so Arabic matches whichever text it's replacing; a custom SD-card override applies at
+one fixed size everywhere instead.
 
 ---
 

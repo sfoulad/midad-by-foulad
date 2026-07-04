@@ -139,6 +139,10 @@ class GfxRenderer {
   // override applies uniformly via arabicFontId_ instead.
   void setArabicFontIdForFontId(int fontId, int arabicFontId) { arabicFontIdByFontId_[fontId] = arabicFontId; }
   void clearArabicFontIdMappings() { arabicFontIdByFontId_.clear(); }
+  // Public wrapper so callers (e.g. a Settings preview pane) can see which Arabic
+  // font a given caller fontId currently resolves to, without duplicating the
+  // per-fontId-override-vs-catch-all lookup logic.
+  int getResolvedArabicFontId(int fontId) const { return resolveArabicFontId(fontId); }
   void registerSdCardFont(int fontId, SdCardFont* font) { sdCardFonts_[fontId] = font; }
   void unregisterSdCardFont(int fontId) { removeFont(fontId); }
   void clearSdCardFonts() { sdCardFonts_.clear(); }

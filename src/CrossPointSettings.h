@@ -112,6 +112,18 @@ class CrossPointSettings {
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
   // Font size options
   enum FONT_SIZE { SMALL = 0, MEDIUM = 1, LARGE = 2, EXTRA_LARGE = 3, FONT_SIZE_COUNT };
+  // Arabic reading-font family options (built-in only; SD card fonts use
+  // sdArabicFontFamilyName). Independent of FONT_FAMILY/fontFamily above -- see
+  // ArabicFontSystem. Reuses FONT_SIZE (Small/Medium/Large/X-Large) for arabicFontSize.
+  enum ARABIC_FONT_FAMILY {
+    NOTOSANSARABIC = 0,
+    NOTONASKHARABIC = 1,
+    AMIRI = 2,
+    SCHEHERAZADENEW = 3,
+    CAIRO = 4,
+    ARABIC_FONT_FAMILY_COUNT
+  };
+  static constexpr uint8_t BUILTIN_ARABIC_FONT_COUNT = ARABIC_FONT_FAMILY_COUNT;
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
     JUSTIFIED = 0,
@@ -261,11 +273,15 @@ class CrossPointSettings {
   uint8_t focusReadingEnabled = 0;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
-  // SD card font family supplying Arabic glyphs for drawArabicText (empty = none loaded,
-  // Arabic text doesn't render). Independent of sdFontFamilyName/fontFamily -- see
-  // ArabicFontSystem. No built-in font carries Arabic glyphs, so unlike the reading font
-  // there's no non-empty default to fall back to.
+  // SD card font family supplying Arabic glyphs for drawArabicText (empty = use the
+  // built-in arabicFontFamily below). Independent of sdFontFamilyName/fontFamily --
+  // see ArabicFontSystem.
   char sdArabicFontFamilyName[32] = "";
+  // Built-in Arabic reading-font family/size (Settings -> Reader -> Arabic Font /
+  // Arabic Font Size). Only used when sdArabicFontFamilyName is empty. Independent of
+  // fontFamily/fontSize (the Latin reading font) -- see ArabicFontSystem.
+  uint8_t arabicFontFamily = NOTOSANSARABIC;
+  uint8_t arabicFontSize = MEDIUM;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)

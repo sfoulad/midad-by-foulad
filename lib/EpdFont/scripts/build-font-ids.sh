@@ -117,3 +117,22 @@ ruby -rdigest -e 'puts [
   "./notosansarabic_12_regular.h",
 ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)'
 ))"
+
+# Arabic reading-size fonts (Settings -> Reader -> Arabic Font / Arabic Font Size).
+# NOTOSANSARABIC_12 above is reused for this family's reading-Small tier.
+for name_size in \
+  "NOTOSANSARABIC 14" "NOTOSANSARABIC 16" "NOTOSANSARABIC 18" \
+  "NOTONASKHARABIC 12" "NOTONASKHARABIC 14" "NOTONASKHARABIC 16" "NOTONASKHARABIC 18" \
+  "AMIRI 12" "AMIRI 14" "AMIRI 16" "AMIRI 18" \
+  "SCHEHERAZADENEW 12" "SCHEHERAZADENEW 14" "SCHEHERAZADENEW 16" "SCHEHERAZADENEW 18" \
+  "CAIRO 12" "CAIRO 14" "CAIRO 16" "CAIRO 18"; do
+  set -- $name_size
+  upper=$1
+  size=$2
+  lower=$(echo "$upper" | tr '[:upper:]' '[:lower:]')
+  echo "#define ${upper}_${size}_FONT_ID ($(
+  ruby -rdigest -e "puts [
+    \"./${lower}_${size}_regular.h\",
+  ].map{|f| Digest::SHA256.hexdigest(File.read(f)).to_i(16) }.sum % (2 ** 32) - (2 ** 31)"
+  ))"
+done

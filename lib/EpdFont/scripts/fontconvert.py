@@ -447,17 +447,28 @@ def _extract_pairpos_subtable(subtable, glyph_to_cp, raw_kern):
                     key = (coverage_glyph, pvr.SecondGlyph)
                     raw_kern[key] = raw_kern.get(key, 0) + xa
     elif subtable.Format == 2:
-        # Class-based pairs
-        class_def1 = subtable.ClassDef1.classDefs if subtable.ClassDef1 else {}
-        class_def2 = subtable.ClassDef2.classDefs if subtable.ClassDef2 else {}
+        # Class-based pairs. Some fonts' PairPos Format 2 subtables (seen in Amiri,
+        # Scheherazade New) omit fields fontTools normally expects here (ClassDef1,
+        # ClassDef2, even Class1Record itself) -- direct attribute access raises
+        # AttributeError rather than returning None/empty, unlike Value1 below.
+        # Kerning is a nice-to-have refinement, not essential correctness, so skip
+        # a subtable we can't parse instead of aborting the whole font conversion.
+        try:
+            class_def1_table = getattr(subtable, 'ClassDef1', None)
+            class_def2_table = getattr(subtable, 'ClassDef2', None)
+            class_def1 = class_def1_table.classDefs if class_def1_table else {}
+            class_def2 = class_def2_table.classDefs if class_def2_table else {}
+            class1_records = subtable.Class1Record
+        except AttributeError:
+            return
         coverage_set = set(subtable.Coverage.glyphs)
         for left_glyph in glyph_to_cp:
             if left_glyph not in coverage_set:
                 continue
             c1 = class_def1.get(left_glyph, 0)
-            if c1 >= len(subtable.Class1Record):
+            if c1 >= len(class1_records):
                 continue
-            class1_rec = subtable.Class1Record[c1]
+            class1_rec = class1_records[c1]
             for right_glyph in glyph_to_cp:
                 c2 = class_def2.get(right_glyph, 0)
                 if c2 >= len(class1_rec.Class2Record):
