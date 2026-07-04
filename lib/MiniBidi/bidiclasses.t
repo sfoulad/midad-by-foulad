@@ -84,6 +84,52 @@
 {0x05D0, 0x05EA, R},    /* alef … tav */
 {0x05F0, 0x05F4, R},    /* alternative forms + geresh/gershayim */
 
+/* ── Arabic ─────────────────────────────────────────────────────────── */
+/* Ranges mirror ScriptDetector::isArabicCodepoint exactly, so containsArabic()
+   (which drives shaping/rendering) and bidi_class() (which drives word-order
+   reversal here) never disagree about what counts as Arabic. Without these,
+   every Arabic codepoint fell through to ON: computeVisualWordOrder() saw no
+   R/AL-class characters in an Arabic line, so it left word order unreversed
+   (identity), and startsWithRtl()'s auto-RTL-paragraph-detection never fired
+   for EPUBs without an explicit dir="rtl"/CSS direction. Text still got
+   shaped and right-aligned correctly by the (separate) UTF-8-lead-byte
+   precheck in mayContainRtlBytes(), so the whole word sequence read backwards
+   instead of being invisible or misaligned -- the exact bug reported after
+   1.5.10 shipped Arabic EPUB support.
+   AL = "Arabic Letter" (like R, but triggers UAX#9 rule W2/W3 so an adjacent
+   European digit is reinterpreted as an Arabic number instead of staying LTR). */
+{0x0600, 0x0605, AN},   /* Arabic number sign & subtending marks */
+{0x0606, 0x060B, ON},
+{0x060C, 0x060C, CS},   /* Arabic comma */
+{0x060D, 0x061A, ON},
+{0x061B, 0x061B, ON},   /* Arabic semicolon */
+{0x061C, 0x061C, AL},   /* Arabic letter mark */
+{0x061D, 0x061F, ON},   /* incl. Arabic question mark */
+{0x0621, 0x063F, AL},   /* Arabic letters: hamza .. Ghain + extensions */
+{0x0640, 0x0640, AL},   /* tatweel */
+{0x0641, 0x064A, AL},   /* Arabic letters: Feh .. Yeh */
+{0x064B, 0x065F, NSM},  /* Arabic combining diacritics (tashkeel) */
+{0x0660, 0x0669, AN},   /* Arabic-Indic digits */
+{0x066A, 0x066A, ET},   /* Arabic percent sign */
+{0x066B, 0x066C, AN},   /* Arabic decimal/thousands separator */
+{0x066D, 0x066D, ON},   /* Arabic five pointed star */
+{0x066E, 0x066F, AL},
+{0x0670, 0x0670, NSM},  /* Arabic superscript alef */
+{0x0671, 0x06D3, AL},   /* extended Arabic letters (Persian/Urdu/Kurdish/Sindhi) */
+{0x06D4, 0x06D4, ON},   /* Arabic full stop */
+{0x06D5, 0x06D5, AL},
+{0x06D6, 0x06DC, NSM},  /* Quranic annotation signs */
+{0x06DD, 0x06DD, AN},   /* Arabic end of ayah */
+{0x06DE, 0x06E4, NSM},
+{0x06E5, 0x06E6, AL},   /* small waw/yeh used as letters */
+{0x06E7, 0x06E8, NSM},
+{0x06E9, 0x06E9, ON},
+{0x06EA, 0x06ED, NSM},
+{0x06EE, 0x06EF, AL},
+{0x06F0, 0x06F9, EN},   /* extended Arabic-Indic digits (Persian/Urdu) -- EN per UAX#9 */
+{0x06FA, 0x06FF, AL},
+{0x0750, 0x077F, AL},   /* Arabic Supplement */
+
 /* ── Latin Extended Additional (L) ─────────────────────────────────── */
 /* Covers accented chars for Vietnamese, Welsh, Romanian, etc.
    Not currently rendered by CrossPoint fonts, but costs only 2 table rows. */
@@ -110,6 +156,10 @@
 {0x2069, 0x2069, PDI},
 {0x206A, 0x206F, BN},
 
+
+/* ── Arabic Presentation Forms ────────────────────────────────────────── */
+{0xFB50, 0xFDFF, AL},   /* Arabic Presentation Forms-A */
+{0xFE70, 0xFEFE, AL},   /* Arabic Presentation Forms-B (0xFEFF is BOM, not Arabic) */
 
 /* ── Byte Order Mark ────────────────────────────────────────────────── */
 {0xFEFF, 0xFEFF, BN},
