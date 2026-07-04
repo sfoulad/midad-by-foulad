@@ -78,7 +78,12 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // both redirect.
   esp_err_t err = esp_http_client_open(client, 0);
   if (err != ESP_OK) {
-    LOG_ERR("HTTP", "open failed: %s", esp_err_to_name(err));
+    // TLS handshake + esp_crt_bundle_attach cert-chain verification need a meaningful
+    // chunk of contiguous heap; ESP_ERR_HTTP_CONNECT with no other detail has been
+    // reported after heavy prior activity (font/image decode) in the same session.
+    // Logging free heap here lets a future crash report confirm or rule out heap
+    // pressure as the cause instead of guessing.
+    LOG_ERR("HTTP", "open failed: %s (free heap: %u bytes)", esp_err_to_name(err), ESP.getFreeHeap());
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
@@ -88,7 +93,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
-      LOG_ERR("HTTP", "redirect open failed: %s", esp_err_to_name(err));
+      LOG_ERR("HTTP", "redirect open failed: %s (free heap: %u bytes)", esp_err_to_name(err), ESP.getFreeHeap());
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }

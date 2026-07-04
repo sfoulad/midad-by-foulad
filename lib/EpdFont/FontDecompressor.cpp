@@ -351,10 +351,14 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
 
   stats.uniqueGroupsAccessed = groupCount;
 
-  // Step 3: Allocate page buffer and lookup table for this slot
-  slot.buffer = static_cast<uint8_t*>(malloc(totalBytes));
+  // Step 3: Allocate page buffer and lookup table for this slot.
+  // totalBytes can legitimately be 0 (e.g. a page of only blank/space glyphs with no
+  // bitmap data) -- malloc(0) is implementation-defined and commonly returns nullptr,
+  // which isn't an allocation failure in that case. Only skip the buffer malloc (and
+  // its nullptr check) when there's nothing to store.
+  slot.buffer = totalBytes > 0 ? static_cast<uint8_t*>(malloc(totalBytes)) : nullptr;
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));
-  if (!slot.buffer || !slot.glyphs) {
+  if ((totalBytes > 0 && !slot.buffer) || !slot.glyphs) {
     LOG_ERR("FDC", "Failed to allocate page buffer (%u bytes, %u glyphs)", totalBytes, glyphCount);
     free(slot.buffer);
     free(slot.glyphs);
