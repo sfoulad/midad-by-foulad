@@ -283,7 +283,8 @@ void RecentBooksActivity::render(RenderLock&&) {
       }
 
       auto title = renderer.truncatedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth);
-      renderer.drawText(SMALL_FONT_ID, cellX, cellY + geometry.coverHeight + 4, title.c_str());
+      renderer.drawTextInWidth(SMALL_FONT_ID, cellX, cellY + geometry.coverHeight + 4, geometry.coverWidth,
+                               title.c_str());
     }
   }
 

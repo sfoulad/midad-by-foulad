@@ -333,7 +333,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       }
 
       auto title = renderer.truncatedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth);
-      renderer.drawText(SMALL_FONT_ID, cellX, cellY + layout.coverHeight + 4, title.c_str());
+      renderer.drawTextInWidth(SMALL_FONT_ID, cellX, cellY + layout.coverHeight + 4, layout.coverWidth, title.c_str());
     }
 
     // Nav strip below the grid (e.g. a "Next Page" entry).

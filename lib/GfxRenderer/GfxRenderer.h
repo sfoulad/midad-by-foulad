@@ -225,6 +225,13 @@ class GfxRenderer {
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                 BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+  /// Draws a single line within the box [x, x+width): left-aligned as normal, but
+  /// right-aligned when the text is Arabic (ScriptDetector::containsArabic), matching
+  /// the natural reading direction instead of always anchoring at the box's left edge.
+  /// For titles/labels drawn into a fixed-width row or grid cell (list rows, cover grid
+  /// captions) where the caller doesn't otherwise track alignment itself.
+  void drawTextInWidth(int fontId, int x, int y, int width, const char* text, bool black = true,
+                       EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// Arabic-script text path: contextual shaping (isolated/initial/medial/final forms) +
   /// Lam-Alef ligatures via ArabicShaper, then rendered in the already-visual-order the
   /// shaper returns (bypasses MiniBidi entirely -- shaping already reorders). Glyphs come

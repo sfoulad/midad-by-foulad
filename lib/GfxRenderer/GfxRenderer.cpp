@@ -418,6 +418,20 @@ void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* te
   drawText(fontId, x, y, text, black, style, baseDir);
 }
 
+void GfxRenderer::drawTextInWidth(const int fontId, const int x, const int y, const int width, const char* text,
+                                  const bool black, const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0') return;
+
+  if (ScriptDetector::containsArabic(text)) {
+    const int textWidth = getTextWidth(fontId, text, style);
+    const int rightAlignedX = x + width - textWidth;
+    drawText(fontId, rightAlignedX, y, text, black, style);
+    return;
+  }
+
+  drawText(fontId, x, y, text, black, style);
+}
+
 void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, const char* text, const bool black,
                                  const EpdFontFamily::Style style) const {
   if (text == nullptr || *text == '\0') return;
