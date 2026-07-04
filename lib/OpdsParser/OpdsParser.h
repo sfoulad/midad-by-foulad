@@ -20,10 +20,13 @@ struct OpdsEntry {
   OpdsEntryType type = OpdsEntryType::NAVIGATION;
   std::string title;
   std::string author;  // Only for books
-  std::string href;    // Navigation URL or epub download URL
+  std::string href;    // Navigation URL or book download URL
   std::string id;
   std::string coverUrl;   // From <link rel="http://opds-spec.org/image[/thumbnail]">, if present
   std::string coverType;  // MIME type of coverUrl, e.g. "image/jpeg"
+  // MIME type of the acquisition link href, e.g. "application/epub+zip" or "application/x-xtc".
+  // Only for books -- lets the downloader pick the right file extension/handling per format.
+  std::string acquisitionType;
 };
 
 // Legacy alias for backward compatibility

@@ -108,17 +108,21 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
       }
 
       if (self->inEntry) {
-        if (rel && type && strstr(rel, "opds-spec.org/acquisition") != nullptr &&
-            strcmp(type, "application/epub+zip") == 0) {
-          // Prefer plain EPUB links over derived formats when multiple
+        const bool isEpubAcquisition = type && strcmp(type, "application/epub+zip") == 0;
+        const bool isXtcAcquisition = type && strcmp(type, "application/x-xtc") == 0;
+        if (rel && strstr(rel, "opds-spec.org/acquisition") != nullptr && (isEpubAcquisition || isXtcAcquisition)) {
+          // Prefer plain EPUB links over derived/other formats when multiple
           // acquisition links are present for one entry.
-          const bool isPlainEpub = strstr(href, ".epub") != nullptr || strstr(href, "/epub/") != nullptr;
+          const bool isPlainEpub =
+              isEpubAcquisition && (strstr(href, ".epub") != nullptr || strstr(href, "/epub/") != nullptr);
           const bool alreadyHasPlainEpub = self->currentEntry.type == OpdsEntryType::BOOK &&
+                                           self->currentEntry.acquisitionType == "application/epub+zip" &&
                                            (self->currentEntry.href.find(".epub") != std::string::npos ||
                                             self->currentEntry.href.find("/epub/") != std::string::npos);
           if (self->currentEntry.type != OpdsEntryType::BOOK || (isPlainEpub && !alreadyHasPlainEpub)) {
             self->currentEntry.type = OpdsEntryType::BOOK;
             self->currentEntry.href = href;
+            self->currentEntry.acquisitionType = type;
           }
         } else if (type && strstr(type, "application/atom+xml") != nullptr) {
           if (self->currentEntry.type != OpdsEntryType::BOOK) {

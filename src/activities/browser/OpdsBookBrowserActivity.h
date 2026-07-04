@@ -39,6 +39,9 @@ class OpdsBookBrowserActivity final : public Activity {
   std::string statusMessage;
   size_t downloadProgress = 0;
   size_t downloadTotal = 0;
+  // Last redrawn percentage during download, so the progress callback (fired once per
+  // HTTP chunk) only forces an e-ink refresh on ~1% steps instead of on every chunk.
+  int lastDownloadPercentage = -1;
 
   OpdsServer server;  // Copied at construction — safe even if the store changes during browsing
 

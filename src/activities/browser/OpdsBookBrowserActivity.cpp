@@ -240,12 +240,30 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   }
 
   if (state == BrowserState::DOWNLOADING) {
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 40, tr(STR_DOWNLOADING));
-    auto title = renderer.truncatedText(UI_10_FONT_ID, statusMessage.c_str(), pageWidth - 40);
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 - 10, title.c_str());
+    // Layout matches OtaUpdateActivity's progress display for a consistent look between
+    // the two long-running download/transfer screens in the app.
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const auto height = renderer.getLineHeight(UI_10_FONT_ID);
+    const int top = pageHeight / 2 - 60;
+
+    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_DOWNLOADING));
+    auto title =
+        renderer.truncatedText(UI_10_FONT_ID, statusMessage.c_str(), pageWidth - metrics.contentSidePadding * 2);
+    renderer.drawCenteredText(UI_10_FONT_ID, top + height + metrics.verticalSpacing, title.c_str());
+
     if (downloadTotal > 0) {
-      GUI.drawProgressBar(renderer, Rect{50, pageHeight / 2 + 20, pageWidth - 100, 20}, downloadProgress,
-                          downloadTotal);
+      int y = top + (height + metrics.verticalSpacing) * 2;
+      GUI.drawProgressBar(
+          renderer,
+          Rect{metrics.contentSidePadding, y, pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
+          downloadProgress, downloadTotal);
+
+      y += metrics.progressBarHeight + metrics.verticalSpacing;
+      // Percent label is drawn by BaseTheme::drawProgressBar; this slot is left intentionally
+      // empty so the bytes line below stays at the same Y as OtaUpdateActivity's layout.
+      y += height + metrics.verticalSpacing;
+      renderer.drawCenteredText(UI_10_FONT_ID, y,
+                                (std::to_string(downloadProgress) + " / " + std::to_string(downloadTotal)).c_str());
     }
     renderer.displayBuffer();
     return;
@@ -517,16 +535,29 @@ void OpdsBookBrowserActivity::navigateBack() {
 }
 
 void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
+  // Pick the file extension from the acquisition link's actual format instead of always
+  // assuming EPUB -- matters now that XTC-only books (Arabic/PDF-sourced, per foulad-ebooks'
+  // one-format-per-book rule) are recognized as downloadable BOOK entries too.
+  const bool isXtc = book.acquisitionType == "application/x-xtc";
+  const std::string filename =
+      "/" + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) +
+      (isXtc ? ".xtc" : ".epub");
+
+  if (Storage.exists(filename.c_str())) {
+    // Already downloaded -- open it directly rather than downloading again.
+    activityManager.goToReader(filename);
+    return;
+  }
+
   state = BrowserState::DOWNLOADING;
   statusMessage = book.title;
   downloadProgress = downloadTotal = 0;
+  lastDownloadPercentage = -1;
   requestUpdate(true);
 
   // Build full download URL relative to the current feed, not the root server URL
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
   std::string downloadUrl = UrlUtils::buildUrl(feedUrl, book.href);
-  std::string filename =
-      "/" + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + ".epub";
   LOG_DBG("OPDS", "Downloading: %s -> %s", downloadUrl.c_str(), filename.c_str());
 
   const auto result = HttpDownloader::downloadToFile(
@@ -534,17 +565,24 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
       [this](const size_t downloaded, const size_t total) {
         downloadProgress = downloaded;
         downloadTotal = total;
+        // Throttle redraws to ~1% steps -- e-ink refreshes are slow, so forcing one on
+        // every HTTP chunk (every 2KB) would make the progress bar itself the bottleneck.
+        if (total > 0) {
+          const int percentage = static_cast<int>(downloaded * 100 / total);
+          if (percentage == lastDownloadPercentage) return;
+          lastDownloadPercentage = percentage;
+        }
         requestUpdate(true);
       },
       nullptr, server.username, server.password);
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
-    state = BrowserState::BROWSING;
-  } else {
-    state = BrowserState::ERROR;
-    errorMessage = tr(STR_DOWNLOAD_FAILED);
+    activityManager.goToReader(filename);
+    return;
   }
+  state = BrowserState::ERROR;
+  errorMessage = tr(STR_DOWNLOAD_FAILED);
   requestUpdate();
 }
 
