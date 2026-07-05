@@ -1,5 +1,6 @@
 #include "OpdsParser.h"
 
+#include <Arduino.h>
 #include <Logging.h>
 #include <XmlParserUtils.h>
 
@@ -19,7 +20,19 @@ OpdsParser::OpdsParser() {
   // final size, not the number/timing of reallocation events on the way there. 64
   // covers real category feeds seen so far (up to 26 entries) with no reallocation at
   // all; larger feeds still grow automatically (doubling) up to MAX_ENTRIES.
-  entries.reserve(64);
+  //
+  // But reserve(64) is itself a single ~11KB contiguous allocation (64 *
+  // sizeof(OpdsEntry), each holding 7 std::string fields) -- with -fno-exceptions a
+  // failed reserve() aborts the whole device, uncatchable. Confirmed via a second
+  // real device crash: this exact reserve() call aborted at ~16KB free heap. Only
+  // attempt it with comfortable headroom; below that, skip it and let the vector
+  // grow via its own doubling from empty, where each growth allocation starts tiny
+  // and stays far smaller than one 11KB block, so it's much more likely to find a
+  // free contiguous run even when the heap is fragmented and low.
+  constexpr uint32_t kMinFreeHeapForReserve = 64 * 1024;
+  if (ESP.getFreeHeap() >= kMinFreeHeapForReserve) {
+    entries.reserve(64);
+  }
 }
 
 OpdsParser::~OpdsParser() { destroyXmlParser(parser); }

@@ -31,8 +31,23 @@ constexpr size_t READ_CHUNK = 2048;
 // doesn't implement esp_http_client_get_errno -- only real ESP-IDF has it.
 #ifdef SIMULATOR
 int getHttpClientErrno(esp_http_client_handle_t) { return 0; }
+void logTlsError(esp_http_client_handle_t) {}
 #else
 int getHttpClientErrno(esp_http_client_handle_t client) { return esp_http_client_get_errno(client); }
+// A bare ESP_ERR_HTTP_CONNECT + errno=0 means the raw socket connect succeeded (or
+// was never attempted) and something above it -- the TLS handshake or certificate
+// verification -- is what actually failed; the plain socket errno can't distinguish
+// that from DNS/TCP-level trouble. esp_tls_error_code is the underlying mbedtls
+// error (a handshake failure); esp_tls_flags is mbedtls' cert verify bitmask
+// (expired/untrusted/hostname-mismatch/etc. -- see mbedtls x509.h X509_BADCERT_*).
+void logTlsError(esp_http_client_handle_t client) {
+  int tlsErrorCode = 0;
+  int tlsFlags = 0;
+  esp_http_client_get_and_clear_last_tls_error(client, &tlsErrorCode, &tlsFlags);
+  if (tlsErrorCode != 0 || tlsFlags != 0) {
+    LOG_ERR("HTTP", "tls detail: esp_tls_error_code=-0x%X esp_tls_flags=0x%X", -tlsErrorCode, tlsFlags);
+  }
+}
 #endif
 
 struct Sink {
@@ -113,6 +128,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // value points at the TLS handshake instead.
     LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err), getHttpClientErrno(client),
             ESP.getFreeHeap());
+    logTlsError(client);
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
@@ -124,6 +140,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     if (err != ESP_OK) {
       LOG_ERR("HTTP", "redirect open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
               getHttpClientErrno(client), ESP.getFreeHeap());
+      logTlsError(client);
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }
