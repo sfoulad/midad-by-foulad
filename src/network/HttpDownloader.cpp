@@ -6,6 +6,7 @@
 #include <base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
+#include <esp_wifi.h>
 
 #include <cstring>
 #include <functional>
@@ -46,6 +47,23 @@ bool isRedirect(int status) {
   return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
+// Disables WiFi modem-sleep power-save for the duration of an HTTP operation,
+// restoring the default on scope exit regardless of which return path is taken.
+// OtaUpdater.cpp already does this for firmware downloads ("For better timing and
+// connectivity, we disable power saving for WiFi"); OPDS feed/book fetches never
+// did, despite being able to run just as long for a large category. Modem sleep
+// periodically powers the radio down between DTIM beacon intervals, which can drop
+// or stall packets mid-transfer -- more likely to be hit the longer a transfer
+// takes, so small feeds mostly get away with it while a 200+ book category
+// consistently doesn't. Matches a real device report: a 3-book category fetched
+// fine while a 200+ book category on the same server/network failed every time
+// with a bare ESP_ERR_HTTP_CONNECT (errno=0, i.e. failed before a socket-level
+// error was even set -- consistent with the radio being asleep at connect time).
+struct WifiPowerSaveGuard {
+  WifiPowerSaveGuard() { esp_wifi_set_ps(WIFI_PS_NONE); }
+  ~WifiPowerSaveGuard() { esp_wifi_set_ps(WIFI_PS_MIN_MODEM); }
+};
+
 // Streams a GET body through sink.write in READ_CHUNK pieces. Uses the manual
 // open/fetch_headers/read path rather than esp_http_client_perform(): perform()
 // pushes the whole body through an event callback and reports a chunked body
@@ -53,6 +71,7 @@ bool isRedirect(int status) {
 // large/slow files and surfaces a short read directly.
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
                                      Sink& sink) {
+  WifiPowerSaveGuard psGuard;
   esp_http_client_config_t config = {};
   config.url = url.c_str();
   config.buffer_size = HTTP_RX_BUF;
