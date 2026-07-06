@@ -232,8 +232,6 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
     // (moved under Settings -> System), so they fall through to NONE here.
     if (activityName == "RecentBooks") {
       initialMenuItem = HomeMenuItem::RECENTS;
-    } else if (activityName == "OpdsBookBrowser") {
-      initialMenuItem = HomeMenuItem::OPDS_BROWSER;
     } else if (activityName == "Settings") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     }

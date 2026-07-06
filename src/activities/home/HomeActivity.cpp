@@ -15,7 +15,6 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
-#include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "activities/settings/OtaUpdateActivity.h"
 #include "components/UITheme.h"
@@ -25,9 +24,6 @@ int HomeActivity::getMenuItemCount() const {
   int count = 4;  // Recents, Foulad eBooks, Settings, Check for Update
   if (!recentBooks.empty()) {
     count += recentBooks.size();
-  }
-  if (hasOpdsServers) {
-    count++;
   }
   return count;
 }
@@ -112,13 +108,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
-  hasOpdsServers = OPDS_STORE.hasServers();
-
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
 
   const auto base = static_cast<int>(recentBooks.size());
-  selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem, hasOpdsServers);
+  selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem);
 
   // Trigger first update
   requestUpdate();
@@ -185,12 +179,9 @@ void HomeActivity::loop() {
       onSelectBook(recentBooks[selectorIndex].path);
     } else {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-      switch (indexToMenuItem(menuIndex, hasOpdsServers)) {
+      switch (indexToMenuItem(menuIndex)) {
         case HomeMenuItem::RECENTS:
           onRecentsOpen();
-          break;
-        case HomeMenuItem::OPDS_BROWSER:
-          onOpdsBrowserOpen();
           break;
         case HomeMenuItem::FOULAD_EBOOKS:
           onFouladEbooksOpen();
@@ -231,16 +222,11 @@ void HomeActivity::render(RenderLock&&) {
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
-  // Build menu items dynamically. Order: Foulad eBooks, Recent Books, [Browse
-  // Library], Check for Update, Settings -- matches menuItemToIndex/indexToMenuItem.
+  // Build menu items dynamically. Order: Foulad eBooks, Recent Books, Check for
+  // Update, Settings -- matches menuItemToIndex/indexToMenuItem.
   std::vector<const char*> menuItems = {tr(STR_FOULAD_EBOOKS), tr(STR_MENU_RECENT_BOOKS), tr(STR_CHECK_UPDATES),
                                         tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Library, Recent, Transfer, Settings};
-
-  if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 2, Library);
-  }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
@@ -277,8 +263,6 @@ void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToR
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
-
-void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
 
 void HomeActivity::onFouladEbooksOpen() { activityManager.goToFouladEbooks(); }
 
