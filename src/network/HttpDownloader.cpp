@@ -31,7 +31,9 @@ constexpr size_t READ_CHUNK = 2048;
 // doesn't implement esp_http_client_get_errno -- only real ESP-IDF has it.
 #ifdef SIMULATOR
 int getHttpClientErrno(esp_http_client_handle_t) { return 0; }
-void logTlsError(esp_http_client_handle_t) {}
+void logTlsError(esp_http_client_handle_t, int* outTlsErrorCode) {
+  if (outTlsErrorCode) *outTlsErrorCode = 0;
+}
 #else
 int getHttpClientErrno(esp_http_client_handle_t client) { return esp_http_client_get_errno(client); }
 // A bare ESP_ERR_HTTP_CONNECT + errno=0 means the raw socket connect succeeded (or
@@ -40,15 +42,59 @@ int getHttpClientErrno(esp_http_client_handle_t client) { return esp_http_client
 // that from DNS/TCP-level trouble. esp_tls_error_code is the underlying mbedtls
 // error (a handshake failure); esp_tls_flags is mbedtls' cert verify bitmask
 // (expired/untrusted/hostname-mismatch/etc. -- see mbedtls x509.h X509_BADCERT_*).
-void logTlsError(esp_http_client_handle_t client) {
+// outTlsErrorCode (if non-null) receives the raw code so the caller can decide whether
+// this looks like a chain-resolution problem worth retrying against the fallback root.
+void logTlsError(esp_http_client_handle_t client, int* outTlsErrorCode) {
   int tlsErrorCode = 0;
   int tlsFlags = 0;
   esp_http_client_get_and_clear_last_tls_error(client, &tlsErrorCode, &tlsFlags);
   if (tlsErrorCode != 0 || tlsFlags != 0) {
     LOG_ERR("HTTP", "tls detail: esp_tls_error_code=-0x%X esp_tls_flags=0x%X", -tlsErrorCode, tlsFlags);
   }
+  if (outTlsErrorCode) *outTlsErrorCode = tlsErrorCode;
 }
 #endif
+
+// Let's Encrypt's certificate hierarchy introduced in Sept 2025 for some of their issuance
+// (confirmed live on foulad.one via `openssl s_client -showcerts`: leaf -> "YE2" -> this
+// "ISRG Root YE" -> cross-signed back to the classic ISRG Root X2/X1). Browsers and OpenSSL
+// do path-building across multiple candidate parents and resolve this fine; mbedTLS does a
+// simple linear chain walk and can't, failing with MBEDTLS_ERR_X509_FATAL_ERROR (-0x3000)
+// even though the chain is entirely legitimate. This root postdates ESP-IDF's embedded
+// crt_bundle snapshot, so esp_crt_bundle_attach doesn't have it either. Trusting it directly
+// short-circuits the ambiguity: the leaf's issuer (YE2) is itself issued by this cert, so
+// mbedTLS resolves the chain in one hop without ever needing the cross-sign detour.
+// Confirmed against a real device failure log (esp_tls_error_code=-0x3000, esp_tls_flags=0x0
+// -- no cert-verify flags set, consistent with "couldn't build a path" rather than "untrusted
+// cert"). Background: https://community.letsencrypt.org/t/chain-validation-issues-with-ye-yr-under-linux-distributions/247836
+constexpr char kIsrgRootYePem[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICpjCCAiugAwIBAgIRAIchZfw0tuX7qK3Vs3BftTowCgYIKoZIzj0EAwMwTzEL\n"
+    "MAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2VhcmNo\n"
+    "IEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDIwHhcNMjYwNTEzMDAwMDAwWhcN\n"
+    "MzIwOTAyMjM1OTU5WjAuMQswCQYDVQQGEwJVUzENMAsGA1UEChMESVNSRzEQMA4G\n"
+    "A1UEAxMHUm9vdCBZRTB2MBAGByqGSM49AgEGBSuBBAAiA2IABDwS/6vhrcVqcbBo\n"
+    "+wgdI3fwn9x7DNJJOY/lTOti0vkwuRN87RhEhTH17E7XyFjWsPYhIPt/wzOqxTd2\n"
+    "b+4ZJNy9ID04YywF9U5zasDVyGSNErVNtz8uSGh5izW87j77GaOB6zCB6DAOBgNV\n"
+    "HQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYBBQUHAwEwDwYDVR0TAQH/BAUwAwEB\n"
+    "/zAdBgNVHQ4EFgQUo8gmWo6hTNA1Y/ybI8g6rlbzT1YwHwYDVR0jBBgwFoAUfEKW\n"
+    "rt5LSDv6kviejM9ti6lyN5UwMgYIKwYBBQUHAQEEJjAkMCIGCCsGAQUFBzAChhZo\n"
+    "dHRwOi8veDIuaS5sZW5jci5vcmcvMBMGA1UdIAQMMAowCAYGZ4EMAQIBMCcGA1Ud\n"
+    "HwQgMB4wHKAaoBiGFmh0dHA6Ly94Mi5jLmxlbmNyLm9yZy8wCgYIKoZIzj0EAwMD\n"
+    "aQAwZgIxAMU19WCtmxVND8UHBZRoma49Z7jPs64Dma0eTu1OChVbB/2J7GV3nvYK\n"
+    "Ax54uk1G9QIxAO0miLVJu8PLNiXXXkiE/gsK3CTRTF/aeo4bMX42Zw40csRU6AC2\n"
+    "6hSW1/IWaas6dg==\n"
+    "-----END CERTIFICATE-----\n";
+
+// True for the mbedTLS error codes that indicate "couldn't resolve/verify the certificate
+// chain" as opposed to a non-TLS network failure (DNS/TCP) or a genuinely bad cert (expired,
+// hostname mismatch -- those set esp_tls_flags bits instead). Only these are worth retrying
+// against the fallback root; anything else retrying wouldn't fix.
+bool isCertChainFailure(int tlsErrorCode) {
+  constexpr int kMbedtlsErrX509FatalError = -0x3000;
+  constexpr int kMbedtlsErrX509CertVerifyFailed = -0x2700;
+  return tlsErrorCode == kMbedtlsErrX509FatalError || tlsErrorCode == kMbedtlsErrX509CertVerifyFailed;
+}
 
 struct Sink {
   std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
@@ -87,39 +133,52 @@ struct WifiPowerSaveGuard {
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
                                      Sink& sink) {
   WifiPowerSaveGuard psGuard;
-  esp_http_client_config_t config = {};
-  config.url = url.c_str();
-  config.buffer_size = HTTP_RX_BUF;
-  config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
-  // Verify HTTPS against the bundled CA roots. This build has esp-tls
-  // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
-  // up at all; the model is public servers over verified https and local
-  // servers over plain http (esp_http_client picks the transport from the URL
-  // scheme, so http:// needs no cert config). The prior setInsecure() worked
-  // only because Arduino's ssl_client drives mbedtls directly.
-  config.crt_bundle_attach = esp_crt_bundle_attach;
-  config.keep_alive_enable = true;
 
-  esp_http_client_handle_t client = esp_http_client_init(&config);
-  if (!client) {
-    LOG_ERR("HTTP", "client init failed");
-    return HttpDownloader::HTTP_ERROR;
-  }
+  // Try the default crt_bundle first (covers the vast majority of servers, including
+  // any user-configured OPDS server or GitHub for OTA); only on a chain-resolution
+  // failure (see isCertChainFailure) retry once against the fallback root above,
+  // which is scoped to exactly the one CA the default bundle is missing.
+  esp_http_client_handle_t client = nullptr;
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    const bool useFallbackRoot = attempt == 1;
+    esp_http_client_config_t config = {};
+    config.url = url.c_str();
+    config.buffer_size = HTTP_RX_BUF;
+    config.buffer_size_tx = HTTP_TX_BUF;
+    config.timeout_ms = HTTP_TIMEOUT_MS;
+    // Verify HTTPS against the bundled CA roots. This build has esp-tls
+    // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
+    // up at all; the model is public servers over verified https and local
+    // servers over plain http (esp_http_client picks the transport from the URL
+    // scheme, so http:// needs no cert config). The prior setInsecure() worked
+    // only because Arduino's ssl_client drives mbedtls directly.
+    if (useFallbackRoot) {
+      config.cert_pem = kIsrgRootYePem;
+    } else {
+      config.crt_bundle_attach = esp_crt_bundle_attach;
+    }
+    config.keep_alive_enable = true;
 
-  esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
-  if (!username.empty() && !password.empty()) {
-    // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
-    const std::string credentials = username + ":" + password;
-    const String header = "Basic " + base64::encode(credentials.c_str());
-    esp_http_client_set_header(client, "Authorization", header.c_str());
-  }
+    client = esp_http_client_init(&config);
+    if (!client) {
+      LOG_ERR("HTTP", "client init failed");
+      return HttpDownloader::HTTP_ERROR;
+    }
 
-  // open()/read() does not auto-follow redirects (only perform() does), so step
-  // 30x responses manually. OPDS download endpoints and the GitHub release CDN
-  // both redirect.
-  esp_err_t err = esp_http_client_open(client, 0);
-  if (err != ESP_OK) {
+    esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+    if (!username.empty() && !password.empty()) {
+      // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
+      const std::string credentials = username + ":" + password;
+      const String header = "Basic " + base64::encode(credentials.c_str());
+      esp_http_client_set_header(client, "Authorization", header.c_str());
+    }
+
+    // open()/read() does not auto-follow redirects (only perform() does), so step
+    // 30x responses manually. OPDS download endpoints and the GitHub release CDN
+    // both redirect.
+    const esp_err_t err = esp_http_client_open(client, 0);
+    if (err == ESP_OK) break;  // connected -- fall through below with this client
+
     // ESP_ERR_HTTP_CONNECT alone doesn't say whether this was heap pressure, DNS
     // failure, TCP-level rejection/timeout, or a TLS handshake problem. Free heap
     // ruled out (confirmed a healthy ~59KB free on a real device that still hit this),
@@ -128,19 +187,27 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // value points at the TLS handshake instead.
     LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err), getHttpClientErrno(client),
             ESP.getFreeHeap());
-    logTlsError(client);
+    int tlsErrorCode = 0;
+    logTlsError(client, &tlsErrorCode);
     esp_http_client_cleanup(client);
+    client = nullptr;
+
+    if (!useFallbackRoot && isCertChainFailure(tlsErrorCode)) {
+      LOG_INF("HTTP", "cert chain unresolved against default bundle -- retrying with fallback root");
+      continue;
+    }
     return HttpDownloader::HTTP_ERROR;
   }
+
   int64_t contentLength = esp_http_client_fetch_headers(client);
   int status = esp_http_client_get_status_code(client);
   for (int hop = 0; isRedirect(status) && hop < 5; ++hop) {
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
-    err = esp_http_client_open(client, 0);
-    if (err != ESP_OK) {
-      LOG_ERR("HTTP", "redirect open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
+    const esp_err_t redirectErr = esp_http_client_open(client, 0);
+    if (redirectErr != ESP_OK) {
+      LOG_ERR("HTTP", "redirect open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(redirectErr),
               getHttpClientErrno(client), ESP.getFreeHeap());
-      logTlsError(client);
+      logTlsError(client, nullptr);
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }
