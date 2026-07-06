@@ -214,6 +214,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // open()/read() does not auto-follow redirects (only perform() does), so step
     // 30x responses manually. OPDS download endpoints and the GitHub release CDN
     // both redirect.
+    const uint32_t attemptStartMs = millis();
     const esp_err_t err = esp_http_client_open(client, 0);
     if (err == ESP_OK) {
       // Remember what worked for this host so the next request skips straight to it.
@@ -230,9 +231,13 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // ruled out (confirmed a healthy ~59KB free on a real device that still hit this),
     // so also surface the underlying socket errno -- ETIMEDOUT/ECONNREFUSED/
     // EHOSTUNREACH/etc. point at the network path itself; an mbedTLS-range negative
-    // value points at the TLS handshake instead.
-    LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err), getHttpClientErrno(client),
-            ESP.getFreeHeap());
+    // value points at the TLS handshake instead. elapsedMs distinguishes a fast failure
+    // (e.g. chain rejected right after receiving the cert) from a slow one (e.g. a real
+    // device report: the fallback-root attempt took ~20s before MBEDTLS_ERR_NET_RECV_FAILED
+    // with errno=0 -- consistent with the peer/edge closing an unusually slow handshake,
+    // not a true socket error).
+    LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes, elapsed: %u ms)", esp_err_to_name(err),
+            getHttpClientErrno(client), ESP.getFreeHeap(), millis() - attemptStartMs);
     int tlsErrorCode = 0;
     logTlsError(client, &tlsErrorCode);
     esp_http_client_cleanup(client);
@@ -243,6 +248,14 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // retry against the other mode; anything else (DNS/network) wouldn't be fixed by
     // switching trust config, so don't waste a second attempt on it.
     if (attempt == 0 && isCertChainFailure(tlsErrorCode)) {
+      // A brief pause before immediately opening a second connection to the same host --
+      // a real device report showed the retry taking ~20s and then failing with a clean
+      // peer-close (NET_RECV_FAILED, errno=0) rather than the fast chain-rejection the
+      // first attempt got, consistent with the underlying socket/TCP state from the
+      // just-failed attempt not having fully settled before immediately reusing the same
+      // host. Cheap to try, no downside if it turns out not to be the cause -- the
+      // elapsed-time log above will show whether the second attempt is still slow.
+      delay(300);
       LOG_INF("HTTP", "cert chain unresolved against %s -- retrying with %s", useFallbackRoot ? "fallback root" : "default bundle",
               useFallbackRoot ? "default bundle" : "fallback root");
       continue;
