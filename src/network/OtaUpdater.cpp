@@ -161,7 +161,16 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
         onProgress(ctx);
       }
     }
-    delay(100);  // TODO: should we replace this with something better?
+    // esp_https_ota_perform() is itself a blocking call -- it already reads one
+    // buffer_size'd chunk over the network and writes it to flash before returning,
+    // so there's no protocol reason to wait afterward. This delay exists only to yield
+    // to the scheduler/watchdog between iterations (see CLAUDE.md's own guidance: a
+    // tight loop needs a small vTaskDelay to avoid tripping the watchdog, not a long
+    // one). The previous 100ms here throttled the whole download to roughly one 4KB
+    // chunk per 100ms+ (~40KB/s ceiling) regardless of how fast the network/flash
+    // actually were -- a real, reported slowdown ("update very slow") with no upside,
+    // since perform()'s own blocking I/O already provides the natural pacing.
+    delay(1);
   } while (esp_err == ESP_ERR_HTTPS_OTA_IN_PROGRESS);
 
   /* Return back to default power saving for WiFi in case of failing */
