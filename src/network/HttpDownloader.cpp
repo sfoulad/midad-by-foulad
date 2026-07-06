@@ -133,6 +133,21 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
                                      Sink& sink) {
   WifiPowerSaveGuard psGuard;
 
+  // Reserve the read buffer before opening any connection, not after. An active TLS
+  // session holds its own sizable internal buffers (mbedTLS's handshake/record buffers)
+  // for as long as the connection stays open; confirmed on a real device that even with
+  // ~59KB reported free right before connecting, a successful TLS handshake (via the
+  // fallback-root retry below) left too little *contiguous* heap for this one small
+  // allocation afterward, failing with "OOM: 2048 byte read buffer" despite the
+  // connection itself having worked. Grabbing this buffer first -- before the
+  // handshake's own larger allocations can fragment the heap -- avoids losing the race
+  // for a small block after a big one has already carved up the free space.
+  auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
+  if (!buf) {
+    LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)READ_CHUNK, ESP.getFreeHeap());
+    return HttpDownloader::HTTP_ERROR;
+  }
+
   // Try the default crt_bundle first (covers the vast majority of servers, including
   // any user-configured OPDS server or GitHub for OTA); only on a chain-resolution
   // failure (see isCertChainFailure) retry once against the fallback root above,
@@ -220,16 +235,15 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     return HttpDownloader::HTTP_ERROR;
   }
 
+  // Visibility into how much heap an established TLS session actually leaves behind --
+  // added after a real device connected successfully but then failed the (now
+  // pre-reserved, see above) read buffer allocation, implying the active session's own
+  // buffers eat deeply into what looked like healthy free heap right before connecting.
+  LOG_INF("HTTP", "connected, free heap: %u bytes", ESP.getFreeHeap());
+
   // fetch_headers returns 0 for a chunked response (no Content-Length); leave
   // total at 0 so progress stays silent and the size check is skipped.
   sink.total = contentLength > 0 ? static_cast<size_t>(contentLength) : 0;
-
-  auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
-  if (!buf) {
-    LOG_ERR("HTTP", "OOM: %u byte read buffer", (unsigned)READ_CHUNK);
-    esp_http_client_cleanup(client);
-    return HttpDownloader::HTTP_ERROR;
-  }
 
   while (true) {
     if (sink.cancelFlag && *sink.cancelFlag) {
