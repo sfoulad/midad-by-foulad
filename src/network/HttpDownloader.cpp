@@ -9,6 +9,8 @@
 #include <esp_http_client.h>
 #include <esp_wifi.h>
 
+#include "util/UrlUtils.h"
+
 #include <cstring>
 #include <functional>
 #include <string>
@@ -124,6 +126,23 @@ struct WifiPowerSaveGuard {
   ~WifiPowerSaveGuard() { esp_wifi_set_ps(WIFI_PS_MIN_MODEM); }
 };
 
+// Remembers, for the most recent host that needed it, that the fallback root was
+// required -- so the next request to that SAME host tries it first instead of
+// wasting a full DNS+TCP+TLS handshake on the default bundle attempt that's known to
+// fail for it every time. Without this, a real device report showed every single
+// request to a fallback-root host (every feed page, every cover image, every book)
+// paying for two full connection attempts back-to-back, which is a real, user-visible
+// slowdown for a host whose outcome doesn't change request to request. Only remembers
+// ONE host at a time (in-memory, reset on reboot) -- this app talks to at most a
+// couple of hosts per session (the configured OPDS server, occasionally GitHub for
+// OTA), so a single slot covers the common case without the complexity of a real
+// cache; a host that isn't the remembered one just gets the normal default-first
+// order, same as before.
+std::string& lastFallbackHost() {
+  static std::string host;
+  return host;
+}
+
 // Streams a GET body through sink.write in READ_CHUNK pieces. Uses the manual
 // open/fetch_headers/read path rather than esp_http_client_perform(): perform()
 // pushes the whole body through an event callback and reports a chunked body
@@ -148,13 +167,18 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     return HttpDownloader::HTTP_ERROR;
   }
 
-  // Try the default crt_bundle first (covers the vast majority of servers, including
-  // any user-configured OPDS server or GitHub for OTA); only on a chain-resolution
-  // failure (see isCertChainFailure) retry once against the fallback root above,
-  // which is scoped to exactly the one CA the default bundle is missing.
+  // Normally try the default crt_bundle first (covers the vast majority of servers,
+  // including any user-configured OPDS server or GitHub for OTA), only falling back to
+  // the root above on a chain-resolution failure (see isCertChainFailure). But if this
+  // exact host needed the fallback last time, try that first instead -- it's going to
+  // fail against the default bundle again regardless, so trying default-first would
+  // just waste a full connection attempt on an outcome we already know.
+  const std::string host = UrlUtils::extractHost(url);
+  const bool preferFallbackFirst = !host.empty() && host == lastFallbackHost();
+
   esp_http_client_handle_t client = nullptr;
   for (int attempt = 0; attempt < 2; ++attempt) {
-    const bool useFallbackRoot = attempt == 1;
+    const bool useFallbackRoot = preferFallbackFirst ? (attempt == 0) : (attempt == 1);
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.buffer_size = HTTP_RX_BUF;
@@ -191,7 +215,15 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // 30x responses manually. OPDS download endpoints and the GitHub release CDN
     // both redirect.
     const esp_err_t err = esp_http_client_open(client, 0);
-    if (err == ESP_OK) break;  // connected -- fall through below with this client
+    if (err == ESP_OK) {
+      // Remember what worked for this host so the next request skips straight to it.
+      if (useFallbackRoot) {
+        lastFallbackHost() = host;
+      } else if (lastFallbackHost() == host) {
+        lastFallbackHost().clear();  // default bundle works again for this host now
+      }
+      break;  // connected -- fall through below with this client
+    }
 
     // ESP_ERR_HTTP_CONNECT alone doesn't say whether this was heap pressure, DNS
     // failure, TCP-level rejection/timeout, or a TLS handshake problem. Free heap
@@ -206,8 +238,13 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     esp_http_client_cleanup(client);
     client = nullptr;
 
-    if (!useFallbackRoot && isCertChainFailure(tlsErrorCode)) {
-      LOG_INF("HTTP", "cert chain unresolved against default bundle -- retrying with fallback root");
+    // Gate on attempt index, not which mode was tried first: whichever mode goes first
+    // (see preferFallbackFirst above), a chain-resolution failure is still worth one
+    // retry against the other mode; anything else (DNS/network) wouldn't be fixed by
+    // switching trust config, so don't waste a second attempt on it.
+    if (attempt == 0 && isCertChainFailure(tlsErrorCode)) {
+      LOG_INF("HTTP", "cert chain unresolved against %s -- retrying with %s", useFallbackRoot ? "fallback root" : "default bundle",
+              useFallbackRoot ? "default bundle" : "fallback root");
       continue;
     }
     return HttpDownloader::HTTP_ERROR;
