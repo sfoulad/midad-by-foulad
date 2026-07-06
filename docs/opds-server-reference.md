@@ -96,12 +96,23 @@ books are omitted entirely (no dead-end links).
 
 ## HTTPS
 
-Since v0.9.7, the server forces `https://` for all generated links and
-redirects any plain `http://` request. If the device's HTTP client doesn't
-handle a 30x redirect cleanly on a request with `Authorization` headers,
-point its configured server URL directly at `https://foulad.one` to avoid
-ever hitting that redirect. `FouladEbooksConfig.h`'s `FOULAD_EBOOKS_URL`
-already hardcodes `https://foulad.one/opds` for exactly this reason; this
-only matters for a user's own manually-entered OPDS server URL, where
-`UrlUtils::ensureProtocol()` still defaults to `http://` for local-server
+Since v0.9.7, the server forced `https://` for all generated links and
+redirected any plain `http://` request. **Temporarily suspended as of
+2026-07 (beta only):** Let's Encrypt rotated foulad.one's certificate onto a
+hierarchy ("ISRG Root YE") that ESP-IDF's embedded trust bundle doesn't
+recognize, and firmware-side verification of it turned out to drive free
+heap dangerously low and freeze the device (see foulad-eink's
+`HttpDownloader.cpp` history) -- not safe to keep. The server has been
+reconfigured to serve OPDS over plain `http://` without redirecting, so the
+device can keep working during beta; `FouladEbooksConfig.h`'s
+`FOULAD_EBOOKS_URL` was updated to `http://foulad.one/opds` to match. Basic
+Auth credentials travel in cleartext over this connection as a result -- an
+accepted tradeoff for beta, not something to carry into production. Revert
+both sides (server back to forcing HTTPS, `FOULAD_EBOOKS_URL` back to
+`https://`) once the certificate chain is fixed server-side or ESP-IDF
+updates its bundle to include the new root.
+
+This only matters for the hardcoded Foulad eBooks entry; a user's own
+manually-entered OPDS server URL was never affected, since
+`UrlUtils::ensureProtocol()` already defaults to `http://` for local-server
 support.
