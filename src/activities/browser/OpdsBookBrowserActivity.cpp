@@ -87,8 +87,13 @@ void OpdsBookBrowserActivity::onExit() {
     delay(30);
     if (!pendingReaderPath.empty()) {
       // Leaving to open a specific book (see downloadBook()) -- resume there after the
-      // restart, not at Home.
+      // restart, not at Home. openEpubPath is only an in-memory field; it must be
+      // explicitly persisted before ESP.restart() wipes RAM, or boot falls back to
+      // whatever was last saved to disk (the book the user was already reading before
+      // opening Foulad eBooks) instead of the one they just downloaded -- confirmed as
+      // a real device bug: download a new book, and it silently reopens the old one.
       APP_STATE.openEpubPath = pendingReaderPath;
+      APP_STATE.saveToFile();
       silentRestartToReader();
     } else {
       silentRestart();
