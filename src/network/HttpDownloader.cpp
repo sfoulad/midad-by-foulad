@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <TlsErrorClassifier.h>
 #include <base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
@@ -49,7 +50,11 @@ void logTlsError(esp_http_client_handle_t client, int* outTlsErrorCode) {
   int tlsFlags = 0;
   esp_http_client_get_and_clear_last_tls_error(client, &tlsErrorCode, &tlsFlags);
   if (tlsErrorCode != 0 || tlsFlags != 0) {
-    LOG_ERR("HTTP", "tls detail: esp_tls_error_code=-0x%X esp_tls_flags=0x%X", -tlsErrorCode, tlsFlags);
+    // esp_http_client reports this as the positive magnitude of the mbedTLS code
+    // (e.g. 0x3000 for MBEDTLS_ERR_X509_FATAL_ERROR, which mbedtls's own headers define
+    // as -0x3000) -- print it as mbedTLS's own negative convention for readability, but
+    // do NOT rely on the sign when comparing (see isCertChainFailure's abs() comparison).
+    LOG_ERR("HTTP", "tls detail: esp_tls_error_code=-0x%X esp_tls_flags=0x%X", tlsErrorCode, tlsFlags);
   }
   if (outTlsErrorCode) *outTlsErrorCode = tlsErrorCode;
 }
@@ -86,15 +91,9 @@ constexpr char kIsrgRootYePem[] =
     "6hSW1/IWaas6dg==\n"
     "-----END CERTIFICATE-----\n";
 
-// True for the mbedTLS error codes that indicate "couldn't resolve/verify the certificate
-// chain" as opposed to a non-TLS network failure (DNS/TCP) or a genuinely bad cert (expired,
-// hostname mismatch -- those set esp_tls_flags bits instead). Only these are worth retrying
-// against the fallback root; anything else retrying wouldn't fix.
-bool isCertChainFailure(int tlsErrorCode) {
-  constexpr int kMbedtlsErrX509FatalError = -0x3000;
-  constexpr int kMbedtlsErrX509CertVerifyFailed = -0x2700;
-  return tlsErrorCode == kMbedtlsErrX509FatalError || tlsErrorCode == kMbedtlsErrX509CertVerifyFailed;
-}
+// isCertChainFailure() lives in lib/TlsErrorClassifier (dependency-free, host-testable --
+// see TlsErrorClassifierTest.cpp for the regression test that would have caught the v1.6.7
+// sign-comparison bug where the fallback-root retry below silently never triggered).
 
 struct Sink {
   std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
