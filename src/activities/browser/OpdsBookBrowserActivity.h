@@ -98,6 +98,20 @@ class OpdsBookBrowserActivity final : public Activity {
   GridLayout computeGridLayout() const;
   void loadGridPageCovers(const GridLayout& layout, int pageStart);
 
+  // Row height in pixels for plain text-list rows (category/navigation entries, both the
+  // pure-list page and the nav strips above/below a book grid). Arabic titles need
+  // noticeably more vertical space than Latin ones (the Arabic font's ascender+descender
+  // is roughly double), so a Latin-sized row clips Arabic glyph tops/tails -- same issue
+  // already fixed for XtcReaderChapterSelectionActivity's chapter list. Checks whether any
+  // entry on the current page has an Arabic title and sizes every row for the tallest font
+  // actually in use, so pagination (getListPageItems) and rendering always agree.
+  int getListRowHeight() const;
+  // How many list rows fit in the available content area for a given row height --
+  // replaces a fixed item-per-page constant so a taller Arabic row height doesn't overflow
+  // the screen, and so this adapts across orientations/devices instead of assuming one
+  // fixed screen height.
+  int getListPageItems(int rowHeight) const;
+
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);
