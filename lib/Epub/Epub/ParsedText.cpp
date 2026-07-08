@@ -19,8 +19,6 @@ namespace {
 // Soft hyphen byte pattern used throughout EPUBs (UTF-8 for U+00AD).
 constexpr char SOFT_HYPHEN_UTF8[] = "\xC2\xAD";
 constexpr size_t SOFT_HYPHEN_BYTES = 2;
-// Paragraph-level direction: scan the first N words to find base direction.
-constexpr size_t RTL_PARAGRAPH_PROBE_WORDS = 3;
 // Per-word: scan enough chars to see through leading neutrals (quotes, numbers)
 // before giving up. 64 is a hedge for pathological cases like long numeric tokens.
 constexpr int RTL_PER_WORD_PROBE_DEPTH = 64;
@@ -473,11 +471,20 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   // Per-paragraph RTL auto-detection: only when CSS/HTML didn't explicitly set direction.
   // Explicit dir="ltr" must be respected and not overridden by content heuristic.
   if (!blockStyle.directionDefined && hasRtlWord) {
-    // Check the first few words for RTL letter codepoints (no heap allocation).
-    const size_t wordsToScan = std::min(words.size(), RTL_PARAGRAPH_PROBE_WORDS);
-    for (size_t i = 0; i < wordsToScan; ++i) {
-      if (BidiUtils::startsWithRtl(words[i].c_str(), BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH)) {
-        blockStyle.isRtl = true;
+    // Per UAX#9 P2/P3: paragraph direction comes from the FIRST word with a strong
+    // direction, skipping any number of leading weak/neutral words -- not just a fixed
+    // prefix. Previously this only checked the first 3 words, so an Arabic paragraph
+    // opening with more than a couple of non-Arabic tokens (a translated character's
+    // Latin name, a chapter number, a quoted phrase) was silently left LTR-aligned even
+    // though hasRtlWord already confirms the paragraph contains Arabic content -- this is
+    // the "some paragraphs render left-aligned/LTR instead of RTL" bug. No heap
+    // allocation, and this runs once at section-cache build time (never per-frame
+    // render), so scanning the whole paragraph instead of a fixed prefix is cheap
+    // relative to the layout work already being done here.
+    bool isRtl = false;
+    for (const auto& word : words) {
+      if (BidiUtils::firstStrongDirection(word.c_str(), isRtl, BidiUtils::RTL_PARAGRAPH_PROBE_DEPTH)) {
+        blockStyle.isRtl = isRtl;
         break;
       }
     }

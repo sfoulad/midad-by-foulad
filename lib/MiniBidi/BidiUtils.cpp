@@ -49,6 +49,30 @@ bool startsWithRtl(const char* utf8, int maxStrongChars) {
   return false;
 }
 
+bool firstStrongDirection(const char* utf8, bool& isRtl, const int maxStrongChars) {
+  if (!utf8 || maxStrongChars <= 0) return false;
+
+  auto* p = reinterpret_cast<const unsigned char*>(utf8);
+  int checked = 0;
+  while (*p) {
+    const uint32_t cp = utf8NextCodepoint(&p);
+    if (!cp || cp == REPLACEMENT_GLYPH) break;
+
+    const uchar cls = bidi_class(cp);
+    if (cls == R || cls == AL) {
+      isRtl = true;
+      return true;
+    }
+    if (cls == L) {
+      isRtl = false;
+      return true;
+    }
+    checked++;
+    if (checked >= maxStrongChars) break;
+  }
+  return false;
+}
+
 int detectParagraphLevel(const char* utf8, const int fallbackLevel, const int maxStrongChars) {
   if (!utf8 || maxStrongChars <= 0) return fallbackLevel & 1;
 
