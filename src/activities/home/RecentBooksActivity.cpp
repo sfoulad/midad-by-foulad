@@ -165,7 +165,8 @@ RecentBooksActivity::GridGeometry RecentBooksActivity::computeGridGeometry() con
 }
 
 int RecentBooksActivity::getGridTitleHeight() const {
-  const int lineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+  const int lineHeight =
+      std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
   return GRID_TITLE_TOP_GAP + lineHeight * GRID_TITLE_LINES;
 }
 
@@ -286,17 +287,19 @@ void RecentBooksActivity::render(RenderLock&&) {
                           32);
       }
       if (bookIdx == static_cast<int>(selectorIndex)) {
-        renderer.drawRect(cellX - 3, cellY - 3, geometry.coverWidth + 6, geometry.coverHeight + 6, true);
+        // A 1px outline was hard to spot at a glance on e-ink, especially across a
+        // multi-column grid where the eye has to search for it -- a thick (4px) border
+        // reads as a deliberate, high-contrast selection frame instead.
+        renderer.drawRect(cellX - 4, cellY - 4, geometry.coverWidth + 8, geometry.coverHeight + 8, 4, true);
       }
 
-      const auto titleLines = renderer.wrappedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth, GRID_TITLE_LINES);
-      // Spacing between this title's own lines, not the worst case across the whole page
-      // (that's getGridTitleHeight(), used for the cell layout itself) -- using the taller
-      // Arabic line height here for every title, including plain Latin ones, left a big
-      // visible gap between lines 1 and 2 for the common case.
-      const int titleLineHeight = ScriptDetector::containsArabic(book.title.c_str())
-                                      ? renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID)
-                                      : renderer.getLineHeight(SMALL_FONT_ID);
+      const auto titleLines =
+          renderer.wrappedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth, GRID_TITLE_LINES);
+      // Was previously widened per-title for an Arabic title (using the taller Arabic line
+      // height between its two lines). Explicit user feedback preferred the gap between
+      // lines matching the Latin/English spacing exactly over the extra clipping headroom
+      // -- always uses the tight Latin height now; revisit if Arabic titles start clipping.
+      const int titleLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
       int titleY = cellY + geometry.coverHeight + GRID_TITLE_TOP_GAP;
       for (const auto& line : titleLines) {
         renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, geometry.coverWidth, line.c_str());

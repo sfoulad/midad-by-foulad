@@ -39,6 +39,13 @@ class OpdsBookBrowserActivity final : public Activity {
   std::string statusMessage;
   size_t downloadProgress = 0;
   size_t downloadTotal = 0;
+  // foulad-ebooks' download endpoints respond with Transfer-Encoding: chunked (no
+  // Content-Length), so downloadTotal is 0 for every real download today. Rather than show
+  // no bar at all in that case, render() fills the bar against this generous EPUB-sized
+  // ceiling instead -- it under-promises (a smaller book finishes before the bar looks
+  // "full", jumping straight to completion) rather than over-promises, and still gives the
+  // user visible proof the transfer is progressing instead of a static label with no motion.
+  static constexpr size_t ESTIMATED_DOWNLOAD_SIZE = 8 * 1024 * 1024;
   // Last redrawn percentage during download, so the progress callback (fired once per
   // HTTP chunk) only forces an e-ink refresh on ~1% steps instead of on every chunk.
   // Only meaningful when downloadTotal > 0 -- foulad-ebooks' download endpoints respond
@@ -79,9 +86,9 @@ class OpdsBookBrowserActivity final : public Activity {
   static constexpr int GRID_GUTTER = 12;
   static constexpr float GRID_COVER_ASPECT = 1.5f;  // coverHeight = coverWidth * aspect
   static constexpr int GRID_TITLE_LINES = 2;        // caption below the cover wraps up to this many lines
-  static constexpr int GRID_TITLE_TOP_GAP = 4;       // gap between cover bottom and first title line
-  static constexpr int GRID_CONTENT_TOP = 60;        // matches the existing list's content start y
-  static constexpr int GRID_BOTTOM_MARGIN = 40;      // reserved for button hints
+  static constexpr int GRID_TITLE_TOP_GAP = 4;      // gap between cover bottom and first title line
+  static constexpr int GRID_CONTENT_TOP = 60;       // matches the existing list's content start y
+  static constexpr int GRID_BOTTOM_MARGIN = 40;     // reserved for button hints
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
 

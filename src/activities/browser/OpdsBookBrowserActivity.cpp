@@ -305,9 +305,17 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       renderer.drawCenteredText(UI_10_FONT_ID, y,
                                 (std::to_string(downloadProgress) + " / " + std::to_string(downloadTotal)).c_str());
     } else if (downloadProgress > 0) {
-      // Total size is unknown (chunked transfer, no Content-Length) -- no percentage to
-      // show, but the downloaded count still proves the transfer is alive rather than
-      // stuck, which a bare "Downloading..." label can't.
+      // Total size is unknown (chunked transfer, no Content-Length): fill the bar against
+      // an estimated ceiling so there's still a moving visual, but suppress the percentage
+      // label (it would be precise-looking but not actually accurate) in favor of the real
+      // byte count below.
+      GUI.drawProgressBar(
+          renderer,
+          Rect{metrics.contentSidePadding, y, pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
+          std::min(downloadProgress, ESTIMATED_DOWNLOAD_SIZE), ESTIMATED_DOWNLOAD_SIZE,
+          /*showPercentage=*/false);
+
+      y += metrics.progressBarHeight + metrics.verticalSpacing;
       renderer.drawCenteredText(UI_10_FONT_ID, y, (std::to_string(downloadProgress / 1024) + " KB downloaded").c_str());
     }
     renderer.displayBuffer();
@@ -334,9 +342,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   if (entries.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_NO_ENTRIES));
   } else if (!layout.isGridPage) {
-    // Plain text list (category/navigation-only pages). Row height adapts to Arabic
-    // titles (see getListRowHeight()) so the highlight and text don't clip them the way
-    // a fixed Latin-sized row did -- same fix already applied to the chapter selector.
+    // Plain text list (category/navigation-only pages). Row height is kept tight and
+    // uniform (see getListRowHeight()) so Arabic and Latin rows match visually.
     const int rowHeight = getListRowHeight();
     const int pageItems = getListPageItems(rowHeight);
     const auto pageStartIndex = selectorIndex / pageItems * pageItems;
@@ -351,8 +358,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
                                item.c_str(), i != static_cast<size_t>(selectorIndex));
     }
   } else {
-    // Nav strip above the grid (e.g. a "Prev Page" entry). Same Arabic-aware row height
-    // as the plain list above -- an Arabic subcategory link here would clip the same way.
+    // Nav strip above the grid (e.g. a "Prev Page" entry). Same tight row height as the
+    // plain list above.
     const int rowHeight = getListRowHeight();
     const int titleHeight = getGridTitleHeight();
     int y = GRID_CONTENT_TOP;
@@ -399,17 +406,19 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         renderer.drawIcon(BookIcon, cellX + (layout.coverWidth - 32) / 2, cellY + (layout.coverHeight - 32) / 2, 32);
       }
       if (bookIdx == selectorIndex) {
-        renderer.drawRect(cellX - 3, cellY - 3, layout.coverWidth + 6, layout.coverHeight + 6, true);
+        // A 1px outline was hard to spot at a glance on e-ink, especially across a
+        // multi-column grid where the eye has to search for it -- a thick (4px) border
+        // reads as a deliberate, high-contrast selection frame instead.
+        renderer.drawRect(cellX - 4, cellY - 4, layout.coverWidth + 8, layout.coverHeight + 8, 4, true);
       }
 
-      const auto titleLines = renderer.wrappedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth, GRID_TITLE_LINES);
-      // Spacing between this title's own lines, not the worst case across the whole page
-      // (that's getGridTitleHeight(), used for the cell layout itself) -- using the taller
-      // Arabic line height here for every title, including plain Latin ones, left a big
-      // visible gap between lines 1 and 2 for the common case.
-      const int titleLineHeight = ScriptDetector::containsArabic(entry.title.c_str())
-                                      ? renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID)
-                                      : renderer.getLineHeight(SMALL_FONT_ID);
+      const auto titleLines =
+          renderer.wrappedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth, GRID_TITLE_LINES);
+      // Was previously widened per-title for an Arabic title (using the taller Arabic line
+      // height between its two lines). Explicit user feedback preferred the gap between
+      // lines matching the Latin/English spacing exactly over the extra clipping headroom
+      // -- always uses the tight Latin height now; revisit if Arabic titles start clipping.
+      const int titleLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
       int titleY = cellY + layout.coverHeight + GRID_TITLE_TOP_GAP;
       for (const auto& line : titleLines) {
         renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, layout.coverWidth, line.c_str());
@@ -417,7 +426,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       }
     }
 
-    // Nav strip below the grid (e.g. a "Next Page" entry). Same Arabic-aware row height.
+    // Nav strip below the grid (e.g. a "Next Page" entry). Same tight row height.
     const int bottomCount = static_cast<int>(entries.size()) - layout.bottomNavStart;
     if (bottomCount > 0) {
       int by = pageHeight - GRID_BOTTOM_MARGIN - bottomCount * rowHeight;
@@ -438,15 +447,12 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
 }
 
 int OpdsBookBrowserActivity::getListRowHeight() const {
-  const int latinLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-
-  const bool hasArabic = std::any_of(entries.begin(), entries.end(), [](const OpdsEntry& entry) {
-    return ScriptDetector::containsArabic(entry.title.c_str());
-  });
-  if (!hasArabic) return latinLineHeight + LIST_ROW_VERTICAL_PADDING;
-
-  const int arabicLineHeight = renderer.getLineHeight(NOTOSANSARABIC_10_FONT_ID);
-  return std::max(latinLineHeight, arabicLineHeight) + LIST_ROW_VERTICAL_PADDING;
+  // Was previously widened for pages with an Arabic title (using the taller Arabic line
+  // height) to avoid clipping ascenders/descenders, matching the chapter selector's fix
+  // for the same issue. Explicit user feedback preferred visually consistent, tighter
+  // spacing matching the Latin rows over the extra clipping headroom, so this is back to
+  // always using the tight Latin height -- revisit if Arabic rows start clipping again.
+  return renderer.getLineHeight(UI_10_FONT_ID) + LIST_ROW_VERTICAL_PADDING;
 }
 
 int OpdsBookBrowserActivity::getListPageItems(const int rowHeight) const {
@@ -455,7 +461,8 @@ int OpdsBookBrowserActivity::getListPageItems(const int rowHeight) const {
 }
 
 int OpdsBookBrowserActivity::getGridTitleHeight() const {
-  const int lineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+  const int lineHeight =
+      std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
   return GRID_TITLE_TOP_GAP + lineHeight * GRID_TITLE_LINES;
 }
 

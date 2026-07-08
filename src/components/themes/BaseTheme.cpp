@@ -130,8 +130,8 @@ void BaseTheme::drawBatteryRight(const GfxRenderer& renderer, Rect rect, const b
   fillBatteryIcon(renderer, iconRect, percentage);
 }
 
-void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const size_t current,
-                                const size_t total) const {
+void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const size_t current, const size_t total,
+                                const bool showPercentage) const {
   if (total == 0) {
     return;
   }
@@ -149,9 +149,14 @@ void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const si
     renderer.fillRect(rect.x + 2, rect.y + 2, fillWidth, rect.height - 4);
   }
 
-  // Draw percentage text centered below bar
-  const std::string percentText = std::to_string(percent) + "%";
-  renderer.drawCenteredText(UI_10_FONT_ID, rect.y + rect.height + 15, percentText.c_str());
+  // showPercentage is false when `total` is an estimate rather than a real size (e.g. OPDS
+  // chunked downloads with no Content-Length) -- the fill is still useful as a "something is
+  // happening" indicator, but a precise-looking "%" against a guessed total would be
+  // misleading, so the caller shows real byte counts elsewhere instead.
+  if (showPercentage) {
+    const std::string percentText = std::to_string(percent) + "%";
+    renderer.drawCenteredText(UI_10_FONT_ID, rect.y + rect.height + 15, percentText.c_str());
+  }
 }
 
 void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
