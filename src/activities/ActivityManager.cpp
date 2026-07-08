@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "FouladEbooksConfig.h"
+#include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
@@ -203,6 +204,16 @@ void ActivityManager::goToFouladEbooks() {
                                [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
   if (it != servers.end()) {
     // Already set up on this device — skip straight to browsing.
+    //
+    // Clear the cover cache on every entry rather than requiring a manual Settings
+    // action: a cover that downloaded successfully once is never re-validated against
+    // the server afterward (ensureOpdsCoverCached's "already cached" fast path just
+    // checks the BMP is well-formed, not that it's still current), so covers cached
+    // from before a server-side URL/scheme change wouldn't otherwise self-heal even
+    // after the underlying issue is fixed. Foulad eBooks specifically, not a
+    // user-added OPDS server, since only this one has had server-side URL changes
+    // during the beta.
+    clearOpdsCoverCache();
     replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, *it));
     return;
   }

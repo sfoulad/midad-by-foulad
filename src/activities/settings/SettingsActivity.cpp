@@ -18,7 +18,6 @@
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
-#include "OpdsCoverCache.h"
 #include "OpdsServerListActivity.h"
 #include "OpdsServerStore.h"
 #include "OtaUpdateActivity.h"
@@ -81,8 +80,6 @@ void SettingsActivity::rebuildSettingsLists() {
   const bool hasFouladEbooksAccount = std::any_of(
       opdsServers.begin(), opdsServers.end(), [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
   if (hasFouladEbooksAccount) {
-    systemSettings.push_back(
-        SettingInfo::Action(StrId::STR_CLEAR_FOULAD_EBOOKS_COVER_CACHE, SettingAction::ClearFouladEbooksCoverCache));
     systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGOUT, SettingAction::FouladEbooksLogout));
   }
   // Insert "Manage Fonts" right after the font family setting so users discover it naturally
@@ -338,19 +335,6 @@ void SettingsActivity::toggleCurrentSetting() {
             std::make_unique<ArabicFontSelectionActivity>(renderer, mappedInput, &arabicFontSystem.registry()),
             resultHandler);
         break;
-      case SettingAction::ClearFouladEbooksCoverCache: {
-        auto clearHandler = [this](const ActivityResult& result) {
-          if (!result.isCancelled) {
-            clearOpdsCoverCache();
-          }
-          rebuildSettingsLists();
-          selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
-        };
-        startActivityForResult(std::make_unique<ConfirmationActivity>(
-                                    renderer, mappedInput, tr(STR_CLEAR_FOULAD_EBOOKS_COVER_CACHE_CONFIRM), ""),
-                               clearHandler);
-        break;
-      }
       case SettingAction::FouladEbooksLogout: {
         auto logoutHandler = [this](const ActivityResult& result) {
           if (!result.isCancelled) {
