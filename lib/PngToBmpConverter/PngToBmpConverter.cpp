@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <InflateReader.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <cstdio>
 #include <cstring>
@@ -265,16 +266,12 @@ static int pngIdatReadCallback(uzlib_uncomp* uncomp) {
   return ctx->readBuf[0];
 }
 
-// Decode one scanline: decompress filter byte + raw bytes, then unfilter
-static bool decodeScanline(PngDecodeContext& ctx) {
-  // Decompress filter byte
-  uint8_t filterType;
-  if (!ctx.reader.read(&filterType, 1)) return false;
-
-  // Decompress raw row data into currentRow
-  if (!ctx.reader.read(ctx.currentRow, ctx.rawRowBytes)) return false;
-
-  // Apply reverse filter
+// Reconstruct one already-decompressed scanline in place (ctx.currentRow holds the raw
+// filtered bytes on entry), using ctx.previousRow for the Up/Average/Paeth filter types.
+// Shared by both the normal streaming decode and the one-shot fallback below -- the only
+// difference between those two paths is how the raw filtered bytes got into ctx.currentRow
+// in the first place, not how they're reconstructed.
+static bool applyScanlineFilter(PngDecodeContext& ctx, const uint8_t filterType) {
   const int bpp = ctx.bytesPerPixel;
 
   switch (filterType) {
@@ -316,6 +313,30 @@ static bool decodeScanline(PngDecodeContext& ctx) {
   }
 
   return true;
+}
+
+// Decode one scanline: decompress filter byte + raw bytes from the streaming reader, then
+// unfilter. Used when the 32KB streaming ring buffer allocation succeeded.
+static bool decodeScanline(PngDecodeContext& ctx) {
+  // Decompress filter byte
+  uint8_t filterType;
+  if (!ctx.reader.read(&filterType, 1)) return false;
+
+  // Decompress raw row data into currentRow
+  if (!ctx.reader.read(ctx.currentRow, ctx.rawRowBytes)) return false;
+
+  return applyScanlineFilter(ctx, filterType);
+}
+
+// Decode one scanline from a buffer that was already fully decompressed in one shot (see the
+// one-shot fallback in pngFileToBmpStreamInternal). rowSrc points at this row's filter byte,
+// followed by rawRowBytes of raw filtered data -- the same per-row layout the streaming path
+// consumes one piece at a time, just already sitting in memory instead of pulled from the
+// decompressor call by call.
+static bool decodeScanlineFromBuffer(PngDecodeContext& ctx, const uint8_t* rowSrc) {
+  const uint8_t filterType = rowSrc[0];
+  memcpy(ctx.currentRow, rowSrc + 1, ctx.rawRowBytes);
+  return applyScanlineFilter(ctx, filterType);
 }
 
 // Batch-convert an entire scanline to grayscale.
@@ -555,16 +576,58 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     return false;
   }
 
-  // Initialize streaming decompressor with 32KB ring buffer for back-reference history
+  // Initialize streaming decompressor with 32KB ring buffer for back-reference history. This
+  // is comfortably the single largest allocation in this whole pipeline, and on a heap
+  // already under pressure elsewhere in the app (WiFi/HTTP stack, UI state, font caches) it
+  // can fail even with tens of KB of *aggregate* free heap if nothing that large happens to
+  // be contiguous -- confirmed via a real device log: "connected, free heap: 43152 bytes"
+  // immediately followed by this exact failure, for every single OPDS cover fetched.
+  bool oneShotMode = false;
+  std::unique_ptr<uint8_t[]> oneShotBuffer;
+  const size_t oneShotTotalBytes = static_cast<size_t>(rawRowBytes + 1) * height;
   if (!ctx.reader.init(true)) {
-    LOG_ERR("PNG", "Failed to init inflate reader");
-    free(ctx.currentRow);
-    free(ctx.previousRow);
-    return false;
+    // Fall back to one-shot decode: it resolves back-references directly against the
+    // destination buffer instead of a separate window, so it needs no extra 32KB
+    // allocation at all -- just the (much smaller) decompressed image data itself. Only
+    // safe when the whole image comfortably fits in one buffer -- true for every OPDS
+    // cover (the server caps these at 160x240, 1-bit) and small embedded EPUB covers, but
+    // not guaranteed for a large embedded cover, hence the cap rather than always trying.
+    constexpr size_t ONE_SHOT_FALLBACK_MAX_BYTES = 24576;
+    if (oneShotTotalBytes > ONE_SHOT_FALLBACK_MAX_BYTES) {
+      LOG_ERR("PNG", "Failed to init inflate reader (image too large for one-shot fallback: %zu bytes)",
+              oneShotTotalBytes);
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
+    oneShotBuffer = makeUniqueNoThrow<uint8_t[]>(oneShotTotalBytes);
+    if (!oneShotBuffer) {
+      LOG_ERR("PNG", "OOM: %zu byte one-shot fallback buffer", oneShotTotalBytes);
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
+    if (!ctx.reader.init(false)) {
+      LOG_ERR("PNG", "Failed to init one-shot inflate reader");
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
+    oneShotMode = true;
+    LOG_DBG("PNG", "Streaming ring buffer unavailable, using one-shot fallback (%zu bytes)", oneShotTotalBytes);
   }
   ctx.reader.setReadCallback(pngIdatReadCallback);
   // PNG IDAT data is zlib-wrapped: consume the 2-byte zlib header (CMF + FLG)
   ctx.reader.skipZlibHeader();
+
+  if (oneShotMode) {
+    if (!ctx.reader.read(oneShotBuffer.get(), oneShotTotalBytes)) {
+      LOG_ERR("PNG", "One-shot decompress failed");
+      free(ctx.currentRow);
+      free(ctx.previousRow);
+      return false;
+    }
+  }
 
   // Calculate output dimensions (same logic as JpegToBmpConverter)
   int outWidth = width;
@@ -675,8 +738,12 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
 
   // Process each scanline
   for (uint32_t y = 0; y < height; y++) {
-    // Decode one scanline
-    if (!decodeScanline(ctx)) {
+    // Decode one scanline -- from the streaming reader normally, or by slicing the
+    // already-fully-decompressed one-shot buffer when the streaming ring buffer couldn't
+    // be allocated (see above).
+    const bool scanlineDecoded =
+        oneShotMode ? decodeScanlineFromBuffer(ctx, oneShotBuffer.get() + y * (rawRowBytes + 1)) : decodeScanline(ctx);
+    if (!scanlineDecoded) {
       LOG_ERR("PNG", "Failed to decode scanline %u", y);
       success = false;
       break;
