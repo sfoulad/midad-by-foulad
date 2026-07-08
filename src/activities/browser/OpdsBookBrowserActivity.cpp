@@ -515,6 +515,14 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
   Rect popupRect;
   const int totalToProcess = pageEnd - pageStart;
   int processedCount = 0;
+  // Cover downloads have no user-visible error state (a failed cover just falls back to
+  // the placeholder icon), so without this there's no way to diagnose a real device
+  // report after the fact -- e.g. confirming whether cover/download links are still
+  // https:// even after the main feed was switched to http:// (see FouladEbooksConfig.h).
+  // OpdsCoverCache already LOG_ERRs the failing coverUrl into the ring buffer; this just
+  // makes sure that ring buffer actually reaches an SD file the user can retrieve, the
+  // same way a feed fetch failure already does via saveOpdsDiagnosticLog().
+  int coverFailures = 0;
 
   for (int i = pageStart; i < pageEnd; i++) {
     const auto& entry = entries[layout.bookStart + i];
@@ -525,9 +533,16 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
         popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       }
       GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-      ensureOpdsCoverCached(entry, server.username, server.password, layout.coverWidth, layout.coverHeight);
+      if (!ensureOpdsCoverCached(entry, server.username, server.password, layout.coverWidth, layout.coverHeight)) {
+        coverFailures++;
+      }
     }
     processedCount++;
+  }
+
+  if (coverFailures > 0) {
+    saveOpdsDiagnosticLog("Cover download failed for " + std::to_string(coverFailures) + " of " +
+                          std::to_string(totalToProcess) + " book(s) on this page");
   }
 
   loadedGridPageStart = pageStart;
