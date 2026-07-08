@@ -13,3 +13,11 @@ std::string getOpdsCoverCachePath(const std::string& entryId, int width, int hei
 // Returns true if a cached cover exists (already present or freshly fetched).
 bool ensureOpdsCoverCached(const OpdsEntry& entry, const std::string& username, const std::string& password, int width,
                            int height);
+
+// Deletes the entire OPDS cover cache directory, forcing every cover to be re-downloaded
+// on next view. Covers that downloaded successfully once are never re-validated against
+// the server afterward (see ensureOpdsCoverCached's "already cached" fast path), so a
+// scheme or URL change on the server side (http/https, signed-URL format, etc.) won't
+// self-heal existing entries -- this lets the user force a clean slate from Settings.
+// Returns true if the directory was removed (or never existed).
+bool clearOpdsCoverCache();

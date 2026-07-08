@@ -74,3 +74,12 @@ bool ensureOpdsCoverCached(const OpdsEntry& entry, const std::string& username, 
   }
   return success;
 }
+
+bool clearOpdsCoverCache() {
+  if (!Storage.exists(CACHE_DIR)) return true;  // nothing to clear
+  const bool removed = Storage.removeDir(CACHE_DIR);
+  if (!removed) {
+    LOG_ERR("OPDSCOVER", "Failed to remove cover cache dir: %s", CACHE_DIR);
+  }
+  return removed;
+}
