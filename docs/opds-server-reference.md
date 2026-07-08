@@ -4,7 +4,7 @@ Authoritative reference for the server-side OPDS implementation this app's OPDS
 client (`lib/OpdsParser/`, `src/network/HttpDownloader.cpp`,
 `src/activities/browser/OpdsBookBrowserActivity.cpp`, `src/OpdsCoverCache.cpp`)
 talks to. Pulled directly from the foulad-ebooks codebase, accurate as of
-foulad-ebooks v0.10.14. Keep this in sync if the server contract changes --
+foulad-ebooks v0.11.2. Keep this in sync if the server contract changes --
 it's meant to save re-deriving server behavior via curl each time the client
 needs a fix.
 
@@ -75,12 +75,72 @@ entries only, no acquisition-format book entries mixed in.
 - `<link rel="http://opds-spec.org/image">` and
   `rel="http://opds-spec.org/image/thumbnail">` -- **currently both point to
   the identical URL/size** (no separate full-size vs thumbnail variant).
-- Format: `image/png`, black & white (1-bit visually, though technically an
-  8-bit palette PNG), **240x360 max**, plain threshold (no dithering).
-- Only present if the book actually has a cover; no `<link>` at all otherwise.
+- URL: a Laravel signed route, `GET /opds/books/{id}/cover?signature=...&user=...`
+  (embedded directly in the feed entry -- the device never needs to construct
+  this URL itself, just fetch whatever href the feed gives it).
+- Format: `image/png`, black & white (2-color palette PNG, values pure
+  `0,0,0` / `255,255,255` -- visually 1-bit, not a grayscale ramp), **as of
+  v0.10.11: 160x240 max** (was 240x360 before that, was 480x800 before that
+  -- if a cached cover looks stale/oversized on-device, that's almost always
+  a client-side cache issue, not the server serving an old size -- see
+  "Server-side cover caching" below).
+- **Server never upscales**: the resize is `min(160/w, 240/h, 1.0)` -- a
+  source cover already smaller than 160x240 is served at its original
+  (smaller) size, not padded or stretched up to fill the full 160x240. If the
+  device's cover-rendering path assumes every OPDS cover is exactly 160x240
+  and mishandles a smaller image (e.g. leaves stale pixels around a
+  smaller-than-expected bitmap instead of clearing the cell first), that
+  would explain a cover appearing to "not show" for specific books while
+  others work fine. Worth checking against a real cover response's actual
+  `IHDR` dimensions (`file <(curl ...)` or a hex dump of the PNG header) if
+  this is suspected, rather than assuming the fixed grid-cell size.
+- Grayscale conversion is a plain 50% threshold, not dithered (dropped
+  deliberately in v0.10.3 -- dithering's pixel noise defeated PNG
+  compression for negligible visible gain at this size).
+- Only present if the book actually has a cover; no `<link>` at all otherwise
+  -- as of foulad-ebooks v0.10.13, all books on production were audited and
+  confirmed to have one, but any book uploaded/converted since then could
+  still be missing one if its source EPUB/PDF cover extraction failed
+  silently (extraction bugs have happened before, see foulad-ebooks
+  CHANGELOG v0.10.10).
 - Cache header: `Cache-Control: private, max-age=604800` (7 days) -- but the
   signed URL itself is valid 30 days, so caching the image response
   separately from re-fetching the feed is safe.
+
+### Server-side cover caching (why a size bump might not show up immediately)
+
+The server generates the black & white PNG once per book and caches it on
+disk at `covers-bw/v3/{book_id}.png` -- it is **not** regenerated on every
+request. That `v3` segment is a manual version bump the foulad-ebooks side
+increments whenever `CoverConverter`'s output changes (size, algorithm) to
+force old cached files to regenerate; it has no bearing on anything the
+device does, it's purely an internal cache-key. If covers still look wrong
+after a foulad-ebooks deploy that claims to have changed cover generation,
+that's a server-side question (did the cache path actually bump?), not
+something fixable from the firmware side.
+
+### If covers aren't showing on-device at all (not just wrong size)
+
+Things confirmed **not** broken server-side as of v0.11.2 (checked directly
+against the `OpdsController`/`CoverConverter`/Blade view source, not just
+assumed): the signed URL is embedded correctly in every feed entry that has
+a cover, the route returns a real `image/png` body with a 200 status when
+fetched, and the black & white conversion produces a valid PNG. If covers
+still don't render on a real device, the likely remaining suspects, roughly
+in the order worth checking:
+1. **Local device cover cache gone stale**: `.crosspoint/opds_covers/` (or
+   wherever `OpdsCoverCache.cpp` persists fetched covers) may hold entries
+   cached from *before* an earlier signed-URL/HTTPS bug was fixed
+   server-side (see the HTTPS section below and foulad-ebooks' `v0.10.8`
+   history) -- a failed fetch cached as a failure would never retry. Clear
+   that cache and re-fetch fresh.
+2. **The small-source-cover no-upscale behavior** described above, if it's
+   specific books that fail rather than all of them.
+3. **A genuinely missing `cover_path`** for a book uploaded after the
+   v0.10.13 audit (server-side question, not a device bug) -- confirm by
+   checking whether that book's feed entry has a `rel="...image"` link at
+   all, since the server omits the link entirely (not a broken link) when
+   there's no cover on file.
 
 ## Acquisition (download) link -- exactly one per book, never a choice
 
