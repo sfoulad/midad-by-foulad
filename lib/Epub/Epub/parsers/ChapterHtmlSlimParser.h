@@ -101,6 +101,14 @@ class ChapterHtmlSlimParser {
   void flushPendingAnchor();
   void flushPartWordBuffer();
   void makePages();
+  // Vertical line advance: the Latin reading font's line height, grown to the Arabic
+  // reading font's line height when hasArabic is true. Arabic ascender+descender runs
+  // noticeably taller than Latin at the same nominal size (fontId is always a Latin font
+  // -- SETTINGS.getReaderFontId() never resolves to Arabic), so without this an Arabic
+  // line only gets Latin-sized vertical room and visually collides with the line
+  // above/below it. Falls back to the plain Latin line height if no Arabic font is
+  // currently loaded/mapped for fontId.
+  int lineHeightFor(bool hasArabic) const;
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);

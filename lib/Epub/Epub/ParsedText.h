@@ -64,6 +64,10 @@ class ParsedText {
   BlockStyle& getBlockStyle() { return blockStyle; }
   size_t size() const { return words.size(); }
   bool isEmpty() const { return words.empty(); }
+  // True if any word added so far contains Arabic content. Lets callers outside this
+  // class (e.g. ChapterHtmlSlimParser's per-paragraph vertical spacing) reuse the flag
+  // already tracked here instead of re-scanning every word.
+  bool hasArabicContent() const { return hasRtlWord; }
   void layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
                              const std::function<void(std::shared_ptr<TextBlock>)>& processLine,
                              bool includeLastLine = true);

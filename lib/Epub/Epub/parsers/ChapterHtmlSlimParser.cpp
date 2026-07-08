@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <ScriptDetector.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
 #include <expat.h>
@@ -1371,8 +1372,21 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   return true;
 }
 
+int ChapterHtmlSlimParser::lineHeightFor(const bool hasArabic) const {
+  const int latinLineHeight = static_cast<int>(renderer.getLineHeight(fontId) * lineCompression);
+  if (!hasArabic) return latinLineHeight;
+
+  const int arabicFontId = renderer.getResolvedArabicFontId(fontId);
+  if (arabicFontId == 0) return latinLineHeight;  // no Arabic font loaded -- nothing to compare against
+
+  const int arabicLineHeight = static_cast<int>(renderer.getLineHeight(arabicFontId) * lineCompression);
+  return std::max(latinLineHeight, arabicLineHeight);
+}
+
 void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
-  const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
+  const bool hasArabic = std::any_of(line->getWords().begin(), line->getWords().end(),
+                                     [](const std::string& w) { return ScriptDetector::containsArabic(w.c_str()); });
+  const int lineHeight = lineHeightFor(hasArabic);
 
   if (!currentPage) {
     currentPage.reset(new Page());
@@ -1412,7 +1426,7 @@ void ChapterHtmlSlimParser::makePages() {
     currentPageNextY = 0;
   }
 
-  const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
+  const int lineHeight = lineHeightFor(currentTextBlock->hasArabicContent());
 
   // Apply top spacing before the paragraph (stored in pixels)
   const BlockStyle& blockStyle = currentTextBlock->getBlockStyle();
