@@ -90,11 +90,20 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 29
+### Version 30
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 30 is a pure cache-bust (no structural change from v29): it forces
+sections cached under the earlier, Latin-only per-line row pitch to rebuild
+after upgrading. `ChapterHtmlSlimParser::addLineToPage` now sizes a line's row
+height using the taller of the Latin reading font and the Arabic font when the
+line contains Arabic text, instead of always using the Latin font's line
+height alone -- the old pitch could clip Arabic glyph ascenders/descenders.
+None of this touched a cache-busting settings field, so it needs an explicit
+version bump.
 
 Version 29 is a pure cache-bust (no structural change from v28): it forces
 sections cached under earlier, incorrect Arabic layout logic (word width
@@ -121,7 +130,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 28
+#define EXPECTED_VERSION 30
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96

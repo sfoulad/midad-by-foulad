@@ -101,6 +101,17 @@ class ChapterHtmlSlimParser {
   void flushPendingAnchor();
   void flushPartWordBuffer();
   void makePages();
+  // Row height for a specific extracted line, in pixels. Normally just the reading font's
+  // own line height (advanceY) * lineCompression, but a line containing Arabic text needs
+  // more: the Arabic font's ascender+descender runs noticeably taller than the Latin
+  // reading font's at the same nominal size, so a row pitch sized only for the Latin font
+  // clips Arabic glyph tops/tails (confirmed on a real device: default 14pt Arabic reading
+  // size clipped words, 16pt "worked" only because the larger glyphs happened to eat less
+  // into the same undersized slot -- the underlying row pitch was never Arabic-aware at
+  // any size). Same fix already applied to the chapter selector (7926f0f6) and the OPDS
+  // browser's lists, now applied to actual EPUB body pagination, which is what those
+  // settings are really for.
+  int computeLineHeight(const TextBlock& line) const;
   static EpdFontFamily::Style fontStyleForTextDecoration(CssTextDecoration decoration);
   static void applyDirectionToEntry(StyleStackEntry& entry, const CssStyle& css);
   static void applyTextDecorationToEntry(StyleStackEntry& entry, const CssStyle& css);

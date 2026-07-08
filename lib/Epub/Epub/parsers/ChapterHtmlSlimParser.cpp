@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <ScriptDetector.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
 #include <expat.h>
@@ -1371,8 +1372,20 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   return true;
 }
 
+int ChapterHtmlSlimParser::computeLineHeight(const TextBlock& line) const {
+  const int latinLineHeight = renderer.getLineHeight(fontId);
+
+  const bool hasArabic = std::any_of(line.getWords().begin(), line.getWords().end(), [](const std::string& word) {
+    return ScriptDetector::containsArabic(word.c_str());
+  });
+  if (!hasArabic) return static_cast<int>(latinLineHeight * lineCompression);
+
+  const int arabicLineHeight = renderer.getLineHeight(renderer.getResolvedArabicFontId(fontId));
+  return static_cast<int>(std::max(latinLineHeight, arabicLineHeight) * lineCompression);
+}
+
 void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
-  const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
+  const int lineHeight = computeLineHeight(*line);
 
   if (!currentPage) {
     currentPage.reset(new Page());
