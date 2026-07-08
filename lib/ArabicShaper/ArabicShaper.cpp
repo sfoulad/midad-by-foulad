@@ -218,14 +218,14 @@ std::vector<uint32_t> shapeText(const char* text) {
   for (size_t i = 0; i < afterLigatures.size(); i++) {
     uint32_t c = afterLigatures[i];
 
-    // Drop tashkeel/harakat diacritics entirely. This renderer draws each shaped
-    // codepoint as its own left-to-right advancing glyph (drawArabicText) with no
-    // GPOS-style mark-to-base positioning, so a diacritic would render as a stray
-    // floating mark beside its base letter instead of stacked above/below it.
-    // Matches arabic_reshaper's own default (delete_harakat=true) for the same
-    // reason -- confirmed by diffing this shaper's output against
-    // arabic_reshaper+python-bidi across a real 30k-word novel corpus.
+    // Tashkeel/harakat diacritics pass through unshaped (no contextual form -- they're
+    // combining marks, not joining letters). drawArabicText renders them as zero-advance
+    // marks stacked above/below the preceding base glyph (see combiningMark helpers in
+    // EpdFontData.h and ArabicCharacter::isArabicBelowMark), the same mechanism already
+    // used for Latin/Cyrillic combining accents. The reversal step below keeps a
+    // diacritic attached to (immediately after) its base letter once bidi-reordered.
     if (isArabicDiacritic(c)) {
+      shaped.push_back(c);
       continue;
     }
 
@@ -377,10 +377,23 @@ std::vector<uint32_t> shapeText(const char* text) {
   visual.reserve(len);
   for (int r = static_cast<int>(runs.size()) - 1; r >= 0; r--) {
     if (runs[r].dir == BidiDir::RTL) {
-      // RTL run: reverse chars (logical RTL → visual LTR) and apply Bidi_Mirrored
-      // to characters like ( ) [ ] « » resolved to RTL context
-      for (int i = static_cast<int>(runs[r].end) - 1; i >= static_cast<int>(runs[r].start); i--) {
-        visual.push_back(bidiMirror(shaped[i]));
+      // RTL run: reverse in GRAPHEME-CLUSTER order (logical RTL -> visual LTR), and
+      // apply Bidi_Mirrored to characters like ( ) [ ] « » resolved to RTL context.
+      // A base letter plus any trailing diacritics forms one cluster that must stay
+      // together in its original (base, then marks) order -- reversing per-codepoint
+      // would put a diacritic BEFORE its base once the run flips, since diacritics
+      // always follow their base in logical/Unicode storage order.
+      size_t pos = runs[r].end;
+      while (pos > runs[r].start) {
+        const size_t clusterEnd = pos;
+        size_t clusterStart = pos - 1;
+        while (clusterStart > runs[r].start && isArabicDiacritic(shaped[clusterStart])) {
+          clusterStart--;
+        }
+        for (size_t k = clusterStart; k < clusterEnd; k++) {
+          visual.push_back(bidiMirror(shaped[k]));
+        }
+        pos = clusterStart;
       }
     } else {
       // LTR run: keep char order

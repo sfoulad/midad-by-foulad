@@ -404,6 +404,7 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
 
   int width = 0;
   for (const uint32_t cp : ArabicShaper::shapeText(text)) {
+    if (ArabicShaper::isArabicDiacritic(cp)) continue;  // zero-advance combining mark, see drawArabicText
     const EpdGlyph* glyph = font.getGlyph(cp, style);
     if (glyph) {
       width += fp4::toPixel(glyph->advanceX);
@@ -453,10 +454,43 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
 
   const int yPos = y + getFontAscenderSize(resolvedArabicFontId);
   int cursorX = x;
+  int lastBaseX = x;
+  int lastBaseLeft = 0, lastBaseWidth = 0;
+  // Top edge (in glyph->top's "distance above baseline" units) that the next above-
+  // baseline mark must clear. Starts at the base letter's own top and is advanced to
+  // each newly-stacked mark's own (raised) top, so a second above-mark on the same base
+  // (e.g. shadda + a vowel -- very common in vocalized text) stacks further out instead
+  // of overlapping the first.
+  int aboveStackTop = 0;
+  bool haveBase = false;
+
   for (const uint32_t cp : ArabicShaper::shapeText(text)) {
     const EpdGlyph* glyph = font.getGlyph(cp, style);
     if (!glyph) continue;
+
+    if (ArabicShaper::isArabicDiacritic(cp)) {
+      if (!haveBase) continue;  // stray leading mark with no base to attach to
+      const int combiningX =
+          combiningMark::centerOver(lastBaseX, lastBaseLeft, lastBaseWidth, glyph->left, glyph->width);
+      if (ArabicShaper::isArabicBelowMark(cp)) {
+        // Below-baseline marks (kasra, hamza-below, ...) already sit correctly relative
+        // to the baseline via their own native glyph metrics -- no vertical adjustment,
+        // same as how the general combining-mark path leaves cedilla/dot-below alone.
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos, black, style);
+      } else {
+        const int raiseBy = combiningMark::raiseAboveBase(glyph->top, glyph->height, aboveStackTop);
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, combiningX, yPos - raiseBy, black, style);
+        aboveStackTop = glyph->top + raiseBy;
+      }
+      continue;
+    }
+
     renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, cursorX, yPos, black, style);
+    lastBaseX = cursorX;
+    lastBaseLeft = glyph->left;
+    lastBaseWidth = glyph->width;
+    aboveStackTop = glyph->top;
+    haveBase = true;
     cursorX += fp4::toPixel(glyph->advanceX);
   }
 }

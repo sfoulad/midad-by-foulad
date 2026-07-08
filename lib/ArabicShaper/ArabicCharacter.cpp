@@ -6,6 +6,20 @@ bool isArabicDiacritic(uint32_t cp) { return (cp >= 0x064B && cp <= 0x065F) || c
 
 bool isArabicBaseChar(uint32_t cp) { return cp >= 0x0621 && cp <= 0x064A && !isArabicDiacritic(cp); }
 
+bool isArabicBelowMark(uint32_t cp) {
+  switch (cp) {
+    case 0x064D:  // KASRATAN (tanwin kasr)
+    case 0x0650:  // KASRA
+    case 0x0655:  // HAMZA BELOW
+    case 0x0656:  // SUBSCRIPT ALEF
+    case 0x065C:  // VOWEL SIGN DOT BELOW
+    case 0x065F:  // WAVY HAMZA BELOW
+      return true;
+    default:
+      return false;
+  }
+}
+
 JoiningType getJoiningType(uint32_t cp) {
   if (isArabicDiacritic(cp)) return JoiningType::TRANSPARENT;
 
