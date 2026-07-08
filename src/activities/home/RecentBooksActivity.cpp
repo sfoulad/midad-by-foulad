@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -289,7 +290,13 @@ void RecentBooksActivity::render(RenderLock&&) {
       }
 
       const auto titleLines = renderer.wrappedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth, GRID_TITLE_LINES);
-      const int titleLineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+      // Spacing between this title's own lines, not the worst case across the whole page
+      // (that's getGridTitleHeight(), used for the cell layout itself) -- using the taller
+      // Arabic line height here for every title, including plain Latin ones, left a big
+      // visible gap between lines 1 and 2 for the common case.
+      const int titleLineHeight = ScriptDetector::containsArabic(book.title.c_str())
+                                      ? renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID)
+                                      : renderer.getLineHeight(SMALL_FONT_ID);
       int titleY = cellY + geometry.coverHeight + GRID_TITLE_TOP_GAP;
       for (const auto& line : titleLines) {
         renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, geometry.coverWidth, line.c_str());
