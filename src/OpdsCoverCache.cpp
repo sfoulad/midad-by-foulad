@@ -59,8 +59,13 @@ bool ensureOpdsCoverCached(const OpdsEntry& entry, const std::string& username, 
     return false;
   }
 
+  // allowUpscale=false: the server already serves a source cover smaller than width/height at
+  // its own native size rather than padding/stretching it, so upscaling it again here would
+  // just blur it for no benefit -- the draw call centers whatever (possibly smaller) size comes
+  // out of this instead.
   const bool isPng = entry.coverType.find("png") != std::string::npos;
-  const bool success = isPng ? PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(src, dst, width, height)
+  const bool success = isPng ? PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(src, dst, width, height,
+                                                                                 /*allowUpscale=*/false)
                              : JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(src, dst, width, height);
 
   // Explicitly close() files before Storage.remove() on the same paths.

@@ -395,7 +395,13 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
           if (Storage.openFileForRead("OPDS", coverPath, file)) {
             Bitmap bitmap(file);
             if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-              renderer.drawBitmap(bitmap, cellX, cellY, layout.coverWidth, layout.coverHeight);
+              // The cache file may be smaller than the cell (OpdsCoverCache never upscales a
+              // source cover below the target size) -- center it instead of pinning to the
+              // top-left corner. drawBitmap only ever scales down, never up, so this stays a
+              // no-op for the common case where the cache file already matches the cell.
+              const int offsetX = std::max(0, (layout.coverWidth - bitmap.getWidth()) / 2);
+              const int offsetY = std::max(0, (layout.coverHeight - bitmap.getHeight()) / 2);
+              renderer.drawBitmap(bitmap, cellX + offsetX, cellY + offsetY, layout.coverWidth, layout.coverHeight);
               drawn = true;
             }
           }

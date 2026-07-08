@@ -396,7 +396,7 @@ static void convertScanlineToGray(const PngDecodeContext& ctx, uint8_t* grayRow)
 }
 
 bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
-                                                   bool oneBit, bool crop) {
+                                                   bool oneBit, bool crop, bool allowUpscale) {
   LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
 
   // Verify PNG signature
@@ -583,18 +583,27 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     } else {
       scale = (scaleToFitWidth < scaleToFitHeight) ? scaleToFitWidth : scaleToFitHeight;
     }
+    // Never upscale a source smaller than the target when the caller asked us not to. Capping
+    // at 1.0 also makes outWidth/outHeight below collapse back to the source's own dimensions,
+    // which then takes the direct-copy path a few lines down instead of the costlier
+    // area-averaging resample loop -- cheaper AND sharper for small covers.
+    if (!allowUpscale && scale > 1.0f) {
+      scale = 1.0f;
+    }
 
     outWidth = static_cast<int>(width * scale);
     outHeight = static_cast<int>(height * scale);
     if (outWidth < 1) outWidth = 1;
     if (outHeight < 1) outHeight = 1;
 
-    scaleX_fp = (width << 16) / outWidth;
-    scaleY_fp = (height << 16) / outHeight;
-    needsScaling = true;
+    if (static_cast<uint32_t>(outWidth) != width || static_cast<uint32_t>(outHeight) != height) {
+      scaleX_fp = (width << 16) / outWidth;
+      scaleY_fp = (height << 16) / outHeight;
+      needsScaling = true;
 
-    LOG_DBG("PNG", "Scaling %ux%u -> %dx%d (target %dx%d)", width, height, outWidth, outHeight, targetWidth,
-            targetHeight);
+      LOG_DBG("PNG", "Scaling %ux%u -> %dx%d (target %dx%d)", width, height, outWidth, outHeight, targetWidth,
+              targetHeight);
+    }
   }
 
   // Write BMP header
@@ -833,6 +842,6 @@ bool PngToBmpConverter::pngFileToBmpStreamWithSize(HalFile& pngFile, Print& bmpO
 }
 
 bool PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int targetMaxWidth,
-                                                       int targetMaxHeight) {
-  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true);
+                                                       int targetMaxHeight, bool allowUpscale) {
+  return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true, allowUpscale);
 }
