@@ -4,7 +4,7 @@ Authoritative reference for the server-side OPDS implementation this app's OPDS
 client (`lib/OpdsParser/`, `src/network/HttpDownloader.cpp`,
 `src/activities/browser/OpdsBookBrowserActivity.cpp`, `src/OpdsCoverCache.cpp`)
 talks to. Pulled directly from the foulad-ebooks codebase, accurate as of
-foulad-ebooks v0.10.4. Keep this in sync if the server contract changes --
+foulad-ebooks v0.10.14. Keep this in sync if the server contract changes --
 it's meant to save re-deriving server behavior via curl each time the client
 needs a fix.
 
@@ -27,27 +27,44 @@ Two methods, both handled by `OpdsBasicAuth` middleware on every OPDS route:
 |---|---|
 | `GET /opds/` | Root navigation feed (categories list) |
 | `GET /opds/books` | Acquisition feed: all books, paginated |
-| `GET /opds/category/{slug}` | Acquisition feed: one category, paginated |
+| `GET /opds/category/{slug}` | Navigation feed: one category's subcategories, "All Books", "Recently Added" |
+| `GET /opds/category/{slug}/all` | Acquisition feed: every book in that category's subtree, paginated |
+| `GET /opds/category/{slug}/recent` | Acquisition feed: same subtree, newest upload first, paginated |
+| `GET /opds/recent` | Acquisition feed: every visible book, newest upload first, paginated |
+| `GET /opds/search?q=...` | Acquisition feed: title/author match, paginated |
 | `GET /opds/books/{id}/download` | Download the EPUB/PDF source file |
 | `GET /opds/books/{id}/xtc` | Download the converted `.xtc`/`.xtch` file |
 | `GET /opds/books/{id}/cover` | Cover image (black & white PNG) |
 
-## Root feed (navigation)
+## Navigation feeds (root and every `/opds/category/{slug}`)
 
-Standard Atom/OPDS navigation feed. `<link rel="subsection">` for "All Books"
-plus one entry per non-empty top-level category. Categories with zero visible
-books are omitted entirely (no dead-end links).
+**As of server v0.10.14, every category feed is pure navigation, the same way
+the root feed itself works** -- neither ever lists a real book `<entry>`
+directly. Standard Atom/OPDS navigation feed: `<link rel="subsection">`
+entries only, no acquisition-format book entries mixed in.
 
-## Acquisition feed (`/opds/books` or `/opds/category/{slug}`)
+- **Root** (`/opds/`): "All Books", "Recently Added", then one entry per
+  non-empty top-level category.
+- **A category** (`/opds/category/{slug}`): any non-empty subcategories,
+  then "All Books" and "Recently Added" entries scoped to that category's own
+  subtree (itself + every descendant subcategory combined) -- these are the
+  *only* way to reach real book entries for that category. This applies
+  uniformly whether the category is a top-level language (English/Arabic) or
+  a leaf subcategory with no children of its own -- a leaf category's page no
+  longer lists its books directly, it shows these two entries instead.
+- Categories/subcategories with zero visible books are omitted entirely (no
+  dead-end links).
+
+## Acquisition feeds (`/opds/books`, `/opds/category/{slug}/all`, `/opds/category/{slug}/recent`, `/opds/recent`, `/opds/search`)
 
 - `<link rel="self">` and `rel="start"` always present.
 - **Pagination**: 25 books per page. `<link rel="next">`/`rel="previous"`
   appear as standard `<link>` elements at the feed level (not per-entry) when
   more pages exist -- just a plain `?page=N` query param appended to the same
   URL. No pagination link at all if everything fits on one page.
-- If browsing a category with subcategories, those subcategories appear as
-  `<link rel="subsection">` entries -- **only on page 1** of that category's
-  feed, never repeated on later pages.
+- No `<link rel="subsection">` entries ever appear in these feeds -- that's
+  exclusively a navigation-feed concept now (see above). These feeds are
+  book entries only.
 - Each book is one `<entry>`: `<title>`, `<id>`
   (`urn:opds-library:book:{id}`), `<updated>`, optional `<author><name>`,
   optional `<summary>` (HTML already stripped), one
