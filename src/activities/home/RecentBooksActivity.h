@@ -39,6 +39,9 @@ class RecentBooksActivity final : public Activity {
   static constexpr int GRID_MIN_CELL_WIDTH = 140;
   static constexpr int GRID_GUTTER = 12;
   static constexpr float GRID_COVER_ASPECT = 1.5f;
+  // Base space reserved below the cover for the title, sized for Latin text. Actual
+  // reserved height comes from getGridTitleRowHeight(), which grows this when an Arabic
+  // title is present -- use that, not this constant directly, anywhere layout is computed.
   static constexpr int GRID_TITLE_ROW_HEIGHT = 36;
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
@@ -51,6 +54,15 @@ class RecentBooksActivity final : public Activity {
   };
   GridGeometry computeGridGeometry() const;
   void loadGridPageCovers(int pageStart);
+
+  // GRID_TITLE_ROW_HEIGHT reserves space below the cover for one line of title text at
+  // SMALL_FONT_ID. Arabic line height at the same nominal size runs noticeably taller
+  // (no descender clearance built in for it), so an Arabic book title clips its
+  // tails/tashkeel against the next row -- same bug class already fixed for
+  // OpdsBookBrowserActivity's list rows. Grows the reserved height by exactly the extra
+  // an Arabic title needs; returns the unmodified constant (zero regression) when the
+  // current recent-books list has no Arabic titles.
+  int getGridTitleRowHeight() const;
 
   // Data loading
   void loadRecentBooks();

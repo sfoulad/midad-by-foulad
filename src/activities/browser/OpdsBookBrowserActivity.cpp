@@ -370,6 +370,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     const int pageCount = std::min(layout.itemsPerPage, layout.bookCount - gridPageStart);
     const int totalGridWidth = layout.columns * (layout.coverWidth + GRID_GUTTER) - GRID_GUTTER;
     const int gridStartX = std::max(0, (pageWidth - totalGridWidth) / 2);
+    const int titleRowHeight = getGridTitleRowHeight();
 
     for (int i = 0; i < pageCount; i++) {
       const int bookIdx = layout.bookStart + gridPageStart + i;
@@ -377,7 +378,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       const int col = i % layout.columns;
       const int row = i / layout.columns;
       const int cellX = gridStartX + col * (layout.coverWidth + GRID_GUTTER);
-      const int cellY = gridTop + row * (layout.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER);
+      const int cellY = gridTop + row * (layout.coverHeight + titleRowHeight + GRID_GUTTER);
 
       bool drawn = false;
       if (!entry.coverUrl.empty()) {
@@ -437,6 +438,17 @@ int OpdsBookBrowserActivity::getListRowHeight() const {
   return std::max(latinLineHeight, arabicLineHeight) + LIST_ROW_VERTICAL_PADDING;
 }
 
+int OpdsBookBrowserActivity::getGridTitleRowHeight() const {
+  const bool hasArabic = std::any_of(entries.begin(), entries.end(), [](const OpdsEntry& entry) {
+    return entry.type == OpdsEntryType::BOOK && ScriptDetector::containsArabic(entry.title.c_str());
+  });
+  if (!hasArabic) return GRID_TITLE_ROW_HEIGHT;
+
+  const int latinLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int arabicLineHeight = renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID);
+  return GRID_TITLE_ROW_HEIGHT + std::max(0, arabicLineHeight - latinLineHeight);
+}
+
 int OpdsBookBrowserActivity::getListPageItems(const int rowHeight) const {
   const int available = renderer.getScreenHeight() - GRID_CONTENT_TOP - GRID_BOTTOM_MARGIN;
   return std::max(1, available / rowHeight);
@@ -476,7 +488,7 @@ OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout()
   layout.coverHeight = static_cast<int>(layout.coverWidth * GRID_COVER_ASPECT);
 
   const int contentHeight = pageHeight - GRID_CONTENT_TOP - GRID_BOTTOM_MARGIN;
-  const int rowHeight = layout.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER;
+  const int rowHeight = layout.coverHeight + getGridTitleRowHeight() + GRID_GUTTER;
   const int rows = std::max(1, contentHeight / rowHeight);
   layout.itemsPerPage = layout.columns * rows;
 

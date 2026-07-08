@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -157,7 +158,7 @@ RecentBooksActivity::GridGeometry RecentBooksActivity::computeGridGeometry() con
   geometry.coverWidth = (pageWidth - GRID_GUTTER * (geometry.columns + 1)) / geometry.columns;
   geometry.coverHeight = static_cast<int>(geometry.coverWidth / 0.6f);
 
-  const int rowHeight = geometry.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER;
+  const int rowHeight = geometry.coverHeight + getGridTitleRowHeight() + GRID_GUTTER;
   const int rows = std::max(1, contentHeight / rowHeight);
   geometry.itemsPerPage = geometry.columns * rows;
   return geometry;
@@ -246,6 +247,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
     const GridGeometry geometry = computeGridGeometry();
+    const int titleRowHeight = getGridTitleRowHeight();
     gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
     const int pageCount = std::min(geometry.itemsPerPage, static_cast<int>(recentBooks.size()) - gridPageStart);
     const int totalGridWidth = geometry.columns * (geometry.coverWidth + GRID_GUTTER) - GRID_GUTTER;
@@ -257,7 +259,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       const int col = i % geometry.columns;
       const int row = i / geometry.columns;
       const int cellX = gridStartX + col * (geometry.coverWidth + GRID_GUTTER);
-      const int cellY = contentTop + row * (geometry.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER);
+      const int cellY = contentTop + row * (geometry.coverHeight + titleRowHeight + GRID_GUTTER);
 
       bool drawn = false;
       if (!book.coverBmpPath.empty()) {
@@ -293,4 +295,15 @@ void RecentBooksActivity::render(RenderLock&&) {
   if (!recentBooks.empty() && loadedGridPageStart != gridPageStart) {
     loadGridPageCovers(gridPageStart);
   }
+}
+
+int RecentBooksActivity::getGridTitleRowHeight() const {
+  const bool hasArabic = std::any_of(recentBooks.begin(), recentBooks.end(), [](const RecentBook& book) {
+    return ScriptDetector::containsArabic(book.title.c_str());
+  });
+  if (!hasArabic) return GRID_TITLE_ROW_HEIGHT;
+
+  const int latinLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int arabicLineHeight = renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID);
+  return GRID_TITLE_ROW_HEIGHT + std::max(0, arabicLineHeight - latinLineHeight);
 }

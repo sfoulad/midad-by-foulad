@@ -78,7 +78,10 @@ class OpdsBookBrowserActivity final : public Activity {
   static constexpr int GRID_MIN_CELL_WIDTH = 140;  // decides column count, not the rendered cover size
   static constexpr int GRID_GUTTER = 12;
   static constexpr float GRID_COVER_ASPECT = 1.5f;  // coverHeight = coverWidth * aspect
-  static constexpr int GRID_TITLE_ROW_HEIGHT = 36;  // space reserved below the cover for the title
+  // Base space reserved below the cover for the title, sized for Latin text. Actual
+  // reserved height comes from getGridTitleRowHeight(), which grows this when an Arabic
+  // title is present -- use that, not this constant directly, anywhere layout is computed.
+  static constexpr int GRID_TITLE_ROW_HEIGHT = 36;
   static constexpr int GRID_CONTENT_TOP = 60;       // matches the existing list's content start y
   static constexpr int GRID_BOTTOM_MARGIN = 40;     // reserved for button hints
   static constexpr int NO_GRID_PAGE_LOADED = -1;
@@ -111,6 +114,12 @@ class OpdsBookBrowserActivity final : public Activity {
   // the screen, and so this adapts across orientations/devices instead of assuming one
   // fixed screen height.
   int getListPageItems(int rowHeight) const;
+  // GRID_TITLE_ROW_HEIGHT reserves space below a cover for one line of title text at
+  // SMALL_FONT_ID. Same issue as getListRowHeight() above: an Arabic book title runs
+  // noticeably taller at the same nominal size and clips against the next row. Grows the
+  // reserved height by exactly the extra an Arabic title needs; returns the unmodified
+  // constant (zero regression) when no BOOK entry on this feed has an Arabic title.
+  int getGridTitleRowHeight() const;
 
   void checkAndConnectWifi();
   void launchWifiSelection();
