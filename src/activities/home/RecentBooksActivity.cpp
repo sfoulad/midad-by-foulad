@@ -157,10 +157,15 @@ RecentBooksActivity::GridGeometry RecentBooksActivity::computeGridGeometry() con
   geometry.coverWidth = (pageWidth - GRID_GUTTER * (geometry.columns + 1)) / geometry.columns;
   geometry.coverHeight = static_cast<int>(geometry.coverWidth / 0.6f);
 
-  const int rowHeight = geometry.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER;
+  const int rowHeight = geometry.coverHeight + getGridTitleHeight() + GRID_GUTTER;
   const int rows = std::max(1, contentHeight / rowHeight);
   geometry.itemsPerPage = geometry.columns * rows;
   return geometry;
+}
+
+int RecentBooksActivity::getGridTitleHeight() const {
+  const int lineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+  return GRID_TITLE_TOP_GAP + lineHeight * GRID_TITLE_LINES;
 }
 
 void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
@@ -246,6 +251,7 @@ void RecentBooksActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
     const GridGeometry geometry = computeGridGeometry();
+    const int titleHeight = getGridTitleHeight();
     gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
     const int pageCount = std::min(geometry.itemsPerPage, static_cast<int>(recentBooks.size()) - gridPageStart);
     const int totalGridWidth = geometry.columns * (geometry.coverWidth + GRID_GUTTER) - GRID_GUTTER;
@@ -257,7 +263,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       const int col = i % geometry.columns;
       const int row = i / geometry.columns;
       const int cellX = gridStartX + col * (geometry.coverWidth + GRID_GUTTER);
-      const int cellY = contentTop + row * (geometry.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER);
+      const int cellY = contentTop + row * (geometry.coverHeight + titleHeight + GRID_GUTTER);
 
       bool drawn = false;
       if (!book.coverBmpPath.empty()) {
@@ -282,9 +288,13 @@ void RecentBooksActivity::render(RenderLock&&) {
         renderer.drawRect(cellX - 3, cellY - 3, geometry.coverWidth + 6, geometry.coverHeight + 6, true);
       }
 
-      auto title = renderer.truncatedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth);
-      renderer.drawTextInWidth(SMALL_FONT_ID, cellX, cellY + geometry.coverHeight + 4, geometry.coverWidth,
-                               title.c_str());
+      const auto titleLines = renderer.wrappedText(SMALL_FONT_ID, book.title.c_str(), geometry.coverWidth, GRID_TITLE_LINES);
+      const int titleLineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+      int titleY = cellY + geometry.coverHeight + GRID_TITLE_TOP_GAP;
+      for (const auto& line : titleLines) {
+        renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, geometry.coverWidth, line.c_str());
+        titleY += titleLineHeight;
+      }
     }
   }
 

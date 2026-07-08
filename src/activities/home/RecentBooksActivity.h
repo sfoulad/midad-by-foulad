@@ -39,7 +39,8 @@ class RecentBooksActivity final : public Activity {
   static constexpr int GRID_MIN_CELL_WIDTH = 140;
   static constexpr int GRID_GUTTER = 12;
   static constexpr float GRID_COVER_ASPECT = 1.5f;
-  static constexpr int GRID_TITLE_ROW_HEIGHT = 36;
+  static constexpr int GRID_TITLE_LINES = 2;   // caption below the cover wraps up to this many lines
+  static constexpr int GRID_TITLE_TOP_GAP = 4;  // gap between cover bottom and first title line
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
 
@@ -51,6 +52,10 @@ class RecentBooksActivity final : public Activity {
   };
   GridGeometry computeGridGeometry() const;
   void loadGridPageCovers(int pageStart);
+  // Total space reserved below a cover for its (up to GRID_TITLE_LINES-line) title caption --
+  // see OpdsBookBrowserActivity::getGridTitleHeight() for why this is computed from font
+  // metrics rather than a fixed constant (Arabic titles need noticeably more line height).
+  int getGridTitleHeight() const;
 
   // Data loading
   void loadRecentBooks();

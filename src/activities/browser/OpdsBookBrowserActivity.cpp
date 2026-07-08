@@ -347,19 +347,20 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       std::string displayText = (entry.type == OpdsEntryType::NAVIGATION) ? "> " + entry.title : entry.title;
       if (entry.type == OpdsEntryType::BOOK && !entry.author.empty()) displayText += " - " + entry.author;
       auto item = renderer.truncatedText(UI_10_FONT_ID, displayText.c_str(), pageWidth - 40);
-      renderer.drawText(UI_10_FONT_ID, 20, GRID_CONTENT_TOP + (i % pageItems) * rowHeight, item.c_str(),
-                        i != static_cast<size_t>(selectorIndex));
+      renderer.drawTextInWidth(UI_10_FONT_ID, 20, GRID_CONTENT_TOP + (i % pageItems) * rowHeight, pageWidth - 40,
+                               item.c_str(), i != static_cast<size_t>(selectorIndex));
     }
   } else {
     // Nav strip above the grid (e.g. a "Prev Page" entry). Same Arabic-aware row height
     // as the plain list above -- an Arabic subcategory link here would clip the same way.
     const int rowHeight = getListRowHeight();
+    const int titleHeight = getGridTitleHeight();
     int y = GRID_CONTENT_TOP;
     for (int i = 0; i < layout.topNavCount; i++) {
       const auto& entry = entries[i];
       auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
       if (i == selectorIndex) renderer.fillRect(0, y - 2, pageWidth - 1, rowHeight);
-      renderer.drawText(UI_10_FONT_ID, 20, y, item.c_str(), i != selectorIndex);
+      renderer.drawTextInWidth(UI_10_FONT_ID, 20, y, pageWidth - 40, item.c_str(), i != selectorIndex);
       y += rowHeight;
     }
     const int gridTop = y + (layout.topNavCount > 0 ? 10 : 0);
@@ -377,7 +378,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       const int col = i % layout.columns;
       const int row = i / layout.columns;
       const int cellX = gridStartX + col * (layout.coverWidth + GRID_GUTTER);
-      const int cellY = gridTop + row * (layout.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER);
+      const int cellY = gridTop + row * (layout.coverHeight + titleHeight + GRID_GUTTER);
 
       bool drawn = false;
       if (!entry.coverUrl.empty()) {
@@ -401,8 +402,13 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         renderer.drawRect(cellX - 3, cellY - 3, layout.coverWidth + 6, layout.coverHeight + 6, true);
       }
 
-      auto title = renderer.truncatedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth);
-      renderer.drawTextInWidth(SMALL_FONT_ID, cellX, cellY + layout.coverHeight + 4, layout.coverWidth, title.c_str());
+      const auto titleLines = renderer.wrappedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth, GRID_TITLE_LINES);
+      const int titleLineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+      int titleY = cellY + layout.coverHeight + GRID_TITLE_TOP_GAP;
+      for (const auto& line : titleLines) {
+        renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, layout.coverWidth, line.c_str());
+        titleY += titleLineHeight;
+      }
     }
 
     // Nav strip below the grid (e.g. a "Next Page" entry). Same Arabic-aware row height.
@@ -413,7 +419,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         const auto& entry = entries[i];
         auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
         if (i == selectorIndex) renderer.fillRect(0, by - 2, pageWidth - 1, rowHeight);
-        renderer.drawText(UI_10_FONT_ID, 20, by, item.c_str(), i != selectorIndex);
+        renderer.drawTextInWidth(UI_10_FONT_ID, 20, by, pageWidth - 40, item.c_str(), i != selectorIndex);
         by += rowHeight;
       }
     }
@@ -440,6 +446,11 @@ int OpdsBookBrowserActivity::getListRowHeight() const {
 int OpdsBookBrowserActivity::getListPageItems(const int rowHeight) const {
   const int available = renderer.getScreenHeight() - GRID_CONTENT_TOP - GRID_BOTTOM_MARGIN;
   return std::max(1, available / rowHeight);
+}
+
+int OpdsBookBrowserActivity::getGridTitleHeight() const {
+  const int lineHeight = std::max(renderer.getLineHeight(SMALL_FONT_ID), renderer.getLineHeight(NOTOSANSARABIC_8_FONT_ID));
+  return GRID_TITLE_TOP_GAP + lineHeight * GRID_TITLE_LINES;
 }
 
 OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout() const {
@@ -476,7 +487,7 @@ OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout()
   layout.coverHeight = static_cast<int>(layout.coverWidth * GRID_COVER_ASPECT);
 
   const int contentHeight = pageHeight - GRID_CONTENT_TOP - GRID_BOTTOM_MARGIN;
-  const int rowHeight = layout.coverHeight + GRID_TITLE_ROW_HEIGHT + GRID_GUTTER;
+  const int rowHeight = layout.coverHeight + getGridTitleHeight() + GRID_GUTTER;
   const int rows = std::max(1, contentHeight / rowHeight);
   layout.itemsPerPage = layout.columns * rows;
 

@@ -78,11 +78,20 @@ class OpdsBookBrowserActivity final : public Activity {
   static constexpr int GRID_MIN_CELL_WIDTH = 140;  // decides column count, not the rendered cover size
   static constexpr int GRID_GUTTER = 12;
   static constexpr float GRID_COVER_ASPECT = 1.5f;  // coverHeight = coverWidth * aspect
-  static constexpr int GRID_TITLE_ROW_HEIGHT = 36;  // space reserved below the cover for the title
-  static constexpr int GRID_CONTENT_TOP = 60;       // matches the existing list's content start y
-  static constexpr int GRID_BOTTOM_MARGIN = 40;     // reserved for button hints
+  static constexpr int GRID_TITLE_LINES = 2;        // caption below the cover wraps up to this many lines
+  static constexpr int GRID_TITLE_TOP_GAP = 4;       // gap between cover bottom and first title line
+  static constexpr int GRID_CONTENT_TOP = 60;        // matches the existing list's content start y
+  static constexpr int GRID_BOTTOM_MARGIN = 40;      // reserved for button hints
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
+
+  // Total space reserved below a cover for its (up to GRID_TITLE_LINES-line) title caption.
+  // Computed from actual font metrics rather than a fixed constant: the Arabic font's line
+  // height runs noticeably taller than SMALL_FONT_ID's Latin metrics (same reasoning as
+  // getListRowHeight() below), so a fixed reservation sized for Latin text would clip an
+  // Arabic title's second line. Uses the worst case unconditionally (not per-page detection)
+  // since the grid's row spacing must stay stable regardless of which page is showing.
+  int getGridTitleHeight() const;
 
   struct GridLayout {
     bool isGridPage = false;
