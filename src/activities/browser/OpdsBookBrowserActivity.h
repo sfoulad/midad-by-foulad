@@ -114,14 +114,19 @@ class OpdsBookBrowserActivity final : public Activity {
   GridLayout computeGridLayout() const;
   void loadGridPageCovers(const GridLayout& layout, int pageStart);
 
-  // Row height in pixels for plain text-list rows (category/navigation entries, both the
-  // pure-list page and the nav strips above/below a book grid). Arabic titles need
-  // noticeably more vertical space than Latin ones (the Arabic font's ascender+descender
-  // is roughly double), so a Latin-sized row clips Arabic glyph tops/tails -- same issue
-  // already fixed for XtcReaderChapterSelectionActivity's chapter list. Checks whether any
-  // entry on the current page has an Arabic title and sizes every row for the tallest font
-  // actually in use, so pagination (getListPageItems) and rendering always agree.
+  // Row height (pitch) in pixels for plain text-list rows (category/navigation entries, both
+  // the pure-list page and the nav strips above/below a book grid). Kept tight/Latin-sized
+  // unconditionally so row-to-row spacing looks identical for English and Arabic pages -- see
+  // getListRowHighlightHeight() below for the one place that tightness isn't safe on its own.
   int getListRowHeight() const;
+  // Height of the selection-highlight bar drawn behind one specific row's title -- can be
+  // taller than getListRowHeight() itself. The row pitch stays tight/Latin-sized (see above)
+  // for visual consistency, but an Arabic title's ascenders/descenders can be taller than that
+  // tight pitch; unselected, the overflow quietly overlaps the next row's whitespace and is
+  // barely noticeable, but a *selected* row inverts to white-on-black, so the same overflow
+  // gets visibly sliced off at the highlight rectangle's hard edge. Only the highlight itself
+  // widens (symmetrically, so the row pitch and text position are untouched) to avoid that.
+  int getListRowHighlightHeight(const std::string& title) const;
   // How many list rows fit in the available content area for a given row height --
   // replaces a fixed item-per-page constant so a taller Arabic row height doesn't overflow
   // the screen, and so this adapts across orientations/devices instead of assuming one

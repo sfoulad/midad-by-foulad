@@ -347,7 +347,13 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     const int rowHeight = getListRowHeight();
     const int pageItems = getListPageItems(rowHeight);
     const auto pageStartIndex = selectorIndex / pageItems * pageItems;
-    renderer.fillRect(0, GRID_CONTENT_TOP + (selectorIndex % pageItems) * rowHeight - 2, pageWidth - 1, rowHeight);
+    const int highlightHeight = getListRowHighlightHeight(entries[selectorIndex].title);
+    // Grow the highlight symmetrically around the tight row pitch (rather than only
+    // downward) so a taller Arabic line doesn't get sliced by the highlight edge, without
+    // moving where the row's own text draws.
+    const int highlightYOffset = (highlightHeight - rowHeight) / 2;
+    renderer.fillRect(0, GRID_CONTENT_TOP + (selectorIndex % pageItems) * rowHeight - 2 - highlightYOffset,
+                      pageWidth - 1, highlightHeight);
 
     for (size_t i = pageStartIndex; i < entries.size() && i < static_cast<size_t>(pageStartIndex + pageItems); i++) {
       const auto& entry = entries[i];
@@ -366,7 +372,11 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     for (int i = 0; i < layout.topNavCount; i++) {
       const auto& entry = entries[i];
       auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
-      if (i == selectorIndex) renderer.fillRect(0, y - 2, pageWidth - 1, rowHeight);
+      if (i == selectorIndex) {
+        const int highlightHeight = getListRowHighlightHeight(entry.title);
+        const int highlightYOffset = (highlightHeight - rowHeight) / 2;
+        renderer.fillRect(0, y - 2 - highlightYOffset, pageWidth - 1, highlightHeight);
+      }
       renderer.drawTextInWidth(UI_10_FONT_ID, 20, y, pageWidth - 40, item.c_str(), i != selectorIndex);
       y += rowHeight;
     }
@@ -439,7 +449,11 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       for (int i = layout.bottomNavStart; i < static_cast<int>(entries.size()); i++) {
         const auto& entry = entries[i];
         auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
-        if (i == selectorIndex) renderer.fillRect(0, by - 2, pageWidth - 1, rowHeight);
+        if (i == selectorIndex) {
+          const int highlightHeight = getListRowHighlightHeight(entry.title);
+          const int highlightYOffset = (highlightHeight - rowHeight) / 2;
+          renderer.fillRect(0, by - 2 - highlightYOffset, pageWidth - 1, highlightHeight);
+        }
         renderer.drawTextInWidth(UI_10_FONT_ID, 20, by, pageWidth - 40, item.c_str(), i != selectorIndex);
         by += rowHeight;
       }
@@ -453,12 +467,22 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
 }
 
 int OpdsBookBrowserActivity::getListRowHeight() const {
-  // Was previously widened for pages with an Arabic title (using the taller Arabic line
-  // height) to avoid clipping ascenders/descenders, matching the chapter selector's fix
-  // for the same issue. Explicit user feedback preferred visually consistent, tighter
-  // spacing matching the Latin rows over the extra clipping headroom, so this is back to
-  // always using the tight Latin height -- revisit if Arabic rows start clipping again.
+  // Explicit user feedback preferred visually consistent, tighter row-to-row spacing matching
+  // the Latin rows over extra clipping headroom, so this always uses the tight Latin height
+  // regardless of script -- see getListRowHighlightHeight() for where an Arabic-tall selection
+  // highlight is still handled separately from this pitch.
   return renderer.getLineHeight(UI_10_FONT_ID) + LIST_ROW_VERTICAL_PADDING;
+}
+
+int OpdsBookBrowserActivity::getListRowHighlightHeight(const std::string& title) const {
+  const int rowHeight = getListRowHeight();
+  if (!ScriptDetector::containsArabic(title.c_str())) return rowHeight;
+  // A selected Arabic row inverts to white-on-black; unlike the unselected case (where a
+  // slightly-too-tall glyph just quietly overlaps the next row's white background), any part
+  // of the glyph taller than the tight Latin pitch gets visibly sliced off at the highlight
+  // rectangle's edge. Widen just the highlight for this one row instead of the pitch itself.
+  const int arabicLineHeight = renderer.getLineHeight(renderer.getResolvedArabicFontId(UI_10_FONT_ID));
+  return std::max(rowHeight, arabicLineHeight + LIST_ROW_VERTICAL_PADDING);
 }
 
 int OpdsBookBrowserActivity::getListPageItems(const int rowHeight) const {
