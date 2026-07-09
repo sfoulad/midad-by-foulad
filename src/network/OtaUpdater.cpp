@@ -14,6 +14,7 @@
 #include <esp_wifi.h>
 // clang-format on
 
+#include <cstring>
 #include <string>
 
 namespace {
@@ -67,17 +68,29 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
 }
 
 bool OtaUpdater::isUpdateNewer() const {
-  if (!updateAvailable || latestVersion.empty() || latestVersion == CROSSPOINT_VERSION) {
+  if (!updateAvailable || latestVersion.empty()) {
+    return false;
+  }
+
+  // GitHub tag names are conventionally "v1.6.24" while CROSSPOINT_VERSION (from
+  // platformio.ini) is the bare "1.6.24" -- strip a leading 'v'/'V' before comparing so the
+  // two aren't treated as different versions just because of the tag prefix. This also
+  // matters for the sscanf below: handing it a string that starts with a non-digit character
+  // leaves its output variables uninitialized rather than parsed, which previously made this
+  // function's result depend on stack garbage whenever the tag prefix caused a mismatch here.
+  const char* latestVersionStr = latestVersion.c_str();
+  if (*latestVersionStr == 'v' || *latestVersionStr == 'V') latestVersionStr++;
+
+  const auto currentVersion = CROSSPOINT_VERSION;
+  if (strcmp(latestVersionStr, currentVersion) == 0) {
     return false;
   }
 
   int currentMajor, currentMinor, currentPatch;
   int latestMajor, latestMinor, latestPatch;
 
-  const auto currentVersion = CROSSPOINT_VERSION;
-
   // semantic version check (only match on 3 segments)
-  sscanf(latestVersion.c_str(), "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
+  sscanf(latestVersionStr, "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
   sscanf(currentVersion, "%d.%d.%d", &currentMajor, &currentMinor, &currentPatch);
 
   /*
