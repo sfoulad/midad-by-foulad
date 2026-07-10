@@ -63,6 +63,38 @@ void saveOpdsDiagnosticLog(const std::string& context) {
     LOG_ERR("OPDS", "Failed to open opds_error_log.txt for writing");
   }
 }
+
+// Rolling browse trace (/opds_browse_log.txt): one line per feed fetch (URL,
+// entry/book counts, the pagination links the parser captured) and per grid
+// auto-advance decision. Diagnoses pagination misbehavior ("after page 4 it
+// goes back to page 1") from the SD card: whether the next link was missing
+// from the parse or the navigation itself picked the wrong URL. Same
+// keep-it-all-in-RAM/rewrite-whole-file pattern as CoverThumbs::diagLog.
+constexpr size_t BROWSE_LOG_MAX = 6 * 1024;
+std::string& browseLogBuffer() {
+  static std::string buffer;
+  return buffer;
+}
+
+void browseLog(const std::string& line) {
+  std::string& buffer = browseLogBuffer();
+  if (buffer.empty()) {
+    buffer = "OPDS browse log -- CrossPoint version " CROSSPOINT_VERSION "\n";
+  }
+  char prefix[48];
+  snprintf(prefix, sizeof(prefix), "[%lus heap=%u] ", millis() / 1000UL, static_cast<unsigned>(ESP.getFreeHeap()));
+  buffer += prefix;
+  buffer += line;
+  buffer += '\n';
+  if (buffer.size() > BROWSE_LOG_MAX) {
+    buffer.erase(0, buffer.size() / 2);
+  }
+  HalFile file;
+  if (Storage.openFileForWrite("OPDS", "/opds_browse_log.txt", file)) {
+    file.write(reinterpret_cast<const uint8_t*>(buffer.data()), buffer.size());
+  }
+  LOG_INF("OPDS", "%s", line.c_str());
+}
 }  // namespace
 
 void OpdsBookBrowserActivity::onEnter() {
@@ -211,9 +243,11 @@ void OpdsBookBrowserActivity::loop() {
         // last book so the reading direction continues seamlessly.
         if (selectorIndex == layout.bookStart && !feedPrevUrl.empty()) {
           pendingGridSelect = PendingGridSelect::LastBook;
+          browseLog("AUTO-PREV -> " + feedPrevUrl);
           navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", feedPrevUrl, ""});
           return;
         }
+        if (selectorIndex == layout.bookStart) browseLog("WRAP-START (no prev link)");
         selectorIndex =
             layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, false);
         requestUpdate();
@@ -225,9 +259,11 @@ void OpdsBookBrowserActivity::loop() {
         // it "repeats" after 25 books.
         if (selectorIndex == layout.bookStart + layout.bookCount - 1 && !feedNextUrl.empty()) {
           pendingGridSelect = PendingGridSelect::FirstBook;
+          browseLog("AUTO-NEXT -> " + feedNextUrl);
           navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", feedNextUrl, ""});
           return;
         }
+        if (selectorIndex == layout.bookStart + layout.bookCount - 1) browseLog("WRAP-END (no next link)");
         selectorIndex =
             layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, true);
         requestUpdate();
@@ -697,6 +733,15 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
 
   state = entries.empty() ? BrowserState::ERROR : BrowserState::BROWSING;
   if (entries.empty()) errorMessage = tr(STR_NO_ENTRIES);
+
+  {
+    int bookCount = 0;
+    for (const auto& e : entries) {
+      if (e.type == OpdsEntryType::BOOK) bookCount++;
+    }
+    browseLog("FETCH " + url + " entries=" + std::to_string(entries.size()) + " books=" + std::to_string(bookCount) +
+              " next=" + (feedNextUrl.empty() ? "-" : feedNextUrl) + " prev=" + (feedPrevUrl.empty() ? "-" : feedPrevUrl));
+  }
   requestUpdate();
 }
 
