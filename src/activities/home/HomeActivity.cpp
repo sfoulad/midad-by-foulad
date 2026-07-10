@@ -65,35 +65,44 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   // back Home, covers now show, because Home could then just read the files the
   // grid had converted). The snapshot is rebuilt on the next render from the
   // freshly cached thumb files.
+  bool anyToGenerate = false;      // invalid thumb (missing or failure marker), not yet attempted this boot
+  bool anyNeverAttempted = false;  // thumb file absent entirely -- never attempted since the cache was cleared
   for (const RecentBook& book : recentBooks) {
     if (book.coverBmpPath.empty()) continue;
     const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-    if (!Bitmap::isValidCachedBmp(thumbPath) && !CoverThumbs::wasAttemptedThisBoot(thumbPath)) {
-      freeCoverBuffer();
-      coverRendered = false;
-      // Also drop the reading-stats vectors (theme render just loaded them for
-      // the hero card): after a cache clear, generation means a FULL EPUB
-      // metadata re-parse (content.opf/expat/BookMetadataCache) on top of the
-      // image decode, and Home needs every spare block for it. Reloaded from SD
-      // on the next stats access.
-      READING_STATS.releaseMemory();
+    if (Bitmap::isValidCachedBmp(thumbPath) || CoverThumbs::wasAttemptedThisBoot(thumbPath)) continue;
+    anyToGenerate = true;
+    if (!Storage.exists(thumbPath.c_str())) anyNeverAttempted = true;
+  }
 
-      // If the largest contiguous block is still too small for the converters
-      // (PNG's inflate ring buffer alone is 32KB) after freeing our own caches,
-      // this session's fragmentation can't be fixed from here -- reboot into a
-      // fresh heap and let this same code run there. This is exactly what the
-      // user discovered manually: entering the Update screen (which silent-
-      // reboots since v1.6.44) and backing out made "covers load everywhere".
-      // bootWasSilentRestart() guards the loop: on the post-reboot pass we
-      // attempt regardless, and a genuine failure writes the empty marker BMP
-      // (+ the CoverThumbs per-boot mark), so no reboot cycle can repeat.
-      constexpr uint32_t kMinContiguousForCoverGen = 44 * 1024;
-      if (ESP.getMaxAllocHeap() < kMinContiguousForCoverGen && !bootWasSilentRestart()) {
-        LOG_DBG("HOME", "Rebooting for cover generation (largest block %u)", ESP.getMaxAllocHeap());
-        silentRestart();  // does not return
-      }
-      break;
-    }
+  if (anyToGenerate) {
+    // Free the ~38KB frame snapshot and the reading-stats vectors before
+    // converting: after a cache clear, generation means a FULL EPUB metadata
+    // re-parse (content.opf/expat/BookMetadataCache) on top of the image decode
+    // (PNG's inflate ring buffer alone is 32KB), and Home needs every spare
+    // block for it. Both are rebuilt/reloaded on demand afterward.
+    freeCoverBuffer();
+    coverRendered = false;
+    READING_STATS.releaseMemory();
+  }
+
+  // Fresh-boot rule, learned the hard way across three on-device iterations:
+  // generation in a used session fails on Home in ways no amount of freeing our
+  // own caches fixed (a heap-threshold heuristic in v1.6.45 also missed), while
+  // generation right after a silent reboot demonstrably succeeds for every book
+  // ("go to Update [which reboots] and back -> covers load everywhere"). So:
+  // never-attempted covers are only generated on a fresh boot -- reboot to get
+  // one if needed. Guarded against cycles two ways: (a) a boot that IS fresh
+  // (silent reboot, or within a minute of any boot) generates inline, and a
+  // genuine failure there writes the empty marker BMP; (b) marker-bearing thumbs
+  // (attempted on a fresh heap before and truly impossible, e.g. no cover art in
+  // the EPUB at all) never justify a reboot -- they only get the cheap
+  // once-per-boot inline retry.
+  constexpr unsigned long kFreshBootWindowMs = 60000;
+  const bool freshBoot = bootWasSilentRestart() || millis() < kFreshBootWindowMs;
+  if (anyNeverAttempted && !freshBoot) {
+    LOG_DBG("HOME", "Rebooting for cover generation (largest block %u)", ESP.getMaxAllocHeap());
+    silentRestart();  // does not return
   }
 
   int progress = 0;
