@@ -385,11 +385,26 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   {
     const int x1 = rect.x + kMenuPadding;
     const int x2 = rect.x + rect.width - kMenuPadding;
-    const int labelH = renderer.getLineHeight(UI_12_FONT_ID);
+    const char* dividerLabel = tr(STR_RECENTS);
+    const bool arabicLabel = ScriptDetector::containsArabic(dividerLabel);
+    // Arabic UI text renders in NotoSansArabic, whose glyphs sit taller and
+    // descend deeper than the Latin UI_12 metrics this block was sized with --
+    // measured on-device as the lower rule slicing through كتبي's descenders.
+    // Use the Arabic line height for centering and push the rules apart a bit.
+    const int labelH =
+        arabicLabel ? renderer.getLineHeight(NOTOSANSARABIC_12_FONT_ID) : renderer.getLineHeight(UI_12_FONT_ID);
+    const int sep = kDividerHalfSeparation + (arabicLabel ? 5 : 0);
     const int labelCenterY = dividerLabelY + labelH / 2;
-    renderer.drawLine(x1, labelCenterY - kDividerHalfSeparation, x2, labelCenterY - kDividerHalfSeparation, true);
-    renderer.drawLine(x1, labelCenterY + kDividerHalfSeparation, x2, labelCenterY + kDividerHalfSeparation, true);
-    renderer.drawCenteredText(UI_12_FONT_ID, dividerLabelY, tr(STR_RECENTS), true, EpdFontFamily::BOLD);
+    renderer.drawLine(x1, labelCenterY - sep, x2, labelCenterY - sep, true);
+    renderer.drawLine(x1, labelCenterY + sep, x2, labelCenterY + sep, true);
+    const int labelW = renderer.getTextWidth(UI_12_FONT_ID, dividerLabel, EpdFontFamily::BOLD);
+    const int labelX = (renderer.getScreenWidth() - labelW) / 2;
+    renderer.drawText(UI_12_FONT_ID, labelX, dividerLabelY, dividerLabel, true, EpdFontFamily::BOLD);
+    if (arabicLabel) {
+      // No bold Arabic face ships in the firmware; double-strike 1px apart
+      // reads as bold on the 1-bit panel, matching the Latin BOLD label.
+      renderer.drawText(UI_12_FONT_ID, labelX + 1, dividerLabelY, dividerLabel, true, EpdFontFamily::BOLD);
+    }
   }
 
   // --- Thumbnail row dynamic parts: progress overlays and count badge. No title
@@ -471,8 +486,11 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
   }
 
   // Physical-button glyphs in the strip under the band, one per tile, as a visual
-  // hint of the front button below the bezel. Home menu order (see HomeActivity):
-  // eBooks (none), Stats (dot), Update (left triangle), Settings (right triangle).
+  // hint of the front button below the bezel. The glyphs mark PHYSICAL bezel
+  // positions, so unlike the tiles above they must NOT mirror in RTL -- the
+  // buttons don't move when the UI language flips (user-specified Arabic
+  // layout: nothing under Settings, dot under Update, left triangle under
+  // Stats, right triangle under eBooks -- i.e. the same screen slots as LTR).
   // Drawn as vector shapes -- the bundled fonts have no U+25C0/25B6/25CF glyphs.
   enum class ButtonGlyph : uint8_t { None, Dot, TriangleLeft, TriangleRight };
   static constexpr ButtonGlyph kHomeMenuGlyphs[] = {ButtonGlyph::None, ButtonGlyph::Dot, ButtonGlyph::TriangleLeft,
@@ -482,8 +500,7 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
   constexpr int kGlyphW = 8;
   const int glyphCy = barY + kMenuBandHeight + 4 + kGlyphH / 2;
   for (int i = 0; i < buttonCount && i < kGlyphCount; i++) {
-    const int slotIndex = rtl ? buttonCount - 1 - i : i;
-    const int tileX = rect.x + kMenuPadding + slotIndex * (tileWidth + kMenuGap);
+    const int tileX = rect.x + kMenuPadding + i * (tileWidth + kMenuGap);
     const int cx = tileX + tileWidth / 2;
     switch (kHomeMenuGlyphs[i]) {
       case ButtonGlyph::Dot:
