@@ -100,7 +100,11 @@ unsigned long MappedInputManager::getHeldTime() const { return gpio.getHeldTime(
 MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const char* confirm, const char* previous,
                                                          const char* next) const {
   // Swap previous/next labels to match the page turn direction swap in INVERTED and LANDSCAPE_CCW.
-  const bool swapLabels = isNavDirectionSwapped();
+  // RTL adds one more swap: NavNext/NavPrevious flip the horizontal buttons for Arabic
+  // (see their handlers above), so the front Left/Right hint labels must flip with them --
+  // otherwise the button that now navigates UP still wears the "Down" label (reported
+  // on-device as "أسفل going up").
+  const bool swapLabels = isNavDirectionSwapped() != I18N.isRtl();
   const char* leftLabel = swapLabels ? next : previous;
   const char* rightLabel = swapLabels ? previous : next;
 
