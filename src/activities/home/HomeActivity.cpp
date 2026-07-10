@@ -17,11 +17,12 @@
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "activities/settings/OtaUpdateActivity.h"
+#include "activities/stats/StatsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // Recents, Foulad eBooks, Settings, Check for Update
+  int count = 5;  // Foulad eBooks, Recents, Stats, Check for Update, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -192,6 +193,9 @@ void HomeActivity::loop() {
         case HomeMenuItem::CHECK_UPDATE:
           onCheckUpdateOpen();
           break;
+        case HomeMenuItem::STATS:
+          onStatsOpen();
+          break;
         default:
           break;
       }
@@ -224,9 +228,9 @@ void HomeActivity::render(RenderLock&&) {
 
   // Build menu items dynamically. Order: Foulad eBooks, Recent Books, Check for
   // Update, Settings -- matches menuItemToIndex/indexToMenuItem.
-  std::vector<const char*> menuItems = {tr(STR_FOULAD_EBOOKS), tr(STR_MENU_RECENT_BOOKS), tr(STR_CHECK_UPDATES),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Library, Recent, Transfer, Settings};
+  std::vector<const char*> menuItems = {tr(STR_FOULAD_EBOOKS), tr(STR_MENU_RECENT_BOOKS), tr(STR_STATS),
+                                        tr(STR_CHECK_UPDATES), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Library, Recent, Stats, Transfer, Settings};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
@@ -261,6 +265,10 @@ void HomeActivity::render(RenderLock&&) {
 void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
 
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+
+void HomeActivity::onStatsOpen() {
+  startActivityForResult(std::make_unique<StatsActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+}
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 

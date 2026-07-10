@@ -9,6 +9,7 @@
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
+#include "reading/ReadingStats.h"
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -77,6 +78,29 @@ class EpubReaderActivity final : public Activity {
   // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
+
+  // --- Reading-time tracking (see src/reading/ReadingStats.h) ---
+  BookReadingStats bookStats;
+  GlobalReadingStats globalStats;
+  // millis() when the current page became visible; 0 = timer not running.
+  unsigned long pageShownAtMs = 0UL;
+  // Active reading seconds accumulated this session (idle intervals excluded).
+  uint32_t sessionReadingSeconds = 0;
+  // First page dwell after opening/jumping includes orientation time, not reading --
+  // skip it as a pace sample (it still counts toward session time).
+  bool paceWarmupPending = true;
+  ReadingLocalDateTime sessionStartDt;
+  // Folds the current page's dwell into sessionReadingSeconds (and, for a qualifying
+  // forward turn, into the pace average), then restarts the page timer.
+  void accountPageDwellForStats(bool isForwardTurn);
+  // Call on any non-linear navigation (chapter/percent/bookmark/footnote jump): banks
+  // the dwell so far and re-arms the pace warmup so the jump doesn't pollute the pace.
+  void statsOnJump();
+  // Pace x estimated remaining pages (current section pages + remaining spine bytes
+  // scaled by this section's bytes-per-page). False when no pace is known yet.
+  bool estimateTimeLeftSeconds(uint32_t& seconds) const;
+  // Current whole-book progress percent (0-100), same math as the reader menu header.
+  uint8_t currentBookProgressPercent() const;
 
  public:
   explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)

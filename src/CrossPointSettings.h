@@ -180,7 +180,7 @@ class CrossPointSettings {
   };
 
   // UI Theme
-  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3 };
+  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3, FOULAD = 4 };
 
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
@@ -282,6 +282,9 @@ class CrossPointSettings {
   // fontFamily/fontSize (the Latin reading font) -- see ArabicFontSystem.
   uint8_t arabicFontFamily = NOTOSANSARABIC;
   uint8_t arabicFontSize = MEDIUM;
+  // Track reading time/stats (session time, pace, streaks -- see src/reading/ReadingStats.h).
+  // 1 = on. Turning it off stops accumulation; already-saved stats are kept.
+  uint8_t trackReadingStats = 1;
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)

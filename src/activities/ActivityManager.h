@@ -27,7 +27,8 @@ enum class HomeMenuItem {
   FOULAD_EBOOKS,
   FILE_TRANSFER,
   SETTINGS_MENU,
-  CHECK_UPDATE
+  CHECK_UPDATE,
+  STATS
 };
 
 /**

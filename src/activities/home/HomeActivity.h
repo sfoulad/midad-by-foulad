@@ -38,6 +38,8 @@ class HomeActivity final : public Activity {
     ++i;
     if (item == HomeMenuItem::RECENTS) return i;
     ++i;
+    if (item == HomeMenuItem::STATS) return i;
+    ++i;
     if (item == HomeMenuItem::CHECK_UPDATE) return i;
     ++i;
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
@@ -49,12 +51,14 @@ class HomeActivity final : public Activity {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FOULAD_EBOOKS;
     if (idx == i++) return HomeMenuItem::RECENTS;
+    if (idx == i++) return HomeMenuItem::STATS;
     if (idx == i++) return HomeMenuItem::CHECK_UPDATE;
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
   }
   void onSelectBook(const std::string& path);
   void onRecentsOpen();
+  void onStatsOpen();
   void onSettingsOpen();
   void onFouladEbooksOpen();
   void onCheckUpdateOpen();
