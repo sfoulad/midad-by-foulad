@@ -66,12 +66,22 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 void OtaUpdateActivity::onEnter() {
   Activity::onEnter();
 
-  // Free the reading-stats store's in-RAM vectors (tens of KB after heavy
-  // reading) before we bring up WiFi/TLS: esp_https_ota_begin needs a large
-  // contiguous block for the mbedTLS session, and a full stats store was
-  // starving it -- the download failed at 0% with plenty of Flash headroom.
-  // The store reloads from SD the next time stats are shown.
+  // Free the two biggest discretionary DRAM consumers -- the reading-stats
+  // store's in-RAM vectors (tens of KB after heavy reading) and the font glyph
+  // cache -- as early as possible, before WiFi/TLS come up at all. A device
+  // report confirmed this needs to happen here, not only right before
+  // installUpdate(): reaching this screen normally means the user was just on
+  // Home (which loads the stats store for the hero card) or browsing a library
+  // (which fills the glyph cache with long/Arabic titles), so that memory is
+  // already resident and fragmenting the heap for the version-CHECK request
+  // too, not only the firmware download -- confirmed by a "code 2" (HTTP_ERROR)
+  // failure on the check step with the fix only applied pre-install. Both
+  // reload on demand afterward (stats from SD, glyphs from flash).
   READING_STATS.releaseMemory();
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
+  }
+  LOG_DBG("OTA", "Pre-check heap: free %u, largest block %u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   // Turn on WiFi immediately
   LOG_DBG("OTA", "Turning on WiFi...");
@@ -198,13 +208,11 @@ void OtaUpdateActivity::loop() {
       }
       requestUpdateAndWait();
 
-      // Free as much heap as possible immediately before the OTA TLS handshake.
-      // esp_https_ota_begin() needs a large *contiguous* block for the mbedTLS
-      // session to GitHub's CDN; on this device that block wasn't available and
-      // the update failed at 0% (code 5). The reading-stats vectors AND the font
-      // glyph cache are the two biggest discretionary consumers -- both reload on
-      // demand afterward. Done here (not onEnter) because every screen drawn on
-      // the way here re-populates the glyph cache.
+      // Free heap again right before the firmware-download TLS handshake, on top
+      // of the onEnter() clear: esp_https_ota_begin() needs a large *contiguous*
+      // block for the mbedTLS session to GitHub's CDN, and the "Checking..." /
+      // "Update available?" screens drawn since onEnter() will have refilled the
+      // glyph cache somewhat (button hints, version strings).
       READING_STATS.releaseMemory();
       if (auto* fcm = renderer.getFontCacheManager()) {
         fcm->clearCache();
