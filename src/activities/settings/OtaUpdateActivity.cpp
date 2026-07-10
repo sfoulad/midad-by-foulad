@@ -104,8 +104,12 @@ void OtaUpdateActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_CHECKING_UPDATE));
   } else if (state == WAITING_CONFIRMATION) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEW_UPDATE), true, EpdFontFamily::BOLD);
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, top + height + metrics.verticalSpacing,
-                      (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
+    // drawTextInWidth right-aligns Arabic strings within the row, so these two lines
+    // anchor to the right edge under the Arabic UI language (proper RTL) while staying
+    // left-anchored for English and other LTR languages.
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, top + height + metrics.verticalSpacing,
+                             pageWidth - metrics.contentSidePadding * 2,
+                             (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
     // GitHub tag names are conventionally "v1.6.24"; strip the leading 'v'/'V' so this
     // reads consistently next to "Current version: 1.6.24" above instead of looking like
     // two different version formats for what may be the same release.
@@ -113,8 +117,9 @@ void OtaUpdateActivity::render(RenderLock&&) {
     if (!latestVersionDisplay.empty() && (latestVersionDisplay[0] == 'v' || latestVersionDisplay[0] == 'V')) {
       latestVersionDisplay.erase(0, 1);
     }
-    renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, top + height * 2 + metrics.verticalSpacing * 2,
-                      (std::string(tr(STR_NEW_VERSION)) + latestVersionDisplay).c_str());
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, top + height * 2 + metrics.verticalSpacing * 2,
+                             pageWidth - metrics.contentSidePadding * 2,
+                             (std::string(tr(STR_NEW_VERSION)) + latestVersionDisplay).c_str());
 
     const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
