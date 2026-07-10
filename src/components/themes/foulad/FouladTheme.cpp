@@ -357,9 +357,9 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
                                  const std::function<std::string(int index)>& buttonLabel,
                                  const std::function<UIIcon(int index)>& rowIcon) const {
   if (buttonCount <= 0) return;
-  // Bottom-anchor the band just above the button hints, regardless of the
-  // (looser) rect HomeActivity hands us.
-  const int barY = renderer.getScreenHeight() - BaseMetrics::values.buttonHintsHeight - kMenuBandHeight - 2;
+  // Bottom-anchor the band at the screen edge (the home screen draws no
+  // button-hints bar), regardless of the (looser) rect HomeActivity hands us.
+  const int barY = renderer.getScreenHeight() - kMenuBandHeight - 8;
   const int lineX1 = rect.x + kMenuPadding;
   const int lineX2 = rect.x + rect.width - kMenuPadding;
   renderer.drawLine(lineX1, barY, lineX2, barY, true);
