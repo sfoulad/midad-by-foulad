@@ -1,14 +1,30 @@
 # Foulad eInk
 
-Foulad eInk is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), an open-source e-reader firmware for ESP32-C3-based Xteink devices. This fork adds a "Foulad eBooks" home-screen shortcut to a self-hosted [OPDS](https://opds.io/) library, and updates itself from this repository's own GitHub releases instead of upstream's.
+**An Arabic-first e-reader firmware.** Foulad eInk is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), the open-source e-reader firmware for ESP32-C3-based Xteink devices, rebuilt around one goal: making Arabic reading on pocket e-ink hardware feel native — full Arabic UI, proper letter shaping in book text, a bundled Naskh reading font, and a direct line to a self-hosted [Foulad eBooks](https://github.com/sfoulad/foulad-ebooks) [OPDS](https://opds.io/) library. It updates itself over the air from this repository's own GitHub releases.
 
 **Runs on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
 
-![Foulad eInk running on Xteink device](./docs/images/cover.jpg)
+![Reading an Arabic EPUB on Foulad eInk (Xteink X4)](./docs/images/reading-arabic.jpg)
+
+## Arabic, first-class
+
+Most e-reader firmware treats Arabic as an afterthought; here it's the point.
+
+- **Full Arabic UI** — switch the device language to Arabic and every screen, menu, and setting is translated.
+- **True RTL mirroring** — the home screen, settings rows, lists, and hint bars all flip layout in Arabic, and even the **physical page-turn buttons swap direction** so "forward" is always where your thumb expects it.
+- **Correct Arabic text rendering everywhere** — contextual letter shaping (isolated/initial/medial/final forms, lam-alef and Allah ligatures) plus bidirectional text handling for numbers and mixed Arabic/Latin lines, in book body text, titles, chapter lists, and filenames alike.
+- **Bundled Naskh reading font** — Noto Naskh Arabic ships in the firmware at all reading sizes (with word spacing tuned per size so large text never runs together), and Noto Sans Arabic covers UI text. No SD-card font setup needed to start reading Arabic.
+- **Arabic-aware layout** — right-aligned Arabic titles, dynamic row heights so tall Arabic glyphs never clip, and Arabic-Indic digit support.
 
 ## What can it do?
 
-Everything CrossPoint Reader can do, plus a built-in "Foulad eBooks" entry:
+Everything CrossPoint Reader can do, reshaped around this fork's additions:
+
+- **Foulad home screen**: a hero card for the book you're reading (cover, progress bar, time read and estimated time left), a "My Books" row of recent covers, and a bottom icon menu with physical-button hints.
+
+- **Reading statistics**: total and per-day reading time, a monthly heatmap of your reading activity, per-book time tracking, and a configurable daily reading goal.
+
+- **Foulad eBooks**: a dedicated home-screen entry that opens a self-hosted OPDS catalog directly — cover-grid browsing, search, pagination, and one-tap downloads that keep the catalog's cover art. No manual server setup beyond a one-time username/password prompt on first use.
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
@@ -18,9 +34,7 @@ Everything CrossPoint Reader can do, plus a built-in "Foulad eBooks" entry:
 
 - **Tilt page turn (X3 only)**.
 
-- **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books, SD-cache management.
-
-- **Foulad eBooks**: a dedicated home-screen entry that opens a self-hosted OPDS catalog directly, no manual server setup beyond a one-time username/password prompt on first use.
+- **Library workflow**: folder browser, hidden-file toggle, long-press delete, recent books with cover thumbnails, SD-cache management.
 
 - **Wireless workflows**:
 
@@ -32,11 +46,13 @@ Everything CrossPoint Reader can do, plus a built-in "Foulad eBooks" entry:
   - AP mode (hotspot) and STA mode (join existing Wi-Fi), both with QR helpers
   - Calibre wireless connect flow
   - OPDS browser with saved servers (up to 8), search, pagination, and direct download
-  - OTA update checks and installs from this repo's GitHub releases
+  - OTA update checks and installs from this repo's GitHub releases — the updater restarts the device into a clean-memory state before downloading, so updates install reliably even after long reading sessions
 
-- **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
+- **Lean firmware**: trimmed to the two languages it's actually for (English and Arabic) and a curated font set (Noto Serif for Latin reading, Noto Naskh Arabic for Arabic) — the whole image is ~4.2 MB, which keeps OTA updates fast.
 
-- **Localization**: 24+ UI languages. RTL support.
+- **Customization**: sleep screen modes, front/side button remapping, status bar controls, power-button behavior, refresh cadence, sunlight fading fix, and more.
+
+- **Localization**: English and Arabic UI with full RTL support.
 
 ---
 
@@ -123,21 +139,17 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 
 Book titles, author names, filenames, chapter titles, and full EPUB body text render Arabic script correctly
 (contextual letter shaping, right-to-left word/line order, and bidi handling for numbers and mixed punctuation) out of
-the box — five Arabic fonts ship built into the firmware, so there's no setup required:
+the box — no setup required. Two Arabic fonts ship built into the firmware:
 
-- **Noto Sans Arabic** (default) — clean, modern, Google's general-purpose Arabic sans.
-- **Noto Naskh Arabic** — traditional Naskh book-printing style.
-- **Amiri** — classical Naskh, based on the typefaces used in the Amiri Quran; excellent for long-form reading.
-- **Scheherazade New** — SIL font designed specifically for readability of Arabic body text.
-- **Cairo** — modern geometric sans, comfortable at a range of sizes.
+- **Noto Naskh Arabic** — traditional Naskh book-printing style, used for reading at all four reading sizes
+  (12/14/16/18pt). Word spacing is tuned per size so large text keeps clear word boundaries.
+- **Noto Sans Arabic** — used for UI text (grid titles, chapter lists, menus) at the UI sizes (8/10/12pt),
+  matching how the Latin reading font doesn't affect UI text either.
 
-Pick a family and reading size from **Settings → Reader → Arabic Font** / **Arabic Font Size**, independent of
-whichever Latin font/size you've chosen for reading — Arabic text always uses its own family and size. UI-context
-Arabic text (grid titles, chapter lists) always renders in Noto Sans Arabic at a small fixed size, regardless of your
-reading-font choice, matching how the Latin reading font/size don't affect UI text either.
+Pick the reading size from **Settings → Reader → Arabic Font Size**, independent of whichever Latin font/size you've
+chosen — Arabic text always uses its own family and size.
 
-If you'd prefer a different Arabic typeface than the five bundled ones, you can still override with your own SD-card
-font:
+If you'd prefer a different Arabic typeface for reading, you can override with your own SD-card font:
 
 1. Download an Arabic-capable TTF/OTF (e.g. [IBM Plex Sans Arabic](https://fonts.google.com/specimen/IBM+Plex+Sans+Arabic)).
 2. Convert it locally (the hosted web font builder doesn't know about this fork's Arabic support, so run the script directly):
@@ -146,12 +158,11 @@ font:
    python3 fontconvert_sdcard.py --intervals reading,arabic --name "PlexArabic" /path/to/IBMPlexSansArabic-Regular.ttf
    ```
 3. Copy the generated `.cpfont` files to your SD card under `/fonts/PlexArabic/` (or `/.fonts/PlexArabic/`).
-4. On the device: **Settings → Reader → Arabic Font** → select the family you just installed from the list (it
-   appears alongside the five built-in options). Selecting one of the built-in fonts again reverts to it.
+4. On the device: **Settings → Reader → Arabic Font** → select the family you just installed (it appears alongside
+   the built-in option). Selecting the built-in font again reverts to it.
 
-Note: the five built-in fonts are bundled at both UI sizes (8/10/12pt, Noto Sans Arabic only) and reading sizes
-(12/14/16/18pt, all five fonts) so Arabic matches whichever text it's replacing; a custom SD-card override applies at
-one fixed size everywhere instead.
+Note: the built-in fonts cover every UI and reading size so Arabic matches whichever text it's replacing; a custom
+SD-card override applies at one fixed size everywhere instead.
 
 ---
 
