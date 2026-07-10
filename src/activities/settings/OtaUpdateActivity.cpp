@@ -1,5 +1,6 @@
 #include "OtaUpdateActivity.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <WiFi.h>
@@ -159,8 +160,9 @@ void OtaUpdateActivity::render(RenderLock&&) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
     // Diagnostic line: error code + free heap at failure. Not prose, so it is not
     // translated; it lets a failure be diagnosed without a USB serial capture.
-    char diag[48];
-    snprintf(diag, sizeof(diag), "code %d  heap %u", lastErrorCode, static_cast<unsigned>(failureFreeHeap));
+    char diag[64];
+    snprintf(diag, sizeof(diag), "code %d  heap %u  block %u", lastErrorCode, static_cast<unsigned>(failureFreeHeap),
+             static_cast<unsigned>(failureMaxBlock));
     renderer.drawCenteredText(SMALL_FONT_ID, top + height + metrics.verticalSpacing, diag);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -181,6 +183,20 @@ void OtaUpdateActivity::loop() {
         state = UPDATE_IN_PROGRESS;
       }
       requestUpdateAndWait();
+
+      // Free as much heap as possible immediately before the OTA TLS handshake.
+      // esp_https_ota_begin() needs a large *contiguous* block for the mbedTLS
+      // session to GitHub's CDN; on this device that block wasn't available and
+      // the update failed at 0% (code 5). The reading-stats vectors AND the font
+      // glyph cache are the two biggest discretionary consumers -- both reload on
+      // demand afterward. Done here (not onEnter) because every screen drawn on
+      // the way here re-populates the glyph cache.
+      READING_STATS.releaseMemory();
+      if (auto* fcm = renderer.getFontCacheManager()) {
+        fcm->clearCache();
+      }
+      LOG_DBG("OTA", "Pre-OTA heap: free %u, largest block %u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
       const auto res = updater.installUpdate(
           [](void* ctx) {
             // immediate=true notifies the render task directly. The default deferred path only
@@ -191,11 +207,13 @@ void OtaUpdateActivity::loop() {
           this);
 
       if (res != OtaUpdater::OK) {
-        LOG_DBG("OTA", "Update failed: %d (free heap %u)", res, ESP.getFreeHeap());
+        LOG_DBG("OTA", "Update failed: %d (free heap %u, largest block %u)", res, ESP.getFreeHeap(),
+                ESP.getMaxAllocHeap());
         {
           RenderLock lock(*this);
           lastErrorCode = res;
           failureFreeHeap = ESP.getFreeHeap();
+          failureMaxBlock = ESP.getMaxAllocHeap();
           state = FAILED;
         }
         requestUpdate();

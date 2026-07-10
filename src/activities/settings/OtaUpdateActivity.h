@@ -25,6 +25,7 @@ class OtaUpdateActivity : public Activity {
   // (otherwise the error code is only in the USB serial log).
   int lastErrorCode = 0;
   uint32_t failureFreeHeap = 0;
+  uint32_t failureMaxBlock = 0;
 
   void onWifiSelectionComplete(bool success);
 
