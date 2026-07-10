@@ -11,9 +11,9 @@ class GfxRenderer;
 namespace FouladMetrics {
 constexpr ThemeMetrics values = [] {
   ThemeMetrics v = BaseMetrics::values;
-  v.homeTopPadding = 14;
-  v.homeCoverHeight = 260;      // hero cover height
-  v.homeCoverTileHeight = 620;  // hero card + Recents header + recents cover row
+  v.homeTopPadding = 10;
+  v.homeCoverHeight = 300;      // aalu hero cover height
+  v.homeCoverTileHeight = 640;  // status line + hero + Recents divider + thumb row
   v.homeRecentBooksCount = 4;   // books[0] = hero, books[1..3] = recents row
   // Same reasoning as Lyra3Covers: the selector walks all recent covers before the
   // menu, which only lines up when Continue Reading isn't ALSO a menu row.

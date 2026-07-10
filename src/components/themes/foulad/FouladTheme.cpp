@@ -1,13 +1,16 @@
 #include "FouladTheme.h"
 
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <string>
 
+#include "CrossPointSettings.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
@@ -19,11 +22,35 @@
 #include "fontIds.h"
 #include "reading/ReadingStats.h"
 
+// Home layout ported from aalu (github.com/dawsonfi/aalu) HomeRenderer: top status
+// line, 200x300 hero cover with a metadata column (title / author / rounded pill
+// progress bar + % / Read + Est. Left columns), a double-rule "Recents" divider,
+// a 140x210 three-cover thumbnail row with floating progress pills and a stacked
+// +N badge, and a rule-framed bottom icon menu with a rounded-outline selection.
+// Data sources are ours (RecentBooksStore + BookReadingStats), only the visual
+// language comes from aalu.
 namespace {
-constexpr int kHeroCoverWidth = 175;
-constexpr int kHeroGap = 16;         // gap between hero cover and the text column
-constexpr int kSelectionBorder = 3;  // selection frame thickness around covers
-constexpr int kRecentsGap = 12;      // gap between recents covers
+constexpr int kStatusBarHeight = 30;
+constexpr int kHeroPadding = 20;
+constexpr int kHeroCoverWidth = 200;
+constexpr int kHeroHeight = 300;
+constexpr int kHeroMetaGap = 20;
+constexpr int kCoverCornerRadius = 6;
+
+constexpr int kThumbWidth = 140;
+constexpr int kThumbCoverHeight = 210;
+constexpr int kThumbTitleGap = 6;
+constexpr int kThumbGap = 20;
+constexpr int kThumbsCount = 3;
+constexpr int kDividerHalfSeparation = 18;
+
+constexpr int kMenuPadding = 16;
+constexpr int kMenuGap = 8;
+constexpr int kMenuBandHeight = 72;
+constexpr int kMenuIconSize = 32;
+constexpr int kMenuIconLabelGap = 6;
+
+constexpr int kCompletedPercent = 95;
 
 const uint8_t* menuIconBitmap(const UIIcon icon) {
   switch (icon) {
@@ -42,8 +69,95 @@ const uint8_t* menuIconBitmap(const UIIcon icon) {
   }
 }
 
-// Draws a book cover (fit by height, crop horizontally like Lyra3Covers) or a
-// placeholder box when there's no usable cover file.
+// Brute-force filled disc, like aalu's badge helper: cheap at badge radii and
+// avoids a new GfxRenderer primitive.
+void fillDisc(const GfxRenderer& renderer, const int cx, const int cy, const int radius, const bool black) {
+  const int rsq = radius * radius;
+  for (int dy = -radius; dy <= radius; ++dy) {
+    for (int dx = -radius; dx <= radius; ++dx) {
+      if (dx * dx + dy * dy <= rsq) {
+        renderer.drawPixel(cx + dx, cy + dy, black);
+      }
+    }
+  }
+}
+
+// aalu's rounded "pill" progress bar: 1px rounded outline, fill rounded only on
+// the leading corners so the trailing edge reads as a straight cut.
+void drawRoundedProgressBar(const GfxRenderer& renderer, const int x, const int y, const int width, const int height,
+                            const int percent, const int maxRadius = 3) {
+  if (width <= 0 || height <= 0) return;
+  const int radius = std::min({maxRadius, width / 2, height / 2});
+  renderer.drawRoundedRect(x, y, width, height, 1, radius, true);
+  const int clamped = std::clamp(percent, 0, 100);
+  const int innerW = width - 2;
+  const int innerH = height - 2;
+  if (innerW <= 0 || innerH <= 0) return;
+  const int fillW = innerW * clamped / 100;
+  if (fillW <= 0) return;
+  const int fillRadius = std::max(0, radius - 1);
+  if (fillW >= innerW) {
+    renderer.fillRoundedRect(x + 1, y + 1, innerW, innerH, fillRadius, Color::Black);
+  } else {
+    renderer.fillRoundedRect(x + 1, y + 1, fillW, innerH, fillRadius, /*roundTopLeft=*/true, /*roundTopRight=*/false,
+                             /*roundBottomLeft=*/true, /*roundBottomRight=*/false, Color::Black);
+  }
+}
+
+// Floating progress pill inside the cover bottom, ringed by a white halo so it
+// stays legible on dark cover art (aalu drawCoverProgressBar).
+void drawCoverProgressOverlay(const GfxRenderer& renderer, const int coverX, const int coverY, const int coverW,
+                              const int coverH, const int percent) {
+  if (percent <= 0) return;
+  if (percent >= kCompletedPercent) {
+    // Completed: black disc + white check.
+    const int radius = 11;
+    const int cx = coverX + coverW - radius - 4;
+    const int cy = coverY + radius + 4;
+    fillDisc(renderer, cx, cy, radius, true);
+    renderer.drawLine(cx - 5, cy, cx - 1, cy + 4, 2, false);
+    renderer.drawLine(cx - 1, cy + 4, cx + 5, cy - 4, 2, false);
+    return;
+  }
+  constexpr int kBarH = 6;
+  constexpr int kMargin = 8;
+  constexpr int kHalo = 2;
+  const int barW = coverW - 2 * kMargin;
+  if (barW <= 0 || coverH <= kBarH + kMargin) return;
+  const int barX = coverX + kMargin;
+  const int barY = coverY + coverH - kBarH - kMargin;
+  renderer.fillRoundedRect(barX - kHalo, barY - kHalo, barW + 2 * kHalo, kBarH + 2 * kHalo, 2 + kHalo, Color::White);
+  drawRoundedProgressBar(renderer, barX, barY, barW, kBarH, percent, 2);
+}
+
+// Ghost "pages" behind a stacked cover (aalu drawBackStack): offset white plates
+// with 1px rounded outlines, up-right of the cover.
+void drawBackStack(const GfxRenderer& renderer, const int x, const int y, const int width, const int height,
+                   int depth) {
+  if (depth <= 0) return;
+  if (depth > 2) depth = 2;
+  for (int g = depth; g >= 1; --g) {
+    const int gx = x + 4 * g;
+    const int gy = y - 4 * g;
+    renderer.fillRoundedRect(gx, gy, width, height, kCoverCornerRadius, Color::White);
+    renderer.drawRoundedRect(gx, gy, width, height, 1, kCoverCornerRadius, true);
+  }
+}
+
+// Round count badge at a cover's top-right corner (aalu drawRoundCountBadge).
+void drawRoundCountBadge(const GfxRenderer& renderer, const int coverX, const int coverY, const int coverW,
+                         const char* count) {
+  const int radius = 13;
+  const int cx = coverX + coverW - radius - 3;
+  const int cy = coverY + radius + 3;
+  fillDisc(renderer, cx, cy, radius + 2, false);  // white halo ring
+  fillDisc(renderer, cx, cy, radius, true);
+  const int tw = renderer.getTextWidth(SMALL_FONT_ID, count, EpdFontFamily::BOLD);
+  renderer.drawText(SMALL_FONT_ID, cx - tw / 2, cy - renderer.getLineHeight(SMALL_FONT_ID) / 2, count, false,
+                    EpdFontFamily::BOLD);
+}
+
+// Cover paint: fit by height, crop horizontally, placeholder when missing.
 void drawCoverAt(const GfxRenderer& renderer, const std::string& coverBmpPath, const int x, const int y, const int w,
                  const int h) {
   bool hasCover = false;
@@ -61,155 +175,178 @@ void drawCoverAt(const GfxRenderer& renderer, const std::string& coverBmpPath, c
       }
     }
   }
-  renderer.drawRect(x, y, w, h, true);
+  renderer.drawRoundedRect(x, y, w, h, 1, kCoverCornerRadius, true);
   if (!hasCover) {
-    renderer.fillRect(x, y + h / 3, w, 2 * h / 3, true);
-    renderer.drawIcon(CoverIcon, x + (w - 32) / 2, y + h / 6 - 16 + h / 3, 32);
+    renderer.fillRect(x + 1, y + h / 3, w - 2, 2 * h / 3 - 1, true);
+    renderer.drawIcon(CoverIcon, x + (w - 32) / 2, y + h / 3 + h / 6 - 16, 32);
   }
+}
+
+// Concentric triple rounded outlines around a focused cover (aalu
+// drawSelectionBorder, cover variant).
+void drawCoverSelection(const GfxRenderer& renderer, const int x, const int y, const int w, const int h) {
+  renderer.drawRoundedRect(x - 2, y - 2, w + 4, h + 4, 1, kCoverCornerRadius + 2, true);
+  renderer.drawRoundedRect(x - 3, y - 3, w + 6, h + 6, 1, kCoverCornerRadius + 3, true);
+  renderer.drawRoundedRect(x - 4, y - 4, w + 8, h + 8, 1, kCoverCornerRadius + 4, true);
 }
 }  // namespace
 
 void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                       const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                       bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
-  const auto& m = FouladMetrics::values;
-  const int sidePad = m.contentSidePadding;
+  const int heroCoverX = rect.x + kHeroPadding;
+  const int heroCoverY = rect.y + kStatusBarHeight;
+  const int metaX = heroCoverX + kHeroCoverWidth + kHeroMetaGap;
+  const int metaWidth = rect.width - metaX - kHeroPadding;
 
-  if (recentBooks.empty()) {
-    renderer.drawCenteredText(UI_12_FONT_ID, rect.y + rect.height / 3, tr(STR_NO_OPEN_BOOK), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, rect.y + rect.height / 3 + 40, tr(STR_START_READING));
-    return;
-  }
+  // Recents band geometry: divider label centered between two rules, thumbs below.
+  const int dividerLabelY = heroCoverY + kHeroHeight + kDividerHalfSeparation + 10;
+  const int thumbsY = dividerLabelY + kDividerHalfSeparation + 16;
+  const int shownRecents = std::min(static_cast<int>(recentBooks.size()) - 1, kThumbsCount);
+  const int thumbsTotalW = kThumbsCount * kThumbWidth + (kThumbsCount - 1) * kThumbGap;
+  const int thumbsX = rect.x + (rect.width - thumbsTotalW) / 2;
 
-  const int heroX = sidePad;
-  const int heroY = rect.y;
-  const int heroH = m.homeCoverHeight;
-  const int textX = heroX + kHeroCoverWidth + kHeroGap;
-  const int textW = rect.width - textX - sidePad;
-
-  // Recents row geometry (below the hero card + section header).
-  const int headerY = heroY + heroH + 22;
-  const int rowY = headerY + 34;
-  const int shownRecents = std::min(static_cast<int>(recentBooks.size()) - 1, 3);
-  const int tileW = (rect.width - sidePad * 2 - kRecentsGap * 2) / 3;
-  const int coverH2 = std::min(200, rect.y + rect.height - rowY - 30);
-
-  // Static content (covers) is drawn once and captured into the cover buffer;
-  // HomeActivity restores it on later renders so only text/selection redraw.
-  if (!coverRendered) {
-    drawCoverAt(renderer, recentBooks[0].coverBmpPath, heroX, heroY, kHeroCoverWidth, heroH);
+  // --- Static covers, drawn once and captured into the stored frame buffer ---
+  if (!coverRendered && !recentBooks.empty()) {
+    drawCoverAt(renderer, recentBooks[0].coverBmpPath, heroCoverX, heroCoverY, kHeroCoverWidth, kHeroHeight);
+    const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
     for (int i = 0; i < shownRecents; i++) {
-      const int x = sidePad + i * (tileW + kRecentsGap);
-      drawCoverAt(renderer, recentBooks[i + 1].coverBmpPath, x, rowY, tileW, coverH2);
+      const int x = thumbsX + i * (kThumbWidth + kThumbGap);
+      const bool isStackTile = (i == kThumbsCount - 1) && totalRecents - 1 > kThumbsCount;
+      if (isStackTile) {
+        drawBackStack(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight,
+                      std::min(2, totalRecents - 1 - kThumbsCount));
+      }
+      drawCoverAt(renderer, recentBooks[i + 1].coverBmpPath, x, thumbsY, kThumbWidth, kThumbCoverHeight);
     }
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
   }
 
-  // --- Hero text column (redrawn every render) ---
+  // --- Status line: clock left, app name centered, battery drawn by drawHeader
+  // pattern (right). Redrawn every render so the clock stays current. ---
+  {
+    if (halClock.isAvailable()) {
+      char timeBuf[9];
+      if (halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockUtcOffsetQ, SETTINGS.clockFormat == 1)) {
+        renderer.drawText(SMALL_FONT_ID, rect.x + kHeroPadding, rect.y, timeBuf);
+      }
+    }
+    renderer.drawCenteredText(SMALL_FONT_ID, rect.y, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
+    const int batteryX = rect.x + rect.width - kHeroPadding - BaseMetrics::values.batteryWidth;
+    drawBatteryRight(renderer,
+                     Rect{batteryX, rect.y - 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
+                     SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS);
+  }
+
+  if (recentBooks.empty()) {
+    renderer.drawRect(heroCoverX, heroCoverY, rect.width - kHeroPadding * 2, kHeroHeight, true);
+    renderer.drawCenteredText(UI_12_FONT_ID, heroCoverY + kHeroHeight / 2 - renderer.getLineHeight(UI_12_FONT_ID),
+                              tr(STR_NO_OPEN_BOOK), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_10_FONT_ID, heroCoverY + kHeroHeight / 2 + 8, tr(STR_START_READING));
+    return;
+  }
+
+  // --- Hero metadata column (title -> author -> progress pill + % -> Read/Left) ---
   const BookReadingStats heroStats = BookReadingStats::load(readingStatsCachePathForBook(recentBooks[0].path));
-  int y = heroY + 2;
-  const auto titleLines = renderer.wrappedText(UI_12_FONT_ID, recentBooks[0].title.c_str(), textW, 3);
-  for (const auto& line : titleLines) {
-    renderer.drawTextInWidth(UI_12_FONT_ID, textX, y, textW, line.c_str(), true, EpdFontFamily::BOLD);
-    y += renderer.getLineHeight(UI_12_FONT_ID) + 2;
-  }
-  if (!recentBooks[0].author.empty()) {
-    const auto author = renderer.truncatedText(UI_10_FONT_ID, recentBooks[0].author.c_str(), textW);
-    renderer.drawTextInWidth(UI_10_FONT_ID, textX, y + 4, textW, author.c_str());
-  }
-  y += renderer.getLineHeight(UI_10_FONT_ID) + 18;
-
-  // Progress bar + percentage from the cached reader-exit progress.
   {
-    char pctBuf[8];
-    snprintf(pctBuf, sizeof(pctBuf), "%u%%", static_cast<unsigned>(heroStats.lastProgressPercent));
-    const int pctW = renderer.getTextWidth(UI_10_FONT_ID, pctBuf, EpdFontFamily::BOLD);
-    const int barW = textW - pctW - 10;
-    const int barH = 12;
-    renderer.drawRect(textX, y, barW, barH, true);
-    const int fillW = (barW - 4) * heroStats.lastProgressPercent / 100;
-    if (fillW > 0) renderer.fillRect(textX + 2, y + 2, fillW, barH - 4);
-    renderer.drawText(UI_10_FONT_ID, textX + barW + 10, y + barH / 2 - renderer.getLineHeight(UI_10_FONT_ID) / 2,
-                      pctBuf, true, EpdFontFamily::BOLD);
-    y += barH + 14;
-  }
+    const int heroBottom = heroCoverY + kHeroHeight - 4;
+    const bool titleArabic = ScriptDetector::containsArabic(recentBooks[0].title.c_str());
+    const int titleLineHeight = titleArabic
+                                    ? renderer.getLineHeight(renderer.getResolvedArabicFontId(NOTOSERIF_18_FONT_ID))
+                                    : renderer.getLineHeight(NOTOSERIF_18_FONT_ID);
+    int textY = heroCoverY + 6;
+    const auto titleLines = renderer.wrappedText(NOTOSERIF_18_FONT_ID, recentBooks[0].title.c_str(), metaWidth,
+                                                 /*maxLines=*/2, EpdFontFamily::BOLD);
+    for (const auto& line : titleLines) {
+      renderer.drawTextInWidth(NOTOSERIF_18_FONT_ID, metaX, textY, metaWidth, line.c_str(), true, EpdFontFamily::BOLD);
+      textY += titleLineHeight + 2;
+    }
+    textY += 4;
 
-  // Read / Est. Left readouts (two columns).
-  {
+    if (!recentBooks[0].author.empty()) {
+      const std::string author = renderer.truncatedText(UI_10_FONT_ID, recentBooks[0].author.c_str(), metaWidth);
+      renderer.drawTextInWidth(UI_10_FONT_ID, metaX, textY, metaWidth, author.c_str());
+      textY += renderer.getLineHeight(UI_10_FONT_ID) + 12;
+    } else {
+      textY += 8;
+    }
+
+    // Rounded pill progress bar + bold percent label.
+    constexpr int kBarHeight = 10;
+    constexpr int kLabelGapPx = 8;
+    const int pct = std::clamp(static_cast<int>(heroStats.lastProgressPercent), 0, 100);
+    char percentStr[8];
+    snprintf(percentStr, sizeof(percentStr), "%d%%", pct);
+    const int labelW = renderer.getTextWidth(UI_10_FONT_ID, percentStr, EpdFontFamily::BOLD);
+    const int barW = std::max(0, metaWidth - labelW - kLabelGapPx);
+    if (textY + kBarHeight <= heroBottom && barW > 0) {
+      drawRoundedProgressBar(renderer, metaX, textY, barW, kBarHeight, pct);
+      renderer.drawText(UI_10_FONT_ID, metaX + barW + kLabelGapPx,
+                        textY + (kBarHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2 - 1, percentStr, true,
+                        EpdFontFamily::BOLD);
+      textY += kBarHeight + 12;
+    }
+
+    // Read / Est. Left, two columns: bold label above, value below.
     char readBuf[24];
     char leftBuf[24];
     formatReadingDuration(heroStats.totalReadingSeconds, readBuf, sizeof(readBuf));
-    if (heroStats.estimatedTimeLeftSeconds > 0) {
+    if (heroStats.estimatedTimeLeftSeconds > 0 && pct < 100) {
       leftBuf[0] = '~';
       formatReadingDuration(heroStats.estimatedTimeLeftSeconds, leftBuf + 1, sizeof(leftBuf) - 1);
     } else {
       snprintf(leftBuf, sizeof(leftBuf), "-");
     }
-    const int colW = textW / 2;
-    const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
-    renderer.drawText(UI_10_FONT_ID, textX, y, tr(STR_READ_LABEL), true, EpdFontFamily::BOLD);
-    renderer.drawText(UI_10_FONT_ID, textX + colW, y, tr(STR_EST_LEFT), true, EpdFontFamily::BOLD);
-    renderer.drawText(UI_10_FONT_ID, textX, y + lineH + 4, readBuf);
-    renderer.drawText(UI_10_FONT_ID, textX + colW, y + lineH + 4, leftBuf);
+    const int labelLineH = renderer.getLineHeight(UI_10_FONT_ID);
+    if (textY + labelLineH * 2 + 2 <= heroBottom && heroStats.totalReadingSeconds > 0) {
+      const int colWidth = metaWidth / 2;
+      renderer.drawText(UI_10_FONT_ID, metaX, textY, tr(STR_READ_LABEL), true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, metaX + colWidth, textY, tr(STR_EST_LEFT), true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_10_FONT_ID, metaX, textY + labelLineH + 2, readBuf);
+      renderer.drawText(UI_10_FONT_ID, metaX + colWidth, textY + labelLineH + 2, leftBuf);
+    }
   }
 
-  // --- Recents section header ---
+  // --- Double-rule "Recents" divider ---
   {
-    const char* label = tr(STR_RECENTS);
-    const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label, EpdFontFamily::BOLD);
-    const int labelX = (rect.width - labelW) / 2;
-    const int lineY = headerY + renderer.getLineHeight(UI_10_FONT_ID) / 2;
-    renderer.drawLine(sidePad, lineY, labelX - 10, lineY, true);
-    renderer.drawLine(labelX + labelW + 10, lineY, rect.width - sidePad, lineY, true);
-    renderer.drawText(UI_10_FONT_ID, labelX, headerY, label, true, EpdFontFamily::BOLD);
+    const int x1 = rect.x + kMenuPadding;
+    const int x2 = rect.x + rect.width - kMenuPadding;
+    const int labelH = renderer.getLineHeight(UI_12_FONT_ID);
+    const int labelCenterY = dividerLabelY + labelH / 2;
+    renderer.drawLine(x1, labelCenterY - kDividerHalfSeparation, x2, labelCenterY - kDividerHalfSeparation, true);
+    renderer.drawLine(x1, labelCenterY + kDividerHalfSeparation, x2, labelCenterY + kDividerHalfSeparation, true);
+    renderer.drawCenteredText(UI_12_FONT_ID, dividerLabelY, tr(STR_RECENTS), true, EpdFontFamily::BOLD);
   }
 
-  // --- Recents row dynamic parts: titles, progress bars, +N badge ---
+  // --- Thumbnail row dynamic parts: progress overlays, count badge, titles ---
+  const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
   for (int i = 0; i < shownRecents; i++) {
-    const int x = sidePad + i * (tileW + kRecentsGap);
+    const int x = thumbsX + i * (kThumbWidth + kThumbGap);
     const auto& book = recentBooks[i + 1];
-    const BookReadingStats stats = BookReadingStats::load(readingStatsCachePathForBook(book.path));
+    const bool isStackTile = (i == kThumbsCount - 1) && totalRecents - 1 > kThumbsCount;
 
-    // Mini progress bar hugging the cover's bottom edge.
-    if (stats.lastProgressPercent > 0) {
-      const int fillW = (tileW - 8) * stats.lastProgressPercent / 100;
-      renderer.fillRect(x + 4, rowY + coverH2 - 8, tileW - 8, 4, false);
-      renderer.drawRect(x + 4, rowY + coverH2 - 8, tileW - 8, 4, true);
-      if (fillW > 0) renderer.fillRect(x + 4, rowY + coverH2 - 8, fillW, 4, true);
+    if (isStackTile) {
+      char countBuf[8];
+      snprintf(countBuf, sizeof(countBuf), "%d", std::min(totalRecents - 1 - kThumbsCount + 1, 99));
+      drawRoundCountBadge(renderer, x, thumbsY, kThumbWidth, countBuf);
+    } else {
+      const BookReadingStats stats = BookReadingStats::load(readingStatsCachePathForBook(book.path));
+      drawCoverProgressOverlay(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight, stats.lastProgressPercent);
     }
 
-    const auto title = renderer.truncatedText(SMALL_FONT_ID, book.title.c_str(), tileW);
-    const int titleW = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
-    renderer.drawText(SMALL_FONT_ID, x + std::max(0, (tileW - titleW) / 2), rowY + coverH2 + 6, title.c_str());
+    const std::string label = renderer.truncatedText(UI_10_FONT_ID, book.title.c_str(), kThumbWidth);
+    const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label.c_str());
+    renderer.drawText(UI_10_FONT_ID, x + std::max(0, (kThumbWidth - labelW) / 2),
+                      thumbsY + kThumbCoverHeight + kThumbTitleGap, label.c_str());
   }
 
-  // Count badge on the last shown recents cover when more books exist beyond the
-  // row (the screenshot's "16" badge): total recents in the store minus the hero
-  // and the covers already visible.
-  const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
-  const int hiddenCount = totalRecents - 1 - shownRecents;
-  if (shownRecents == 3 && hiddenCount > 0) {
-    char badge[8];
-    snprintf(badge, sizeof(badge), "%d", std::min(hiddenCount, 99));
-    const int bx = sidePad + 2 * (tileW + kRecentsGap) + tileW - 16;
-    const int by = rowY + 16;
-    renderer.fillRoundedRect(bx - 15, by - 15, 30, 30, 15, Color::Black);
-    const int tw = renderer.getTextWidth(SMALL_FONT_ID, badge, EpdFontFamily::BOLD);
-    renderer.drawText(SMALL_FONT_ID, bx - tw / 2, by - renderer.getLineHeight(SMALL_FONT_ID) / 2, badge, false,
-                      EpdFontFamily::BOLD);
-  }
-
-  // --- Selection frames ---
+  // --- Selection: triple concentric rounded outline around the focused cover ---
   if (selectorIndex == 0) {
-    renderer.drawRect(heroX - kSelectionBorder - 1, heroY - kSelectionBorder - 1,
-                      kHeroCoverWidth + 2 * (kSelectionBorder + 1), heroH + 2 * (kSelectionBorder + 1),
-                      kSelectionBorder, true);
+    drawCoverSelection(renderer, heroCoverX, heroCoverY, kHeroCoverWidth, kHeroHeight);
   } else if (selectorIndex >= 1 && selectorIndex <= shownRecents) {
-    const int i = selectorIndex - 1;
-    const int x = sidePad + i * (tileW + kRecentsGap);
-    renderer.drawRect(x - kSelectionBorder - 1, rowY - kSelectionBorder - 1, tileW + 2 * (kSelectionBorder + 1),
-                      coverH2 + 2 * (kSelectionBorder + 1), kSelectionBorder, true);
+    const int x = thumbsX + (selectorIndex - 1) * (kThumbWidth + kThumbGap);
+    drawCoverSelection(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight);
   }
 }
 
@@ -217,37 +354,45 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
                                  const std::function<std::string(int index)>& buttonLabel,
                                  const std::function<UIIcon(int index)>& rowIcon) const {
   if (buttonCount <= 0) return;
-  constexpr int kIconSize = 32;
-  constexpr int kLabelGap = 4;
-  const int labelLineH = renderer.getLineHeight(SMALL_FONT_ID);
-  const int barH = kIconSize + kLabelGap + labelLineH + 16;
-  const int barY = rect.y + std::max(0, rect.height - barH);
-  const int slotW = rect.width / buttonCount;
+  // Bottom-anchor the band just above the button hints, regardless of the
+  // (looser) rect HomeActivity hands us.
+  const int barY = renderer.getScreenHeight() - BaseMetrics::values.buttonHintsHeight - kMenuBandHeight - 2;
+  const int lineX1 = rect.x + kMenuPadding;
+  const int lineX2 = rect.x + rect.width - kMenuPadding;
+  renderer.drawLine(lineX1, barY, lineX2, barY, true);
+  renderer.drawLine(lineX1, barY + kMenuBandHeight - 1, lineX2, barY + kMenuBandHeight - 1, true);
+
+  const int totalGaps = kMenuGap * (buttonCount - 1);
+  const int tileWidth = (rect.width - kMenuPadding * 2 - totalGaps) / buttonCount;
   // RTL UI languages flow the bar right-to-left (first item at the rightmost slot).
   const bool rtl = I18N.isRtl();
 
-  renderer.drawLine(rect.x, barY - 2, rect.x + rect.width - 1, barY - 2, true);
-
   for (int i = 0; i < buttonCount; i++) {
     const int slotIndex = rtl ? buttonCount - 1 - i : i;
-    const int slotX = rect.x + slotIndex * slotW;
+    const int tileX = rect.x + kMenuPadding + slotIndex * (tileWidth + kMenuGap);
     const bool selected = selectedIndex == i;
+    const uint8_t* icon = rowIcon != nullptr ? menuIconBitmap(rowIcon(i)) : nullptr;
 
     if (selected) {
-      renderer.drawRoundedRect(slotX + 3, barY + 2, slotW - 6, barH - 4, /*lineWidth=*/2, /*cornerRadius=*/8, true);
+      // aalu selection: icon only, centered, framed by a double rounded outline.
+      const int iconY = barY + (kMenuBandHeight - kMenuIconSize) / 2;
+      if (icon != nullptr) {
+        renderer.drawIcon(icon, tileX + (tileWidth - kMenuIconSize) / 2, iconY, kMenuIconSize);
+      }
+      renderer.drawRoundedRect(tileX + 2, barY + 2, tileWidth - 4, kMenuBandHeight - 4, 1, 6, true);
+      renderer.drawRoundedRect(tileX + 3, barY + 3, tileWidth - 6, kMenuBandHeight - 6, 1, 5, true);
+      continue;
     }
 
-    const uint8_t* icon = rowIcon != nullptr ? menuIconBitmap(rowIcon(i)) : nullptr;
-    const int iconY = barY + 8;
+    const int labelLineH = renderer.getLineHeight(SMALL_FONT_ID);
+    const int contentH = kMenuIconSize + kMenuIconLabelGap + labelLineH;
+    const int iconY = barY + (kMenuBandHeight - contentH) / 2;
     if (icon != nullptr) {
-      renderer.drawIcon(icon, slotX + (slotW - kIconSize) / 2, iconY, kIconSize);
+      renderer.drawIcon(icon, tileX + (tileWidth - kMenuIconSize) / 2, iconY, kMenuIconSize);
     }
-
-    const std::string label = renderer.truncatedText(SMALL_FONT_ID, buttonLabel(i).c_str(), slotW - 10,
-                                                     selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-    const int labelW =
-        renderer.getTextWidth(SMALL_FONT_ID, label.c_str(), selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-    renderer.drawText(SMALL_FONT_ID, slotX + std::max(0, (slotW - labelW) / 2), iconY + kIconSize + kLabelGap,
-                      label.c_str(), true, selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+    const std::string label = renderer.truncatedText(SMALL_FONT_ID, buttonLabel(i).c_str(), tileWidth - 6);
+    const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
+    renderer.drawText(SMALL_FONT_ID, tileX + std::max(0, (tileWidth - labelW) / 2),
+                      iconY + kMenuIconSize + kMenuIconLabelGap, label.c_str());
   }
 }
