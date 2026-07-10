@@ -84,7 +84,18 @@ void RecentBooksStore::updatePath(const std::string& oldPath, const std::string&
   saveToFile();
 }
 
-bool RecentBooksStore::isMissing(const RecentBook& book) { return !Storage.exists(book.path.c_str()); }
+bool RecentBooksStore::isMissing(const RecentBook& book) {
+  // Only real book files count as present: the formats a reader activity can
+  // actually open (.epub/.xtc/.xtch/.txt/.md). Corrupt or legacy entries (empty
+  // paths, non-book paths, folders that merely exist) must not survive pruning --
+  // they inflated the home screen's "+N" stack badge with entries that are not
+  // books.
+  if (book.path.empty() || !(FsHelpers::hasEpubExtension(book.path) || FsHelpers::hasXtcExtension(book.path) ||
+                             FsHelpers::hasTxtExtension(book.path) || FsHelpers::hasMarkdownExtension(book.path))) {
+    return true;
+  }
+  return !Storage.exists(book.path.c_str());
+}
 
 bool RecentBooksStore::pruneMissing() {
   const size_t before = recentBooks.size();
