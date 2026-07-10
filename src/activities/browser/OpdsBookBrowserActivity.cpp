@@ -206,11 +206,28 @@ void OpdsBookBrowserActivity::loop() {
         requestUpdate();
       };
       auto moveLeft = [this, layout] {
+        // Before the first cover: fetch the previous OPDS page (if the feed has
+        // one) instead of wrapping to the last in-memory cover, landing on its
+        // last book so the reading direction continues seamlessly.
+        if (selectorIndex == layout.bookStart && !feedPrevUrl.empty()) {
+          pendingGridSelect = PendingGridSelect::LastBook;
+          navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", feedPrevUrl, ""});
+          return;
+        }
         selectorIndex =
             layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, false);
         requestUpdate();
       };
       auto moveRight = [this, layout] {
+        // Past the last cover: fetch the next OPDS page (if the feed has one)
+        // instead of wrapping back to the first in-memory cover -- with a
+        // 25-books-per-page server feed, the wrap made the catalog look like
+        // it "repeats" after 25 books.
+        if (selectorIndex == layout.bookStart + layout.bookCount - 1 && !feedNextUrl.empty()) {
+          pendingGridSelect = PendingGridSelect::FirstBook;
+          navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", feedNextUrl, ""});
+          return;
+        }
         selectorIndex =
             layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, true);
         requestUpdate();
@@ -599,6 +616,10 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
 
 void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   loadedGridPageStart = NO_GRID_PAGE_LOADED;
+  // Consume the auto-advance landing hint up front so a failed fetch can't
+  // leave it armed for a later, unrelated navigation.
+  const PendingGridSelect pendingSelect = pendingGridSelect;
+  pendingGridSelect = PendingGridSelect::None;
 
   if (server.url.empty()) {
     state = BrowserState::ERROR;
@@ -646,18 +667,34 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   searchTemplate = parser->getSearchTemplate();
-  const auto& nextUrl = parser->getNextPageUrl();
-  const auto& prevUrl = parser->getPrevPageUrl();
+  feedNextUrl = parser->getNextPageUrl();
+  feedPrevUrl = parser->getPrevPageUrl();
   entries = std::move(*parser).getEntries();
 
-  if (!prevUrl.empty()) {
-    entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_PREV_PAGE), "", prevUrl, ""});
+  if (!feedPrevUrl.empty()) {
+    entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_PREV_PAGE), "", feedPrevUrl, ""});
   }
-  if (!nextUrl.empty()) {
-    entries.push_back(OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_NEXT_PAGE), "", nextUrl, ""});
+  if (!feedNextUrl.empty()) {
+    entries.push_back(OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_NEXT_PAGE), "", feedNextUrl, ""});
   }
 
   selectorIndex = 0;
+  if (pendingSelect != PendingGridSelect::None) {
+    // Auto-advance landing spot: continue the reading direction seamlessly
+    // instead of parking the selection on the "> Prev Page" strip row.
+    int firstBook = -1;
+    int lastBook = -1;
+    for (size_t i = 0; i < entries.size(); i++) {
+      if (entries[i].type == OpdsEntryType::BOOK) {
+        if (firstBook < 0) firstBook = static_cast<int>(i);
+        lastBook = static_cast<int>(i);
+      }
+    }
+    if (firstBook >= 0) {
+      selectorIndex = (pendingSelect == PendingGridSelect::FirstBook) ? firstBook : lastBook;
+    }
+  }
+
   state = entries.empty() ? BrowserState::ERROR : BrowserState::BROWSING;
   if (entries.empty()) errorMessage = tr(STR_NO_ENTRIES);
   requestUpdate();

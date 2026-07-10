@@ -32,6 +32,17 @@ class OpdsBookBrowserActivity final : public Activity {
   std::vector<std::string> navigationHistory;
   std::string currentPath;
   std::string searchTemplate;
+  // Feed-level pagination links of the currently loaded page (empty when the
+  // feed has none). Kept as members so grid navigation can auto-advance: moving
+  // Right past the last cover fetches the next OPDS page, Left before the first
+  // cover fetches the previous one -- without them, the grid just wrapped
+  // around its 25 in-memory books and the catalog appeared to "repeat".
+  std::string feedNextUrl;
+  std::string feedPrevUrl;
+  // Where to land the selection after the next fetchFeed() (auto-advance only):
+  // page N+1 should start on its first cover, page N-1 on its last.
+  enum class PendingGridSelect { None, FirstBook, LastBook };
+  PendingGridSelect pendingGridSelect = PendingGridSelect::None;
   bool consumeConfirm = false;
   bool consumeBack = false;  // Added missing member
   int selectorIndex = 0;
