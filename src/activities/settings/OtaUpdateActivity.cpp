@@ -32,11 +32,13 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 
   const auto res = updater.checkForUpdate();
   if (res != OtaUpdater::OK) {
-    LOG_DBG("OTA", "Update check failed: %d", res);
+    LOG_DBG("OTA", "Update check failed: %d (free heap %u, largest block %u)", res, ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap());
     {
       RenderLock lock(*this);
       lastErrorCode = res;
       failureFreeHeap = ESP.getFreeHeap();
+      failureMaxBlock = ESP.getMaxAllocHeap();
       state = FAILED;
     }
     return;
