@@ -254,10 +254,28 @@ RecentBooksActivity::GridGeometry RecentBooksActivity::computeGridGeometry() con
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
   // Column count first, from a target minimum cell width -- then the cover
-  // size is derived to fill the resulting columns edge-to-edge.
+  // size is derived to fill the resulting columns edge-to-edge. Aspect matches
+  // the OPDS grid's GRID_COVER_ASPECT (1.5, the standard 2:3 book cover); the
+  // previous /0.6 (1.67x) made rows so tall that the X3 (528x792) fit only ONE
+  // row of 3 per page, splitting a 6-book library across two pages.
   geometry.columns = std::max(1, (pageWidth - GRID_GUTTER) / (GRID_MIN_CELL_WIDTH + GRID_GUTTER));
   geometry.coverWidth = (pageWidth - GRID_GUTTER * (geometry.columns + 1)) / geometry.columns;
-  geometry.coverHeight = static_cast<int>(geometry.coverWidth / 0.6f);
+  geometry.coverHeight = static_cast<int>(geometry.coverWidth * GRID_COVER_ASPECT);
+
+  // Guarantee two rows per page in portrait-like layouts: if the edge-to-edge
+  // cover size leaves room for only one row, shrink covers (grid stays
+  // centered -- see gridStartX in render()) until a second row fits.
+  {
+    const int titleHeight = getGridTitleHeight();
+    if (contentHeight / (geometry.coverHeight + titleHeight + GRID_GUTTER) < 2) {
+      const int maxCoverHeight = contentHeight / 2 - titleHeight - GRID_GUTTER;
+      // Only shrink while covers stay a useful size; tiny screens keep one row.
+      if (maxCoverHeight >= 120) {
+        geometry.coverHeight = maxCoverHeight;
+        geometry.coverWidth = static_cast<int>(maxCoverHeight / GRID_COVER_ASPECT);
+      }
+    }
+  }
 
   // Thumbnail CACHE height stays fixed at the theme's canonical hero height
   // (matching HomeActivity::loadRecentCovers) instead of this grid's own
