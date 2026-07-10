@@ -41,7 +41,6 @@ constexpr int kCoverCornerRadius = 6;
 // screen on both devices (X4 portrait 480 -> 136px tiles, X3 portrait 528 ->
 // 152px tiles) instead of leaving dead margins on the wider X3 panel.
 constexpr int kThumbCoverHeight = 210;
-constexpr int kThumbTitleGap = 6;
 constexpr int kThumbGap = 20;
 constexpr int kThumbsCount = 3;
 constexpr int kDividerHalfSeparation = 18;
@@ -227,7 +226,9 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
 
   // Recents band geometry: divider label centered between two rules, thumbs below.
   const int dividerLabelY = heroCoverY + kHeroHeight + kDividerHalfSeparation + 10;
-  const int thumbsY = dividerLabelY + kDividerHalfSeparation + 16;
+  // 28px clears the divider's bottom rule (label center + half-separation) with a
+  // visible gap; 16 left the covers touching the rule.
+  const int thumbsY = dividerLabelY + kDividerHalfSeparation + 28;
   const int shownRecents = std::min(static_cast<int>(recentBooks.size()) - 1, kThumbsCount);
   const int kThumbWidth = (rect.width - 2 * kMenuPadding - (kThumbsCount - 1) * kThumbGap) / kThumbsCount;
   const int thumbsTotalW = kThumbsCount * kThumbWidth + (kThumbsCount - 1) * kThumbGap;
@@ -385,7 +386,8 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
     renderer.drawCenteredText(UI_12_FONT_ID, dividerLabelY, tr(STR_RECENTS), true, EpdFontFamily::BOLD);
   }
 
-  // --- Thumbnail row dynamic parts: progress overlays, count badge, titles ---
+  // --- Thumbnail row dynamic parts: progress overlays and count badge. No title
+  // labels under the covers -- the cover art already carries the book name. ---
   const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
   for (int i = 0; i < shownRecents; i++) {
     const int slot = rtl ? kThumbsCount - 1 - i : i;
@@ -402,11 +404,6 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
       drawCoverProgressOverlay(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight,
                                stats ? stats->lastProgressPercent : 0, rtl);
     }
-
-    const std::string label = renderer.truncatedText(UI_10_FONT_ID, book.title.c_str(), kThumbWidth);
-    const int labelW = renderer.getTextWidth(UI_10_FONT_ID, label.c_str());
-    renderer.drawText(UI_10_FONT_ID, x + std::max(0, (kThumbWidth - labelW) / 2),
-                      thumbsY + kThumbCoverHeight + kThumbTitleGap, label.c_str());
   }
 
   // --- Selection: triple concentric rounded outline around the focused cover ---

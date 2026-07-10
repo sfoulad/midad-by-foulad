@@ -1,6 +1,7 @@
 #include "MappedInputManager.h"
 
 #include <GfxRenderer.h>
+#include <I18n.h>
 
 #include "CrossPointSettings.h"
 
@@ -60,15 +61,25 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
         default:
           return false;
       }
-    case Button::NavNext:
+    case Button::NavNext: {
       // Logical "next item" navigation: side Down + front Right, with the control axis flipped in
       // INVERTED / LANDSCAPE_CCW (frontButtonFollowOrientation) so it matches the rotated hint labels.
-      return isNavDirectionSwapped() ? (mapButton(Button::Up, fn) || mapButton(Button::Left, fn))
-                                     : (mapButton(Button::Down, fn) || mapButton(Button::Right, fn));
-    case Button::NavPrevious:
-      // Logical "previous item" navigation: side Up + front Left, axis-flipped in the same orientations.
-      return isNavDirectionSwapped() ? (mapButton(Button::Down, fn) || mapButton(Button::Right, fn))
-                                     : (mapButton(Button::Up, fn) || mapButton(Button::Left, fn));
+      // In an RTL UI language only the HORIZONTAL half swaps (Left advances, Right goes back):
+      // mirrored layouts flow right-to-left, while vertical flow is unchanged.
+      const bool swapped = isNavDirectionSwapped();
+      const Button vertical = swapped ? Button::Up : Button::Down;
+      Button horizontal = swapped ? Button::Left : Button::Right;
+      if (I18N.isRtl()) horizontal = horizontal == Button::Right ? Button::Left : Button::Right;
+      return mapButton(vertical, fn) || mapButton(horizontal, fn);
+    }
+    case Button::NavPrevious: {
+      // Logical "previous item" navigation: side Up + front Left, axis-flipped the same ways.
+      const bool swapped = isNavDirectionSwapped();
+      const Button vertical = swapped ? Button::Down : Button::Up;
+      Button horizontal = swapped ? Button::Right : Button::Left;
+      if (I18N.isRtl()) horizontal = horizontal == Button::Right ? Button::Left : Button::Right;
+      return mapButton(vertical, fn) || mapButton(horizontal, fn);
+    }
   }
 
   return false;

@@ -109,6 +109,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
+  // Drop entries whose files were deleted since the store was loaded, so the
+  // "+N" stack badge and stack-tile logic count only books that still exist.
+  if (RECENT_BOOKS.pruneMissing() && !RECENT_BOOKS.saveToFile()) {
+    LOG_ERR("HOME", "Failed to persist pruned recent books");
+  }
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
 
