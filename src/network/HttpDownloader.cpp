@@ -8,6 +8,7 @@
 #include <esp_http_client.h>
 #include <esp_wifi.h>
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -52,6 +53,13 @@ void logTlsError(esp_http_client_handle_t client) {
   }
 }
 #endif
+
+// Set at every runGet() failure point (and cleared at the top of runGet), so a
+// caller can read WHY the last HTTP_ERROR/FILE_ERROR happened -- see
+// HttpDownloader::FailStage for what each stage means.
+HttpDownloader::LastFailure gLastFailure;
+
+void setLastFailure(const HttpDownloader::FailStage stage, const int detail) { gLastFailure = {stage, detail}; }
 
 struct Sink {
   std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
@@ -102,6 +110,7 @@ struct WifiPowerSaveGuard {
 // ESP_ERR_HTTP_CONNECT instead, same as unmodified upstream crosspoint-reader.
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
                                      Sink& sink) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
   WifiPowerSaveGuard psGuard;
 
   // Reserve the read buffer before opening the connection, not after. An active TLS
@@ -115,6 +124,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
   if (!buf) {
     LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)READ_CHUNK, ESP.getFreeHeap());
+    setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
     return HttpDownloader::HTTP_ERROR;
   }
 
@@ -135,6 +145,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (!client) {
     LOG_ERR("HTTP", "client init failed");
+    setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
     return HttpDownloader::HTTP_ERROR;
   }
 
@@ -159,6 +170,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err), getHttpClientErrno(client),
             ESP.getFreeHeap());
     logTlsError(client);
+    setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
@@ -171,6 +183,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
       LOG_ERR("HTTP", "redirect open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
               getHttpClientErrno(client), ESP.getFreeHeap());
       logTlsError(client);
+      setLastFailure(HttpDownloader::FailStage::REDIRECT, static_cast<int>(err));
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }
@@ -180,6 +193,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 
   if (status != 200) {
     LOG_ERR("HTTP", "unexpected status: %d", status);
+    setLastFailure(HttpDownloader::FailStage::STATUS, status);
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
   }
@@ -202,6 +216,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
     if (read < 0) {
       LOG_ERR("HTTP", "read error after %zu bytes", sink.downloaded);
+      setLastFailure(HttpDownloader::FailStage::READ, static_cast<int>(std::min<size_t>(sink.downloaded, INT32_MAX)));
       esp_http_client_cleanup(client);
       return HttpDownloader::HTTP_ERROR;
     }
@@ -218,11 +233,15 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   esp_http_client_cleanup(client);
   if (!complete) {
     LOG_ERR("HTTP", "incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
+    setLastFailure(HttpDownloader::FailStage::INCOMPLETE,
+                   static_cast<int>(std::min<size_t>(sink.downloaded, INT32_MAX)));
     return HttpDownloader::HTTP_ERROR;
   }
   return HttpDownloader::OK;
 }
 }  // namespace
+
+HttpDownloader::LastFailure HttpDownloader::getLastFailure() { return gLastFailure; }
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
                               const std::string& password) {

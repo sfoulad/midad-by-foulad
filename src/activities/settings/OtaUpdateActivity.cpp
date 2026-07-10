@@ -12,6 +12,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/HttpDownloader.h"
 #include "network/OtaUpdater.h"
 #include "reading/ReadingStatsStore.h"
 
@@ -32,13 +33,16 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 
   const auto res = updater.checkForUpdate();
   if (res != OtaUpdater::OK) {
-    LOG_DBG("OTA", "Update check failed: %d (free heap %u, largest block %u)", res, ESP.getFreeHeap(),
-            ESP.getMaxAllocHeap());
+    const auto httpFailure = HttpDownloader::getLastFailure();
+    LOG_DBG("OTA", "Update check failed: %d (free heap %u, largest block %u, http stage %u detail %d)", res,
+            ESP.getFreeHeap(), ESP.getMaxAllocHeap(), static_cast<unsigned>(httpFailure.stage), httpFailure.detail);
     {
       RenderLock lock(*this);
       lastErrorCode = res;
       failureFreeHeap = ESP.getFreeHeap();
       failureMaxBlock = ESP.getMaxAllocHeap();
+      failureHttpStage = static_cast<uint8_t>(httpFailure.stage);
+      failureHttpDetail = httpFailure.detail;
       state = FAILED;
     }
     return;
@@ -160,12 +164,20 @@ void OtaUpdateActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FAILED) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
-    // Diagnostic line: error code + free heap at failure. Not prose, so it is not
-    // translated; it lets a failure be diagnosed without a USB serial capture.
+    // Diagnostic lines: error code + heap at failure, plus (when the failure came
+    // from the HTTP version-check) which network stage failed and its detail code.
+    // Not prose, so not translated; lets a failure be diagnosed without a USB
+    // serial capture.
     char diag[64];
     snprintf(diag, sizeof(diag), "code %d  heap %u  block %u", lastErrorCode, static_cast<unsigned>(failureFreeHeap),
              static_cast<unsigned>(failureMaxBlock));
     renderer.drawCenteredText(SMALL_FONT_ID, top + height + metrics.verticalSpacing, diag);
+    if (failureHttpStage != 0) {
+      char httpDiag[32];
+      snprintf(httpDiag, sizeof(httpDiag), "http %u:%d", failureHttpStage, failureHttpDetail);
+      renderer.drawCenteredText(
+          SMALL_FONT_ID, top + height + metrics.verticalSpacing + renderer.getLineHeight(SMALL_FONT_ID) + 2, httpDiag);
+    }
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FINISHED) {

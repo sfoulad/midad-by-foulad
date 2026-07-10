@@ -26,6 +26,11 @@ class OtaUpdateActivity : public Activity {
   int lastErrorCode = 0;
   uint32_t failureFreeHeap = 0;
   uint32_t failureMaxBlock = 0;
+  // Only meaningful when the failure came from checkForUpdate() (the version-check
+  // GET), which goes through HttpDownloader -- installUpdate() uses esp_https_ota_*
+  // directly and doesn't set these. 0/0 (FailStage::NONE) otherwise.
+  uint8_t failureHttpStage = 0;
+  int failureHttpDetail = 0;
 
   void onWifiSelectionComplete(bool success);
 
