@@ -3,8 +3,10 @@
 #include <BidiUtils.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <ScriptDetector.h>
 #include <Serialization.h>
 
+#include <algorithm>
 #include <cstring>
 
 void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int x, const int y) const {
@@ -21,6 +23,29 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
 
   const bool scanning = renderer.isFontCacheScanning();
   const int ascender = renderer.getFontAscenderSize(fontId);
+
+  // Mixed Arabic/Latin lines must share ONE baseline. drawText anchors each word's
+  // baseline at y + ascender of the font that actually renders it: Arabic words use the
+  // Arabic reading font's ascender (much taller than the Latin font's -- it reserves
+  // headroom for stacked diacritics), Latin/digit words use the Latin ascender. Without
+  // correction, Latin runs and numbers in an Arabic line float visibly HIGHER than the
+  // Arabic beside them (confirmed on device: "هاتف 800811", ISBN digits, dates). Shift
+  // the non-Arabic words down so every word sits on the Arabic baseline; the line's row
+  // pitch is already sized for the Arabic line height when the line contains Arabic.
+  int latinBaselineShift = 0;
+  {
+    bool lineHasArabic = false;
+    for (const auto& w : words) {
+      if (ScriptDetector::containsArabic(w.c_str())) {
+        lineHasArabic = true;
+        break;
+      }
+    }
+    if (lineHasArabic) {
+      const int arabicAscender = renderer.getFontAscenderSize(renderer.getResolvedArabicFontId(fontId));
+      latinBaselineShift = std::max(0, arabicAscender - ascender);
+    }
+  }
 
   struct DecorationLineTracker {
     EpdFontFamily::Style style;
@@ -66,6 +91,9 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
     //   SUP: raise by 40% of ascender — sits clearly above the cap-height
     //   SUB: lower by 25% of ascender — descends below baseline without clashing with ascenders below
     int wordY = y;
+    if (latinBaselineShift != 0 && !ScriptDetector::containsArabic(words[i].c_str())) {
+      wordY += latinBaselineShift;  // align this Latin/digit word to the Arabic baseline
+    }
     if ((currentStyle & EpdFontFamily::SUP) != 0) {
       wordY -= ascender * 2 / 5;
     } else if ((currentStyle & EpdFontFamily::SUB) != 0) {
