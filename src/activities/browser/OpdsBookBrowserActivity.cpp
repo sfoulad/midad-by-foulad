@@ -347,13 +347,13 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     const int rowHeight = getListRowHeight();
     const int pageItems = getListPageItems(rowHeight);
     const auto pageStartIndex = selectorIndex / pageItems * pageItems;
-    const int highlightHeight = getListRowHighlightHeight(entries[selectorIndex].title);
-    // Grow the highlight symmetrically around the tight row pitch (rather than only
-    // downward) so a taller Arabic line doesn't get sliced by the highlight edge, without
-    // moving where the row's own text draws.
-    const int highlightYOffset = (highlightHeight - rowHeight) / 2;
-    renderer.fillRect(0, GRID_CONTENT_TOP + (selectorIndex % pageItems) * rowHeight - 2 - highlightYOffset,
-                      pageWidth - 1, highlightHeight);
+    // Extend the highlight downward only, not split symmetrically above/below: text draws
+    // from a fixed top anchor (y = row top, baseline = y + font ascender), and Arabic's
+    // larger ascender+descender sum extends the glyph bounds further DOWN from that same
+    // top -- the top of the glyph doesn't move. Splitting the extra height evenly (an
+    // earlier attempt) only gave half the needed room at the bottom and still clipped it.
+    renderer.fillRect(0, GRID_CONTENT_TOP + (selectorIndex % pageItems) * rowHeight - 2, pageWidth - 1,
+                      getListRowHighlightHeight(entries[selectorIndex].title));
 
     for (size_t i = pageStartIndex; i < entries.size() && i < static_cast<size_t>(pageStartIndex + pageItems); i++) {
       const auto& entry = entries[i];
@@ -373,9 +373,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       const auto& entry = entries[i];
       auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
       if (i == selectorIndex) {
-        const int highlightHeight = getListRowHighlightHeight(entry.title);
-        const int highlightYOffset = (highlightHeight - rowHeight) / 2;
-        renderer.fillRect(0, y - 2 - highlightYOffset, pageWidth - 1, highlightHeight);
+        // Extends downward only -- see the plain-list highlight above for why.
+        renderer.fillRect(0, y - 2, pageWidth - 1, getListRowHighlightHeight(entry.title));
       }
       renderer.drawTextInWidth(UI_10_FONT_ID, 20, y, pageWidth - 40, item.c_str(), i != selectorIndex);
       y += rowHeight;
@@ -450,9 +449,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         const auto& entry = entries[i];
         auto item = renderer.truncatedText(UI_10_FONT_ID, ("> " + entry.title).c_str(), pageWidth - 40);
         if (i == selectorIndex) {
-          const int highlightHeight = getListRowHighlightHeight(entry.title);
-          const int highlightYOffset = (highlightHeight - rowHeight) / 2;
-          renderer.fillRect(0, by - 2 - highlightYOffset, pageWidth - 1, highlightHeight);
+          // Extends downward only -- see the plain-list highlight above for why.
+          renderer.fillRect(0, by - 2, pageWidth - 1, getListRowHighlightHeight(entry.title));
         }
         renderer.drawTextInWidth(UI_10_FONT_ID, 20, by, pageWidth - 40, item.c_str(), i != selectorIndex);
         by += rowHeight;

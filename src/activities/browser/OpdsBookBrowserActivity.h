@@ -125,7 +125,11 @@ class OpdsBookBrowserActivity final : public Activity {
   // tight pitch; unselected, the overflow quietly overlaps the next row's whitespace and is
   // barely noticeable, but a *selected* row inverts to white-on-black, so the same overflow
   // gets visibly sliced off at the highlight rectangle's hard edge. Only the highlight itself
-  // widens (symmetrically, so the row pitch and text position are untouched) to avoid that.
+  // grows -- and only downward from the row's existing top edge, not split symmetrically
+  // above/below: text draws from a fixed top anchor (baseline = top + font ascender), and
+  // Arabic's larger ascender+descender sum extends the glyph bounds further down from that
+  // same top, not upward, so a symmetric split (an earlier attempt) only gave half the
+  // needed room at the bottom and still clipped it.
   int getListRowHighlightHeight(const std::string& title) const;
   // How many list rows fit in the available content area for a given row height --
   // replaces a fixed item-per-page constant so a taller Arabic row height doesn't overflow
