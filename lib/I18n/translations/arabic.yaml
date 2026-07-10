@@ -4,6 +4,7 @@ _order: "1"
 
 STR_CROSSPOINT: "Foulad eInk"
 STR_FOULAD_EBOOKS: "كتب فولاد"
+STR_FOULAD_EBOOKS_LOGIN: "تسجيل الدخول إلى كتب فولاد"
 STR_FOULAD_EBOOKS_LOGOUT: "تسجيل الخروج من كتب فولاد"
 STR_FOULAD_EBOOKS_LOGOUT_CONFIRM: "تسجيل الخروج من كتب فولاد؟ سيطلب منك اسم المستخدم وكلمة المرور مرة أخرى."
 STR_FOULAD_EBOOKS_LOGIN_HINT: "استخدم بيانات حسابك على foulad.one"

@@ -25,6 +25,7 @@
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
+#include "activities/browser/FouladEbooksSetupActivity.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -74,12 +75,16 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
-  // Only offer logout once an account is actually stored; nothing to log out of otherwise.
+  // One slot, two states: Logout when an account is stored, Login when not --
+  // after logging out (which also swaps the home menu's eBooks slot to Files),
+  // this is the way back in.
   const auto& opdsServers = OPDS_STORE.getServers();
   const bool hasFouladEbooksAccount = std::any_of(
       opdsServers.begin(), opdsServers.end(), [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
   if (hasFouladEbooksAccount) {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGOUT, SettingAction::FouladEbooksLogout));
+  } else {
+    systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGIN, SettingAction::FouladEbooksLogin));
   }
   // Insert "Manage Fonts" right after the font family setting so users discover it naturally
   readerSettings.insert(readerSettings.begin() + 1,
@@ -368,6 +373,17 @@ void SettingsActivity::toggleCurrentSetting() {
             logoutHandler);
         break;
       }
+      case SettingAction::FouladEbooksLogin:
+        // Same username/password flow as the first-run home entry. On success
+        // the setup activity silent-reboots into the catalog on a fresh heap
+        // (see FouladEbooksSetupActivity); on cancel we return here, so rebuild
+        // the list either way to flip this row between Login and Logout.
+        startActivityForResult(std::make_unique<FouladEbooksSetupActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 rebuildSettingsLists();
+                                 selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+                               });
+        break;
       case SettingAction::None:
         // Do nothing
         break;

@@ -5,7 +5,7 @@
 
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
-#include "OpdsBookBrowserActivity.h"
+#include "SilentRestart.h"
 #include "OpdsServerStore.h"
 #include "activities/ActivityManager.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -44,9 +44,13 @@ void FouladEbooksSetupActivity::launchPasswordEntry() {
     server.url = FOULAD_EBOOKS_URL;
     server.username = username;
     server.password = std::get<KeyboardResult>(result.data).text;
-    OPDS_STORE.addServer(server);
+    OPDS_STORE.addServer(server);  // persists to SD before the reboot below
 
-    activityManager.replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, server));
+    // Reboot into the catalog on a fresh heap instead of opening it in this
+    // session -- same OOM protection as the Home eBooks entry (see
+    // SilentRestart.h). Boot routes into goToFouladEbooks(), which finds the
+    // account just stored and opens the browser directly.
+    silentRestartToFouladEbooks();
   };
   startActivityForResult(
       std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_PASSWORD), "", 63, InputType::Password,

@@ -4,6 +4,7 @@ _order: "0"
 
 STR_CROSSPOINT: "Foulad eInk"
 STR_FOULAD_EBOOKS: "Foulad eBooks"
+STR_FOULAD_EBOOKS_LOGIN: "Log In to Foulad eBooks"
 STR_FOULAD_EBOOKS_LOGOUT: "Log Out of Foulad eBooks"
 STR_FOULAD_EBOOKS_LOGOUT_CONFIRM: "Log out of Foulad eBooks? You'll be asked for a username and password again next time."
 STR_FOULAD_EBOOKS_LOGIN_HINT: "Use your foulad.one account details"
