@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "CrossPointSettings.h"
@@ -422,7 +423,9 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
   if (buttonCount <= 0) return;
   // Bottom-anchor the band at the screen edge (the home screen draws no
   // button-hints bar), regardless of the (looser) rect HomeActivity hands us.
-  const int barY = renderer.getScreenHeight() - kMenuBandHeight - 8;
+  // The strip below the band holds the physical-button glyphs (see below).
+  constexpr int kGlyphStripHeight = 20;
+  const int barY = renderer.getScreenHeight() - kMenuBandHeight - kGlyphStripHeight;
   const int lineX1 = rect.x + kMenuPadding;
   const int lineX2 = rect.x + rect.width - kMenuPadding;
   renderer.drawLine(lineX1, barY, lineX2, barY, true);
@@ -460,5 +463,46 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
     const int labelW = renderer.getTextWidth(SMALL_FONT_ID, label.c_str());
     renderer.drawText(SMALL_FONT_ID, tileX + std::max(0, (tileWidth - labelW) / 2),
                       iconY + kMenuIconSize + kMenuIconLabelGap, label.c_str());
+  }
+
+  // Physical-button glyphs in the strip under the band, one per tile, as a visual
+  // hint of the front button below the bezel. Home menu order (see HomeActivity):
+  // eBooks (none), Stats (dot), Update (left triangle), Settings (right triangle).
+  // Drawn as vector shapes -- the bundled fonts have no U+25C0/25B6/25CF glyphs.
+  enum class ButtonGlyph : uint8_t { None, Dot, TriangleLeft, TriangleRight };
+  static constexpr ButtonGlyph kHomeMenuGlyphs[] = {ButtonGlyph::None, ButtonGlyph::Dot, ButtonGlyph::TriangleLeft,
+                                                    ButtonGlyph::TriangleRight};
+  constexpr int kGlyphCount = sizeof(kHomeMenuGlyphs) / sizeof(kHomeMenuGlyphs[0]);
+  constexpr int kGlyphH = 10;
+  constexpr int kGlyphW = 8;
+  const int glyphCy = barY + kMenuBandHeight + 4 + kGlyphH / 2;
+  for (int i = 0; i < buttonCount && i < kGlyphCount; i++) {
+    const int slotIndex = rtl ? buttonCount - 1 - i : i;
+    const int tileX = rect.x + kMenuPadding + slotIndex * (tileWidth + kMenuGap);
+    const int cx = tileX + tileWidth / 2;
+    switch (kHomeMenuGlyphs[i]) {
+      case ButtonGlyph::Dot:
+        fillDisc(renderer, cx, glyphCy, kGlyphH / 2 - 1, true);
+        break;
+      case ButtonGlyph::TriangleLeft:
+        // Filled left-pointing triangle, one horizontal line per row.
+        for (int row = 0; row < kGlyphH; row++) {
+          const int half = kGlyphH / 2;
+          const int inset = kGlyphW * std::abs(row - half) / half;
+          renderer.drawLine(cx - kGlyphW / 2 + inset, glyphCy - half + row, cx + kGlyphW / 2, glyphCy - half + row,
+                            true);
+        }
+        break;
+      case ButtonGlyph::TriangleRight:
+        for (int row = 0; row < kGlyphH; row++) {
+          const int half = kGlyphH / 2;
+          const int inset = kGlyphW * std::abs(row - half) / half;
+          renderer.drawLine(cx - kGlyphW / 2, glyphCy - half + row, cx + kGlyphW / 2 - inset, glyphCy - half + row,
+                            true);
+        }
+        break;
+      case ButtonGlyph::None:
+        break;
+    }
   }
 }
