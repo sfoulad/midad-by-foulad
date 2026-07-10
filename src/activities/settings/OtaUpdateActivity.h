@@ -31,12 +31,17 @@ class OtaUpdateActivity : public Activity {
   // directly and doesn't set these. 0/0 (FailStage::NONE) otherwise.
   uint8_t failureHttpStage = 0;
   int failureHttpDetail = 0;
+  // True only on the fresh boot landed on by silentRestartToOtaInstall(): the
+  // user already confirmed this update before that reboot, so WAITING_CONFIRMATION
+  // proceeds straight to install instead of waiting for another button press.
+  bool autoInstall = false;
 
   void onWifiSelectionComplete(bool success);
+  void beginInstall();
 
  public:
-  explicit OtaUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("OtaUpdate", renderer, mappedInput), updater() {}
+  explicit OtaUpdateActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoInstall = false)
+      : Activity("OtaUpdate", renderer, mappedInput), updater(), autoInstall(autoInstall) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;

@@ -198,61 +198,79 @@ void OtaUpdateActivity::render(RenderLock&&) {
   renderer.displayBuffer();
 }
 
+void OtaUpdateActivity::beginInstall() {
+  LOG_DBG("OTA", "Starting download...");
+  {
+    RenderLock lock(*this);
+    state = UPDATE_IN_PROGRESS;
+  }
+  requestUpdateAndWait();
+
+  // Free heap again right before the firmware-download TLS handshake, on top
+  // of the onEnter() clear: esp_https_ota_begin() needs a large *contiguous*
+  // block for the mbedTLS session to GitHub's CDN, and the "Checking..." /
+  // "Update available?" screens drawn since onEnter() will have refilled the
+  // glyph cache somewhat (button hints, version strings). On an autoInstall
+  // (post silentRestartToOtaInstall) boot this is close to a no-op -- nothing
+  // has grown these yet -- but costs nothing to run unconditionally.
+  READING_STATS.releaseMemory();
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->clearCache();
+  }
+  LOG_DBG("OTA", "Pre-OTA heap: free %u, largest block %u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  const auto res = updater.installUpdate(
+      [](void* ctx) {
+        // immediate=true notifies the render task directly. The default deferred path only
+        // sets a flag consumed at the end of ActivityManager::loop(), which never runs while
+        // installUpdate() blocks this task.
+        static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
+      },
+      this);
+
+  if (res != OtaUpdater::OK) {
+    LOG_DBG("OTA", "Update failed: %d (free heap %u, largest block %u)", res, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    {
+      RenderLock lock(*this);
+      lastErrorCode = res;
+      failureFreeHeap = ESP.getFreeHeap();
+      failureMaxBlock = ESP.getMaxAllocHeap();
+      state = FAILED;
+    }
+    requestUpdate();
+    return;
+  }
+
+  {
+    RenderLock lock(*this);
+    state = FINISHED;
+  }
+  requestUpdateAndWait();
+  // Hold the completion screen briefly so the user sees it, then restart.
+  delay(3000);
+  {
+    RenderLock lock(*this);
+    state = SHUTTING_DOWN;
+  }
+}
+
 void OtaUpdateActivity::loop() {
   if (state == WAITING_CONFIRMATION) {
+    // autoInstall means the user already confirmed this exact update before
+    // silentRestartToOtaInstall() rebooted here -- proceed immediately instead
+    // of waiting for a second button press.
+    if (autoInstall) {
+      beginInstall();
+      return;
+    }
+
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      LOG_DBG("OTA", "New update available, starting download...");
-      {
-        RenderLock lock(*this);
-        state = UPDATE_IN_PROGRESS;
-      }
-      requestUpdateAndWait();
-
-      // Free heap again right before the firmware-download TLS handshake, on top
-      // of the onEnter() clear: esp_https_ota_begin() needs a large *contiguous*
-      // block for the mbedTLS session to GitHub's CDN, and the "Checking..." /
-      // "Update available?" screens drawn since onEnter() will have refilled the
-      // glyph cache somewhat (button hints, version strings).
-      READING_STATS.releaseMemory();
-      if (auto* fcm = renderer.getFontCacheManager()) {
-        fcm->clearCache();
-      }
-      LOG_DBG("OTA", "Pre-OTA heap: free %u, largest block %u", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-
-      const auto res = updater.installUpdate(
-          [](void* ctx) {
-            // immediate=true notifies the render task directly. The default deferred path only
-            // sets a flag consumed at the end of ActivityManager::loop(), which never runs while
-            // installUpdate() blocks this task.
-            static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
-          },
-          this);
-
-      if (res != OtaUpdater::OK) {
-        LOG_DBG("OTA", "Update failed: %d (free heap %u, largest block %u)", res, ESP.getFreeHeap(),
-                ESP.getMaxAllocHeap());
-        {
-          RenderLock lock(*this);
-          lastErrorCode = res;
-          failureFreeHeap = ESP.getFreeHeap();
-          failureMaxBlock = ESP.getMaxAllocHeap();
-          state = FAILED;
-        }
-        requestUpdate();
-        return;
-      }
-
-      {
-        RenderLock lock(*this);
-        state = FINISHED;
-      }
-      requestUpdateAndWait();
-      // Hold the completion screen briefly so the user sees it, then restart.
-      delay(3000);
-      {
-        RenderLock lock(*this);
-        state = SHUTTING_DOWN;
-      }
+      // Reboot into a fresh heap before the (memory-hungry) firmware download
+      // rather than attempting it in this already-fragmented session -- see
+      // silentRestartToOtaInstall(). Does not return.
+      LOG_DBG("OTA", "Update confirmed, rebooting into auto-install...");
+      silentRestartToOtaInstall();
+      return;
     }
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
