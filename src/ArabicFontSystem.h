@@ -6,13 +6,13 @@
 class GfxRenderer;
 
 /// Supplies Arabic glyphs for GfxRenderer::drawArabicText/getArabicTextWidth. Two
-/// independent axes: a built-in family+size pair (CrossPointSettings::arabicFontFamily/
-/// arabicFontSize, one of 5 bundled OFL fonts at 12/14/16/18pt) used for EPUB reading
-/// text, plus a fixed set of small UI-context sizes (8/10/12pt, always Noto Sans
-/// Arabic) used for titles/menus/lists. An optional SD-card override
-/// (sdArabicFontFamilyName) replaces BOTH axes uniformly with one custom font loaded
-/// at one fixed size, mirroring SdCardFontSystem's discover/load pattern for the
-/// reading font.
+/// independent axes: a READING font (built-in Noto Naskh Arabic at
+/// CrossPointSettings::arabicFontSize, or the optional SD-card override
+/// sdArabicFontFamilyName loaded at that same size) used for EPUB body text and any
+/// other fontId without an explicit mapping, plus a fixed set of small UI-context
+/// sizes (8/10/12pt, always built-in Noto Sans Arabic) used for titles/menus/lists.
+/// The UI axis is never overridden by the SD font -- UI geometry is sized for the
+/// small built-in tiers, and this keeps Arabic Font Size purely a reading-text knob.
 class ArabicFontSystem {
  public:
   ArabicFontSystem() = default;
@@ -43,6 +43,9 @@ class ArabicFontSystem {
   SdCardFontRegistry registry_;
   SdCardFontManager manager_;
   bool registryDirty_ = false;
+  // Size enum the current SD family was loaded at, so an Arabic Font Size change
+  // reloads the family instead of matching on name alone and keeping the old size.
+  uint8_t loadedSdSizeEnum_ = 0xFF;
 };
 
 // Global Arabic font system instance (defined in main.cpp).
