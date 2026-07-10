@@ -128,6 +128,7 @@ constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_OTA_INSTALL = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_OTA_CHECK = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_FILE_TRANSFER = 4;
+constexpr uint32_t SILENT_REBOOT_TARGET_FOULAD_EBOOKS = 5;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -199,6 +200,16 @@ void silentRestartToFileTransfer() {
   silentRebootTarget = SILENT_REBOOT_TARGET_FILE_TRANSFER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=file_transfer)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToFouladEbooks() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_FOULAD_EBOOKS;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=foulad_ebooks)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -371,7 +382,7 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_FILE_TRANSFER) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_FOULAD_EBOOKS) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   gBootWasSilentRestart = isSilentReboot;
@@ -504,6 +515,11 @@ void setup() {
     // allocations for the WiFi driver and TCP buffers, and a fragmented heap
     // makes page loads crawl. Settings reboots here before starting it.
     activityManager.goToFileTransfer();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_FOULAD_EBOOKS) {
+    // Same fresh-heap treatment: OPDS browsing stacks WiFi + feed parsing +
+    // cover download/decode allocations; started from a fragmented session
+    // heap it aborted with OOM twice on-device (crash reports 7 and 8).
+    activityManager.goToFouladEbooks();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale

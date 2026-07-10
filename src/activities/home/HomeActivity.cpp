@@ -382,7 +382,12 @@ void HomeActivity::onStatsOpen() {
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
-void HomeActivity::onFouladEbooksOpen() { activityManager.goToFouladEbooks(); }
+void HomeActivity::onFouladEbooksOpen() {
+  // Reboot into the browser on a fresh heap (see SilentRestart.h): OPDS
+  // browsing from a fragmented session heap ended in OOM aborts on-device.
+  // Does not return.
+  silentRestartToFouladEbooks();
+}
 
 void HomeActivity::onCheckUpdateOpen() {
   // Reboot into the OTA flow instead of opening it in this session: after
