@@ -159,20 +159,34 @@ void drawRoundCountBadge(const GfxRenderer& renderer, const int coverX, const in
                     EpdFontFamily::BOLD);
 }
 
-// Cover paint: fit by height, crop horizontally, placeholder when missing.
+// Cover paint. thumbHeight selects which generated thumbnail file to load --
+// HomeActivity::loadRecentCovers only generates thumbs at homeCoverHeight (the
+// hero size), so EVERY tile loads that one size and scales it into its own box
+// (drawBitmap only ever scales down). Requesting the tile's own height here was
+// why the recents-row covers showed placeholders: thumb_210.bmp never exists.
 void drawCoverAt(const GfxRenderer& renderer, const std::string& coverBmpPath, const int x, const int y, const int w,
-                 const int h) {
+                 const int h, const int thumbHeight) {
   bool hasCover = false;
   if (!coverBmpPath.empty()) {
-    const std::string path = UITheme::getCoverThumbPath(coverBmpPath, h);
+    const std::string path = UITheme::getCoverThumbPath(coverBmpPath, thumbHeight);
     HalFile file;
     if (Storage.openFileForRead("HOME", path, file)) {
       Bitmap bitmap(file);
-      if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-        const float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-        const float tileRatio = static_cast<float>(w) / static_cast<float>(h);
-        const float cropX = std::max(0.0f, 1.0f - (tileRatio / ratio));
-        renderer.drawBitmap(bitmap, x, y, w, h, cropX);
+      if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
+        if (bitmap.getHeight() == h) {
+          // Exact-height thumb (the hero): crop horizontally to fill the box.
+          const float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+          const float tileRatio = static_cast<float>(w) / static_cast<float>(h);
+          const float cropX = std::max(0.0f, 1.0f - (tileRatio / ratio));
+          renderer.drawBitmap(bitmap, x, y, w, h, cropX);
+        } else {
+          // Larger thumb reused for a smaller tile: shrink-to-fit, centered.
+          const float scale =
+              std::min(static_cast<float>(w) / bitmap.getWidth(), static_cast<float>(h) / bitmap.getHeight());
+          const int scaledW = static_cast<int>(bitmap.getWidth() * scale);
+          const int scaledH = static_cast<int>(bitmap.getHeight() * scale);
+          renderer.drawBitmap(bitmap, x + std::max(0, (w - scaledW) / 2), y + std::max(0, (h - scaledH) / 2), w, h);
+        }
         hasCover = true;
       }
     }
@@ -211,7 +225,8 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
 
   // --- Static covers, drawn once and captured into the stored frame buffer ---
   if (!coverRendered && !recentBooks.empty()) {
-    drawCoverAt(renderer, recentBooks[0].coverBmpPath, heroCoverX, heroCoverY, kHeroCoverWidth, kHeroHeight);
+    drawCoverAt(renderer, recentBooks[0].coverBmpPath, heroCoverX, heroCoverY, kHeroCoverWidth, kHeroHeight,
+                kHeroHeight);
     const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
     for (int i = 0; i < shownRecents; i++) {
       const int x = thumbsX + i * (kThumbWidth + kThumbGap);
@@ -220,7 +235,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
         drawBackStack(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight,
                       std::min(2, totalRecents - 1 - kThumbsCount));
       }
-      drawCoverAt(renderer, recentBooks[i + 1].coverBmpPath, x, thumbsY, kThumbWidth, kThumbCoverHeight);
+      drawCoverAt(renderer, recentBooks[i + 1].coverBmpPath, x, thumbsY, kThumbWidth, kThumbCoverHeight, kHeroHeight);
     }
     coverBufferStored = storeCoverBuffer();
     coverRendered = coverBufferStored;
