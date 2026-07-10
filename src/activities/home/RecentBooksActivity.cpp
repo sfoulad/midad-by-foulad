@@ -56,6 +56,12 @@ void RecentBooksActivity::loadRecentBooks() {
   size_t dirsScanned = 0;
   char nameBuf[NAME_BUF_SIZE];
 
+  // On-SD scan report (/mybooks_scan_log.txt): every directory visited and how
+  // each entry was classified, so "a book on the card isn't showing up" can be
+  // diagnosed from the SD card without a serial capture. Rewritten per scan.
+  std::string report = "My Books scan -- CrossPoint version " CROSSPOINT_VERSION "\n";
+  report += "recents in store: " + std::to_string(recentBooks.size()) + "\n";
+
   while (!dirs.empty() && dirsScanned < MAX_SCAN_DIRS &&
          recentBooks.size() + discovered.size() < MAX_LIBRARY_BOOKS) {
     const std::string dirPath = dirs.back();
@@ -63,8 +69,12 @@ void RecentBooksActivity::loadRecentBooks() {
     dirsScanned++;
 
     auto dir = Storage.open(dirPath.c_str());
-    if (!dir || !dir.isDirectory()) continue;
+    if (!dir || !dir.isDirectory()) {
+      report += "OPEN-FAIL " + dirPath + "\n";
+      continue;
+    }
     dir.rewindDirectory();
+    report += "DIR " + dirPath + "\n";
 
     for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
       entry.getName(nameBuf, sizeof(nameBuf));
@@ -80,11 +90,18 @@ void RecentBooksActivity::loadRecentBooks() {
 
       const bool isEpub = FsHelpers::hasEpubExtension(entryPath);
       const bool isXtc = FsHelpers::hasXtcExtension(entryPath);
-      if (!isEpub && !isXtc) continue;
+      if (!isEpub && !isXtc) {
+        if (report.size() < 4096) report += "  skip(ext) " + std::string(nameBuf) + "\n";
+        continue;
+      }
 
       const bool inRecents = std::any_of(recentBooks.begin(), recentBooks.end(),
                                          [&entryPath](const RecentBook& b) { return b.path == entryPath; });
-      if (inRecents) continue;
+      if (inRecents) {
+        report += "  book(recent) " + std::string(nameBuf) + "\n";
+        continue;
+      }
+      report += "  book(new) " + std::string(nameBuf) + "\n";
 
       RecentBook book;
       book.path = entryPath;
@@ -97,6 +114,17 @@ void RecentBooksActivity::loadRecentBooks() {
       discovered.push_back(std::move(book));
     }
   }
+
+  report += "TOTAL recents=" + std::to_string(RECENT_BOOKS.getBooks().size()) +
+            " new=" + std::to_string(discovered.size()) + " dirs=" + std::to_string(dirsScanned) + "\n";
+  {
+    HalFile logFile;
+    if (Storage.openFileForWrite("MYBOOKS", "/mybooks_scan_log.txt", logFile)) {
+      logFile.write(reinterpret_cast<const uint8_t*>(report.data()), report.size());
+    }
+  }
+  LOG_INF("MYBOOKS", "scan: recents=%u new=%u dirs=%u", (unsigned)RECENT_BOOKS.getBooks().size(),
+          (unsigned)discovered.size(), (unsigned)dirsScanned);
 
   std::sort(discovered.begin(), discovered.end(),
             [](const RecentBook& a, const RecentBook& b) { return a.title < b.title; });
