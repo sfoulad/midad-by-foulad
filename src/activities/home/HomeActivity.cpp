@@ -14,7 +14,9 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
+#include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SilentRestart.h"
 #include "activities/stats/StatsActivity.h"
@@ -23,8 +25,22 @@
 #include "reading/ReadingStatsStore.h"
 #include "util/CoverThumbs.h"
 
+namespace {
+// The first menu slot is "eBooks" only while a Foulad eBooks account is
+// configured; logged out it becomes "Files" (SD card browser) so users who
+// don't use the catalog aren't shown its icon. The store is a boot-loaded
+// in-RAM vector of at most 8 servers, so this check is effectively free --
+// no SD or network access -- and can run on every render/dispatch.
+bool fouladEbooksLoggedIn() {
+  for (const auto& server : OPDS_STORE.getServers()) {
+    if (server.url == FOULAD_EBOOKS_URL) return true;
+  }
+  return false;
+}
+}  // namespace
+
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // eBooks, Stats, Update, Settings
+  int count = 4;  // eBooks-or-Files, Stats, Update, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -292,7 +308,13 @@ void HomeActivity::loop() {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
       switch (indexToMenuItem(menuIndex)) {
         case HomeMenuItem::FOULAD_EBOOKS:
-          onFouladEbooksOpen();
+          // Slot 0 is dual-purpose: "eBooks" with a Foulad eBooks account,
+          // "Files" (SD browser) without one -- see fouladEbooksLoggedIn().
+          if (fouladEbooksLoggedIn()) {
+            onFouladEbooksOpen();
+          } else {
+            activityManager.goToFileBrowser("/");
+          }
           break;
         case HomeMenuItem::SETTINGS_MENU:
           onSettingsOpen();
@@ -339,8 +361,10 @@ void HomeActivity::render(RenderLock&&) {
   // Short labels chosen to fit the bottom icon bar tiles. Recent Books has no
   // menu entry anymore: the recents covers row (and its stacked +N tile, which
   // opens the full grid) took over that job.
-  std::vector<const char*> menuItems = {tr(STR_EBOOKS), tr(STR_STATS), tr(STR_UPDATE), tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Library, Stats, Transfer, Settings};
+  const bool ebooksAccount = fouladEbooksLoggedIn();
+  std::vector<const char*> menuItems = {ebooksAccount ? tr(STR_EBOOKS) : tr(STR_FILES), tr(STR_STATS), tr(STR_UPDATE),
+                                        tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {ebooksAccount ? Library : Folder, Stats, Transfer, Settings};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme

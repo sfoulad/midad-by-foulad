@@ -15,6 +15,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
+#include "components/icons/folder.h"
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
 #include "components/icons/settings2.h"
@@ -58,6 +59,10 @@ const uint8_t* menuIconBitmap(const UIIcon icon) {
   switch (icon) {
     case UIIcon::Library:
       return LibraryIcon;
+    case UIIcon::Folder:
+      // Home slot 0 shows Files (SD browser) when no Foulad eBooks account
+      // is configured -- see HomeActivity's fouladEbooksLoggedIn().
+      return FolderIcon;
     case UIIcon::Recent:
       return RecentIcon;
     case UIIcon::Stats:

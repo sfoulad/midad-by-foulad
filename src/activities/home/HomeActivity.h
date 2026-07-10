@@ -36,7 +36,8 @@ class HomeActivity final : public Activity {
   // recentBooks selection range, handled separately in loop()).
   static int menuItemToIndex(HomeMenuItem item) {
     int i = 0;
-    if (item == HomeMenuItem::FOULAD_EBOOKS) return i;
+    // Slot 0 shows eBooks (logged in) or Files (logged out) -- same index.
+    if (item == HomeMenuItem::FOULAD_EBOOKS || item == HomeMenuItem::FILE_BROWSER) return i;
     ++i;
     if (item == HomeMenuItem::STATS) return i;
     ++i;
