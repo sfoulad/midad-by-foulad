@@ -20,10 +20,10 @@
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
 #include "OpdsServerStore.h"
-#include "OtaUpdateActivity.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
+#include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/network/CrossPointWebServerActivity.h"
@@ -322,7 +322,10 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::CheckForUpdates:
-        startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
+        // Reboot into the OTA flow instead of opening it in this session: after
+        // Home/library browsing the heap is fragmented below what the GitHub TLS
+        // handshakes need (see silentRestartToOtaCheck). Does not return.
+        silentRestartToOtaCheck();
         break;
       case SettingAction::SdFirmwareUpdate:
         startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);

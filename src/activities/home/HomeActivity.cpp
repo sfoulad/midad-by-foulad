@@ -16,7 +16,7 @@
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
-#include "activities/settings/OtaUpdateActivity.h"
+#include "SilentRestart.h"
 #include "activities/stats/StatsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -291,5 +291,8 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 void HomeActivity::onFouladEbooksOpen() { activityManager.goToFouladEbooks(); }
 
 void HomeActivity::onCheckUpdateOpen() {
-  activityManager.replaceActivity(std::make_unique<OtaUpdateActivity>(renderer, mappedInput));
+  // Reboot into the OTA flow instead of opening it in this session: after
+  // Home/library browsing the heap is fragmented below what the GitHub TLS
+  // handshakes need (see silentRestartToOtaCheck). Does not return.
+  silentRestartToOtaCheck();
 }
