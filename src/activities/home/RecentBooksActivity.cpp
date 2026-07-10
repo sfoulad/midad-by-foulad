@@ -178,7 +178,9 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
   for (int i = pageStart; i < pageEnd; i++) {
     const RecentBook& book = recentBooks[i];
     if (book.coverBmpPath.empty()) continue;
-    if (!Storage.exists(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight).c_str())) {
+    // isValidCachedBmp, not a plain existence check -- see the comment on the
+    // matching check below for why a stale failure marker must not block a retry.
+    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight))) {
       needsGeneration = true;
       break;
     }
@@ -197,8 +199,14 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     RecentBook& book = recentBooks[i];
     if (!book.coverBmpPath.empty()) {
       const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight);
-      if (!Storage.exists(coverPath.c_str())) {
-        bool success = false;
+      // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
+      // from a PRIOR failed attempt -- generateThumbBmp() writes an empty file to
+      // avoid retrying every render -- doesn't permanently block a retry once the
+      // underlying reason for that failure is fixed (e.g. the OPDS external-cover
+      // fallback added later). A retry that fails again is a handful of cheap
+      // local Storage checks, not a network request or image decode. Failure also
+      // leaves book.coverBmpPath untouched (not cleared to "") for the same reason.
+      if (!Bitmap::isValidCachedBmp(coverPath)) {
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
           if (epub.load(false, true)) {
@@ -207,7 +215,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            success = epub.generateThumbBmp(geometry.coverHeight);
+            epub.generateThumbBmp(geometry.coverHeight);
           }
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           Xtc xtc(book.path, "/.crosspoint");
@@ -217,12 +225,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            success = xtc.generateThumbBmp(geometry.coverHeight);
+            xtc.generateThumbBmp(geometry.coverHeight);
           }
-        }
-        if (!success) {
-          RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-          book.coverBmpPath = "";
         }
       }
     }

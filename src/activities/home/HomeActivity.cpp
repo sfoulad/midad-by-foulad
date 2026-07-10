@@ -58,7 +58,13 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   for (RecentBook& book : recentBooks) {
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      if (!Storage.exists(coverPath.c_str())) {
+      // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
+      // from a PRIOR failed attempt -- generateThumbBmp() writes an empty file to
+      // avoid retrying every render -- doesn't permanently block a retry once the
+      // underlying reason for that failure is fixed (e.g. the OPDS external-cover
+      // fallback added later). A retry that fails again is a handful of cheap
+      // local Storage checks, not a network request or image decode.
+      if (!Bitmap::isValidCachedBmp(coverPath)) {
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
@@ -71,11 +77,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
           }
           GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-          bool success = epub.generateThumbBmp(coverHeight);
-          if (!success) {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-            book.coverBmpPath = "";
-          }
+          // Failure leaves book.coverBmpPath untouched (not cleared to "") --
+          // see the isValidCachedBmp comment above for why a retry must stay
+          // possible instead of being disabled forever.
+          epub.generateThumbBmp(coverHeight);
           coverRendered = false;
           requestUpdate();
         } else if (FsHelpers::hasXtcExtension(book.path)) {
@@ -88,11 +93,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-            bool success = xtc.generateThumbBmp(coverHeight);
-            if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-              book.coverBmpPath = "";
-            }
+            xtc.generateThumbBmp(coverHeight);
             coverRendered = false;
             requestUpdate();
           }
