@@ -270,13 +270,16 @@ void HomeActivity::freeCoverBuffer() {
 
 void HomeActivity::loop() {
   // Anti-drift whitening: a static e-ink image slowly drifts gray over minutes
-  // ("background becomes dark instead of clear white"), and the user confirmed
-  // any plain redraw restores the white (moving the selection fixed it). Redraw
-  // quietly every few minutes -- an ordinary FAST partial refresh, none of the
-  // deep-refresh flashing a waveform-promotion approach caused (reverted).
+  // even with the Sunlight Fading Fix ON (confirmed on-device by photo) -- the
+  // pigment relaxes regardless of the panel gate being powered down. A FAST
+  // redraw of identical content drives NO pixels (FAST only pushes changed
+  // ones), so the previous quiet-redraw version here did nothing for the
+  // fade. Full-drive the panel instead (HALF refresh, ~1.7s blink). Only
+  // fires after minutes of true idleness on this screen, never mid-use.
   constexpr unsigned long kIdleWhitenIntervalMs = 3UL * 60UL * 1000UL;
   if (millis() - lastIdleWhitenMs >= kIdleWhitenIntervalMs) {
     lastIdleWhitenMs = millis();
+    idleWhitenPending = true;
     requestUpdate();
   }
 
@@ -385,7 +388,14 @@ void HomeActivity::render(RenderLock&&) {
   // No button-hints bar on the home screen (matching aalu): the icon menu is
   // self-explanatory, and dropping the bar frees the bottom strip for the menu.
 
-  renderer.displayBuffer();
+  if (idleWhitenPending) {
+    // Idle anti-fade pass: full-drive every pixel (FAST would skip unchanged
+    // ones and leave the gray drift in place) -- see loop().
+    idleWhitenPending = false;
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  } else {
+    renderer.displayBuffer();
+  }
 
   if (!firstRenderDone) {
     firstRenderDone = true;

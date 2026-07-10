@@ -16,6 +16,10 @@ class HomeActivity final : public Activity {
   bool firstRenderDone = false;
   // Last periodic anti-drift redraw; see the idle-whitening block in loop().
   unsigned long lastIdleWhitenMs = 0;
+  // Set by loop()'s idle timer; makes the next render full-drive the panel
+  // (HALF refresh) to clear accumulated e-ink fade instead of a FAST pass
+  // that skips unchanged pixels. Cleared in render().
+  bool idleWhitenPending = false;
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
