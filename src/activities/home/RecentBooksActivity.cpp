@@ -18,6 +18,7 @@
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "fontIds.h"
+#include "util/CoverThumbs.h"
 #include "util/GridNav.h"
 
 namespace {
@@ -188,7 +189,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     if (book.coverBmpPath.empty()) continue;
     // isValidCachedBmp, not a plain existence check -- see the comment on the
     // matching check below for why a stale failure marker must not block a retry.
-    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight))) {
+    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
+    if (!Bitmap::isValidCachedBmp(thumbPath) && !CoverThumbs::wasAttemptedThisBoot(thumbPath)) {
       needsGeneration = true;
       break;
     }
@@ -208,13 +210,12 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     if (!book.coverBmpPath.empty()) {
       const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
       // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
-      // from a PRIOR failed attempt -- generateThumbBmp() writes an empty file to
-      // avoid retrying every render -- doesn't permanently block a retry once the
-      // underlying reason for that failure is fixed (e.g. the OPDS external-cover
-      // fallback added later). A retry that fails again is a handful of cheap
-      // local Storage checks, not a network request or image decode. Failure also
+      // from a PRIOR failed attempt doesn't permanently block a retry once the
+      // underlying failure is fixed; CoverThumbs bounds those retries to once per
+      // boot so a coverless book doesn't re-attempt on every grid entry. Failure
       // leaves book.coverBmpPath untouched (not cleared to "") for the same reason.
-      if (!Bitmap::isValidCachedBmp(coverPath)) {
+      if (!Bitmap::isValidCachedBmp(coverPath) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
+        CoverThumbs::markAttempted(coverPath);
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
           if (epub.load(false, true)) {

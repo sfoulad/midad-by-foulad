@@ -20,6 +20,7 @@
 #include "activities/stats/StatsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/CoverThumbs.h"
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // eBooks, Stats, Update, Settings
@@ -59,12 +60,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
       // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
-      // from a PRIOR failed attempt -- generateThumbBmp() writes an empty file to
-      // avoid retrying every render -- doesn't permanently block a retry once the
-      // underlying reason for that failure is fixed (e.g. the OPDS external-cover
-      // fallback added later). A retry that fails again is a handful of cheap
-      // local Storage checks, not a network request or image decode.
-      if (!Bitmap::isValidCachedBmp(coverPath)) {
+      // from a PRIOR failed attempt doesn't permanently block a retry once the
+      // underlying failure is fixed; CoverThumbs bounds those retries to once
+      // per boot so a genuinely coverless book doesn't re-attempt (and re-show
+      // the loading popup) on every Home entry.
+      if (!Bitmap::isValidCachedBmp(coverPath) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
+        CoverThumbs::markAttempted(coverPath);
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
