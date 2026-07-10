@@ -26,7 +26,6 @@
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
 #include "activities/home/FileBrowserActivity.h"
-#include "activities/network/CrossPointWebServerActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
@@ -344,7 +343,11 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<FileBrowserActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::FileTransfer:
-        startActivityForResult(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput), resultHandler);
+        // Reboot into the web server on a fresh heap (see SilentRestart.h):
+        // starting it from a long-running session leaves the WiFi driver and
+        // TCP buffers fighting a fragmented heap and page loads crawl. The
+        // activity's own exit path already silentRestart()s back to Home.
+        silentRestartToFileTransfer();
         break;
       case SettingAction::FouladEbooksLogout: {
         auto logoutHandler = [this](const ActivityResult& result) {

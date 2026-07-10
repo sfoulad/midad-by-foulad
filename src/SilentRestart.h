@@ -18,6 +18,13 @@ void silentRestartToReader();  // currently-open EPUB (APP_STATE.openEpubPath)
 void silentRestartToOtaCheck();    // start of the flow (Home/Settings entry)
 void silentRestartToOtaInstall();  // user already confirmed; auto-install armed
 
+// File Transfer (web server), same rationale as OTA: the WiFi driver plus the
+// web server's TCP buffers want large contiguous allocations, and on a
+// fragmented heap page loads slow to a crawl. The exit path already
+// silentRestart()s (CrossPointWebServerActivity::onExit); this makes the entry
+// path symmetric.
+void silentRestartToFileTransfer();
+
 // True when the current boot was produced by any silentRestart* call -- i.e.
 // the heap is as fresh as a reboot can make it. Used as a loop guard by
 // callers that trigger a silent restart to escape heap fragmentation: if the
