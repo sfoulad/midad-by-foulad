@@ -862,7 +862,16 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       const auto accumulated = self->blockStyleStack.back().getCombinedBlockStyle(userAlignmentBlockStyle,
                                                                                   BlockStyle::CombineAxis::Horizontal);
       self->blockStyleStack.push_back(accumulated);
-      self->startNewTextBlock(accumulated.withoutBottom());
+      // A block tag nested directly inside a fresh <li> (the common <li><p>text</p>
+      // structure) must NOT start a new text block: the li's block only holds the
+      // synthetic bullet marker so far, and flushing it would strand the bullet on
+      // its own line with the item text starting on the next one (confirmed on a
+      // real Arabic EPUB). Keep appending into the bullet's block instead.
+      const bool blockIsLoneBullet =
+          self->currentTextBlock && self->currentTextBlock->containsSingleWord("\xe2\x80\xa2");
+      if (!blockIsLoneBullet) {
+        self->startNewTextBlock(accumulated.withoutBottom());
+      }
       self->updateEffectiveInlineStyle();
 
       if (strcmp(name, "li") == 0) {

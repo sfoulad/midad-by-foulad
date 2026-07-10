@@ -23,7 +23,11 @@ namespace {
 // paragraph with `text-align: start` is right-aligned, previously always left);
 // (b) Arabic words are no longer fallback-hyphenated mid-word. Both change layout for
 // affected books without touching any cache-key settings field.
-constexpr uint8_t SECTION_FILE_VERSION = 31;
+// v32: (a) <li><p>text</p></li> no longer strands the bullet marker on its own line
+// (nested block tags continue in the lone-bullet block); (b) mid-word alef maksura
+// now shapes with yeh initial/medial forms, changing measured word widths. Both
+// change layout for affected books without touching any cache-key settings field.
+constexpr uint8_t SECTION_FILE_VERSION = 32;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +

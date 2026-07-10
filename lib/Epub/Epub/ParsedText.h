@@ -60,6 +60,11 @@ class ParsedText {
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool underline = false, bool attachToPrevious = false);
+  // True when the block holds exactly one word equal to `word`. Used by the HTML
+  // parser to detect a list-item block that so far contains only the synthetic
+  // bullet marker, so a nested block tag (<li><p>...) can continue in the same
+  // block instead of orphaning the bullet on its own line.
+  bool containsSingleWord(const char* word) const { return words.size() == 1 && words[0] == word; }
   void setBlockStyle(const BlockStyle& blockStyle) { this->blockStyle = blockStyle; }
   BlockStyle& getBlockStyle() { return blockStyle; }
   size_t size() const { return words.size(); }

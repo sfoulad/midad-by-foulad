@@ -50,7 +50,14 @@ static const ArabicFormEntry ARABIC_FORMS[] = {
     {0x0646, 0xFEE5, 0xFEE6, 0xFEE7, 0xFEE8},  // Noon
     {0x0647, 0xFEE9, 0xFEEA, 0xFEEB, 0xFEEC},  // Heh
     {0x0648, 0xFEED, 0xFEEE, 0x0000, 0x0000},  // Waw
-    {0x0649, 0xFEEF, 0xFEF0, 0x0000, 0x0000},  // Alef Maksura
+    // Alef Maksura is dual-joining per Unicode, but its true initial/medial
+    // presentation forms (U+FBE8/U+FBE9, dotless) don't exist in the bundled fonts.
+    // Mid-word ALEF MAKSURA only occurs in real text when the author typed it in
+    // place of YEH (the common Egyptian keyboard convention, e.g. "التركىز"), so
+    // joining positions render with the YEH initial/medial forms -- exactly the
+    // letter the reader expects there. Word-final/isolated positions (where genuine
+    // alef maksura actually occurs: على, إلى) keep the correct dotless forms.
+    {0x0649, 0xFEEF, 0xFEF0, 0xFEF3, 0xFEF4},  // Alef Maksura
     {0x064A, 0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4},  // Yeh
 };
 

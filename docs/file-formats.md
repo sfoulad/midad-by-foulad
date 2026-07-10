@@ -90,11 +90,19 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 31
+### Version 32
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 32 is a pure cache-bust (no structural change from v31), covering two
+Arabic fixes that change layout: (a) `<li><p>text</p></li>` no longer strands
+the bullet marker on its own line -- a block tag nested directly inside a
+fresh `<li>` continues in the bullet's block; (b) mid-word alef maksura shapes
+with the yeh initial/medial presentation forms (the dotless FBE8/FBE9 forms
+aren't in the bundled fonts, and mid-word ى in real text is the Egyptian yeh
+convention), which changes measured word widths and therefore line breaks.
 
 Version 31 is a pure cache-bust (no structural change from v30), covering two
 Arabic/RTL layout fixes: (a) CSS `text-align: start`/`end` now resolve against
@@ -141,7 +149,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 31
+#define EXPECTED_VERSION 32
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
