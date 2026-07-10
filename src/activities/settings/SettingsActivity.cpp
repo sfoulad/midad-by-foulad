@@ -86,15 +86,16 @@ void SettingsActivity::rebuildSettingsLists() {
   } else {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGIN, SettingAction::FouladEbooksLogin));
   }
-  // Insert "Manage Fonts" right after the font family setting so users discover it naturally
-  readerSettings.insert(readerSettings.begin() + 1,
+  // Reader list order (user-specified): English Font, English Font Size,
+  // Arabic Font, Arabic Font Size, Manage Fonts, then the rest. The base table
+  // supplies [English Font, English Font Size, Arabic Font Size, ...]; insert
+  // "Arabic Font" at index 2 so the two Arabic settings pair up in the same
+  // family-then-size order as the English pair. Built via
+  // buildArabicFontFamilySetting() (an ENUM, not a plain Action) so the current
+  // font's name shows inline in the list -- see that function's comment for why.
+  readerSettings.insert(readerSettings.begin() + 2, buildArabicFontFamilySetting(&arabicFontSystem.registry()));
+  readerSettings.insert(readerSettings.begin() + 4,
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
-  // Insert "Arabic Font" right after "Arabic Font Size" (list order: Font Family,
-  // Manage Fonts, Font Size, Arabic Font Size, [Arabic Font here], ...) so the two
-  // Arabic reading settings sit together, mirroring the Latin font family/size pair. Built
-  // via buildArabicFontFamilySetting() (an ENUM, not a plain Action) so the current font's
-  // name shows inline in the list -- see that function's comment for why.
-  readerSettings.insert(readerSettings.begin() + 4, buildArabicFontFamilySetting(&arabicFontSystem.registry()));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
   // Update currentSettings pointer and count for the active category
