@@ -24,9 +24,85 @@
 namespace {
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
+
+// SD library scan bounds: enough for any realistic personal library on these
+// devices while keeping the path vector's RAM cost trivial (~50 bytes/entry).
+constexpr size_t MAX_LIBRARY_BOOKS = 200;
+constexpr size_t MAX_SCAN_DIRS = 64;
+constexpr size_t NAME_BUF_SIZE = 256;
+
+// Filename without directory or extension -- the caption for books that have
+// never been opened (no metadata in the recents store yet). OPDS downloads are
+// named "Author - Title.ext", so this reads naturally.
+std::string filenameStem(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  const size_t start = (slash == std::string::npos) ? 0 : slash + 1;
+  const size_t dot = path.find_last_of('.');
+  const size_t end = (dot == std::string::npos || dot < start) ? path.size() : dot;
+  return path.substr(start, end - start);
+}
 }  // namespace
 
-void RecentBooksActivity::loadRecentBooks() { recentBooks = RECENT_BOOKS.getBooks(); }
+void RecentBooksActivity::loadRecentBooks() {
+  // "My Books" = every book on the SD card, not just the recently-opened list.
+  // Downloaded-but-unopened books used to be invisible here (user request:
+  // "recent books showing 3 books while in the sd card 6 books"). Recents come
+  // first (most recently read first, preserving their stored title/author),
+  // then every other .epub/.xtc found on the card, alphabetically.
+  recentBooks = RECENT_BOOKS.getBooks();
+
+  std::vector<std::string> dirs{"/"};
+  std::vector<RecentBook> discovered;
+  size_t dirsScanned = 0;
+  char nameBuf[NAME_BUF_SIZE];
+
+  while (!dirs.empty() && dirsScanned < MAX_SCAN_DIRS &&
+         recentBooks.size() + discovered.size() < MAX_LIBRARY_BOOKS) {
+    const std::string dirPath = dirs.back();
+    dirs.pop_back();
+    dirsScanned++;
+
+    auto dir = Storage.open(dirPath.c_str());
+    if (!dir || !dir.isDirectory()) continue;
+    dir.rewindDirectory();
+
+    for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+      entry.getName(nameBuf, sizeof(nameBuf));
+      if (nameBuf[0] == '\0' || nameBuf[0] == '.') continue;  // hidden + .crosspoint/.fonts
+      const std::string entryPath = (dirPath == "/") ? "/" + std::string(nameBuf) : dirPath + "/" + nameBuf;
+      if (entry.isDirectory()) {
+        if (strcmp(nameBuf, "System Volume Information") != 0 && strcmp(nameBuf, "fonts") != 0) {
+          dirs.push_back(entryPath);
+        }
+        continue;
+      }
+      if (recentBooks.size() + discovered.size() >= MAX_LIBRARY_BOOKS) break;
+
+      const bool isEpub = FsHelpers::hasEpubExtension(entryPath);
+      const bool isXtc = FsHelpers::hasXtcExtension(entryPath);
+      if (!isEpub && !isXtc) continue;
+
+      const bool inRecents = std::any_of(recentBooks.begin(), recentBooks.end(),
+                                         [&entryPath](const RecentBook& b) { return b.path == entryPath; });
+      if (inRecents) continue;
+
+      RecentBook book;
+      book.path = entryPath;
+      book.title = filenameStem(entryPath);
+      // Same [HEIGHT]-templated thumb path addBook stores for opened books, so
+      // the grid's cover pipeline (incl. the build-cache-if-missing fallback)
+      // works identically for never-opened books.
+      book.coverBmpPath =
+          isEpub ? Epub(entryPath, "/.crosspoint").getThumbBmpPath() : Xtc(entryPath, "/.crosspoint").getThumbBmpPath();
+      discovered.push_back(std::move(book));
+    }
+  }
+
+  std::sort(discovered.begin(), discovered.end(),
+            [](const RecentBook& a, const RecentBook& b) { return a.title < b.title; });
+  recentBooks.insert(recentBooks.end(), std::make_move_iterator(discovered.begin()),
+                     std::make_move_iterator(discovered.end()));
+}
 
 void RecentBooksActivity::onEnter() {
   Activity::onEnter();
@@ -244,6 +320,10 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
             generated = epub.generateThumbBmp(geometry.thumbHeight);
+            // Never-opened books enter the list with a filename-stem caption;
+            // now that the metadata is loaded anyway, use the real title.
+            const std::string title = epub.getTitle();
+            if (!title.empty()) book.title = title;
           }
           CoverThumbs::diagLog(std::string("GRID epub load=") + (loaded ? "1" : "0") + " built=" +
                                (built ? "1" : "0") + " gen=" + (generated ? "1" : "0") + " " + book.path);
@@ -279,7 +359,9 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_MENU_RECENT_BOOKS));
+  // "My Books" (STR_RECENTS), matching the home screen's divider label: this
+  // page lists every book on the SD card now, not just recently-opened ones.
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_RECENTS));
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 
