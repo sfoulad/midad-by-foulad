@@ -5,6 +5,7 @@
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <ScriptDetector.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -299,7 +300,17 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   // Draw selection
   int contentWidth = rect.width - 5;
   if (selectedIndex >= 0) {
-    renderer.fillRect(rect.x, rect.y + selectedIndex % pageItems * rowHeight - 2, rect.width, rowHeight);
+    // Arabic text (baseline-matched to the Latin UI font) descends a few px further
+    // below the shared baseline than Latin glyphs, so the inverted selection box needs
+    // a little extra depth or descender tails get sliced at its bottom edge. Row pitch
+    // itself stays Latin-tight; only this one row's highlight grows, downward.
+    int fillHeight = rowHeight;
+    const bool selectedRowHasArabic =
+        ScriptDetector::containsArabic(rowTitle(selectedIndex).c_str()) ||
+        (rowValue != nullptr && ScriptDetector::containsArabic(rowValue(selectedIndex).c_str())) ||
+        (rowSubtitle != nullptr && ScriptDetector::containsArabic(rowSubtitle(selectedIndex).c_str()));
+    if (selectedRowHasArabic) fillHeight += 4;
+    renderer.fillRect(rect.x, rect.y + selectedIndex % pageItems * rowHeight - 2, rect.width, fillHeight);
   }
   constexpr int minValueGap = 10;
 
@@ -420,12 +431,22 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
     const int textWidth =
         renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
 
+    // Arabic labels (baseline-matched to the Latin font's baseline) still descend
+    // further below that shared baseline than Latin glyphs do, so the selected-tab
+    // inversion box and the underline both need a few extra pixels of depth or they
+    // slice/strike through descender tails like the final yaa. 6px comes from the
+    // built-in fonts' measured ink: Arabic 12pt shaped forms reach 11px below
+    // baseline vs Ubuntu 12's 5px -- the nominal font descender (19px) is far deeper
+    // than any real glyph and would leave the underline looking detached.
+    constexpr int ARABIC_DESCENT_EXTRA = 6;
+    const int descentExtra = ScriptDetector::containsArabic(tab.label) ? ARABIC_DESCENT_EXTRA : 0;
+
     // Draw underline for selected tab
     if (tab.selected) {
       if (selected) {
-        renderer.fillRect(currentX - 3, rect.y, textWidth + 6, lineHeight + underlineGap);
+        renderer.fillRect(currentX - 3, rect.y, textWidth + 6, lineHeight + underlineGap + descentExtra);
       } else {
-        renderer.fillRect(currentX, rect.y + lineHeight + underlineGap, textWidth, underlineHeight);
+        renderer.fillRect(currentX, rect.y + lineHeight + underlineGap + descentExtra, textWidth, underlineHeight);
       }
     }
 

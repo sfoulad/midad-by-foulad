@@ -36,9 +36,14 @@ constexpr int
 // text tracks its own family/size preference, not the Latin one. Falls back to the
 // 12pt tier as the catch-all for any other fontId.
 void registerBuiltinSizeMappings(GfxRenderer& renderer) {
-  renderer.setArabicFontIdForFontId(SMALL_FONT_ID, NOTOSANSARABIC_8_FONT_ID);
-  renderer.setArabicFontIdForFontId(UI_10_FONT_ID, NOTOSANSARABIC_10_FONT_ID);
-  renderer.setArabicFontIdForFontId(UI_12_FONT_ID, NOTOSANSARABIC_12_FONT_ID);
+  // matchLatinBaseline=true: UI labels sit on the requested Latin font's baseline so
+  // Arabic strings fit the fixed Latin-sized UI geometry (30px list rows, button
+  // hints, header) and align with adjacent Latin text -- essential for a fully-Arabic
+  // interface. Reading mappings below stay unmatched: EPUB rows are sized for the
+  // full Arabic line height and book text carries diacritics needing that headroom.
+  renderer.setArabicFontIdForFontId(SMALL_FONT_ID, NOTOSANSARABIC_8_FONT_ID, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(UI_10_FONT_ID, NOTOSANSARABIC_10_FONT_ID, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(UI_12_FONT_ID, NOTOSANSARABIC_12_FONT_ID, /*matchLatinBaseline=*/true);
 
   const int readingFontId =
       ArabicFontSystem::resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.arabicFontSize);

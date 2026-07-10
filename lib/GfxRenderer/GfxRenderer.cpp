@@ -451,7 +451,12 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     return;
   }
 
-  const int yPos = y + getFontAscenderSize(resolvedArabicFontId);
+  // UI-font mappings anchor on the requested Latin font's baseline so Arabic labels
+  // fit the fixed Latin-sized UI geometry and align with adjacent Latin text; reading
+  // mappings keep the Arabic font's own (taller) ascender -- see
+  // arabicBaselineMatchFontIds_ in the header for the full reasoning.
+  const bool matchLatinBaseline = arabicBaselineMatchFontIds_.count(fontId) > 0 && fontMap.count(fontId) > 0;
+  const int yPos = y + getFontAscenderSize(matchLatinBaseline ? fontId : resolvedArabicFontId);
   int cursorX = x;
   for (const uint32_t cp : ArabicShaper::shapeText(text)) {
     const EpdGlyph* glyph = font.getGlyph(cp, style);

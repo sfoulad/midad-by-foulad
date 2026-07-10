@@ -16,6 +16,7 @@ class SdCardFont;
 
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,20 @@ class GfxRenderer {
   // the caller requested instead of always falling back to arabicFontId_'s single
   // fixed size. See setArabicFontIdForFontId()/resolveArabicFontId().
   std::map<int, int> arabicFontIdByFontId_;
+  // fontIds (keys of arabicFontIdByFontId_) whose Arabic text should sit on the
+  // REQUESTED Latin font's baseline (baseline = y + Latin ascender) instead of the
+  // Arabic font's own, much taller, nominal ascender. The Noto Arabic fonts reserve
+  // enormous headroom above baseline for stacked diacritics (10pt: ascender 29px vs
+  // Ubuntu 10's 20px), so anchoring by the Arabic ascender pushes every Arabic string
+  // ~9px lower than the Latin text the fixed UI geometry (30px list rows, 40px button
+  // hints, 45px header) was sized for -- clipping the bottom of the glyphs. Plain,
+  // undiacritized UI labels never use that headroom (measured worst-case ink above
+  // baseline across all shaped presentation forms at 10pt: 21px, barely above Ubuntu's
+  // 20px ascender), so sharing the Latin baseline both fits the existing geometry and
+  // vertically aligns mixed Arabic/Latin strings. Reading-text mappings deliberately
+  // stay unmatched: EPUB body rows are already sized for the full Arabic line height
+  // and real book text does carry diacritics that need the taller headroom.
+  std::set<int> arabicBaselineMatchFontIds_;
   // Mutable because ensureSdCardFontReady() is const (called from layout code
   // that holds a const GfxRenderer&) but triggers SD card reads and heap
   // allocation inside the SdCardFont objects. Same pragmatic compromise as
@@ -137,8 +152,22 @@ class GfxRenderer {
   // at arabicFontId_'s single fixed size. ArabicFontSystem registers these for the
   // built-in default; cleared when an SD-card Arabic font override is active so that
   // override applies uniformly via arabicFontId_ instead.
-  void setArabicFontIdForFontId(int fontId, int arabicFontId) { arabicFontIdByFontId_[fontId] = arabicFontId; }
-  void clearArabicFontIdMappings() { arabicFontIdByFontId_.clear(); }
+  // matchLatinBaseline=true additionally anchors the Arabic text on the requested
+  // Latin font's baseline so it fits fixed Latin-sized UI geometry -- see
+  // arabicBaselineMatchFontIds_ above. Use for UI-font mappings only, never for
+  // reading-text mappings.
+  void setArabicFontIdForFontId(int fontId, int arabicFontId, bool matchLatinBaseline = false) {
+    arabicFontIdByFontId_[fontId] = arabicFontId;
+    if (matchLatinBaseline) {
+      arabicBaselineMatchFontIds_.insert(fontId);
+    } else {
+      arabicBaselineMatchFontIds_.erase(fontId);
+    }
+  }
+  void clearArabicFontIdMappings() {
+    arabicFontIdByFontId_.clear();
+    arabicBaselineMatchFontIds_.clear();
+  }
   // Public wrapper so callers (e.g. a Settings preview pane) can see which Arabic
   // font a given caller fontId currently resolves to, without duplicating the
   // per-fontId-override-vs-catch-all lookup logic.

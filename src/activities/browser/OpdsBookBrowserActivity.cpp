@@ -479,8 +479,11 @@ int OpdsBookBrowserActivity::getListRowHighlightHeight(const std::string& title)
   // slightly-too-tall glyph just quietly overlaps the next row's white background), any part
   // of the glyph taller than the tight Latin pitch gets visibly sliced off at the highlight
   // rectangle's edge. Widen just the highlight for this one row instead of the pitch itself.
-  const int arabicLineHeight = renderer.getLineHeight(renderer.getResolvedArabicFontId(UI_10_FONT_ID));
-  return std::max(rowHeight, arabicLineHeight + LIST_ROW_VERTICAL_PADDING);
+  // Since UI Arabic is baseline-matched to the Latin font (see GfxRenderer's
+  // arabicBaselineMatchFontIds_), only the deeper Arabic descenders overshoot -- a few px,
+  // matching BaseTheme::drawList's identical bump, not the full Arabic line height (which
+  // produced a comically oversized 50px highlight on a 30px row once baselines matched).
+  return rowHeight + 4;
 }
 
 int OpdsBookBrowserActivity::getListPageItems(const int rowHeight) const {
