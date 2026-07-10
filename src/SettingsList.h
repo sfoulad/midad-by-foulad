@@ -90,6 +90,83 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   return s;
 }
 
+// Build the Arabic font family setting dynamically, mirroring buildFontFamilySetting()
+// above -- same two-axis structure (5 built-in families + optional SD override) as the
+// main reading font. Built as an ENUM (not a plain SettingInfo::Action) specifically so
+// the settings list shows the currently selected font's name inline, the same way Font
+// Family does, instead of requiring the user to open the picker just to see what's
+// selected. SettingsActivity::toggleCurrentSetting() special-cases STR_ARABIC_FONT (like
+// it already does for STR_FONT_FAMILY) to launch the picker on Confirm instead of cycling
+// through a plain popup -- the picker's live glyph preview is worth keeping for Arabic
+// specifically, where the built-in styles look meaningfully different from each other.
+inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* registry) {
+  // Built-in font labels (StrId), in CrossPointSettings::ARABIC_FONT_FAMILY order --
+  // mirrors ArabicFontSelectionActivity.cpp's own kBuiltinArabicFontNames.
+  std::vector<StrId> enumValues = {StrId::STR_NOTO_SANS_ARABIC, StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI,
+                                   StrId::STR_SCHEHERAZADE_NEW, StrId::STR_CAIRO_ARABIC};
+  std::vector<std::string> enumStringValues;
+
+  if (registry) {
+    const auto& families = registry->getFamilies();
+    enumStringValues.reserve(families.size());
+    std::transform(families.begin(), families.end(), std::back_inserter(enumStringValues),
+                   [](const SdCardFontFamilyInfo& f) { return f.name; });
+  }
+
+  const int sdFontCount = static_cast<int>(enumStringValues.size());
+
+  std::vector<std::string> allStringValues;
+  if (sdFontCount > 0) {
+    std::transform(enumValues.begin(), enumValues.end(), std::back_inserter(allStringValues),
+                   [](StrId strId) { return I18N.get(strId); });
+    allStringValues.insert(allStringValues.end(), enumStringValues.begin(), enumStringValues.end());
+  }
+
+  SettingInfo s;
+  s.nameId = StrId::STR_ARABIC_FONT;
+  s.type = SettingType::ENUM;
+  s.enumValues = std::move(enumValues);
+  s.enumStringValues = std::move(allStringValues);
+  s.key = "arabicFontFamily";
+  s.category = StrId::STR_CAT_READER;
+
+  std::vector<std::string> sdFamilyNames;
+  if (registry) {
+    const auto& families = registry->getFamilies();
+    sdFamilyNames.reserve(families.size());
+    std::transform(families.begin(), families.end(), std::back_inserter(sdFamilyNames),
+                   [](const SdCardFontFamilyInfo& f) { return f.name; });
+  }
+
+  s.valueGetter = [sdFamilyNames]() -> uint8_t {
+    if (SETTINGS.sdArabicFontFamilyName[0] != '\0') {
+      for (int i = 0; i < static_cast<int>(sdFamilyNames.size()); i++) {
+        if (sdFamilyNames[i] == SETTINGS.sdArabicFontFamilyName) {
+          return static_cast<uint8_t>(CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT + i);
+        }
+      }
+      // SD font name not found in registry — fall through to built-in
+    }
+    return SETTINGS.arabicFontFamily < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT ? SETTINGS.arabicFontFamily : 0;
+  };
+
+  s.valueSetter = [sdFamilyNames](uint8_t v) {
+    if (v < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT) {
+      SETTINGS.arabicFontFamily = v;
+      SETTINGS.sdArabicFontFamilyName[0] = '\0';
+    } else {
+      int sdIdx = v - CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT;
+      if (sdIdx < static_cast<int>(sdFamilyNames.size())) {
+        strncpy(SETTINGS.sdArabicFontFamilyName, sdFamilyNames[sdIdx].c_str(),
+                sizeof(SETTINGS.sdArabicFontFamilyName) - 1);
+        SETTINGS.sdArabicFontFamilyName[sizeof(SETTINGS.sdArabicFontFamilyName) - 1] = '\0';
+      }
+    }
+  };
+
+  return s;
+}
+
 // Shared settings list used by both the device settings UI and the web settings API.
 // Each entry has a key (for JSON API) and category (for grouping).
 // ACTION-type entries and entries without a key are device-only.

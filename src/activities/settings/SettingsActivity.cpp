@@ -87,9 +87,10 @@ void SettingsActivity::rebuildSettingsLists() {
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
   // Insert "Arabic Font" right after "Arabic Font Size" (list order: Font Family,
   // Manage Fonts, Font Size, Arabic Font Size, [Arabic Font here], ...) so the two
-  // Arabic reading settings sit together, mirroring the Latin font family/size pair.
-  readerSettings.insert(readerSettings.begin() + 4,
-                        SettingInfo::Action(StrId::STR_ARABIC_FONT, SettingAction::ArabicFont));
+  // Arabic reading settings sit together, mirroring the Latin font family/size pair. Built
+  // via buildArabicFontFamilySetting() (an ENUM, not a plain Action) so the current font's
+  // name shows inline in the list -- see that function's comment for why.
+  readerSettings.insert(readerSettings.begin() + 4, buildArabicFontFamilySetting(&arabicFontSystem.registry()));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 
   // Update currentSettings pointer and count for the active category
@@ -257,6 +258,18 @@ void SettingsActivity::toggleCurrentSetting() {
                              });
       return;
     }
+    if (setting.nameId == StrId::STR_ARABIC_FONT) {
+      // Launch the Arabic font picker instead of cycling, same reasoning as Font Family
+      // above -- it also has a live glyph preview pane, which matters more here since the
+      // built-in Arabic styles look meaningfully different from each other.
+      startActivityForResult(
+          std::make_unique<ArabicFontSelectionActivity>(renderer, mappedInput, &arabicFontSystem.registry()),
+          [this](const ActivityResult&) {
+            SETTINGS.saveToFile();
+            rebuildSettingsLists();
+          });
+      return;
+    }
     const uint8_t totalValues = setting.enumStringValues.empty()
                                     ? static_cast<uint8_t>(setting.enumValues.size())
                                     : static_cast<uint8_t>(setting.enumStringValues.size());
@@ -329,11 +342,6 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       case SettingAction::FileTransfer:
         startActivityForResult(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput), resultHandler);
-        break;
-      case SettingAction::ArabicFont:
-        startActivityForResult(
-            std::make_unique<ArabicFontSelectionActivity>(renderer, mappedInput, &arabicFontSystem.registry()),
-            resultHandler);
         break;
       case SettingAction::FouladEbooksLogout: {
         auto logoutHandler = [this](const ActivityResult& result) {
