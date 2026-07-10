@@ -24,4 +24,11 @@ bool wasAttemptedThisBoot(const std::string& thumbPath);
 // Record that generation for this thumb path is being attempted.
 void markAttempted(const std::string& thumbPath);
 
+// Appends a line to the on-SD cover diagnostic log (/cover_diag_log.txt) and
+// rewrites the file. Cheap and rare (only called around generation attempts,
+// which are themselves throttled); the file lets a cover failure be diagnosed
+// from the SD card without a USB serial capture, like /opds_error_log.txt.
+// Lines carry a millis() timestamp and free-heap/largest-block readings.
+void diagLog(const std::string& line);
+
 }  // namespace CoverThumbs

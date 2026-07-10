@@ -224,24 +224,32 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
         CoverThumbs::markAttempted(coverPath);
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
-          if (epub.load(false, true)) {
+          const bool loaded = epub.load(false, true);
+          bool generated = false;
+          if (loaded) {
             if (!showingLoading) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            epub.generateThumbBmp(geometry.thumbHeight);
+            generated = epub.generateThumbBmp(geometry.thumbHeight);
           }
+          CoverThumbs::diagLog(std::string("GRID epub load=") + (loaded ? "1" : "0") +
+                               " gen=" + (generated ? "1" : "0") + " " + book.path);
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           Xtc xtc(book.path, "/.crosspoint");
-          if (xtc.load()) {
+          const bool loaded = xtc.load();
+          bool generated = false;
+          if (loaded) {
             if (!showingLoading) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            xtc.generateThumbBmp(geometry.thumbHeight);
+            generated = xtc.generateThumbBmp(geometry.thumbHeight);
           }
+          CoverThumbs::diagLog(std::string("GRID xtc load=") + (loaded ? "1" : "0") +
+                               " gen=" + (generated ? "1" : "0") + " " + book.path);
         }
       }
     }

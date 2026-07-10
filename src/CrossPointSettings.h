@@ -260,8 +260,12 @@ class CrossPointSettings {
   uint8_t longPressMenuFunction = LP_MENU_DISABLED;
   // UI Theme
   uint8_t uiTheme = FOULAD;  // single-theme firmware: always Foulad
-  // Sunlight fading compensation
-  uint8_t fadingFix = 0;
+  // Sunlight fading compensation: power the panel off after each refresh so a
+  // static image can't fade/darken while sitting ("background becomes dark
+  // instead of clear white" -- reported on this fork's hardware). Default ON;
+  // devices with an older saved settings.json keep their stored value and can
+  // enable it under Settings -> Display -> Sunlight Fading Fix.
+  uint8_t fadingFix = 1;
   // Power button return from footnotes (1 = enabled, 0 = disabled)
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

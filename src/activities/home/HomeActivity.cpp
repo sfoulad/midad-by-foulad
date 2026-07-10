@@ -103,8 +103,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   // only the cheap once-per-boot inline retry.
   constexpr unsigned long kFreshBootWindowMs = 60000;
   const bool freshBoot = millis() < kFreshBootWindowMs;
+  if (anyToGenerate) {
+    CoverThumbs::diagLog(std::string("HOME scan: neverAttempted=") + (anyNeverAttempted ? "1" : "0") + " fresh=" +
+                         (freshBoot ? "1" : "0") + (anyNeverAttempted && !freshBoot ? " -> reboot" : " -> inline"));
+  }
   if (anyNeverAttempted && !freshBoot) {
-    LOG_DBG("HOME", "Rebooting for cover generation (largest block %u)", ESP.getMaxAllocHeap());
     silentRestart();  // does not return
   }
 
@@ -125,7 +128,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           // Skip loading css since we only need metadata here. Only generate if
           // the metadata actually loaded (matching the My Books grid) --
           // generateThumbBmp can't do anything without it.
-          if (epub.load(false, true)) {
+          const bool loaded = epub.load(false, true);
+          bool generated = false;
+          if (loaded) {
             // Try to generate thumbnail image for Continue Reading card
             if (!showingLoading) {
               showingLoading = true;
@@ -135,24 +140,30 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             // Failure leaves book.coverBmpPath untouched (not cleared to "") --
             // see the isValidCachedBmp comment above for why a retry must stay
             // possible instead of being disabled forever.
-            epub.generateThumbBmp(coverHeight);
+            generated = epub.generateThumbBmp(coverHeight);
             coverRendered = false;
             requestUpdate();
           }
+          CoverThumbs::diagLog(std::string("HOME epub load=") + (loaded ? "1" : "0") +
+                               " gen=" + (generated ? "1" : "0") + " " + book.path);
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
           Xtc xtc(book.path, "/.crosspoint");
-          if (xtc.load()) {
+          const bool loaded = xtc.load();
+          bool generated = false;
+          if (loaded) {
             // Try to generate thumbnail image for Continue Reading card
             if (!showingLoading) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-            xtc.generateThumbBmp(coverHeight);
+            generated = xtc.generateThumbBmp(coverHeight);
             coverRendered = false;
             requestUpdate();
           }
+          CoverThumbs::diagLog(std::string("HOME xtc load=") + (loaded ? "1" : "0") +
+                               " gen=" + (generated ? "1" : "0") + " " + book.path);
         }
       }
     }
