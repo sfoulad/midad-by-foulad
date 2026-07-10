@@ -189,8 +189,13 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     if (book.coverBmpPath.empty()) continue;
     // isValidCachedBmp, not a plain existence check -- see the comment on the
     // matching check below for why a stale failure marker must not block a retry.
-    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
-    if (!Bitmap::isValidCachedBmp(thumbPath) && !CoverThumbs::wasAttemptedThisBoot(thumbPath)) {
+    // Unlike Home, the grid does NOT consult CoverThumbs::wasAttemptedThisBoot:
+    // opening this screen is an explicit user action (its loading popup is
+    // expected), and the grid is the memory-favorable context that has
+    // historically succeeded where Home's attempt failed -- gating it behind
+    // Home's failed attempt turned "grid rescues the covers" into "nothing
+    // does" (confirmed on device after a cache clear).
+    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight))) {
       needsGeneration = true;
       break;
     }
@@ -211,10 +216,11 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
       const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
       // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
       // from a PRIOR failed attempt doesn't permanently block a retry once the
-      // underlying failure is fixed; CoverThumbs bounds those retries to once per
-      // boot so a coverless book doesn't re-attempt on every grid entry. Failure
+      // underlying failure is fixed. The grid always attempts (see the pre-scan
+      // comment above) but still records the attempt so HOME's once-per-boot
+      // gate stays quiet for a book the grid itself couldn't generate. Failure
       // leaves book.coverBmpPath untouched (not cleared to "") for the same reason.
-      if (!Bitmap::isValidCachedBmp(coverPath) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
+      if (!Bitmap::isValidCachedBmp(coverPath)) {
         CoverThumbs::markAttempted(coverPath);
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");

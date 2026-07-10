@@ -145,6 +145,10 @@ enum class BootResume : uint8_t {
 // startDeepSleep() does not return, so a set latch only ends at the wakeup reset.
 static bool deepSleepInProgress = false;
 
+// Set once in setup() from the RTC silent-reboot magic; see SilentRestart.h.
+static bool gBootWasSilentRestart = false;
+bool bootWasSilentRestart() { return gBootWasSilentRestart; }
+
 void silentRestart() {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
   silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
@@ -359,6 +363,7 @@ void setup() {
       (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_OTA_CHECK) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
+  gBootWasSilentRestart = isSilentReboot;
 
   gpio.begin();
   powerManager.begin();

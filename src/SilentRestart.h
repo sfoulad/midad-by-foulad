@@ -6,6 +6,7 @@
 
 void silentRestart();          // home screen
 void silentRestartToReader();  // currently-open EPUB (APP_STATE.openEpubPath)
+
 // OTA update entry points, landing straight back in OtaUpdateActivity on a
 // fresh boot. Device reports showed BOTH the version-check GET and the
 // firmware-download TLS handshake failing with a recurring ~35KB
@@ -16,3 +17,9 @@ void silentRestartToReader();  // currently-open EPUB (APP_STATE.openEpubPath)
 // else having allocated anything yet.
 void silentRestartToOtaCheck();    // start of the flow (Home/Settings entry)
 void silentRestartToOtaInstall();  // user already confirmed; auto-install armed
+
+// True when the current boot was produced by any silentRestart* call -- i.e.
+// the heap is as fresh as a reboot can make it. Used as a loop guard by
+// callers that trigger a silent restart to escape heap fragmentation: if the
+// fresh boot STILL can't satisfy them, rebooting again won't help.
+bool bootWasSilentRestart();

@@ -20,6 +20,7 @@
 #include "activities/stats/StatsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "reading/ReadingStatsStore.h"
 #include "util/CoverThumbs.h"
 
 int HomeActivity::getMenuItemCount() const {
@@ -70,6 +71,27 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     if (!Bitmap::isValidCachedBmp(thumbPath) && !CoverThumbs::wasAttemptedThisBoot(thumbPath)) {
       freeCoverBuffer();
       coverRendered = false;
+      // Also drop the reading-stats vectors (theme render just loaded them for
+      // the hero card): after a cache clear, generation means a FULL EPUB
+      // metadata re-parse (content.opf/expat/BookMetadataCache) on top of the
+      // image decode, and Home needs every spare block for it. Reloaded from SD
+      // on the next stats access.
+      READING_STATS.releaseMemory();
+
+      // If the largest contiguous block is still too small for the converters
+      // (PNG's inflate ring buffer alone is 32KB) after freeing our own caches,
+      // this session's fragmentation can't be fixed from here -- reboot into a
+      // fresh heap and let this same code run there. This is exactly what the
+      // user discovered manually: entering the Update screen (which silent-
+      // reboots since v1.6.44) and backing out made "covers load everywhere".
+      // bootWasSilentRestart() guards the loop: on the post-reboot pass we
+      // attempt regardless, and a genuine failure writes the empty marker BMP
+      // (+ the CoverThumbs per-boot mark), so no reboot cycle can repeat.
+      constexpr uint32_t kMinContiguousForCoverGen = 44 * 1024;
+      if (ESP.getMaxAllocHeap() < kMinContiguousForCoverGen && !bootWasSilentRestart()) {
+        LOG_DBG("HOME", "Rebooting for cover generation (largest block %u)", ESP.getMaxAllocHeap());
+        silentRestart();  // does not return
+      }
       break;
     }
   }
@@ -88,21 +110,23 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
-          // Skip loading css since we only need metadata here
-          epub.load(false, true);
-
-          // Try to generate thumbnail image for Continue Reading card
-          if (!showingLoading) {
-            showingLoading = true;
-            popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+          // Skip loading css since we only need metadata here. Only generate if
+          // the metadata actually loaded (matching the My Books grid) --
+          // generateThumbBmp can't do anything without it.
+          if (epub.load(false, true)) {
+            // Try to generate thumbnail image for Continue Reading card
+            if (!showingLoading) {
+              showingLoading = true;
+              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+            }
+            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            // Failure leaves book.coverBmpPath untouched (not cleared to "") --
+            // see the isValidCachedBmp comment above for why a retry must stay
+            // possible instead of being disabled forever.
+            epub.generateThumbBmp(coverHeight);
+            coverRendered = false;
+            requestUpdate();
           }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-          // Failure leaves book.coverBmpPath untouched (not cleared to "") --
-          // see the isValidCachedBmp comment above for why a retry must stay
-          // possible instead of being disabled forever.
-          epub.generateThumbBmp(coverHeight);
-          coverRendered = false;
-          requestUpdate();
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
           Xtc xtc(book.path, "/.crosspoint");
