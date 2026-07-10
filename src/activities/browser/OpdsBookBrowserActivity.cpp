@@ -760,8 +760,12 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     if (!book.coverUrl.empty() && FsHelpers::hasEpubExtension(filename)) {
       Epub epub(filename, "/.crosspoint");
       Storage.mkdir(epub.getCachePath().c_str());
-      if (HttpDownloader::downloadToFile(book.coverUrl, epub.getExternalCoverPath(), nullptr, nullptr, server.username,
-                                         server.password) != HttpDownloader::OK) {
+      // Mirror OpdsCoverCache's own format dispatch: the catalog serves either JPEG
+      // or PNG covers, and saving/decoding under the wrong assumed format silently
+      // fails the later thumbnail conversion, leaving the cover blank.
+      const bool isPng = book.coverType.find("png") != std::string::npos;
+      if (HttpDownloader::downloadToFile(book.coverUrl, epub.getExternalCoverPath(isPng), nullptr, nullptr,
+                                         server.username, server.password) != HttpDownloader::OK) {
         LOG_DBG("OPDS", "External cover download failed (non-fatal): %s", book.coverUrl.c_str());
       }
     }
