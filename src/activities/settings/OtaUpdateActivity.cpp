@@ -4,12 +4,15 @@
 #include <I18n.h>
 #include <WiFi.h>
 
+#include <cstdio>
+
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/OtaUpdater.h"
+#include "reading/ReadingStatsStore.h"
 
 void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
@@ -31,6 +34,8 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
     LOG_DBG("OTA", "Update check failed: %d", res);
     {
       RenderLock lock(*this);
+      lastErrorCode = res;
+      failureFreeHeap = ESP.getFreeHeap();
       state = FAILED;
     }
     return;
@@ -53,6 +58,13 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 
 void OtaUpdateActivity::onEnter() {
   Activity::onEnter();
+
+  // Free the reading-stats store's in-RAM vectors (tens of KB after heavy
+  // reading) before we bring up WiFi/TLS: esp_https_ota_begin needs a large
+  // contiguous block for the mbedTLS session, and a full stats store was
+  // starving it -- the download failed at 0% with plenty of Flash headroom.
+  // The store reloads from SD the next time stats are shown.
+  READING_STATS.releaseMemory();
 
   // Turn on WiFi immediately
   LOG_DBG("OTA", "Turning on WiFi...");
@@ -145,6 +157,11 @@ void OtaUpdateActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FAILED) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
+    // Diagnostic line: error code + free heap at failure. Not prose, so it is not
+    // translated; it lets a failure be diagnosed without a USB serial capture.
+    char diag[48];
+    snprintf(diag, sizeof(diag), "code %d  heap %u", lastErrorCode, static_cast<unsigned>(failureFreeHeap));
+    renderer.drawCenteredText(SMALL_FONT_ID, top + height + metrics.verticalSpacing, diag);
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FINISHED) {
@@ -174,9 +191,11 @@ void OtaUpdateActivity::loop() {
           this);
 
       if (res != OtaUpdater::OK) {
-        LOG_DBG("OTA", "Update failed: %d", res);
+        LOG_DBG("OTA", "Update failed: %d (free heap %u)", res, ESP.getFreeHeap());
         {
           RenderLock lock(*this);
+          lastErrorCode = res;
+          failureFreeHeap = ESP.getFreeHeap();
           state = FAILED;
         }
         requestUpdate();

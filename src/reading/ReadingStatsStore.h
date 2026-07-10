@@ -128,6 +128,13 @@ class ReadingStatsStore {
   uint32_t getLatestReadingDayOrdinal() const;
 
   bool removeBook(const std::string& path);
+
+  // Persist any pending changes, then drop the in-RAM book/day vectors so the
+  // heap they hold is available for memory-hungry operations (notably the OTA
+  // update's TLS session). Safe to call anytime a reading session is not active;
+  // the store transparently reloads from SD on the next ensureLoaded(). No-op
+  // while a session is active.
+  void releaseMemory();
 };
 
 #define READING_STATS ReadingStatsStore::getInstance()

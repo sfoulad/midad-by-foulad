@@ -385,6 +385,22 @@ void ReadingStatsStore::saveDeferred() {
   save();
 }
 
+void ReadingStatsStore::releaseMemory() {
+  if (session.active) {
+    return;  // never drop stats mid-session
+  }
+  if (dirty) {
+    save();
+  }
+  // swap-with-empty frees the backing storage (clear() alone keeps capacity).
+  // Loaded books can total tens of KB after heavy reading -- exactly the
+  // contiguous heap the OTA TLS handshake needs. Reloaded on next ensureLoaded().
+  std::vector<ReadingBookStats>().swap(books);
+  std::vector<ReadingDayStats>().swap(readingDays);
+  loaded = false;
+  lastSaveMs = 0;
+}
+
 bool ReadingStatsStore::save() {
   HalFile f;
   if (!Storage.openFileForWrite("RSTAT", STATS_PATH, f)) {

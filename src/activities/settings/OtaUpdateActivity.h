@@ -21,6 +21,10 @@ class OtaUpdateActivity : public Activity {
   State state = WIFI_SELECTION;
   unsigned int lastUpdaterPercentage = UNINITIALIZED_PERCENTAGE;
   OtaUpdater updater;
+  // Captured on failure so the on-screen message can show what went wrong
+  // (otherwise the error code is only in the USB serial log).
+  int lastErrorCode = 0;
+  uint32_t failureFreeHeap = 0;
 
   void onWifiSelectionComplete(bool success);
 
