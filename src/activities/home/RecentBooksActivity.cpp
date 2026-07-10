@@ -149,14 +149,22 @@ RecentBooksActivity::GridGeometry RecentBooksActivity::computeGridGeometry() con
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
   // Column count first, from a target minimum cell width -- then the cover
-  // size is derived to fill the resulting columns edge-to-edge. Height is
-  // requested at width/0.6 (the exact inverse of Epub::generateThumbBmp's own
-  // internal width = height * 0.6 derivation) so the bitmap it actually
-  // generates comes out at this cell's width, not a mismatched size that
-  // would then get letterboxed by drawBitmap's aspect-fit scaling.
+  // size is derived to fill the resulting columns edge-to-edge.
   geometry.columns = std::max(1, (pageWidth - GRID_GUTTER) / (GRID_MIN_CELL_WIDTH + GRID_GUTTER));
   geometry.coverWidth = (pageWidth - GRID_GUTTER * (geometry.columns + 1)) / geometry.columns;
   geometry.coverHeight = static_cast<int>(geometry.coverWidth / 0.6f);
+
+  // Thumbnail CACHE height stays fixed at the theme's canonical hero height
+  // (matching HomeActivity::loadRecentCovers) instead of this grid's own
+  // dynamically-computed cell height. Two different generateThumbBmp() heights
+  // per book meant two independent cache files, two independent generation
+  // attempts, and two independent success/failure outcomes for the exact same
+  // source cover -- confirmed on a real device as the reason a book could show
+  // its cover in this grid but not on Home (or vice versa) even after both
+  // screens' cover logic was otherwise identical. drawBitmap already scales
+  // this fixed-height source down to fit the grid's (device/orientation
+  // dependent) cell box, same as FouladTheme's hero/thumbnail-row covers do.
+  geometry.thumbHeight = metrics.homeCoverHeight;
 
   const int rowHeight = geometry.coverHeight + getGridTitleHeight() + GRID_GUTTER;
   const int rows = std::max(1, contentHeight / rowHeight);
@@ -180,7 +188,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     if (book.coverBmpPath.empty()) continue;
     // isValidCachedBmp, not a plain existence check -- see the comment on the
     // matching check below for why a stale failure marker must not block a retry.
-    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight))) {
+    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight))) {
       needsGeneration = true;
       break;
     }
@@ -198,7 +206,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
   for (int i = pageStart; i < pageEnd; i++) {
     RecentBook& book = recentBooks[i];
     if (!book.coverBmpPath.empty()) {
-      const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight);
+      const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
       // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
       // from a PRIOR failed attempt -- generateThumbBmp() writes an empty file to
       // avoid retrying every render -- doesn't permanently block a retry once the
@@ -215,7 +223,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            epub.generateThumbBmp(geometry.coverHeight);
+            epub.generateThumbBmp(geometry.thumbHeight);
           }
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           Xtc xtc(book.path, "/.crosspoint");
@@ -225,7 +233,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-            xtc.generateThumbBmp(geometry.coverHeight);
+            xtc.generateThumbBmp(geometry.thumbHeight);
           }
         }
       }
@@ -273,7 +281,9 @@ void RecentBooksActivity::render(RenderLock&&) {
 
       bool drawn = false;
       if (!book.coverBmpPath.empty()) {
-        const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.coverHeight);
+        // Read from the shared canonical-height thumb (see computeGridGeometry);
+        // drawBitmap scales it down to this grid cell's own display size.
+        const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
         if (Storage.exists(coverPath.c_str())) {
           HalFile file;
           if (Storage.openFileForRead("RBA", coverPath, file)) {
