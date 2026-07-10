@@ -1,6 +1,8 @@
 #include "OpdsBookBrowserActivity.h"
 
 #include <Bitmap.h>
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -750,6 +752,19 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
+    // Save the catalog cover next to the book (after clearBookCache, which wipes the
+    // cache dir) so it shows a thumbnail on Home/My Books even when the EPUB has no
+    // embedded cover art -- common for Foulad eBooks. Best-effort; a missing cover
+    // just falls back to the placeholder as before. Only EPUBs have the external
+    // cover fallback in generateThumbBmp(); XTC covers come from the file itself.
+    if (!book.coverUrl.empty() && FsHelpers::hasEpubExtension(filename)) {
+      Epub epub(filename, "/.crosspoint");
+      Storage.mkdir(epub.getCachePath().c_str());
+      if (HttpDownloader::downloadToFile(book.coverUrl, epub.getExternalCoverPath(), nullptr, nullptr, server.username,
+                                         server.password) != HttpDownloader::OK) {
+        LOG_DBG("OPDS", "External cover download failed (non-fatal): %s", book.coverUrl.c_str());
+      }
+    }
     pendingReaderPath = filename;
     activityManager.goToReader(filename);
     return;

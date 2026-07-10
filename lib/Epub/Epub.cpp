@@ -751,11 +751,35 @@ bool Epub::generateThumbBmp(int height) const {
     LOG_ERR("EBP", "Cover image is not a supported format, skipping thumbnail");
   }
 
+  // No usable embedded cover. Fall back to an externally-supplied cover JPEG (the
+  // Foulad eBooks catalog cover saved next to the book at download time) so books
+  // without embedded art still get a thumbnail.
+  const std::string externalCover = getExternalCoverPath();
+  if (Storage.exists(externalCover.c_str())) {
+    HalFile coverJpg;
+    HalFile thumbBmp;
+    if (Storage.openFileForRead("EBP", externalCover, coverJpg) &&
+        Storage.openFileForWrite("EBP", getThumbBmpPath(height), thumbBmp)) {
+      const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(coverJpg, thumbBmp,
+                                                                               static_cast<int>(height * 0.6), height);
+      coverJpg.close();
+      thumbBmp.close();
+      if (success) {
+        LOG_DBG("EBP", "Generated thumb BMP from external cover");
+        return true;
+      }
+      Storage.remove(getThumbBmpPath(height).c_str());
+      LOG_ERR("EBP", "Failed to generate thumb BMP from external cover");
+    }
+  }
+
   // Write an empty bmp file to avoid generation attempts in the future
   HalFile thumbBmp;
   Storage.openFileForWrite("EBP", getThumbBmpPath(height), thumbBmp);
   return false;
 }
+
+std::string Epub::getExternalCoverPath() const { return cachePath + "/external_cover.jpg"; }
 
 uint8_t* Epub::readItemContentsToBytes(const std::string& itemHref, size_t* size, const bool trailingNullByte) const {
   if (itemHref.empty()) {
