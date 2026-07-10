@@ -55,6 +55,25 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   bool showingLoading = false;
   Rect popupRect;
 
+  // If any cover actually needs generating, release the ~38KB home-cover frame
+  // snapshot (storeCoverBuffer) first: the JPEG/PNG cover converters need large
+  // contiguous heap blocks (the PNG inflate ring buffer alone is 32KB), and with
+  // the snapshot held, generation reliably failed HERE while succeeding for the
+  // SAME book at the SAME size from the My Books grid, which holds no such
+  // buffer -- confirmed on device (Home blank -> open grid, covers appear ->
+  // back Home, covers now show, because Home could then just read the files the
+  // grid had converted). The snapshot is rebuilt on the next render from the
+  // freshly cached thumb files.
+  for (const RecentBook& book : recentBooks) {
+    if (book.coverBmpPath.empty()) continue;
+    const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
+    if (!Bitmap::isValidCachedBmp(thumbPath) && !CoverThumbs::wasAttemptedThisBoot(thumbPath)) {
+      freeCoverBuffer();
+      coverRendered = false;
+      break;
+    }
+  }
+
   int progress = 0;
   for (RecentBook& book : recentBooks) {
     if (!book.coverBmpPath.empty()) {
