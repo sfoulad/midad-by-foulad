@@ -218,54 +218,70 @@ void OpdsBookBrowserActivity::loop() {
     } else if (onBook) {
       // Inside the cover grid: Left/Right cycle through books; Up/Down move by
       // row, escaping to the nav strip above/below at the grid's true edges.
-      auto moveUp = [this, layout] {
+      // Any movement that would WRAP around the in-memory books instead pages
+      // the server feed (when it has a next/previous link). The first attempt
+      // hooked only Left/Right on the exact first/last book, but users page
+      // the grid with Up/Down, which wraps page-by-page without ever standing
+      // on the last book -- the browse log showed 4 grid pages then a silent
+      // wrap to page 1 with no auto-advance ever firing. Detecting the wrap
+      // itself (candidate index jumping backwards on a forward move, or
+      // forwards on a backward move) covers every direction and page shape.
+      auto goToFeedPage = [this](const bool forward) {
+        pendingGridSelect = forward ? PendingGridSelect::FirstBook : PendingGridSelect::LastBook;
+        const std::string& url = forward ? feedNextUrl : feedPrevUrl;
+        browseLog(std::string(forward ? "AUTO-NEXT -> " : "AUTO-PREV -> ") + url);
+        navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", url, ""});
+      };
+      auto moveUp = [this, layout, goToFeedPage] {
         if (selectorIndex == layout.bookStart && layout.topNavCount > 0) {
           selectorIndex = 0;
-        } else {
-          selectorIndex = layout.bookStart + moveVerticalInGrid(selectorIndex - layout.bookStart, layout.bookCount,
-                                                                layout.columns, layout.itemsPerPage, false);
+          requestUpdate();
+          return;
         }
+        const int local = selectorIndex - layout.bookStart;
+        const int candidate =
+            moveVerticalInGrid(local, layout.bookCount, layout.columns, layout.itemsPerPage, false);
+        if (candidate >= local && !feedPrevUrl.empty()) {
+          goToFeedPage(false);
+          return;
+        }
+        selectorIndex = layout.bookStart + candidate;
         requestUpdate();
       };
-      auto moveDown = [this, layout] {
+      auto moveDown = [this, layout, goToFeedPage] {
         if (selectorIndex == layout.bookStart + layout.bookCount - 1 &&
             layout.bottomNavStart < static_cast<int>(entries.size())) {
           selectorIndex = layout.bottomNavStart;
-        } else {
-          selectorIndex = layout.bookStart + moveVerticalInGrid(selectorIndex - layout.bookStart, layout.bookCount,
-                                                                layout.columns, layout.itemsPerPage, true);
-        }
-        requestUpdate();
-      };
-      auto moveLeft = [this, layout] {
-        // Before the first cover: fetch the previous OPDS page (if the feed has
-        // one) instead of wrapping to the last in-memory cover, landing on its
-        // last book so the reading direction continues seamlessly.
-        if (selectorIndex == layout.bookStart && !feedPrevUrl.empty()) {
-          pendingGridSelect = PendingGridSelect::LastBook;
-          browseLog("AUTO-PREV -> " + feedPrevUrl);
-          navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", feedPrevUrl, ""});
+          requestUpdate();
           return;
         }
-        if (selectorIndex == layout.bookStart) browseLog("WRAP-START (no prev link)");
-        selectorIndex =
-            layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, false);
-        requestUpdate();
-      };
-      auto moveRight = [this, layout] {
-        // Past the last cover: fetch the next OPDS page (if the feed has one)
-        // instead of wrapping back to the first in-memory cover -- with a
-        // 25-books-per-page server feed, the wrap made the catalog look like
-        // it "repeats" after 25 books.
-        if (selectorIndex == layout.bookStart + layout.bookCount - 1 && !feedNextUrl.empty()) {
-          pendingGridSelect = PendingGridSelect::FirstBook;
-          browseLog("AUTO-NEXT -> " + feedNextUrl);
-          navigateToEntry(OpdsEntry{OpdsEntryType::NAVIGATION, "", "", feedNextUrl, ""});
+        const int local = selectorIndex - layout.bookStart;
+        const int candidate = moveVerticalInGrid(local, layout.bookCount, layout.columns, layout.itemsPerPage, true);
+        if (candidate <= local && !feedNextUrl.empty()) {
+          goToFeedPage(true);
           return;
         }
-        if (selectorIndex == layout.bookStart + layout.bookCount - 1) browseLog("WRAP-END (no next link)");
-        selectorIndex =
-            layout.bookStart + moveHorizontalInGrid(selectorIndex - layout.bookStart, layout.bookCount, true);
+        selectorIndex = layout.bookStart + candidate;
+        requestUpdate();
+      };
+      auto moveLeft = [this, layout, goToFeedPage] {
+        const int local = selectorIndex - layout.bookStart;
+        const int candidate = moveHorizontalInGrid(local, layout.bookCount, false);
+        if (candidate >= local && !feedPrevUrl.empty()) {
+          goToFeedPage(false);
+          return;
+        }
+        selectorIndex = layout.bookStart + candidate;
+        requestUpdate();
+      };
+      auto moveRight = [this, layout, goToFeedPage] {
+        const int local = selectorIndex - layout.bookStart;
+        const int candidate = moveHorizontalInGrid(local, layout.bookCount, true);
+        if (candidate <= local && !feedNextUrl.empty()) {
+          goToFeedPage(true);
+          return;
+        }
+        selectorIndex = layout.bookStart + candidate;
         requestUpdate();
       };
 
