@@ -71,31 +71,6 @@ EpdFont notoserif18BoldItalicFont(&notoserif_18_bolditalic);
 EpdFontFamily notoserif18FontFamily(&notoserif18RegularFont, &notoserif18BoldFont, &notoserif18ItalicFont,
                                     &notoserif18BoldItalicFont);
 
-EpdFont notosans12RegularFont(&notosans_12_regular);
-EpdFont notosans12BoldFont(&notosans_12_bold);
-EpdFont notosans12ItalicFont(&notosans_12_italic);
-EpdFont notosans12BoldItalicFont(&notosans_12_bolditalic);
-EpdFontFamily notosans12FontFamily(&notosans12RegularFont, &notosans12BoldFont, &notosans12ItalicFont,
-                                   &notosans12BoldItalicFont);
-EpdFont notosans14RegularFont(&notosans_14_regular);
-EpdFont notosans14BoldFont(&notosans_14_bold);
-EpdFont notosans14ItalicFont(&notosans_14_italic);
-EpdFont notosans14BoldItalicFont(&notosans_14_bolditalic);
-EpdFontFamily notosans14FontFamily(&notosans14RegularFont, &notosans14BoldFont, &notosans14ItalicFont,
-                                   &notosans14BoldItalicFont);
-EpdFont notosans16RegularFont(&notosans_16_regular);
-EpdFont notosans16BoldFont(&notosans_16_bold);
-EpdFont notosans16ItalicFont(&notosans_16_italic);
-EpdFont notosans16BoldItalicFont(&notosans_16_bolditalic);
-EpdFontFamily notosans16FontFamily(&notosans16RegularFont, &notosans16BoldFont, &notosans16ItalicFont,
-                                   &notosans16BoldItalicFont);
-EpdFont notosans18RegularFont(&notosans_18_regular);
-EpdFont notosans18BoldFont(&notosans_18_bold);
-EpdFont notosans18ItalicFont(&notosans_18_italic);
-EpdFont notosans18BoldItalicFont(&notosans_18_bolditalic);
-EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, &notosans18ItalicFont,
-                                   &notosans18BoldItalicFont);
-
 #endif  // OMIT_FONTS
 
 EpdFont smallFont(&notosans_8_regular);
@@ -122,19 +97,13 @@ EpdFontFamily notosansarabic10FontFamily(&notosansarabic10RegularFont);
 EpdFont notosansarabic12RegularFont(&notosansarabic_12_regular);
 EpdFontFamily notosansarabic12FontFamily(&notosansarabic12RegularFont);
 
-// Arabic reading-text font families, bundled at the same four reading sizes as the
-// Latin fonts above (12/14/16/18pt = Small/Medium/Large/X-Large) so Arabic body text
-// can match the user's chosen size independently of the Latin reading font. Five
-// choices (Settings -> Reader -> Arabic Font): Noto Sans Arabic (reuses the 12pt
-// UI-context font above for its reading-Small tier), Noto Naskh Arabic, Amiri,
-// Scheherazade New, and Cairo -- all OFL-licensed. See ArabicFontSystem.cpp for the
-// family/size -> font ID resolution.
-EpdFont notosansarabic14RegularFont(&notosansarabic_14_regular);
-EpdFontFamily notosansarabic14FontFamily(&notosansarabic14RegularFont);
-EpdFont notosansarabic16RegularFont(&notosansarabic_16_regular);
-EpdFontFamily notosansarabic16FontFamily(&notosansarabic16RegularFont);
-EpdFont notosansarabic18RegularFont(&notosansarabic_18_regular);
-EpdFontFamily notosansarabic18FontFamily(&notosansarabic18RegularFont);
+// Arabic reading-text font family (Noto Naskh Arabic, OFL-licensed), bundled at the
+// same four reading sizes as the Latin fonts above (12/14/16/18pt = Small/Medium/
+// Large/X-Large) so Arabic body text can match the user's chosen size independently
+// of the Latin reading font. Other families were trimmed from flash to keep OTA
+// images small; custom families can still be loaded from the SD card (Settings ->
+// Reader -> Arabic Font). See ArabicFontSystem.cpp for family/size -> font ID
+// resolution.
 
 EpdFont notonaskharabic12RegularFont(&notonaskharabic_12_regular);
 EpdFontFamily notonaskharabic12FontFamily(&notonaskharabic12RegularFont);
@@ -144,33 +113,6 @@ EpdFont notonaskharabic16RegularFont(&notonaskharabic_16_regular);
 EpdFontFamily notonaskharabic16FontFamily(&notonaskharabic16RegularFont);
 EpdFont notonaskharabic18RegularFont(&notonaskharabic_18_regular);
 EpdFontFamily notonaskharabic18FontFamily(&notonaskharabic18RegularFont);
-
-EpdFont amiri12RegularFont(&amiri_12_regular);
-EpdFontFamily amiri12FontFamily(&amiri12RegularFont);
-EpdFont amiri14RegularFont(&amiri_14_regular);
-EpdFontFamily amiri14FontFamily(&amiri14RegularFont);
-EpdFont amiri16RegularFont(&amiri_16_regular);
-EpdFontFamily amiri16FontFamily(&amiri16RegularFont);
-EpdFont amiri18RegularFont(&amiri_18_regular);
-EpdFontFamily amiri18FontFamily(&amiri18RegularFont);
-
-EpdFont scheherazadenew12RegularFont(&scheherazadenew_12_regular);
-EpdFontFamily scheherazadenew12FontFamily(&scheherazadenew12RegularFont);
-EpdFont scheherazadenew14RegularFont(&scheherazadenew_14_regular);
-EpdFontFamily scheherazadenew14FontFamily(&scheherazadenew14RegularFont);
-EpdFont scheherazadenew16RegularFont(&scheherazadenew_16_regular);
-EpdFontFamily scheherazadenew16FontFamily(&scheherazadenew16RegularFont);
-EpdFont scheherazadenew18RegularFont(&scheherazadenew_18_regular);
-EpdFontFamily scheherazadenew18FontFamily(&scheherazadenew18RegularFont);
-
-EpdFont cairo12RegularFont(&cairo_12_regular);
-EpdFontFamily cairo12FontFamily(&cairo12RegularFont);
-EpdFont cairo14RegularFont(&cairo_14_regular);
-EpdFontFamily cairo14FontFamily(&cairo14RegularFont);
-EpdFont cairo16RegularFont(&cairo_16_regular);
-EpdFontFamily cairo16FontFamily(&cairo16RegularFont);
-EpdFont cairo18RegularFont(&cairo_18_regular);
-EpdFontFamily cairo18FontFamily(&cairo18RegularFont);
 
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
@@ -352,10 +294,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTOSERIF_16_FONT_ID, notoserif16FontFamily);
   renderer.insertFont(NOTOSERIF_18_FONT_ID, notoserif18FontFamily);
 
-  renderer.insertFont(NOTOSANS_12_FONT_ID, notosans12FontFamily);
-  renderer.insertFont(NOTOSANS_14_FONT_ID, notosans14FontFamily);
-  renderer.insertFont(NOTOSANS_16_FONT_ID, notosans16FontFamily);
-  renderer.insertFont(NOTOSANS_18_FONT_ID, notosans18FontFamily);
 #endif  // OMIT_FONTS
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
@@ -363,25 +301,10 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTOSANSARABIC_8_FONT_ID, notosansarabic8FontFamily);
   renderer.insertFont(NOTOSANSARABIC_10_FONT_ID, notosansarabic10FontFamily);
   renderer.insertFont(NOTOSANSARABIC_12_FONT_ID, notosansarabic12FontFamily);
-  renderer.insertFont(NOTOSANSARABIC_14_FONT_ID, notosansarabic14FontFamily);
-  renderer.insertFont(NOTOSANSARABIC_16_FONT_ID, notosansarabic16FontFamily);
-  renderer.insertFont(NOTOSANSARABIC_18_FONT_ID, notosansarabic18FontFamily);
   renderer.insertFont(NOTONASKHARABIC_12_FONT_ID, notonaskharabic12FontFamily);
   renderer.insertFont(NOTONASKHARABIC_14_FONT_ID, notonaskharabic14FontFamily);
   renderer.insertFont(NOTONASKHARABIC_16_FONT_ID, notonaskharabic16FontFamily);
   renderer.insertFont(NOTONASKHARABIC_18_FONT_ID, notonaskharabic18FontFamily);
-  renderer.insertFont(AMIRI_12_FONT_ID, amiri12FontFamily);
-  renderer.insertFont(AMIRI_14_FONT_ID, amiri14FontFamily);
-  renderer.insertFont(AMIRI_16_FONT_ID, amiri16FontFamily);
-  renderer.insertFont(AMIRI_18_FONT_ID, amiri18FontFamily);
-  renderer.insertFont(SCHEHERAZADENEW_12_FONT_ID, scheherazadenew12FontFamily);
-  renderer.insertFont(SCHEHERAZADENEW_14_FONT_ID, scheherazadenew14FontFamily);
-  renderer.insertFont(SCHEHERAZADENEW_16_FONT_ID, scheherazadenew16FontFamily);
-  renderer.insertFont(SCHEHERAZADENEW_18_FONT_ID, scheherazadenew18FontFamily);
-  renderer.insertFont(CAIRO_12_FONT_ID, cairo12FontFamily);
-  renderer.insertFont(CAIRO_14_FONT_ID, cairo14FontFamily);
-  renderer.insertFont(CAIRO_16_FONT_ID, cairo16FontFamily);
-  renderer.insertFont(CAIRO_18_FONT_ID, cairo18FontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

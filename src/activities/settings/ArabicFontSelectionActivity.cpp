@@ -17,10 +17,9 @@
 namespace {
 constexpr const char* ELLIPSIS_UTF8 = "\xe2\x80\xa6";
 
-// StrIds for the 5 built-in Arabic fonts, in CrossPointSettings::ARABIC_FONT_FAMILY order.
+// StrIds for the built-in Arabic fonts, in CrossPointSettings::ARABIC_FONT_FAMILY order.
 constexpr StrId kBuiltinArabicFontNames[CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT] = {
-    StrId::STR_NOTO_SANS_ARABIC, StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI,
-    StrId::STR_SCHEHERAZADE_NEW, StrId::STR_CAIRO_ARABIC,
+    StrId::STR_NOTO_NASKH_ARABIC,
 };
 
 int findCurrentArabicFontIndex(const SdCardFontRegistry* registry, const char* sdArabicFontFamilyName,

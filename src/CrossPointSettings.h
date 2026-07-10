@@ -106,8 +106,10 @@ class CrossPointSettings {
   // Default: Up = Previous, Down = Next
   enum SIDE_BUTTON_LAYOUT { PREV_NEXT = 0, NEXT_PREV = 1, SIDE_BUTTONS_DISABLED = 2, SIDE_BUTTON_LAYOUT_COUNT };
 
-  // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName)
-  enum FONT_FAMILY { NOTOSERIF = 0, NOTOSANS = 1, FONT_FAMILY_COUNT };
+  // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName).
+  // Noto Sans (formerly = 1) was trimmed from flash to keep OTA images small;
+  // saved fontFamily values >= FONT_FAMILY_COUNT clamp back to Noto Serif on load.
+  enum FONT_FAMILY { NOTOSERIF = 0, FONT_FAMILY_COUNT };
   static constexpr uint8_t LEGACY_OPENDYSLEXIC = 2;
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
   // Font size options
@@ -115,14 +117,9 @@ class CrossPointSettings {
   // Arabic reading-font family options (built-in only; SD card fonts use
   // sdArabicFontFamilyName). Independent of FONT_FAMILY/fontFamily above -- see
   // ArabicFontSystem. Reuses FONT_SIZE (Small/Medium/Large/X-Large) for arabicFontSize.
-  enum ARABIC_FONT_FAMILY {
-    NOTOSANSARABIC = 0,
-    NOTONASKHARABIC = 1,
-    AMIRI = 2,
-    SCHEHERAZADENEW = 3,
-    CAIRO = 4,
-    ARABIC_FONT_FAMILY_COUNT
-  };
+  // Noto Sans Arabic / Amiri / Scheherazade New / Cairo (formerly indices 0/2/3/4)
+  // were trimmed from flash; out-of-range saved values clamp to Noto Naskh.
+  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, ARABIC_FONT_FAMILY_COUNT };
   static constexpr uint8_t BUILTIN_ARABIC_FONT_COUNT = ARABIC_FONT_FAMILY_COUNT;
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
@@ -280,7 +277,7 @@ class CrossPointSettings {
   // Built-in Arabic reading-font family/size (Settings -> Reader -> Arabic Font /
   // Arabic Font Size). Only used when sdArabicFontFamilyName is empty. Independent of
   // fontFamily/fontSize (the Latin reading font) -- see ArabicFontSystem.
-  uint8_t arabicFontFamily = NOTOSANSARABIC;
+  uint8_t arabicFontFamily = NOTONASKHARABIC;
   uint8_t arabicFontSize = MEDIUM;
   // Track reading time/stats (session time, pace, streaks -- see
   // src/reading/ReadingStatsStore.h). 1 = on. Turning it off stops accumulation;

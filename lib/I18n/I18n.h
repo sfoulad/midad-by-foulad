@@ -25,7 +25,7 @@ class I18n {
   // this to mirror layout: titles/icons anchor to the right edge, values/options to the
   // left, tab bars flow right-to-left. Per-string glyph ordering is already handled
   // inside GfxRenderer (MiniBidi / ArabicShaper); this flag only drives layout anchoring.
-  bool isRtl() const { return _language == Language::AR || _language == Language::HE; }
+  bool isRtl() const { return _language == Language::AR; }
   void setLanguage(Language lang);
   const char* getLanguageName(Language lang) const;
   static Language languageFromCode(const char* code);

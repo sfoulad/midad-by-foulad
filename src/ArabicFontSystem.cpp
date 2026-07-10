@@ -13,18 +13,14 @@ namespace {
 // UI text actually needs (see registerBuiltinSizeMappings() below).
 constexpr uint8_t ARABIC_FONT_SIZE_ENUM = CrossPointSettings::SMALL;
 
-// [family][size] -> font ID, for the 5 built-in Arabic reading-font families at the
+// [family][size] -> font ID, for the built-in Arabic reading-font family at the
 // 4 reading sizes (12/14/16/18pt = Small/Medium/Large/X-Large). Order matches
-// CrossPointSettings::ARABIC_FONT_FAMILY and FONT_SIZE.
+// CrossPointSettings::ARABIC_FONT_FAMILY and FONT_SIZE. Only Noto Naskh Arabic
+// ships in flash (other families were trimmed to keep OTA images small).
 constexpr int
     kBuiltinArabicReadingFontIds[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT][CrossPointSettings::FONT_SIZE_COUNT] = {
-        {NOTOSANSARABIC_12_FONT_ID, NOTOSANSARABIC_14_FONT_ID, NOTOSANSARABIC_16_FONT_ID, NOTOSANSARABIC_18_FONT_ID},
         {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
          NOTONASKHARABIC_18_FONT_ID},
-        {AMIRI_12_FONT_ID, AMIRI_14_FONT_ID, AMIRI_16_FONT_ID, AMIRI_18_FONT_ID},
-        {SCHEHERAZADENEW_12_FONT_ID, SCHEHERAZADENEW_14_FONT_ID, SCHEHERAZADENEW_16_FONT_ID,
-         SCHEHERAZADENEW_18_FONT_ID},
-        {CAIRO_12_FONT_ID, CAIRO_14_FONT_ID, CAIRO_16_FONT_ID, CAIRO_18_FONT_ID},
 };
 
 // Registers the built-in Arabic font at each size actually used for Arabic-eligible
@@ -48,8 +44,7 @@ void registerBuiltinSizeMappings(GfxRenderer& renderer) {
   const int readingFontId =
       ArabicFontSystem::resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.arabicFontSize);
   for (const int latinReadingFontId :
-       {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID, NOTOSANS_12_FONT_ID,
-        NOTOSANS_14_FONT_ID, NOTOSANS_16_FONT_ID, NOTOSANS_18_FONT_ID}) {
+       {NOTOSERIF_12_FONT_ID, NOTOSERIF_14_FONT_ID, NOTOSERIF_16_FONT_ID, NOTOSERIF_18_FONT_ID}) {
     renderer.setArabicFontIdForFontId(latinReadingFontId, readingFontId);
   }
 
@@ -58,7 +53,7 @@ void registerBuiltinSizeMappings(GfxRenderer& renderer) {
 }  // namespace
 
 int ArabicFontSystem::resolveBuiltinReadingFontId(uint8_t family, uint8_t size) {
-  if (family >= CrossPointSettings::ARABIC_FONT_FAMILY_COUNT) family = CrossPointSettings::NOTOSANSARABIC;
+  if (family >= CrossPointSettings::ARABIC_FONT_FAMILY_COUNT) family = CrossPointSettings::NOTONASKHARABIC;
   if (size >= CrossPointSettings::FONT_SIZE_COUNT) size = CrossPointSettings::MEDIUM;
   return kBuiltinArabicReadingFontIds[family][size];
 }

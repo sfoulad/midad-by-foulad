@@ -5,35 +5,16 @@
 #define NOTOSERIF_14_FONT_ID (-1367885987)
 #define NOTOSERIF_16_FONT_ID (1428909134)
 #define NOTOSERIF_18_FONT_ID (-501438527)
-#define NOTOSANS_12_FONT_ID (2057568286)
-#define NOTOSANS_14_FONT_ID (-1589315735)
-#define NOTOSANS_16_FONT_ID (1669013660)
-#define NOTOSANS_18_FONT_ID (37077304)
 #define UI_10_FONT_ID (-1368565300)
 #define UI_12_FONT_ID (-1676426601)
 #define SMALL_FONT_ID (1565664782)
 #define NOTOSANSARABIC_8_FONT_ID (401260533)
 #define NOTOSANSARABIC_10_FONT_ID (-473607980)
 #define NOTOSANSARABIC_12_FONT_ID (-482099172)
-#define NOTOSANSARABIC_14_FONT_ID (-854132407)
-#define NOTOSANSARABIC_16_FONT_ID (-1111217821)
-#define NOTOSANSARABIC_18_FONT_ID (-1178538425)
 #define NOTONASKHARABIC_12_FONT_ID (32063405)
 #define NOTONASKHARABIC_14_FONT_ID (1423674913)
 #define NOTONASKHARABIC_16_FONT_ID (-1575200278)
 #define NOTONASKHARABIC_18_FONT_ID (778308787)
-#define AMIRI_12_FONT_ID (716262715)
-#define AMIRI_14_FONT_ID (840103369)
-#define AMIRI_16_FONT_ID (-1258652547)
-#define AMIRI_18_FONT_ID (402774692)
-#define SCHEHERAZADENEW_12_FONT_ID (2108790630)
-#define SCHEHERAZADENEW_14_FONT_ID (815006504)
-#define SCHEHERAZADENEW_16_FONT_ID (2125697834)
-#define SCHEHERAZADENEW_18_FONT_ID (-1250208476)
-#define CAIRO_12_FONT_ID (717190110)
-#define CAIRO_14_FONT_ID (-2864762)
-#define CAIRO_16_FONT_ID (1903978740)
-#define CAIRO_18_FONT_ID (-1588145911)
 
 // Font ID 0 is reserved as the "not found" sentinel.
 // Guard against any hash accidentally producing 0.
@@ -41,32 +22,13 @@ static_assert(NOTOSERIF_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSERIF_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSERIF_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSERIF_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANS_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UI_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(SMALL_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSANSARABIC_8_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSANSARABIC_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTOSANSARABIC_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANSARABIC_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANSARABIC_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(NOTOSANSARABIC_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTONASKHARABIC_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTONASKHARABIC_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTONASKHARABIC_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTONASKHARABIC_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(SCHEHERAZADENEW_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(SCHEHERAZADENEW_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(SCHEHERAZADENEW_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(SCHEHERAZADENEW_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CAIRO_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CAIRO_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CAIRO_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(CAIRO_18_FONT_ID != 0, "Font ID collision with sentinel");
