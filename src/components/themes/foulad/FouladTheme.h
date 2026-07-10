@@ -1,16 +1,18 @@
 #pragma once
 
-#include "components/themes/BaseTheme.h"
+#include "components/themes/lyra/LyraTheme.h"
 
 class GfxRenderer;
 
 // "Foulad" home theme: hero card for the current book (cover + title/author +
 // progress bar + Read / Est. Left readouts from the reading stats), a Recents
 // cover row with a +N count badge, and a bottom icon bar for the home menu.
-// Everything outside the home screen inherits the Classic (Base) look.
+// Everything outside the home screen inherits the Lyra look (the previous
+// device default, restored by user request after Classic felt like a
+// downgrade for Settings/lists).
 namespace FouladMetrics {
 constexpr ThemeMetrics values = [] {
-  ThemeMetrics v = BaseMetrics::values;
+  ThemeMetrics v = LyraMetrics::values;
   v.homeTopPadding = 10;
   v.homeCoverHeight = 300;      // aalu hero cover height
   v.homeCoverTileHeight = 640;  // status line + hero + Recents divider + thumb row
@@ -23,7 +25,7 @@ constexpr ThemeMetrics values = [] {
 }();
 }  // namespace FouladMetrics
 
-class FouladTheme : public BaseTheme {
+class FouladTheme : public LyraTheme {
  public:
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
