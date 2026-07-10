@@ -92,14 +92,17 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   // generation right after a silent reboot demonstrably succeeds for every book
   // ("go to Update [which reboots] and back -> covers load everywhere"). So:
   // never-attempted covers are only generated on a fresh boot -- reboot to get
-  // one if needed. Guarded against cycles two ways: (a) a boot that IS fresh
-  // (silent reboot, or within a minute of any boot) generates inline, and a
-  // genuine failure there writes the empty marker BMP; (b) marker-bearing thumbs
-  // (attempted on a fresh heap before and truly impossible, e.g. no cover art in
-  // the EPUB at all) never justify a reboot -- they only get the cheap
-  // once-per-boot inline retry.
+  // one if needed. Freshness is TIME SINCE BOOT only -- an earlier version also
+  // counted bootWasSilentRestart(), but that flag stays true for the whole boot,
+  // so a session that STARTED as a silent restart (e.g. the post-download
+  // auto-open-reader path) still counted as fresh after a long reading session
+  // and generated inline in a used heap, failing until the grid rescued it.
+  // Cycle guards: (a) the fresh boot's inline attempt writes the empty marker
+  // BMP on genuine failure; (b) marker-bearing thumbs (attempted on a fresh heap
+  // and truly impossible, e.g. no cover art in the EPUB) never justify a reboot,
+  // only the cheap once-per-boot inline retry.
   constexpr unsigned long kFreshBootWindowMs = 60000;
-  const bool freshBoot = bootWasSilentRestart() || millis() < kFreshBootWindowMs;
+  const bool freshBoot = millis() < kFreshBootWindowMs;
   if (anyNeverAttempted && !freshBoot) {
     LOG_DBG("HOME", "Rebooting for cover generation (largest block %u)", ESP.getMaxAllocHeap());
     silentRestart();  // does not return
@@ -175,6 +178,8 @@ void HomeActivity::onEnter() {
   const auto base = static_cast<int>(recentBooks.size());
   selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem);
 
+  lastIdleWhitenMs = millis();
+
   // Trigger first update
   requestUpdate();
 }
@@ -223,6 +228,17 @@ void HomeActivity::freeCoverBuffer() {
 }
 
 void HomeActivity::loop() {
+  // Anti-drift whitening: a static e-ink image slowly drifts gray over minutes
+  // ("background becomes dark instead of clear white"), and the user confirmed
+  // any plain redraw restores the white (moving the selection fixed it). Redraw
+  // quietly every few minutes -- an ordinary FAST partial refresh, none of the
+  // deep-refresh flashing a waveform-promotion approach caused (reverted).
+  constexpr unsigned long kIdleWhitenIntervalMs = 3UL * 60UL * 1000UL;
+  if (millis() - lastIdleWhitenMs >= kIdleWhitenIntervalMs) {
+    lastIdleWhitenMs = millis();
+    requestUpdate();
+  }
+
   const int menuCount = getMenuItemCount();
 
   buttonNavigator.onNext([this, menuCount] {
