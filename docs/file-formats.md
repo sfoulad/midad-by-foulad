@@ -90,11 +90,18 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 32
+### Version 33
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 33 is a pure cache-bust (no structural change from v32): the gap between
+two Arabic words is now sized by the Arabic font's own space glyph (which follows
+the `arabicFontSize` setting) instead of the Latin reading font's space. When
+Arabic is set larger than the Latin reading size, the old Latin-sized gap was too
+small for the big Arabic glyphs and words ran together; this changes inter-word x
+positions on Arabic lines without touching any cache-key settings field.
 
 Version 32 is a pure cache-bust (no structural change from v31), covering two
 Arabic fixes that change layout: (a) `<li><p>text</p></li>` no longer strands
@@ -149,7 +156,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 32
+#define EXPECTED_VERSION 33
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96

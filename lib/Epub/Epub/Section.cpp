@@ -27,7 +27,11 @@ namespace {
 // (nested block tags continue in the lone-bullet block); (b) mid-word alef maksura
 // now shapes with yeh initial/medial forms, changing measured word widths. Both
 // change layout for affected books without touching any cache-key settings field.
-constexpr uint8_t SECTION_FILE_VERSION = 32;
+// v33: the gap between two Arabic words is now sized by the Arabic font's own space
+// glyph (which follows arabicFontSize) instead of the Latin reading font's space, so
+// large Arabic text no longer runs its words together. Changes inter-word positions
+// on Arabic lines without touching any cache-key settings field.
+constexpr uint8_t SECTION_FILE_VERSION = 33;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +

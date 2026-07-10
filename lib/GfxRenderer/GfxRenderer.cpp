@@ -1671,6 +1671,27 @@ int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style styl
 
 int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const uint32_t rightCp,
                                  const EpdFontFamily::Style style) const {
+  // Arabic words are drawn with the resolved Arabic font, whose size follows the
+  // separate arabicFontSize setting -- independent of the Latin reading fontId.
+  // The gap between two Arabic words must therefore be sized by that Arabic font's
+  // own space glyph, not the Latin font's: when Arabic is set larger than the Latin
+  // reading size, a Latin-sized gap is too small for the big Arabic glyphs and the
+  // words appear to join (no kerning across the gap here, matching the paths below).
+  if (ScriptDetector::isArabicCodepoint(leftCp) || ScriptDetector::isArabicCodepoint(rightCp)) {
+    const int arabicFontId = resolveArabicFontId(fontId);
+    if (arabicFontId != fontId) {
+      const auto arSdIt = sdCardFonts_.find(arabicFontId);
+      if (arSdIt != sdCardFonts_.end() && arSdIt->second->hasAdvanceTable()) {
+        return fp4::toPixel(arSdIt->second->getAdvance(' ', resolveSdCardStyle(*arSdIt->second, style)));
+      }
+      const auto arIt = fontMap.find(arabicFontId);
+      if (arIt != fontMap.end()) {
+        const EpdGlyph* arSpace = arIt->second.getGlyph(' ', style);
+        if (arSpace) return fp4::toPixel(arSpace->advanceX);
+      }
+    }
+  }
+
   // Advance table fast-path for SD card fonts during layout.
   // Kern data is not loaded during layout (consistent with previous metadataOnly behavior),
   // so we return just the space advance without kerning.
