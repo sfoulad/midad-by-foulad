@@ -20,14 +20,14 @@
 #include "components/icons/stats.h"
 #include "components/icons/transfer.h"
 #include "fontIds.h"
-#include "reading/ReadingStats.h"
+#include "reading/ReadingStatsStore.h"
 
 // Home layout ported from aalu (github.com/dawsonfi/aalu) HomeRenderer: top status
 // line, 200x300 hero cover with a metadata column (title / author / rounded pill
 // progress bar + % / Read + Est. Left columns), a double-rule "Recents" divider,
 // a 140x210 three-cover thumbnail row with floating progress pills and a stacked
 // +N badge, and a rule-framed bottom icon menu with a rounded-outline selection.
-// Data sources are ours (RecentBooksStore + BookReadingStats), only the visual
+// Data sources are ours (RecentBooksStore + ReadingStatsStore), only the visual
 // language comes from aalu.
 namespace {
 constexpr int kStatusBarHeight = 30;
@@ -288,7 +288,11 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   }
 
   // --- Hero metadata column (title -> author -> progress pill + % -> Read/Left) ---
-  const BookReadingStats heroStats = BookReadingStats::load(readingStatsCachePathForBook(recentBooks[0].path));
+  READING_STATS.ensureLoaded();
+  const ReadingBookStats* heroBook = READING_STATS.findBook(recentBooks[0].path);
+  const uint8_t heroProgressPercent = heroBook ? heroBook->lastProgressPercent : 0;
+  const uint32_t heroReadSeconds = heroBook ? static_cast<uint32_t>(heroBook->totalReadingMs / 1000ULL) : 0;
+  const uint32_t heroEstLeftSeconds = heroBook ? heroBook->estimatedTimeLeftSeconds : 0;
   {
     const int heroBottom = heroCoverY + kHeroHeight - 4;
     const bool titleArabic = ScriptDetector::containsArabic(recentBooks[0].title.c_str());
@@ -326,7 +330,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
     // Rounded pill progress bar + bold percent label.
     constexpr int kBarHeight = 10;
     constexpr int kLabelGapPx = 8;
-    const int pct = std::clamp(static_cast<int>(heroStats.lastProgressPercent), 0, 100);
+    const int pct = std::clamp(static_cast<int>(heroProgressPercent), 0, 100);
     char percentStr[8];
     snprintf(percentStr, sizeof(percentStr), "%d%%", pct);
     const int labelW = renderer.getTextWidth(UI_10_FONT_ID, percentStr, EpdFontFamily::BOLD);
@@ -343,15 +347,15 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
     // Read / Est. Left, two columns: bold label above, value below.
     char readBuf[24];
     char leftBuf[24];
-    formatReadingDuration(heroStats.totalReadingSeconds, readBuf, sizeof(readBuf));
-    if (heroStats.estimatedTimeLeftSeconds > 0 && pct < 100) {
+    formatReadingDuration(heroReadSeconds, readBuf, sizeof(readBuf));
+    if (heroEstLeftSeconds > 0 && pct < 100) {
       leftBuf[0] = '~';
-      formatReadingDuration(heroStats.estimatedTimeLeftSeconds, leftBuf + 1, sizeof(leftBuf) - 1);
+      formatReadingDuration(heroEstLeftSeconds, leftBuf + 1, sizeof(leftBuf) - 1);
     } else {
       snprintf(leftBuf, sizeof(leftBuf), "-");
     }
     const int labelLineH = renderer.getLineHeight(UI_10_FONT_ID);
-    if (textY + labelLineH * 2 + 2 <= heroBottom && heroStats.totalReadingSeconds > 0) {
+    if (textY + labelLineH * 2 + 2 <= heroBottom && heroReadSeconds > 0) {
       const int colWidth = metaWidth / 2;
       const auto colText = [&](const int col, const int y, const char* text, const bool bold) {
         // Column 0 = "Read": right column in RTL, left column otherwise. Text
@@ -394,8 +398,9 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
       snprintf(countBuf, sizeof(countBuf), "%d", std::min(totalRecents - 1 - kThumbsCount + 1, 99));
       drawRoundCountBadge(renderer, x, thumbsY, kThumbWidth, countBuf, rtl);
     } else {
-      const BookReadingStats stats = BookReadingStats::load(readingStatsCachePathForBook(book.path));
-      drawCoverProgressOverlay(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight, stats.lastProgressPercent, rtl);
+      const ReadingBookStats* stats = READING_STATS.findBook(book.path);
+      drawCoverProgressOverlay(renderer, x, thumbsY, kThumbWidth, kThumbCoverHeight,
+                               stats ? stats->lastProgressPercent : 0, rtl);
     }
 
     const std::string label = renderer.truncatedText(UI_10_FONT_ID, book.title.c_str(), kThumbWidth);

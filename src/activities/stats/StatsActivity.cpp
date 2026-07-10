@@ -5,157 +5,273 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
 
+#include "AppMetricCard.h"
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "ReadingHeatmapActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "reading/ReadingStatsStore.h"
 
 namespace {
-constexpr int ROW_HEIGHT = 34;
+constexpr unsigned long BOOK_LONG_PRESS_MS = 1000;
+constexpr int SUMMARY_CARD_HEIGHT = 72;
+constexpr int SUMMARY_GAP = 10;
+constexpr int HEATMAP_BUTTON_HEIGHT = 54;
+constexpr int LIST_HEADER_HEIGHT = 34;
+constexpr int LIST_HEADER_BOTTOM_GAP = 8;
+constexpr int BOOK_ROW_HEIGHT = 78;
+constexpr int BOOK_ROW_GAP = 8;
+constexpr int BOOKS_PER_PAGE = 3;
 
-const char* bucketName(const size_t bucket) {
-  switch (bucket) {
-    case 0:
-      return tr(STR_STATS_MORNING);
-    case 1:
-      return tr(STR_STATS_AFTERNOON);
-    case 2:
-      return tr(STR_STATS_EVENING);
-    default:
-      return tr(STR_STATS_NIGHT);
+const char* bookTitle(const ReadingBookStats& book) {
+  return book.title.empty() ? book.path.c_str() : book.title.c_str();
+}
+
+void drawHeatmapButton(const GfxRenderer& renderer, const Rect& rect, const bool selected) {
+  if (selected) {
+    renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
+  }
+  renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
+  const char* label = tr(STR_READING_HEATMAP);
+  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, label, EpdFontFamily::BOLD);
+  const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2 + 2;
+  renderer.drawText(UI_12_FONT_ID, rect.x + (rect.width - textWidth) / 2, textY, label, true, EpdFontFamily::BOLD);
+}
+
+void drawMiniProgressBar(const GfxRenderer& renderer, const Rect& rect, const uint8_t percent, const bool rtl) {
+  renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
+  const int innerWidth = std::max(0, rect.width - 4);
+  const int fillWidth = innerWidth * std::min<int>(percent, 100) / 100;
+  if (fillWidth > 0) {
+    const int fillX = rtl ? rect.x + 2 + innerWidth - fillWidth : rect.x + 2;
+    renderer.fillRect(fillX, rect.y + 2, fillWidth, std::max(0, rect.height - 4));
   }
 }
 
-const char* dayName(const size_t dayOfWeek) {
-  static constexpr StrId kDays[] = {StrId::STR_DAY_MON, StrId::STR_DAY_TUE, StrId::STR_DAY_WED, StrId::STR_DAY_THU,
-                                    StrId::STR_DAY_FRI, StrId::STR_DAY_SAT, StrId::STR_DAY_SUN};
-  return I18N.get(kDays[dayOfWeek % 7]);
+void drawBookRow(const GfxRenderer& renderer, const Rect& rect, const ReadingBookStats& book, const bool selected,
+                 const bool rtl) {
+  if (selected) {
+    renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
+    renderer.drawRect(rect.x, rect.y, rect.width, rect.height);
+  } else {
+    renderer.drawLine(rect.x, rect.y + rect.height, rect.x + rect.width, rect.y + rect.height);
+  }
+
+  constexpr int sidePadding = 12;
+  constexpr int metaWidth = 88;
+  const int titleY = rect.y + 8;
+  const int subtitleY = titleY + 26;
+  const int textWidth = rect.width - sidePadding * 2 - metaWidth;
+  // Text column and meta column swap sides in RTL.
+  const int textLeft = rtl ? rect.x + sidePadding + metaWidth : rect.x + sidePadding;
+
+  const std::string title = renderer.truncatedText(UI_12_FONT_ID, bookTitle(book), textWidth - 4, EpdFontFamily::BOLD);
+  const std::string subtitle = renderer.truncatedText(
+      UI_10_FONT_ID, book.author.empty() ? (book.completed ? tr(STR_DONE) : tr(STR_IN_PROGRESS)) : book.author.c_str(),
+      textWidth - 4);
+  const int titleX =
+      rtl ? textLeft + textWidth - renderer.getTextWidth(UI_12_FONT_ID, title.c_str(), EpdFontFamily::BOLD) : textLeft;
+  const int subtitleX = rtl ? textLeft + textWidth - renderer.getTextWidth(UI_10_FONT_ID, subtitle.c_str()) : textLeft;
+  renderer.drawText(UI_12_FONT_ID, titleX, titleY, title.c_str(), true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_10_FONT_ID, subtitleX, subtitleY, subtitle.c_str());
+
+  char progressText[8];
+  snprintf(progressText, sizeof(progressText), "%u%%", static_cast<unsigned>(book.lastProgressPercent));
+  char timeText[24];
+  formatReadingDuration(static_cast<uint32_t>(book.totalReadingMs / 1000ULL), timeText, sizeof(timeText));
+  const int progressX =
+      rtl ? rect.x + sidePadding
+          : rect.x + rect.width - sidePadding - renderer.getTextWidth(UI_12_FONT_ID, progressText, EpdFontFamily::BOLD);
+  const int timeX =
+      rtl ? rect.x + sidePadding : rect.x + rect.width - sidePadding - renderer.getTextWidth(UI_10_FONT_ID, timeText);
+  renderer.drawText(UI_12_FONT_ID, progressX, titleY, progressText, true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_10_FONT_ID, timeX, subtitleY, timeText);
+
+  drawMiniProgressBar(renderer, Rect{rect.x + sidePadding, rect.y + rect.height - 14, rect.width - sidePadding * 2, 9},
+                      book.lastProgressPercent, rtl);
 }
 }  // namespace
 
 void StatsActivity::onEnter() {
   Activity::onEnter();
-  stats = GlobalReadingStats::load();
-  today = getCurrentLocalReadingDateTime();
+  READING_STATS.ensureLoaded();
+  selectedIndex = 0;
+  waitForConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
+  waitForBackRelease = false;
   requestUpdate();
 }
 
 void StatsActivity::loop() {
+  const int bookCount = static_cast<int>(READING_STATS.getBooks().size());
+  const int selectableCount = bookCount + 1;
+
+  if (waitForBackRelease) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Back) &&
+        !mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      waitForBackRelease = false;
+    }
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
+    return;
   }
+
+  if (waitForConfirmRelease) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+      waitForConfirmRelease = false;
+    }
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (selectedIndex > 0 && mappedInput.getHeldTime() >= BOOK_LONG_PRESS_MS) {
+      confirmRemoveSelectedBook();
+    } else {
+      openSelectedEntry();
+    }
+    return;
+  }
+
+  buttonNavigator.onNextRelease([this, selectableCount] {
+    selectedIndex = ButtonNavigator::nextIndex(selectedIndex, selectableCount);
+    requestUpdate();
+  });
+  buttonNavigator.onPreviousRelease([this, selectableCount] {
+    selectedIndex = ButtonNavigator::previousIndex(selectedIndex, selectableCount);
+    requestUpdate();
+  });
+  buttonNavigator.onNextContinuous([this, selectableCount] {
+    if (selectableCount <= 1) return;
+    const int bookIndex = std::max(0, selectedIndex - 1);
+    selectedIndex = ButtonNavigator::nextPageIndex(bookIndex, selectableCount - 1, BOOKS_PER_PAGE) + 1;
+    requestUpdate();
+  });
+  buttonNavigator.onPreviousContinuous([this, selectableCount] {
+    if (selectableCount <= 1) return;
+    const int bookIndex = std::max(0, selectedIndex - 1);
+    selectedIndex = ButtonNavigator::previousPageIndex(bookIndex, selectableCount - 1, BOOKS_PER_PAGE) + 1;
+    requestUpdate();
+  });
 }
 
-void StatsActivity::drawRow(const int y, const char* label, const char* value) const {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int pageWidth = renderer.getScreenWidth();
-  // Mirror label/value anchoring for RTL UI languages, matching BaseTheme::drawList.
-  const bool rtl = I18N.isRtl();
-  const int labelX = rtl ? pageWidth - metrics.contentSidePadding - renderer.getTextWidth(UI_10_FONT_ID, label)
-                         : metrics.contentSidePadding;
-  const int valueX = rtl ? metrics.contentSidePadding
-                         : pageWidth - metrics.contentSidePadding - renderer.getTextWidth(UI_10_FONT_ID, value);
-  renderer.drawText(UI_10_FONT_ID, labelX, y, label);
-  renderer.drawText(UI_10_FONT_ID, valueX, y, value, true, EpdFontFamily::BOLD);
+void StatsActivity::openSelectedEntry() {
+  const auto& books = READING_STATS.getBooks();
+  if (selectedIndex == 0) {
+    startActivityForResult(std::make_unique<ReadingHeatmapActivity>(renderer, mappedInput),
+                           [this](const ActivityResult&) {
+                             waitForBackRelease = true;
+                             requestUpdate();
+                           });
+    return;
+  }
+  const int bookIndex = selectedIndex - 1;
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(books.size())) {
+    return;
+  }
+  // Jump straight into reading the selected book.
+  activityManager.goToReader(books[bookIndex].path);
+}
+
+void StatsActivity::confirmRemoveSelectedBook() {
+  const auto& books = READING_STATS.getBooks();
+  const int bookIndex = selectedIndex - 1;
+  if (bookIndex < 0 || bookIndex >= static_cast<int>(books.size())) {
+    return;
+  }
+  const std::string path = books[bookIndex].path;
+  const std::string title = bookTitle(books[bookIndex]);
+  startActivityForResult(
+      std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_DELETE_STATS_ENTRY), title),
+      [this, path](const ActivityResult& result) {
+        if (!result.isCancelled && READING_STATS.removeBook(path)) {
+          const int bookCount = static_cast<int>(READING_STATS.getBooks().size());
+          selectedIndex = std::min(selectedIndex, bookCount);
+        }
+        waitForBackRelease = true;
+        requestUpdate(true);
+      });
 }
 
 void StatsActivity::render(RenderLock&&) {
   renderer.clearScreen();
+
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
+  const int sidePadding = metrics.contentSidePadding;
+  const int cardWidth = (pageWidth - sidePadding * 2 - SUMMARY_GAP) / 2;
+  const int summaryTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const bool rtl = I18N.isRtl();
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_STATS_TITLE));
 
-  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing * 2;
+  char value[48];
+  char goalBuf[24];
+  const uint64_t todayMs = READING_STATS.getTodayReadingMs();
+  const uint64_t goalMs = SETTINGS.getDailyGoalMs();
+  const auto cardAt = [&](const int row, const int col, const char* label, const char* text, const bool check) {
+    // Column order mirrors in RTL.
+    const int slot = rtl ? 1 - col : col;
+    const Rect rect{sidePadding + slot * (cardWidth + SUMMARY_GAP),
+                    summaryTop + row * (SUMMARY_CARD_HEIGHT + SUMMARY_GAP), cardWidth, SUMMARY_CARD_HEIGHT};
+    AppMetricCard::Options options;
+    options.showCheck = check;
+    AppMetricCard::draw(renderer, rect, label, text, options);
+  };
 
-  if (stats.totalReadingSeconds == 0) {
-    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_STATS_NO_DATA));
+  snprintf(value, sizeof(value), "%lu", static_cast<unsigned long>(READING_STATS.getCurrentStreakDays()));
+  cardAt(0, 0, tr(STR_STREAK), value, false);
+  snprintf(value, sizeof(value), "%lu", static_cast<unsigned long>(READING_STATS.getMaxStreakDays()));
+  cardAt(0, 1, tr(STR_MAX_STREAK), value, false);
+
+  formatReadingDuration(static_cast<uint32_t>(todayMs / 1000ULL), goalBuf, sizeof(goalBuf));
+  char goalTarget[24];
+  formatReadingDuration(static_cast<uint32_t>(goalMs / 1000ULL), goalTarget, sizeof(goalTarget));
+  snprintf(value, sizeof(value), "%s / %s", goalBuf, goalTarget);
+  cardAt(1, 0, tr(STR_DAILY_GOAL), value, todayMs >= goalMs && todayMs > 0);
+  formatReadingDuration(static_cast<uint32_t>(READING_STATS.getTotalReadingMs() / 1000ULL), value, sizeof(value));
+  cardAt(1, 1, tr(STR_READING_TIME), value, false);
+
+  snprintf(value, sizeof(value), "%lu", static_cast<unsigned long>(READING_STATS.getBooksFinishedCount()));
+  cardAt(2, 0, tr(STR_BOOKS_FINISHED), value, false);
+  snprintf(value, sizeof(value), "%lu", static_cast<unsigned long>(READING_STATS.getBooksStartedCount()));
+  cardAt(2, 1, tr(STR_BOOKS_STARTED), value, false);
+
+  const int buttonTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
+  drawHeatmapButton(renderer, Rect{sidePadding, buttonTop, pageWidth - sidePadding * 2, HEATMAP_BUTTON_HEIGHT},
+                    selectedIndex == 0);
+
+  const auto& books = READING_STATS.getBooks();
+  const int listHeaderTop = buttonTop + HEATMAP_BUTTON_HEIGHT + metrics.verticalSpacing;
+  const int totalPages = std::max(1, static_cast<int>((books.size() + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE));
+  const int currentPage = (books.empty() || selectedIndex == 0) ? 1 : ((selectedIndex - 1) / BOOKS_PER_PAGE) + 1;
+  char headerLabel[64];
+  snprintf(headerLabel, sizeof(headerLabel), "%s (%lu)", tr(STR_STARTED_BOOKS),
+           static_cast<unsigned long>(books.size()));
+  char pageLabel[16];
+  snprintf(pageLabel, sizeof(pageLabel), "%d/%d", currentPage, totalPages);
+  GUI.drawSubHeader(renderer, Rect{0, listHeaderTop, pageWidth, LIST_HEADER_HEIGHT}, headerLabel, pageLabel);
+
+  const int contentTop = listHeaderTop + LIST_HEADER_HEIGHT + LIST_HEADER_BOTTOM_GAP;
+  if (books.empty()) {
+    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_STATS_NO_DATA));
   } else {
-    char buf[48];
-
-    formatReadingDuration(stats.totalReadingSeconds, buf, sizeof(buf));
-    drawRow(y, tr(STR_STATS_TOTAL_TIME), buf);
-    y += ROW_HEIGHT;
-
-    snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(stats.totalSessions));
-    drawRow(y, tr(STR_STATS_SESSIONS), buf);
-    y += ROW_HEIGHT;
-
-    snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(stats.totalPagesTurned));
-    drawRow(y, tr(STR_STATS_PAGES), buf);
-    y += ROW_HEIGHT;
-
-    if (stats.totalPagesTurned > 0) {
-      snprintf(buf, sizeof(buf), "%lus",
-               static_cast<unsigned long>(stats.totalReadingSeconds / stats.totalPagesTurned));
-      drawRow(y, tr(STR_STATS_AVG_PACE), buf);
-      y += ROW_HEIGHT;
-    }
-
-    // Streak/history rows need date attribution, which needs a valid clock at least
-    // once; historyAnchorDay stays 0 until then.
-    if (stats.historyAnchorDay != 0) {
-      const uint32_t todayIdx = today.valid ? today.dayIndex : 0;
-      if (todayIdx != 0) {
-        snprintf(buf, sizeof(buf), tr(STR_STATS_DAYS_FORMAT), static_cast<unsigned int>(stats.currentStreak(todayIdx)));
-        drawRow(y, tr(STR_STATS_CURRENT_STREAK), buf);
-        y += ROW_HEIGHT;
-      }
-      snprintf(buf, sizeof(buf), tr(STR_STATS_DAYS_FORMAT), static_cast<unsigned int>(stats.longestStreak));
-      drawRow(y, tr(STR_STATS_LONGEST_STREAK), buf);
-      y += ROW_HEIGHT;
-      if (todayIdx != 0) {
-        snprintf(buf, sizeof(buf), "%u / 30", static_cast<unsigned int>(stats.daysReadInLast(30, todayIdx)));
-        drawRow(y, tr(STR_STATS_DAYS_LAST_30), buf);
-        y += ROW_HEIGHT;
-      }
-
-      // Favorite time-of-day / most active weekday: the buckets with the most
-      // accumulated seconds.
-      const auto maxBucket = std::max_element(stats.timeOfDaySeconds.begin(), stats.timeOfDaySeconds.end()) -
-                             stats.timeOfDaySeconds.begin();
-      if (stats.timeOfDaySeconds[maxBucket] > 0) {
-        drawRow(y, tr(STR_STATS_FAVORITE_TIME), bucketName(static_cast<size_t>(maxBucket)));
-        y += ROW_HEIGHT;
-      }
-      const auto maxDay = std::max_element(stats.dayOfWeekSeconds.begin(), stats.dayOfWeekSeconds.end()) -
-                          stats.dayOfWeekSeconds.begin();
-      if (stats.dayOfWeekSeconds[maxDay] > 0) {
-        drawRow(y, tr(STR_STATS_BUSIEST_DAY), dayName(static_cast<size_t>(maxDay)));
-        y += ROW_HEIGHT;
-      }
-
-      // Last-14-days activity strip: one square per day, oldest on the left
-      // (mirrored for RTL), filled when any reading happened that day.
-      if (todayIdx != 0) {
-        y += metrics.verticalSpacing;
-        renderer.drawText(UI_10_FONT_ID,
-                          I18N.isRtl() ? pageWidth - metrics.contentSidePadding -
-                                             renderer.getTextWidth(UI_10_FONT_ID, tr(STR_STATS_LAST_14_DAYS))
-                                       : metrics.contentSidePadding,
-                          y, tr(STR_STATS_LAST_14_DAYS));
-        y += ROW_HEIGHT;
-        constexpr int kDaysShown = 14;
-        constexpr int kSquare = 22;
-        constexpr int kGap = 8;
-        const int stripWidth = kDaysShown * kSquare + (kDaysShown - 1) * kGap;
-        int x = (pageWidth - stripWidth) / 2;
-        for (int i = kDaysShown - 1; i >= 0; i--) {
-          const bool read = todayIdx >= static_cast<uint32_t>(i) && stats.wasDayRead(todayIdx - i);
-          if (read) {
-            renderer.fillRect(x, y, kSquare, kSquare);
-          } else {
-            renderer.drawRect(x, y, kSquare, kSquare);
-          }
-          x += kSquare + kGap;
-        }
-        y += kSquare;
-      }
+    const int selectedBookIndex = std::max(0, selectedIndex - 1);
+    const int pageStartIndex = (selectedBookIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
+    const int pageEndIndex = std::min(static_cast<int>(books.size()), pageStartIndex + BOOKS_PER_PAGE);
+    for (int index = pageStartIndex; index < pageEndIndex; ++index) {
+      const int rowY = contentTop + (index - pageStartIndex) * (BOOK_ROW_HEIGHT + BOOK_ROW_GAP);
+      drawBookRow(renderer, Rect{sidePadding, rowY, pageWidth - sidePadding * 2, BOOK_ROW_HEIGHT}, books[index],
+                  selectedIndex == index + 1, rtl);
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

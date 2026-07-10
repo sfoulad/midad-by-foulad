@@ -199,14 +199,14 @@ void EpubReaderActivity::onEnter() {
 
   loadCachedBookmarks();
 
-  // Reading-time tracking: load persisted stats, stamp the session start, and start
-  // the first page's dwell timer. Committed and saved once, in onExit().
+  // Reading-time tracking: open a session in the day-level stats store and start
+  // the first page's dwell timer. Time is credited per page turn; the session is
+  // committed and saved in onExit().
   if (SETTINGS.trackReadingStats) {
-    bookStats = BookReadingStats::load(epub->getCachePath());
-    globalStats = GlobalReadingStats::load();
-    sessionReadingSeconds = 0;
+    READING_STATS.beginSession(epub->getPath(), epub->getTitle(), epub->getAuthor());
+    // One-time cleanup of the previous stats system's per-book sidecar file.
+    Storage.remove((epub->getCachePath() + "/reading_stats.bin").c_str());
     paceWarmupPending = true;
-    sessionStartDt = getCurrentLocalReadingDateTime();
     pageShownAtMs = millis();
   }
 
@@ -223,29 +223,16 @@ void EpubReaderActivity::onExit() {
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
 
-  // Commit this session's reading time. Thresholds match CrossInk's accounting:
-  // under 10s adds nothing (accidental opens), under 60s adds time but doesn't
-  // count as a session. Saved here only -- never per page turn (SD write throttling).
+  // Commit this session: bank the last page's dwell, cache the time-left estimate
+  // and progress for the home hero card, then let the store apply its session
+  // thresholds and save (single SD write; never per page turn).
   if (SETTINGS.trackReadingStats && epub) {
     accountPageDwellForStats(false);
-    if (sessionReadingSeconds >= MIN_SESSION_SECONDS_FOR_TIME) {
-      bookStats.totalReadingSeconds += sessionReadingSeconds;
-      globalStats.totalReadingSeconds += sessionReadingSeconds;
-      globalStats.recordReadingSpan(sessionStartDt, sessionReadingSeconds);
-      if (sessionStartDt.valid) {
-        if (bookStats.firstReadDayIndex == 0) bookStats.firstReadDayIndex = sessionStartDt.dayIndex;
-        bookStats.lastReadDayIndex = sessionStartDt.dayIndex;
-      }
-      if (sessionReadingSeconds >= MIN_SESSION_SECONDS_FOR_SESSION) {
-        bookStats.sessionCount++;
-        globalStats.totalSessions++;
-      }
-      uint32_t timeLeft = 0;
-      bookStats.estimatedTimeLeftSeconds = estimateTimeLeftSeconds(timeLeft) ? timeLeft : 0;
-      bookStats.lastProgressPercent = currentBookProgressPercent();
-      bookStats.save(epub->getCachePath());
-      globalStats.save();
-    }
+    uint32_t timeLeft = 0;
+    const bool haveEstimate = estimateTimeLeftSeconds(timeLeft);
+    const uint8_t progressPercent = currentBookProgressPercent();
+    const bool finishedBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
+    READING_STATS.endSession(haveEstimate ? timeLeft : 0, progressPercent, finishedBook);
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the
@@ -806,16 +793,14 @@ void EpubReaderActivity::accountPageDwellForStats(const bool isForwardTurn) {
     // reader was set aside with the page open -- discard rather than inflate stats.
     return;
   }
-  sessionReadingSeconds += elapsed;
+  READING_STATS.addReadingTime(elapsed);
   if (isForwardTurn) {
     if (paceWarmupPending) {
       // First dwell after open/jump includes setup, not just reading.
       paceWarmupPending = false;
     } else if (elapsed >= MIN_PACE_SAMPLE_SECONDS) {
-      bookStats.recordForwardPageRead(elapsed);
+      READING_STATS.recordForwardPage(elapsed);
     }
-    bookStats.totalPagesTurned++;
-    globalStats.totalPagesTurned++;
   }
 }
 
@@ -836,7 +821,7 @@ uint8_t EpubReaderActivity::currentBookProgressPercent() const {
 
 bool EpubReaderActivity::estimateTimeLeftSeconds(uint32_t& seconds) const {
   seconds = 0;
-  const uint32_t pace = bookStats.avgSecondsPerForwardPage;
+  const uint32_t pace = READING_STATS.activeBookPace();
   if (pace == 0 || !epub || !section || section->pageCount == 0) {
     return false;
   }

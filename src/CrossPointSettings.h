@@ -282,9 +282,18 @@ class CrossPointSettings {
   // fontFamily/fontSize (the Latin reading font) -- see ArabicFontSystem.
   uint8_t arabicFontFamily = NOTOSANSARABIC;
   uint8_t arabicFontSize = MEDIUM;
-  // Track reading time/stats (session time, pace, streaks -- see src/reading/ReadingStats.h).
-  // 1 = on. Turning it off stops accumulation; already-saved stats are kept.
+  // Track reading time/stats (session time, pace, streaks -- see
+  // src/reading/ReadingStatsStore.h). 1 = on. Turning it off stops accumulation;
+  // already-saved stats are kept.
   uint8_t trackReadingStats = 1;
+  // Daily reading goal, as an index into DAILY_GOAL_MINUTES (default 30 minutes).
+  // Drives the goal card on the stats screen and the heatmap's goal-met badges.
+  uint8_t dailyReadingGoal = 1;
+  static constexpr uint16_t DAILY_GOAL_MINUTES[6] = {15, 30, 45, 60, 90, 120};
+  uint64_t getDailyGoalMs() const {
+    const uint8_t index = dailyReadingGoal < 6 ? dailyReadingGoal : 1;
+    return static_cast<uint64_t>(DAILY_GOAL_MINUTES[index]) * 60ULL * 1000ULL;
+  }
   // Show hidden files/directories (starting with '.') in the file browser (0 = hidden, 1 = show)
   uint8_t showHiddenFiles = 0;
   // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)

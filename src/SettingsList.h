@@ -229,6 +229,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             StrId::STR_CAT_READER),
         SettingInfo::Toggle(StrId::STR_TRACK_READING_STATS, &CrossPointSettings::trackReadingStats, "trackReadingStats",
                             StrId::STR_CAT_READER),
+        SettingInfo::Enum(StrId::STR_DAILY_READING_GOAL, &CrossPointSettings::dailyReadingGoal,
+                          {StrId::STR_GOAL_15M, StrId::STR_GOAL_30M, StrId::STR_GOAL_45M, StrId::STR_GOAL_1H,
+                           StrId::STR_GOAL_90M, StrId::STR_GOAL_2H},
+                          "dailyReadingGoal", StrId::STR_CAT_READER),
         SettingInfo::Enum(
             StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
             {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},

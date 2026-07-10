@@ -9,7 +9,7 @@
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
-#include "reading/ReadingStats.h"
+#include "reading/ReadingStatsStore.h"
 
 class EpubReaderActivity final : public Activity {
   std::shared_ptr<Epub> epub;
@@ -79,18 +79,13 @@ class EpubReaderActivity final : public Activity {
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
 
-  // --- Reading-time tracking (see src/reading/ReadingStats.h) ---
-  BookReadingStats bookStats;
-  GlobalReadingStats globalStats;
+  // --- Reading-time tracking (see src/reading/ReadingStatsStore.h) ---
   // millis() when the current page became visible; 0 = timer not running.
   unsigned long pageShownAtMs = 0UL;
-  // Active reading seconds accumulated this session (idle intervals excluded).
-  uint32_t sessionReadingSeconds = 0;
   // First page dwell after opening/jumping includes orientation time, not reading --
   // skip it as a pace sample (it still counts toward session time).
   bool paceWarmupPending = true;
-  ReadingLocalDateTime sessionStartDt;
-  // Folds the current page's dwell into sessionReadingSeconds (and, for a qualifying
+  // Folds the current page's dwell into the stats store (and, for a qualifying
   // forward turn, into the pace average), then restarts the page timer.
   void accountPageDwellForStats(bool isForwardTurn);
   // Call on any non-linear navigation (chapter/percent/bookmark/footnote jump): banks
