@@ -81,7 +81,16 @@ void NetworkModeSelectionActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
-  renderer.displayBuffer();
+  if (firstPaint) {
+    // File Transfer is entered via silentRestartToFileTransfer(), so the panel
+    // still physically holds the pre-reboot frame (Settings + loading popup). A
+    // FAST first paint only drives the pixels this menu draws, leaving the old
+    // frame showing through as an overlay -- full-drive the first paint.
+    firstPaint = false;
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+  } else {
+    renderer.displayBuffer();
+  }
 }
 
 void NetworkModeSelectionActivity::onModeSelected(NetworkMode mode) {

@@ -21,6 +21,10 @@ class NetworkModeSelectionActivity final : public Activity {
 
   int selectedIndex = 0;
 
+  // First paint full-drives the panel: File Transfer is entered via a silent
+  // reboot, so the display still holds the pre-reboot frame (see render()).
+  bool firstPaint = true;
+
  public:
   explicit NetworkModeSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("NetworkModeSelection", renderer, mappedInput) {}
