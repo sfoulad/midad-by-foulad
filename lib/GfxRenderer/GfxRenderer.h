@@ -121,6 +121,12 @@ class GfxRenderer {
       : display(halDisplay), renderMode(BW), orientation(Portrait), fadingFix(false) {}
   ~GfxRenderer() { freeBwBufferChunks(); }
 
+  // Public view of resolveArabicFontId() for cache-key purposes: the Arabic
+  // font that Arabic text drawn with this fontId actually renders in. Section
+  // layout caches must include it -- changing the Arabic reading font/size
+  // otherwise leaves the Latin fontId untouched and stale layouts keep loading.
+  int getArabicFontIdFor(const int fontId) const { return resolveArabicFontId(fontId); }
+
   static constexpr int VIEWABLE_MARGIN_TOP = 9;
   static constexpr int VIEWABLE_MARGIN_RIGHT = 3;
   static constexpr int VIEWABLE_MARGIN_BOTTOM = 3;

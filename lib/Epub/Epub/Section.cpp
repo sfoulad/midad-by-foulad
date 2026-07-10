@@ -1,5 +1,6 @@
 #include "Section.h"
 
+#include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <Serialization.h>
@@ -31,11 +32,15 @@ namespace {
 // glyph (which follows arabicFontSize) instead of the Latin reading font's space, so
 // large Arabic text no longer runs its words together. Changes inter-word positions
 // on Arabic lines without touching any cache-key settings field.
-constexpr uint8_t SECTION_FILE_VERSION = 33;
-constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
-                                 sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
-                                 sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +
-                                 sizeof(uint32_t) + sizeof(uint32_t);
+// v34: the resolved Arabic reading font id joins the header cache key. Arabic text
+// dispatches to its own font (family + arabicFontSize), so changing the Arabic Font
+// Size left the Latin fontId untouched and cached layouts kept "matching" -- an open
+// Arabic book never re-laid-out at the new size, even across restarts (user report).
+constexpr uint8_t SECTION_FILE_VERSION = 34;
+constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(int) + sizeof(float) + sizeof(bool) +
+                                 sizeof(uint8_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) +
+                                 sizeof(bool) + sizeof(bool) + sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) +
+                                 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t);
 
 struct PageLutEntry {
   uint32_t fileOffset;
@@ -70,14 +75,17 @@ void Section::writeSectionFileHeader(const int fontId, const float lineCompressi
     LOG_DBG("SCT", "File not open for writing header");
     return;
   }
-  static_assert(HEADER_SIZE == sizeof(SECTION_FILE_VERSION) + sizeof(fontId) + sizeof(lineCompression) +
-                                   sizeof(extraParagraphSpacing) + sizeof(paragraphAlignment) + sizeof(viewportWidth) +
-                                   sizeof(viewportHeight) + sizeof(pageCount) + sizeof(hyphenationEnabled) +
-                                   sizeof(embeddedStyle) + sizeof(imageRendering) + sizeof(focusReadingEnabled) +
-                                   sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
+  static_assert(HEADER_SIZE == sizeof(SECTION_FILE_VERSION) + sizeof(fontId) + sizeof(int) /*arabicFontId*/ +
+                                   sizeof(lineCompression) + sizeof(extraParagraphSpacing) +
+                                   sizeof(paragraphAlignment) + sizeof(viewportWidth) + sizeof(viewportHeight) +
+                                   sizeof(pageCount) + sizeof(hyphenationEnabled) + sizeof(embeddedStyle) +
+                                   sizeof(imageRendering) + sizeof(focusReadingEnabled) + sizeof(uint32_t) +
+                                   sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
                 "Header size mismatch");
   serialization::writePod(file, SECTION_FILE_VERSION);
   serialization::writePod(file, fontId);
+  // The Arabic font this layout was measured with (see SECTION_FILE_VERSION v34).
+  serialization::writePod(file, renderer.getArabicFontIdFor(fontId));
   serialization::writePod(file, lineCompression);
   serialization::writePod(file, extraParagraphSpacing);
   serialization::writePod(file, paragraphAlignment);
@@ -115,6 +123,7 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
     }
 
     int fileFontId;
+    int fileArabicFontId;
     uint16_t fileViewportWidth, fileViewportHeight;
     float fileLineCompression;
     bool fileExtraParagraphSpacing;
@@ -124,6 +133,7 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
     uint8_t fileImageRendering;
     bool fileFocusReadingEnabled;
     serialization::readPod(file, fileFontId);
+    serialization::readPod(file, fileArabicFontId);
     serialization::readPod(file, fileLineCompression);
     serialization::readPod(file, fileExtraParagraphSpacing);
     serialization::readPod(file, fileParagraphAlignment);
@@ -134,11 +144,12 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
     serialization::readPod(file, fileImageRendering);
     serialization::readPod(file, fileFocusReadingEnabled);
 
-    if (fontId != fileFontId || lineCompression != fileLineCompression ||
-        extraParagraphSpacing != fileExtraParagraphSpacing || paragraphAlignment != fileParagraphAlignment ||
-        viewportWidth != fileViewportWidth || viewportHeight != fileViewportHeight ||
-        hyphenationEnabled != fileHyphenationEnabled || embeddedStyle != fileEmbeddedStyle ||
-        imageRendering != fileImageRendering || focusReadingEnabled != fileFocusReadingEnabled) {
+    if (fontId != fileFontId || renderer.getArabicFontIdFor(fontId) != fileArabicFontId ||
+        lineCompression != fileLineCompression || extraParagraphSpacing != fileExtraParagraphSpacing ||
+        paragraphAlignment != fileParagraphAlignment || viewportWidth != fileViewportWidth ||
+        viewportHeight != fileViewportHeight || hyphenationEnabled != fileHyphenationEnabled ||
+        embeddedStyle != fileEmbeddedStyle || imageRendering != fileImageRendering ||
+        focusReadingEnabled != fileFocusReadingEnabled) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
       clearCache();
