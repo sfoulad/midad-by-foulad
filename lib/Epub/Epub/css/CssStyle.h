@@ -2,8 +2,16 @@
 
 #include <cstdint>
 
-// Matches order of PARAGRAPH_ALIGNMENT in CrossPointSettings
-enum class CssTextAlign : uint8_t { Justify = 0, Left = 1, Center = 2, Right = 3, None = 4 };
+// Matches order of PARAGRAPH_ALIGNMENT in CrossPointSettings (values 0-4).
+// Start/End are the CSS logical alignment values common in EPUB3 stylesheets: they mean
+// "line-start"/"line-end" relative to the paragraph's text direction, so they can only be
+// resolved to a physical Left/Right once the paragraph's direction is known --
+// ParsedText::layoutAndExtractLines() does that right after RTL detection, so everything
+// downstream of layout (including the serialized section cache) only ever sees physical
+// values. In an RTL paragraph `start` is Right and `end` is Left; a static mapping to
+// Left/Right (the old behavior) left Arabic books styled with the spec-recommended
+// `text-align: start` incorrectly left-aligned.
+enum class CssTextAlign : uint8_t { Justify = 0, Left = 1, Center = 2, Right = 3, None = 4, Start = 5, End = 6 };
 enum class CssUnit : uint8_t { Pixels = 0, Em = 1, Rem = 2, Points = 3, Percent = 4 };
 enum class CssTextDirection : uint8_t { Ltr = 0, Rtl = 1 };
 

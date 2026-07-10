@@ -99,7 +99,10 @@ void appendSegmentPatternBreaks(const std::vector<CodepointInfo>& cps, const Lan
       std::vector<CodepointInfo> segment(cps.begin() + segStart, cps.begin() + i);
       auto segIndexes = hyphenator.breakIndexes(segment);
 
-      if (includeFallback && segIndexes.empty()) {
+      // Never fallback-break an Arabic segment: Arabic doesn't hyphenate at all, and a
+      // mid-word split also destroys the cursive joining forms on both sides of the
+      // break (each half re-shapes as if it were a complete word).
+      if (includeFallback && segIndexes.empty() && !containsArabicLetter(segment)) {
         const size_t minPrefix = hyphenator.minPrefix();
         const size_t minSuffix = hyphenator.minSuffix();
         for (size_t idx = minPrefix; idx + minSuffix <= segment.size(); ++idx) {
@@ -241,8 +244,12 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
     indexes = hyphenator->breakIndexes(cps);
   }
 
-  // Only add fallback breaks if needed
-  if (includeFallback && indexes.empty()) {
+  // Only add fallback breaks if needed. Never for Arabic words: Arabic doesn't hyphenate
+  // at all, and a mid-word split also destroys the cursive joining forms on both sides of
+  // the break (each half re-shapes as if it were a complete word). This matters even with
+  // no language hyphenator loaded (e.g. dc:language "ar" has no Liang patterns), since the
+  // fallback would otherwise offer break-anywhere points in every long Arabic word.
+  if (includeFallback && indexes.empty() && !containsArabicLetter(cps)) {
     const size_t minPrefix = hyphenator ? hyphenator->minPrefix() : LiangWordConfig::kDefaultMinPrefix;
     const size_t minSuffix = hyphenator ? hyphenator->minSuffix() : LiangWordConfig::kDefaultMinSuffix;
     for (size_t idx = minPrefix; idx + minSuffix <= cps.size(); ++idx) {

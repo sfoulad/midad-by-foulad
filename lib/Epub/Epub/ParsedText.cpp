@@ -483,6 +483,17 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
     }
   }
 
+  // Resolve CSS logical alignment (text-align: start/end) to physical Left/Right now that
+  // the paragraph's direction is final: `start` is the direction's leading edge (right in
+  // RTL), `end` its trailing edge. Must happen before isNaturalAlign below and before any
+  // line is extracted, so everything downstream -- including the blockStyle serialized
+  // into the section cache with each line -- only ever sees physical values.
+  if (blockStyle.alignment == CssTextAlign::Start) {
+    blockStyle.alignment = blockStyle.isRtl ? CssTextAlign::Right : CssTextAlign::Left;
+  } else if (blockStyle.alignment == CssTextAlign::End) {
+    blockStyle.alignment = blockStyle.isRtl ? CssTextAlign::Left : CssTextAlign::Right;
+  }
+
   isNaturalAlign =
       blockStyle.alignment == CssTextAlign::Justify ||
       (blockStyle.isRtl ? blockStyle.alignment == CssTextAlign::Right : blockStyle.alignment == CssTextAlign::Left);

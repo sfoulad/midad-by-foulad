@@ -212,8 +212,14 @@ bool CssParser::SvEqual::operator()(std::string_view sv, CompositeKey k) const n
 CssTextAlign CssParser::interpretAlignment(std::string_view val) {
   val = trimCssWhitespace(val);
 
-  if (iequalsAscii(val, "left") || iequalsAscii(val, "start")) return CssTextAlign::Left;
-  if (iequalsAscii(val, "right") || iequalsAscii(val, "end")) return CssTextAlign::Right;
+  if (iequalsAscii(val, "left")) return CssTextAlign::Left;
+  if (iequalsAscii(val, "right")) return CssTextAlign::Right;
+  // Logical values: direction-relative, resolved to physical Left/Right per paragraph
+  // once its direction is known (ParsedText::layoutAndExtractLines). Mapping them
+  // statically to Left/Right here (the old behavior) rendered Arabic books styled with
+  // the spec-recommended `text-align: start` left-aligned instead of right-aligned.
+  if (iequalsAscii(val, "start")) return CssTextAlign::Start;
+  if (iequalsAscii(val, "end")) return CssTextAlign::End;
   if (iequalsAscii(val, "center")) return CssTextAlign::Center;
   if (iequalsAscii(val, "justify")) return CssTextAlign::Justify;
 

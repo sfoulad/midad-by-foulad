@@ -19,7 +19,11 @@ namespace {
 // taller Arabic font's line height (previously sized only for the Latin reading font,
 // clipping Arabic glyph tops/tails at default font sizes). Same cache-busting need as
 // v29 -- this changes layout geometry without touching any cache-key settings field.
-constexpr uint8_t SECTION_FILE_VERSION = 30;
+// v31: (a) text-align start/end now resolve against paragraph direction (an RTL
+// paragraph with `text-align: start` is right-aligned, previously always left);
+// (b) Arabic words are no longer fallback-hyphenated mid-word. Both change layout for
+// affected books without touching any cache-key settings field.
+constexpr uint8_t SECTION_FILE_VERSION = 31;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(uint32_t) + sizeof(uint32_t) +

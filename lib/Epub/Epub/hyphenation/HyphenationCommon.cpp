@@ -82,6 +82,21 @@ bool isLatinLetter(const uint32_t cp) {
 
 bool isCyrillicLetter(const uint32_t cp) { return (cp >= 0x0400 && cp <= 0x052F); }
 
+bool isArabicLetter(const uint32_t cp) {
+  return (cp >= 0x0600 && cp <= 0x06FF) ||  // Arabic
+         (cp >= 0x0750 && cp <= 0x077F) ||  // Arabic Supplement
+         (cp >= 0x08A0 && cp <= 0x08FF) ||  // Arabic Extended-A
+         (cp >= 0xFB50 && cp <= 0xFDFF) ||  // Arabic Presentation Forms-A
+         (cp >= 0xFE70 && cp <= 0xFEFF);    // Arabic Presentation Forms-B
+}
+
+bool containsArabicLetter(const std::vector<CodepointInfo>& cps) {
+  for (const auto& cp : cps) {
+    if (isArabicLetter(cp.value)) return true;
+  }
+  return false;
+}
+
 bool isAlphabetic(const uint32_t cp) { return isLatinLetter(cp) || isCyrillicLetter(cp); }
 
 bool isPunctuation(const uint32_t cp) {
