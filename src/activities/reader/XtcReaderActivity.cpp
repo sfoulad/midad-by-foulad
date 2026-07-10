@@ -27,6 +27,10 @@
 void XtcReaderActivity::onEnter() {
   Activity::onEnter();
 
+  // The reader owns its refresh cadence (Settings -> Refresh Frequency);
+  // suspend the UI screens' auto-clean promotion while reading.
+  renderer.setAutoCleanRefresh(false);
+
   if (!xtc) {
     return;
   }
@@ -46,6 +50,7 @@ void XtcReaderActivity::onEnter() {
 }
 
 void XtcReaderActivity::onExit() {
+  renderer.setAutoCleanRefresh(true);
   Activity::onExit();
 
   APP_STATE.readerActivityLoadCount = 0;

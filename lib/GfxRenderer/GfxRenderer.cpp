@@ -1452,7 +1452,21 @@ void GfxRenderer::invertScreen() const {
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
-  display.displayBuffer(refreshMode, fadingFix);
+
+  // Auto-clean: promote every Nth consecutive FAST refresh to HALF so long
+  // runs of partial refreshes on UI screens can't darken the panel background.
+  // Disabled by reader activities (see setAutoCleanRefresh in the header).
+  HalDisplay::RefreshMode effectiveMode = refreshMode;
+  if (refreshMode == HalDisplay::FAST_REFRESH) {
+    if (autoCleanRefresh_ && ++fastRefreshStreak_ >= kAutoCleanAfterFastRefreshes) {
+      effectiveMode = HalDisplay::HALF_REFRESH;
+      fastRefreshStreak_ = 0;
+    }
+  } else {
+    fastRefreshStreak_ = 0;  // any deeper refresh cleans the panel already
+  }
+
+  display.displayBuffer(effectiveMode, fadingFix);
 }
 
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,

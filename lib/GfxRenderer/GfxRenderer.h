@@ -95,6 +95,13 @@ class GfxRenderer {
   mutable int _stripRows = 0;
   mutable bool _stripActive = false;
 
+  // Auto-clean refresh state (see setAutoCleanRefresh). Mutable because
+  // displayBuffer() is const. Streak counts consecutive FAST refreshes; any
+  // HALF/FULL (from any caller) resets it.
+  mutable bool autoCleanRefresh_ = true;
+  mutable uint16_t fastRefreshStreak_ = 0;
+  static constexpr uint16_t kAutoCleanAfterFastRefreshes = 12;
+
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
   // Arabic font to actually use for a caller-requested fontId: the specific
@@ -190,6 +197,20 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
+
+  // Auto-clean refresh: UI screens default every displayBuffer() to
+  // FAST_REFRESH, and long runs of fast partial refreshes visibly darken the
+  // panel background (charge accumulation / ghosting) until a deeper waveform
+  // washes it -- reported on device as "background becomes dark instead of
+  // clear white". While enabled (the default), one of every
+  // kAutoCleanAfterFastRefreshes consecutive FAST refreshes is promoted to
+  // HALF_REFRESH to clean the panel. Reader activities disable this so their
+  // own user-configured cadence (Settings -> Refresh Frequency) stays in
+  // sole control of page-turn refresh quality.
+  void setAutoCleanRefresh(const bool enabled) const {
+    autoCleanRefresh_ = enabled;
+    fastRefreshStreak_ = 0;
+  }
 
   // Screen ops
   int getScreenWidth() const;

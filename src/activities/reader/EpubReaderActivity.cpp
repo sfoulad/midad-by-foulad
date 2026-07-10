@@ -151,6 +151,10 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 void EpubReaderActivity::onEnter() {
   Activity::onEnter();
 
+  // The reader owns its refresh cadence (Settings -> Refresh Frequency);
+  // suspend the UI screens' auto-clean promotion while reading.
+  renderer.setAutoCleanRefresh(false);
+
   if (!epub) {
     return;
   }
@@ -215,6 +219,7 @@ void EpubReaderActivity::onEnter() {
 }
 
 void EpubReaderActivity::onExit() {
+  renderer.setAutoCleanRefresh(true);
   Activity::onExit();
 
   // Reset orientation back to portrait for the rest of the UI

@@ -27,6 +27,10 @@ constexpr uint8_t CACHE_VERSION = 3;          // Increment when cache format cha
 void TxtReaderActivity::onEnter() {
   Activity::onEnter();
 
+  // The reader owns its refresh cadence (Settings -> Refresh Frequency);
+  // suspend the UI screens' auto-clean promotion while reading.
+  renderer.setAutoCleanRefresh(false);
+
   if (!txt) {
     return;
   }
@@ -47,6 +51,7 @@ void TxtReaderActivity::onEnter() {
 }
 
 void TxtReaderActivity::onExit() {
+  renderer.setAutoCleanRefresh(true);
   Activity::onExit();
 
   // Reset orientation back to portrait for the rest of the UI

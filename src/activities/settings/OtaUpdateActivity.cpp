@@ -59,7 +59,12 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
 
   {
     RenderLock lock(*this);
-    state = WAITING_CONFIRMATION;
+    // autoInstall (post silentRestartToOtaInstall boot): the user already
+    // confirmed this update, so skip the WAITING_CONFIRMATION version page --
+    // rendering it for one frame between the reboot and the install looked
+    // like the updater bouncing back and forth. Show the progress screen
+    // immediately; loop() starts the install from there.
+    state = autoInstall ? UPDATE_IN_PROGRESS : WAITING_CONFIRMATION;
   }
 }
 
@@ -255,15 +260,17 @@ void OtaUpdateActivity::beginInstall() {
 }
 
 void OtaUpdateActivity::loop() {
-  if (state == WAITING_CONFIRMATION) {
-    // autoInstall means the user already confirmed this exact update before
-    // silentRestartToOtaInstall() rebooted here -- proceed immediately instead
-    // of waiting for a second button press.
-    if (autoInstall) {
-      beginInstall();
-      return;
-    }
+  // autoInstall means the user already confirmed this exact update before
+  // silentRestartToOtaInstall() rebooted here -- start the install as soon as
+  // the check has succeeded (state already shows the progress screen, see
+  // onWifiSelectionComplete). One-shot: beginInstall blocks until done/failed.
+  if (state == UPDATE_IN_PROGRESS && autoInstall) {
+    autoInstall = false;
+    beginInstall();
+    return;
+  }
 
+  if (state == WAITING_CONFIRMATION) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       // Reboot into a fresh heap before the (memory-hungry) firmware download
       // rather than attempting it in this already-fragmented session -- see
