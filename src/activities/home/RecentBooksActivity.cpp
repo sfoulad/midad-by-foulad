@@ -224,7 +224,18 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
         CoverThumbs::markAttempted(coverPath);
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
-          const bool loaded = epub.load(false, true);
+          bool loaded = epub.load(false, true);
+          bool built = false;
+          if (!loaded) {
+            // Metadata cache missing (never opened / cache cleared): build it
+            // now behind the loading popup -- see HomeActivity::loadRecentCovers.
+            if (!showingLoading) {
+              showingLoading = true;
+              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+            }
+            GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
+            loaded = built = epub.load(true, true);
+          }
           bool generated = false;
           if (loaded) {
             if (!showingLoading) {
@@ -234,8 +245,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
             GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
             generated = epub.generateThumbBmp(geometry.thumbHeight);
           }
-          CoverThumbs::diagLog(std::string("GRID epub load=") + (loaded ? "1" : "0") +
-                               " gen=" + (generated ? "1" : "0") + " " + book.path);
+          CoverThumbs::diagLog(std::string("GRID epub load=") + (loaded ? "1" : "0") + " built=" +
+                               (built ? "1" : "0") + " gen=" + (generated ? "1" : "0") + " " + book.path);
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           Xtc xtc(book.path, "/.crosspoint");
           const bool loaded = xtc.load();

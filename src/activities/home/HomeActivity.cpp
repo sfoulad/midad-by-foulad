@@ -128,7 +128,21 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
           // Skip loading css since we only need metadata here. Only generate if
           // the metadata actually loaded (matching the My Books grid) --
           // generateThumbBmp can't do anything without it.
-          const bool loaded = epub.load(false, true);
+          bool loaded = epub.load(false, true);
+          bool built = false;
+          if (!loaded) {
+            // No metadata cache: the book was downloaded but never opened, or
+            // the user cleared the SD cache -- the confirmed "covers never come
+            // back until each book is reopened" case from /cover_diag_log.txt.
+            // Build it now: a one-time OPF/TOC indexing pass per book, behind
+            // the same loading popup the thumb conversion already shows.
+            if (!showingLoading) {
+              showingLoading = true;
+              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+            }
+            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            loaded = built = epub.load(true, true);
+          }
           bool generated = false;
           if (loaded) {
             // Try to generate thumbnail image for Continue Reading card
@@ -144,8 +158,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             coverRendered = false;
             requestUpdate();
           }
-          CoverThumbs::diagLog(std::string("HOME epub load=") + (loaded ? "1" : "0") +
-                               " gen=" + (generated ? "1" : "0") + " " + book.path);
+          CoverThumbs::diagLog(std::string("HOME epub load=") + (loaded ? "1" : "0") + " built=" +
+                               (built ? "1" : "0") + " gen=" + (generated ? "1" : "0") + " " + book.path);
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
           Xtc xtc(book.path, "/.crosspoint");
