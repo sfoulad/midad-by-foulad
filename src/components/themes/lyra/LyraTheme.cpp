@@ -175,7 +175,10 @@ void LyraTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char
 
 void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                            bool selected) const {
-  int currentX = rect.x + LyraMetrics::values.contentSidePadding;
+  // RTL UI languages flow the tab strip right-to-left: first tab hugs the right edge.
+  const bool rtl = I18N.isRtl();
+  int currentX = rtl ? rect.x + rect.width - LyraMetrics::values.contentSidePadding
+                     : rect.x + LyraMetrics::values.contentSidePadding;
 
   if (selected) {
     renderer.fillRectDither(rect.x, rect.y, rect.width, rect.height, Color::LightGray);
@@ -183,6 +186,7 @@ void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::ve
 
   for (const auto& tab : tabs) {
     const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tab.label, EpdFontFamily::REGULAR);
+    if (rtl) currentX -= textWidth + 2 * hPaddingInSelection;
 
     if (tab.selected) {
       if (selected) {
@@ -199,7 +203,11 @@ void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::ve
     renderer.drawText(UI_10_FONT_ID, currentX + hPaddingInSelection, rect.y + 6, tab.label, !(tab.selected && selected),
                       EpdFontFamily::REGULAR);
 
-    currentX += textWidth + LyraMetrics::values.tabSpacing + 2 * hPaddingInSelection;
+    if (rtl) {
+      currentX -= LyraMetrics::values.tabSpacing;
+    } else {
+      currentX += textWidth + LyraMetrics::values.tabSpacing + 2 * hPaddingInSelection;
+    }
   }
 
   renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
@@ -244,14 +252,22 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
         contentWidth - LyraMetrics::values.contentSidePadding * 2, rowHeight, cornerRadius, Color::LightGray);
   }
 
+  // RTL UI languages mirror the row layout: icon and title anchor to the right edge,
+  // value to the left. Per-string glyph ordering is handled inside drawText; this is
+  // layout anchoring only. The scroll bar deliberately stays on the right edge.
+  const bool rtl = I18N.isRtl();
+
   int textX = rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection;
   int textWidth = contentWidth - LyraMetrics::values.contentSidePadding * 2 - hPaddingInSelection * 2;
-  int iconSize;
+  int iconSize = 0;
   if (rowIcon != nullptr) {
     iconSize = (rowSubtitle != nullptr) ? mainMenuIconSize : listIconSize;
     textX += iconSize + hPaddingInSelection;
     textWidth -= iconSize + hPaddingInSelection;
   }
+  // Right edge of the text area (mirror of textX): where RTL titles right-align.
+  const int textRightEdge = rect.x + contentWidth - LyraMetrics::values.contentSidePadding - hPaddingInSelection -
+                            (rowIcon != nullptr ? iconSize + hPaddingInSelection : 0);
 
   // Draw all items
   const auto pageStartIndex = selectedIndex / pageItems * pageItems;
@@ -272,14 +288,15 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
     auto itemName = rowTitle(i);
     auto item = renderer.truncatedText(UI_10_FONT_ID, itemName.c_str(), rowTextWidth);
-    renderer.drawText(UI_10_FONT_ID, textX, itemY + 7, item.c_str(), true);
+    const int titleX = rtl ? textRightEdge - renderer.getTextWidth(UI_10_FONT_ID, item.c_str()) : textX;
+    renderer.drawText(UI_10_FONT_ID, titleX, itemY + 7, item.c_str(), true);
 
     // Apply checkerboard dither to create gray text effect for dimmed items
     if (rowDimmed && rowDimmed(i) && i != selectedIndex) {
       const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, item.c_str());
       const int lineH = renderer.getLineHeight(UI_10_FONT_ID);
       for (int py = itemY + 7; py < itemY + 7 + lineH; py++)
-        for (int px = textX; px < textX + titleWidth; px++)
+        for (int px = titleX; px < titleX + titleWidth; px++)
           if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
     }
 
@@ -287,8 +304,10 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       UIIcon icon = rowIcon(i);
       const uint8_t* iconBitmap = iconForName(icon, iconSize);
       if (iconBitmap != nullptr) {
-        renderer.drawIcon(iconBitmap, rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection,
-                          itemY + iconY, iconSize);
+        const int iconX =
+            rtl ? rect.x + contentWidth - LyraMetrics::values.contentSidePadding - hPaddingInSelection - iconSize
+                : rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection;
+        renderer.drawIcon(iconBitmap, iconX, itemY + iconY, iconSize);
       }
     }
 
@@ -296,23 +315,24 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       // Draw subtitle
       std::string subtitleText = rowSubtitle(i);
       auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
-      renderer.drawText(SMALL_FONT_ID, textX, itemY + 30, subtitle.c_str(), true);
+      const int subtitleX = rtl ? textRightEdge - renderer.getTextWidth(SMALL_FONT_ID, subtitle.c_str()) : textX;
+      renderer.drawText(SMALL_FONT_ID, subtitleX, itemY + 30, subtitle.c_str(), true);
     }
 
     // Draw value
     if (!valueText.empty()) {
+      const int valueX = rtl ? rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection
+                             : rect.x + contentWidth - LyraMetrics::values.contentSidePadding - valueWidth;
       if (i == selectedIndex && highlightValue) {
-        renderer.fillRoundedRect(
-            rect.x + contentWidth - LyraMetrics::values.contentSidePadding - hPaddingInSelection - valueWidth, itemY,
-            valueWidth + hPaddingInSelection, rowHeight, cornerRadius, Color::Black);
+        renderer.fillRoundedRect(valueX - hPaddingInSelection, itemY, valueWidth + hPaddingInSelection, rowHeight,
+                                 cornerRadius, Color::Black);
       }
 
       int valueY = itemY + 6;
       if (rowSubtitle != nullptr) {
         valueY = itemY + 16;
       }
-      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - LyraMetrics::values.contentSidePadding - valueWidth,
-                        valueY, valueText.c_str(), !(i == selectedIndex && highlightValue));
+      renderer.drawText(UI_10_FONT_ID, valueX, valueY, valueText.c_str(), !(i == selectedIndex && highlightValue));
     }
   }
 }
@@ -526,19 +546,33 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
 
     std::string labelStr = buttonLabel(i);
     const char* label = labelStr.c_str();
-    int textX = tileRect.x + 16;
     const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
     const int textY = tileRect.y + (LyraMetrics::values.menuRowHeight - lineHeight) / 2;
 
-    if (rowIcon != nullptr) {
-      UIIcon icon = rowIcon(i);
-      const uint8_t* iconBitmap = iconForName(icon, mainMenuIconSize);
-      if (iconBitmap != nullptr) {
-        renderer.drawIcon(iconBitmap, textX, textY, mainMenuIconSize);
-        textX += mainMenuIconSize + hPaddingInSelection + 2;
+    // RTL UI languages mirror the tile layout: icon hugs the right edge with the label
+    // right-aligned beside it, matching the mirrored settings lists.
+    if (I18N.isRtl()) {
+      int textRight = tileRect.x + tileRect.width - 16;
+      if (rowIcon != nullptr) {
+        UIIcon icon = rowIcon(i);
+        const uint8_t* iconBitmap = iconForName(icon, mainMenuIconSize);
+        if (iconBitmap != nullptr) {
+          renderer.drawIcon(iconBitmap, textRight - mainMenuIconSize, textY, mainMenuIconSize);
+          textRight -= mainMenuIconSize + hPaddingInSelection + 2;
+        }
       }
+      renderer.drawText(UI_12_FONT_ID, textRight - renderer.getTextWidth(UI_12_FONT_ID, label), textY, label, true);
+    } else {
+      int textX = tileRect.x + 16;
+      if (rowIcon != nullptr) {
+        UIIcon icon = rowIcon(i);
+        const uint8_t* iconBitmap = iconForName(icon, mainMenuIconSize);
+        if (iconBitmap != nullptr) {
+          renderer.drawIcon(iconBitmap, textX, textY, mainMenuIconSize);
+          textX += mainMenuIconSize + hPaddingInSelection + 2;
+        }
+      }
+      renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
     }
-
-    renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
   }
 }

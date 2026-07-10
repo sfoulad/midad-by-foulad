@@ -314,6 +314,10 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   }
   constexpr int minValueGap = 10;
 
+  // RTL UI languages mirror the row layout: title anchored to the right edge, value to
+  // the left. Per-string glyph ordering is handled inside drawText; this is layout only.
+  const bool rtl = I18N.isRtl();
+
   // Draw all items
   const auto pageStartIndex = selectedIndex / pageItems * pageItems;
   for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
@@ -334,15 +338,17 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     auto itemName = rowTitle(i);
     auto font = UI_10_FONT_ID;
     auto item = renderer.truncatedText(font, itemName.c_str(), rowTextWidth);
-    renderer.drawText(font, rect.x + BaseMetrics::values.contentSidePadding, itemY, item.c_str(), i != selectedIndex);
+    const int titleX =
+        rtl ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding - renderer.getTextWidth(font, item.c_str())
+            : rect.x + BaseMetrics::values.contentSidePadding;
+    renderer.drawText(font, titleX, itemY, item.c_str(), i != selectedIndex);
 
     // Apply checkerboard dither to create gray text effect for dimmed items
     if (rowDimmed && rowDimmed(i) && i != selectedIndex) {
       const int titleWidth = renderer.getTextWidth(font, item.c_str());
       const int lineH = renderer.getLineHeight(font);
-      const int tx = rect.x + BaseMetrics::values.contentSidePadding;
       for (int py = itemY; py < itemY + lineH; py++)
-        for (int px = tx; px < tx + titleWidth; px++)
+        for (int px = titleX; px < titleX + titleWidth; px++)
           if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
     }
 
@@ -350,8 +356,10 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       std::string subtitleText = rowSubtitle(i);
       if (!subtitleText.empty()) {
         auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
-        renderer.drawText(SMALL_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, itemY + 22, subtitle.c_str(),
-                          i != selectedIndex);
+        const int subtitleX = rtl ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding -
+                                        renderer.getTextWidth(SMALL_FONT_ID, subtitle.c_str())
+                                  : rect.x + BaseMetrics::values.contentSidePadding;
+        renderer.drawText(SMALL_FONT_ID, subtitleX, itemY + 22, subtitle.c_str(), i != selectedIndex);
       }
     }
 
@@ -361,8 +369,9 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       if (rowSubtitle != nullptr) {
         valueY = itemY + 10;
       }
-      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth,
-                        valueY, valueText.c_str(), i != selectedIndex);
+      const int valueX = rtl ? rect.x + BaseMetrics::values.contentSidePadding
+                             : rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth;
+      renderer.drawText(UI_10_FONT_ID, valueX, valueY, valueText.c_str(), i != selectedIndex);
     }
   }
 }
@@ -425,11 +434,15 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
 
   const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
 
-  int currentX = rect.x + BaseMetrics::values.contentSidePadding;
+  // RTL UI languages flow the tab strip right-to-left: first tab hugs the right edge.
+  const bool rtl = I18N.isRtl();
+  int currentX = rtl ? rect.x + rect.width - BaseMetrics::values.contentSidePadding
+                     : rect.x + BaseMetrics::values.contentSidePadding;
 
   for (const auto& tab : tabs) {
     const int textWidth =
         renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+    if (rtl) currentX -= textWidth;
 
     // Arabic labels (baseline-matched to the Latin font's baseline) still descend
     // further below that shared baseline than Latin glyphs do, so the selected-tab
@@ -454,7 +467,11 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
     renderer.drawText(UI_12_FONT_ID, currentX, rect.y, tab.label, !(tab.selected && selected),
                       tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
 
-    currentX += textWidth + BaseMetrics::values.tabSpacing;
+    if (rtl) {
+      currentX -= BaseMetrics::values.tabSpacing;
+    } else {
+      currentX += textWidth + BaseMetrics::values.tabSpacing;
+    }
   }
 }
 
