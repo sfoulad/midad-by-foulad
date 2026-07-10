@@ -22,7 +22,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 5;  // Foulad eBooks, Recents, Stats, Check for Update, Settings
+  int count = 4;  // eBooks, Stats, Update, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -177,13 +177,19 @@ void HomeActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (selectorIndex < recentBooks.size()) {
-      onSelectBook(recentBooks[selectorIndex].path);
+      // The last recents tile becomes a "+N more" stack when the store holds more
+      // books than the row shows (see FouladTheme); confirming it opens the full
+      // Recent Books grid instead of silently opening one arbitrary book.
+      const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
+      const bool stackTile = selectorIndex == 3 && recentBooks.size() == 4 && totalRecents > 4;
+      if (stackTile) {
+        onRecentsOpen();
+      } else {
+        onSelectBook(recentBooks[selectorIndex].path);
+      }
     } else {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
       switch (indexToMenuItem(menuIndex)) {
-        case HomeMenuItem::RECENTS:
-          onRecentsOpen();
-          break;
         case HomeMenuItem::FOULAD_EBOOKS:
           onFouladEbooksOpen();
           break;
@@ -211,8 +217,9 @@ void HomeActivity::render(RenderLock&&) {
   renderer.clearScreen();
   bool bufferRestored = coverBufferStored && restoreCoverBuffer();
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding},
-                 metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
+  // No GUI.drawHeader here: the Foulad theme draws its own status line (clock /
+  // app name / battery) inside the cover tile. Drawing the standard header too
+  // duplicated the battery indicator at the top of the screen.
 
   // Record the tile rect so storeCoverBuffer (called from the theme) knows
   // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
@@ -228,9 +235,11 @@ void HomeActivity::render(RenderLock&&) {
 
   // Build menu items dynamically. Order: Foulad eBooks, Recent Books, Check for
   // Update, Settings -- matches menuItemToIndex/indexToMenuItem.
-  std::vector<const char*> menuItems = {tr(STR_FOULAD_EBOOKS), tr(STR_MENU_RECENT_BOOKS), tr(STR_STATS),
-                                        tr(STR_CHECK_UPDATES), tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Library, Recent, Stats, Transfer, Settings};
+  // Short labels chosen to fit the bottom icon bar tiles. Recent Books has no
+  // menu entry anymore: the recents covers row (and its stacked +N tile, which
+  // opens the full grid) took over that job.
+  std::vector<const char*> menuItems = {tr(STR_EBOOKS), tr(STR_STATS), tr(STR_UPDATE), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Library, Stats, Transfer, Settings};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme

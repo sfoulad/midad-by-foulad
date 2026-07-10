@@ -36,8 +36,6 @@ class HomeActivity final : public Activity {
     int i = 0;
     if (item == HomeMenuItem::FOULAD_EBOOKS) return i;
     ++i;
-    if (item == HomeMenuItem::RECENTS) return i;
-    ++i;
     if (item == HomeMenuItem::STATS) return i;
     ++i;
     if (item == HomeMenuItem::CHECK_UPDATE) return i;
@@ -50,7 +48,6 @@ class HomeActivity final : public Activity {
   static HomeMenuItem indexToMenuItem(int idx) {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FOULAD_EBOOKS;
-    if (idx == i++) return HomeMenuItem::RECENTS;
     if (idx == i++) return HomeMenuItem::STATS;
     if (idx == i++) return HomeMenuItem::CHECK_UPDATE;
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;

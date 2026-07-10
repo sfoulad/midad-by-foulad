@@ -37,7 +37,9 @@ constexpr int kHeroHeight = 300;
 constexpr int kHeroMetaGap = 20;
 constexpr int kCoverCornerRadius = 6;
 
-constexpr int kThumbWidth = 140;
+// Thumb width is derived from the rect width at draw time so the row fills the
+// screen on both devices (X4 portrait 480 -> 136px tiles, X3 portrait 528 ->
+// 152px tiles) instead of leaving dead margins on the wider X3 panel.
 constexpr int kThumbCoverHeight = 210;
 constexpr int kThumbTitleGap = 6;
 constexpr int kThumbGap = 20;
@@ -203,6 +205,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   const int dividerLabelY = heroCoverY + kHeroHeight + kDividerHalfSeparation + 10;
   const int thumbsY = dividerLabelY + kDividerHalfSeparation + 16;
   const int shownRecents = std::min(static_cast<int>(recentBooks.size()) - 1, kThumbsCount);
+  const int kThumbWidth = (rect.width - 2 * kMenuPadding - (kThumbsCount - 1) * kThumbGap) / kThumbsCount;
   const int thumbsTotalW = kThumbsCount * kThumbWidth + (kThumbsCount - 1) * kThumbGap;
   const int thumbsX = rect.x + (rect.width - thumbsTotalW) / 2;
 
