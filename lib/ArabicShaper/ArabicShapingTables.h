@@ -59,6 +59,25 @@ static const ArabicFormEntry ARABIC_FORMS[] = {
     // alef maksura actually occurs: على, إلى) keep the correct dotless forms.
     {0x0649, 0xFEEF, 0xFEF0, 0xFEF3, 0xFEF4},  // Alef Maksura
     {0x064A, 0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4},  // Yeh
+    // Extended-Arabic letters (Persian / Ottoman Turkish / Kurdish), shaped via
+    // Arabic Presentation Forms-A. Every base listed here must also be in
+    // isExtendedArabicLetter() (ArabicCharacter.cpp) so it classifies as a
+    // shapeable base char with the right joining type, and its form codepoints
+    // must be in the bundled font intervals (fontconvert.py --script arabic).
+    {0x067E, 0xFB56, 0xFB57, 0xFB58, 0xFB59},  // Peh
+    {0x0686, 0xFB7A, 0xFB7B, 0xFB7C, 0xFB7D},  // Tcheh
+    {0x0698, 0xFB8A, 0xFB8B, 0x0000, 0x0000},  // Jeh -- Reh-shaped, right-joining
+    {0x06A9, 0xFB8E, 0xFB8F, 0xFB90, 0xFB91},  // Keheh
+    {0x06AD, 0xFBD3, 0xFBD4, 0xFBD5, 0xFBD6},  // Ng
+    {0x06AF, 0xFB92, 0xFB93, 0xFB94, 0xFB95},  // Gaf
+    {0x06C0, 0xFBA4, 0xFBA5, 0x0000, 0x0000},  // Heh with Yeh Above
+    // Farsi Yeh: dotless in final/isolated position by design (the Persian
+    // convention the Reddit request called out); FBFC-FBFF encode exactly that.
+    {0x06CC, 0xFBFC, 0xFBFD, 0xFBFE, 0xFBFF},  // Farsi Yeh
+    // Ae: no presentation forms are encoded for it in Unicode. Isolated keeps the
+    // base glyph; final borrows Heh's final form (U+FEEA) -- both are the same
+    // dotless bowl shape, which is exactly how it renders in Ottoman/Kurdish text.
+    {0x06D5, 0x06D5, 0xFEEA, 0x0000, 0x0000},  // Ae
 };
 
 static constexpr size_t ARABIC_FORMS_COUNT = sizeof(ARABIC_FORMS) / sizeof(ARABIC_FORMS[0]);

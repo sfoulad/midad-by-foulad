@@ -151,6 +151,12 @@ if args.script == "arabic":
         (0xFDF2, 0xFDF2),  # Arabic Ligature Allah Isolated Form (Presentation Forms-A) --
                            # a single codepoint, not the full FB50-FDFF block, so ArabicShaper
                            # can special-case the four-letter "الله" sequence into one glyph.
+        (0xFB56, 0xFB59),  # Peh forms (Persian)
+        (0xFB7A, 0xFB7D),  # Tcheh forms (Persian)
+        (0xFB8A, 0xFB95),  # Jeh/Keheh/Gaf forms (Persian; span includes Rreh)
+        (0xFBA4, 0xFBA5),  # Heh with Yeh Above forms (Persian)
+        (0xFBD3, 0xFBD6),  # Ng forms (Ottoman Turkish)
+        (0xFBFC, 0xFBFF),  # Farsi Yeh forms (dotless-final yeh)
         (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
     ]
 

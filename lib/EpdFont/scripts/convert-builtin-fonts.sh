@@ -70,6 +70,16 @@ for size in ${ARABIC_UI_FONT_SIZES[@]}; do
   echo "Generated ../builtinFonts/notosansarabic_${size}_regular.h"
 done
 
+# Built-in Arabic READING font (ArabicFontSystem's default reading family) at the
+# four reading sizes matching NOTOSERIF sizes -- see kBuiltinArabicReadingFontIds.
+ARABIC_READING_FONT_SIZES=(12 14 16 18)
+for size in ${ARABIC_READING_FONT_SIZES[@]}; do
+  python fontconvert.py notonaskharabic_${size}_regular ${size} \
+    ../builtinFonts/source/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf \
+    --2bit --compress --script arabic > ../builtinFonts/notonaskharabic_${size}_regular.h
+  echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
+done
+
 echo ""
 echo "Running compression verification..."
 python verify_compression.py ../builtinFonts/
