@@ -799,12 +799,25 @@ build_flags =
 3. ✅ **Format**: Commit messages (`feat:`/`fix:`), no `.gitignore`-excluded files staged (e.g., `*.generated.h`, `.pio/`, `platformio.local.ini`)
 4. ✅ **CI**: Fix GitHub Actions failures before review
 5. ✅ **Code review**: Ensure orientation-aware logic is correct in all 4 modes by inspecting switch/case coverage
+6. ✅ **Simulator smoke test** (for any change touching the reader, home, browser, or OPDS flows):
+   `pio run -e simulator`, then run `.pio/build/simulator/program` in the background from the repo
+   root and watch its stdout log. `./fs_/` is the virtual SD card (gitignored) — drop test EPUBs
+   there. With macOS Accessibility granted to the terminal host, drive it via
+   `osascript`/System Events keystrokes (focus process "program" first): ←→ front buttons,
+   ↑↓ page back/forward, Return select, Esc back. Verify through the log lines (activity
+   transitions, section build/deserialize, cover diag) and the artifacts written under
+   `fs_/.crosspoint/` (e.g. section `.bin` version bytes). OPDS flows reach real servers via
+   host curl — **always use the Foulad eBooks TEST account for simulator/testing logins:
+   username `11`, password `11`** (never a real account).
 
 **Human tester scope** (flag these for the user):
-6. 🔲 **Device**: Test on hardware
-7. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW)
-8. 🔲 **Heap**: `ESP.getFreeHeap()` > 50KB, no leaks
-9. 🔲 **Cache**: If EPUB modified, delete `.crosspoint/` and verify re-parse
+7. 🔲 **Device**: Test on hardware
+8. 🔲 **Orientations**: Verify all 4 modes (Portrait/Inverted/Landscape CW/CCW)
+9. 🔲 **Heap**: `ESP.getFreeHeap()` > 50KB, no leaks — the simulator has a flat 1MB heap and
+   CANNOT reproduce fragmentation/OOM behavior; memory verdicts are hardware-only
+10. 🔲 **Cache**: If EPUB modified, delete `.crosspoint/` and verify re-parse
+11. 🔲 **E-ink refresh**: ghosting/fading/waveform behavior — the simulator's SDL window
+    renders instantly and can't show these
 
 ### CI/CD Pipeline Awareness
 
