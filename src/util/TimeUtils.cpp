@@ -23,7 +23,13 @@ const char* monthName(const unsigned month) {
 
 namespace TimeUtils {
 
+#ifdef SIMULATOR
+// The simulator's HalClock stub has no isSystemTimeValid(); the host clock is
+// always trustworthy.
+bool isClockValid() { return true; }
+#else
 bool isClockValid() { return HalClock::isSystemTimeValid(); }
+#endif
 
 bool isClockValid(const uint32_t epochSeconds) { return epochSeconds >= MIN_PLAUSIBLE_EPOCH; }
 
