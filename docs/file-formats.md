@@ -90,11 +90,21 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 33
+### Version 35
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 35 (this fork) is upstream's v29 format -- flat TextBlock word storage
+and the incremental-build INCOMPLETE/PARTIAL version sentinels -- plus this
+fork's extra header field: the resolved Arabic reading font id, written right
+after `fontId` and compared on load, so changing the Arabic Font Size (or an
+SD Arabic font override) re-paginates like any other layout setting. The fork
+numbers formats independently of upstream: v29-v34 below were fork versions.
+
+Version 34 added the Arabic reading font id to the header cache key (see
+above; first shipped in fork v1.6.59 with upstream's v28 body format).
 
 Version 33 is a pure cache-bust (no structural change from v32): the gap between
 two Arabic words is now sized by the Arabic font's own space glyph (which follows
@@ -137,7 +147,7 @@ measurement, word-order reordering, tashkeel/ligature/digit-range shaping) to
 rebuild after upgrading, since none of those fixes touched a cache-busting
 settings field.
 
-Version 28 includes:
+Version 35 includes:
 
 - cache-busting fields for paragraph alignment, hyphenation, embedded CSS,
   image rendering mode, and Focus Reading
@@ -148,6 +158,10 @@ Version 28 includes:
 - per-page footnote entries
 - serialized word style bits for underline, strikethrough, superscript, and
   subscript
+- flat TextBlock word storage (v29): per-word arrays plus one shared
+  NUL-terminated text blob, replacing v28's length-prefixed word strings. The
+  on-disk order mirrors the in-RAM arena so the firmware reads a whole block
+  payload with a single allocation and a single SD read
 
 ImHex pattern:
 
@@ -156,7 +170,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 33
+#define EXPECTED_VERSION 35
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 96
@@ -217,14 +231,20 @@ struct BlockStyle {
 
 struct TextBlock {
     u16 wordCount;
-    String words[wordCount];
-    s16 wordXPos[wordCount];
-    WordStyle wordStyle[wordCount];
-
     u8 hasFocus;
-    if (hasFocus != 0) {
-        u8 wordFocusBoundary[wordCount] [[comment("UTF-8 byte boundary between bold prefix and suffix")]];
-        u16 wordFocusSuffixX[wordCount] [[comment("Suffix x offset from word start")]];
+    u16 textBytes [[comment("Total size of text[], including one NUL per word")]];
+
+    if (wordCount > 0) {
+        u16 textOff[wordCount] [[comment("Byte offset of word i's text within text[]")]];
+        s16 wordXPos[wordCount];
+        if (hasFocus != 0) {
+            u16 wordFocusSuffixX[wordCount] [[comment("Suffix x offset from word start")]];
+        }
+        WordStyle wordStyle[wordCount];
+        if (hasFocus != 0) {
+            u8 wordFocusBoundary[wordCount] [[comment("UTF-8 byte boundary between bold prefix and suffix")]];
+        }
+        char text[textBytes] [[comment("All words back to back, each NUL-terminated")]];
     }
 
     BlockStyle blockStyle;
@@ -303,6 +323,7 @@ struct SectionBin {
     }
 
     s32 fontId;
+    s32 arabicFontId [[comment("Fork addition: resolved Arabic reading font id")]];
     float lineCompression;
     bool extraParagraphSpacing;
     u8 paragraphAlignment;
