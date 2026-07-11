@@ -323,7 +323,14 @@ void HomeActivity::loop() {
           onSettingsOpen();
           break;
         case HomeMenuItem::CHECK_UPDATE:
-          onCheckUpdateOpen();
+          // Slot 2 is dual-purpose like slot 0: "Files" when a Foulad eBooks
+          // account is configured (Update moves to Settings > System), the
+          // OTA update flow when not -- see the menuItems comment in render().
+          if (fouladEbooksLoggedIn()) {
+            activityManager.goToFileBrowser("/");
+          } else {
+            onCheckUpdateOpen();
+          }
           break;
         case HomeMenuItem::STATS:
           onStatsOpen();
@@ -364,10 +371,15 @@ void HomeActivity::render(RenderLock&&) {
   // Short labels chosen to fit the bottom icon bar tiles. Recent Books has no
   // menu entry anymore: the recents covers row (and its stacked +N tile, which
   // opens the full grid) took over that job.
+  // Slot 0 and slot 2 both follow the Foulad eBooks login state (user-specified):
+  // logged in  -> eBooks, Stats, Files,  Settings (Update lives in Settings > System)
+  // logged out -> Files,  Stats, Update, Settings (no catalog, so no eBooks icon)
+  // Files (the SD browser) is always one tap away either way.
   const bool ebooksAccount = fouladEbooksLoggedIn();
-  std::vector<const char*> menuItems = {ebooksAccount ? tr(STR_EBOOKS) : tr(STR_FILES), tr(STR_STATS), tr(STR_UPDATE),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {ebooksAccount ? Library : Folder, Stats, Transfer, Settings};
+  std::vector<const char*> menuItems = {ebooksAccount ? tr(STR_EBOOKS) : tr(STR_FILES), tr(STR_STATS),
+                                        ebooksAccount ? tr(STR_FILES) : tr(STR_UPDATE), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {ebooksAccount ? Library : Folder, Stats, ebooksAccount ? Folder : Transfer,
+                                   Settings};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme

@@ -1286,12 +1286,52 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
   auto* outputRow = static_cast<uint8_t*>(malloc(outputRowSize));
   auto* rowBytes = static_cast<uint8_t*>(malloc(bitmap.getRowBytes()));
 
-  if (!outputRow || !rowBytes) {
+  // Downscale accumulators: per-destination-column black/total source-pixel
+  // counts for the destination row currently being gathered. Sources are
+  // DITHERED 1-bit covers -- with the previous any-black-wins sampling, every
+  // mid-gray dot pattern collapsed to solid black once several source pixels
+  // landed on one screen pixel, turning the My Books row and grid cells into
+  // high-contrast black blobs. Box-filtering each bucket and re-dithering the
+  // average preserves the tone instead.
+  uint16_t* blackCount = nullptr;
+  uint16_t* totalCount = nullptr;
+  int destW = 0;
+  if (isScaled) {
+    destW = static_cast<int>(std::floor((bitmap.getWidth() - 1) * scale)) + 1;
+    blackCount = static_cast<uint16_t*>(calloc(destW, sizeof(uint16_t)));
+    totalCount = static_cast<uint16_t*>(calloc(destW, sizeof(uint16_t)));
+  }
+
+  if (!outputRow || !rowBytes || (isScaled && (!blackCount || !totalCount))) {
     LOG_ERR("GFX", "!! Failed to allocate 1-bit BMP row buffers");
     free(outputRow);
     free(rowBytes);
+    free(blackCount);
+    free(totalCount);
     return;
   }
+
+  // Emit one accumulated destination row: 3-tone re-dither of the bucket
+  // averages -- dark buckets go black, light ones stay white, and mid-tones
+  // render as a pixel checkerboard so downscaled dither still reads as gray.
+  auto flushDestRow = [&](const int destY) {
+    const int screenY = y + destY;
+    if (screenY >= 0 && screenY < getScreenHeight()) {
+      for (int destX = 0; destX < destW; destX++) {
+        const int screenX = x + destX;
+        if (screenX < 0 || screenX >= getScreenWidth() || totalCount[destX] == 0) continue;
+        const uint32_t black3 = 3u * blackCount[destX];
+        const uint32_t total = totalCount[destX];
+        // black3/total in [0,3]: >=2 black, <1 white, in between checkerboard.
+        if (black3 >= 2 * total || (black3 >= total && ((screenX + screenY) & 1) == 0)) {
+          drawPixel(screenX, screenY, true);
+        }
+      }
+    }
+    memset(blackCount, 0, destW * sizeof(uint16_t));
+    memset(totalCount, 0, destW * sizeof(uint16_t));
+  };
+  int pendingDestY = -1;  // destination row currently accumulating (-1 = none)
 
   for (int bmpY = 0; bmpY < bitmap.getHeight(); bmpY++) {
     // Read rows sequentially using readNextRow
@@ -1299,12 +1339,33 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       LOG_ERR("GFX", "Failed to read row %d from 1-bit bitmap", bmpY);
       free(outputRow);
       free(rowBytes);
+      free(blackCount);
+      free(totalCount);
       return;
     }
 
     // Calculate screen Y based on whether BMP is top-down or bottom-up
     const int bmpYOffset = bitmap.isTopDown() ? bmpY : bitmap.getHeight() - 1 - bmpY;
-    int screenY = y + (isScaled ? static_cast<int>(std::floor(bmpYOffset * scale)) : bmpYOffset);
+
+    if (isScaled) {
+      // bmpYOffset moves monotonically (up or down), so every source row of a
+      // given destination row arrives consecutively: accumulate until it changes.
+      const int destY = static_cast<int>(std::floor(bmpYOffset * scale));
+      if (pendingDestY >= 0 && destY != pendingDestY) {
+        flushDestRow(pendingDestY);
+      }
+      pendingDestY = destY;
+      for (int bmpX = 0; bmpX < bitmap.getWidth(); bmpX++) {
+        const int destX = static_cast<int>(std::floor(bmpX * scale));
+        if (destX < 0 || destX >= destW) continue;
+        totalCount[destX]++;
+        const uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+        if (val < 3) blackCount[destX]++;
+      }
+      continue;
+    }
+
+    const int screenY = y + bmpYOffset;
     if (screenY >= getScreenHeight()) {
       continue;  // Continue reading to keep row counter in sync
     }
@@ -1313,7 +1374,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     }
 
     for (int bmpX = 0; bmpX < bitmap.getWidth(); bmpX++) {
-      int screenX = x + (isScaled ? static_cast<int>(std::floor(bmpX * scale)) : bmpX);
+      int screenX = x + bmpX;
       if (screenX >= getScreenWidth()) {
         break;
       }
@@ -1333,8 +1394,14 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     }
   }
 
+  if (isScaled && pendingDestY >= 0) {
+    flushDestRow(pendingDestY);
+  }
+
   free(outputRow);
   free(rowBytes);
+  free(blackCount);
+  free(totalCount);
 }
 
 void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoints, bool state) const {
