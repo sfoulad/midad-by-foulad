@@ -27,8 +27,12 @@ constexpr unsigned long LONG_PRESS_MS = 1000;
 
 // SD library scan bounds: enough for any realistic personal library on these
 // devices while keeping the path vector's RAM cost trivial (~50 bytes/entry).
+// A real user card hit the old 64-dir cap exactly (mybooks_scan_log: dirs=64)
+// because the stock Xteink firmware litters the card with an XTCache tree of
+// 60+ subdirectories -- XTCache is now skipped outright and the cap has
+// headroom for genuinely nested libraries.
 constexpr size_t MAX_LIBRARY_BOOKS = 200;
-constexpr size_t MAX_SCAN_DIRS = 64;
+constexpr size_t MAX_SCAN_DIRS = 192;
 constexpr size_t NAME_BUF_SIZE = 256;
 
 // Filename without directory or extension -- the caption for books that have
@@ -81,7 +85,10 @@ void RecentBooksActivity::loadRecentBooks() {
       if (nameBuf[0] == '\0' || nameBuf[0] == '.') continue;  // hidden + .crosspoint/.fonts
       const std::string entryPath = (dirPath == "/") ? "/" + std::string(nameBuf) : dirPath + "/" + nameBuf;
       if (entry.isDirectory()) {
-        if (strcmp(nameBuf, "System Volume Information") != 0 && strcmp(nameBuf, "fonts") != 0) {
+        // XTCache is the STOCK Xteink firmware's cache tree -- 60+ nested dirs
+        // of extracted chapter HTML on a card that dual-boots, with no books.
+        if (strcmp(nameBuf, "System Volume Information") != 0 && strcmp(nameBuf, "fonts") != 0 &&
+            strcmp(nameBuf, "XTCache") != 0) {
           dirs.push_back(entryPath);
         }
         continue;

@@ -950,6 +950,18 @@ void EpubReaderActivity::render(RenderLock&& lock) {
                                   SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
       LOG_DBG("ERS", "Cache not found, building...");
 
+      // Pagination of a large chapter is the reader's peak-RAM moment (expat +
+      // CSS + hyphenation + page assembly); an on-device crash report showed
+      // abort() during a rebuild right after a corrupt section file was
+      // discarded. Drop the decompressed-glyph cache first (tens of KB after
+      // browsing; repopulates with exactly the working set as pagination
+      // measures text) -- same relief valve the OTA flow uses. Reading stats
+      // stay put: releaseMemory() is a mid-session no-op by design.
+      if (renderer.getFontCacheManager() != nullptr) {
+        renderer.getFontCacheManager()->clearCache();
+      }
+      LOG_INF("ERS", "Building section (free heap: %u, largest block: %u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
       GUI.drawPopup(renderer, tr(STR_INDEXING));
 
       const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
@@ -1099,6 +1111,10 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
   }
 
   LOG_DBG("ERS", "Silently indexing next chapter: %d", nextSpineIndex);
+  // Peak-RAM moment -- same glyph-cache relief as the main build path above.
+  if (renderer.getFontCacheManager() != nullptr) {
+    renderer.getFontCacheManager()->clearCache();
+  }
   if (!nextSection.createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                      SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
                                      viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
