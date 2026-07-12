@@ -355,9 +355,20 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
           Epub epub(book.path, "/.crosspoint");
           bool loaded = epub.load(false, true);
           bool built = false;
-          if (!loaded) {
-            // Metadata cache missing (never opened / cache cleared): build it
-            // now behind the loading popup -- see HomeActivity::loadRecentCovers.
+          // Build a missing metadata cache ONLY for books the user has actually
+          // opened (recents) -- that's the cache-clear recovery case the
+          // build-if-missing fallback exists for. Never-opened books found by
+          // the SD scan show a placeholder until first opened instead: building
+          // full metadata for every sideloaded book made the FIRST visit to My
+          // Books take seconds per book on a full card (user report: "slow when
+          // there is a lot of books"). OPDS downloads auto-open, so they carry
+          // caches (and catalog cover art) already.
+          const auto& storedRecents = RECENT_BOOKS.getBooks();
+          const bool everOpened = std::any_of(storedRecents.begin(), storedRecents.end(),
+                                              [&book](const RecentBook& r) { return r.path == book.path; });
+          if (!loaded && everOpened) {
+            // Metadata cache missing (cache cleared): build it now behind the
+            // loading popup -- see HomeActivity::loadRecentCovers.
             if (!showingLoading) {
               showingLoading = true;
               popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
