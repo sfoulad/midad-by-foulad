@@ -15,6 +15,15 @@ constexpr int
     kBuiltinArabicReadingFontIds[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT][CrossPointSettings::FONT_SIZE_COUNT] = {
         {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
          NOTONASKHARABIC_18_FONT_ID},
+        // Amiri: revival of the Amiria Press (1924 Cairo mushaf) typeface --
+        // the Quran's default reading face (per-book sidecar written at
+        // extraction; see QuranBook::ensureExtracted).
+        {AMIRI_12_FONT_ID, AMIRI_14_FONT_ID, AMIRI_16_FONT_ID, AMIRI_18_FONT_ID},
+        // Neirizi: classical Quranic mushaf face (user-supplied) -- the Quran's
+        // default reading family via its extraction-time sidecar (QuranBook).
+        // Converted with fontconvert --shape-fallback: its contextual forms
+        // only exist through GSUB, which the fallback bakes into the bitmaps.
+        {NEIRIZI_12_FONT_ID, NEIRIZI_14_FONT_ID, NEIRIZI_16_FONT_ID, NEIRIZI_18_FONT_ID},
 };
 
 // One mapping scheme for both the built-in and SD-override cases: the three
@@ -72,7 +81,7 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
       loadedSdSizeEnum_ = 0xFF;
     }
     applyArabicMappings(renderer,
-                        resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.effArabicFontSize()));
+                        resolveBuiltinReadingFontId(SETTINGS.effArabicFontFamily(), SETTINGS.effArabicFontSize()));
     return;
   }
 
@@ -103,6 +112,6 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
       SETTINGS.sdArabicFontFamilyName[0] = '\0';
     }
     applyArabicMappings(renderer,
-                        resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.effArabicFontSize()));
+                        resolveBuiltinReadingFontId(SETTINGS.effArabicFontFamily(), SETTINGS.effArabicFontSize()));
   }
 }

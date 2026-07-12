@@ -20,6 +20,7 @@
 
 #include "ArabicFontSystem.h"
 #include "CrossPointSettings.h"
+#include "QuranBook.h"
 #include "CrossPointState.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
@@ -114,6 +115,29 @@ EpdFont notonaskharabic16RegularFont(&notonaskharabic_16_regular);
 EpdFontFamily notonaskharabic16FontFamily(&notonaskharabic16RegularFont);
 EpdFont notonaskharabic18RegularFont(&notonaskharabic_18_regular);
 EpdFontFamily notonaskharabic18FontFamily(&notonaskharabic18RegularFont);
+
+// Amiri (OFL): revival of the Amiria Press typeface from the classic 1924
+// Cairo mushaf -- the built-in Quranic reading family (see QuranBook.h). Same
+// four reading sizes as Naskh.
+EpdFont amiri12RegularFont(&amiri_12_regular);
+EpdFontFamily amiri12FontFamily(&amiri12RegularFont);
+EpdFont amiri14RegularFont(&amiri_14_regular);
+EpdFontFamily amiri14FontFamily(&amiri14RegularFont);
+EpdFont amiri16RegularFont(&amiri_16_regular);
+EpdFontFamily amiri16FontFamily(&amiri16RegularFont);
+EpdFont amiri18RegularFont(&amiri_18_regular);
+EpdFontFamily amiri18FontFamily(&amiri18RegularFont);
+
+// Neirizi (user-selected Quranic mushaf face) -- Quran default via per-book
+// sidecar; see QuranBook.h and ArabicFontSystem.cpp.
+EpdFont neirizi12RegularFont(&neirizi_12_regular);
+EpdFontFamily neirizi12FontFamily(&neirizi12RegularFont);
+EpdFont neirizi14RegularFont(&neirizi_14_regular);
+EpdFontFamily neirizi14FontFamily(&neirizi14RegularFont);
+EpdFont neirizi16RegularFont(&neirizi_16_regular);
+EpdFontFamily neirizi16FontFamily(&neirizi16RegularFont);
+EpdFont neirizi18RegularFont(&neirizi_18_regular);
+EpdFontFamily neirizi18FontFamily(&neirizi18RegularFont);
 
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
@@ -354,10 +378,25 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTONASKHARABIC_14_FONT_ID, notonaskharabic14FontFamily);
   renderer.insertFont(NOTONASKHARABIC_16_FONT_ID, notonaskharabic16FontFamily);
   renderer.insertFont(NOTONASKHARABIC_18_FONT_ID, notonaskharabic18FontFamily);
+  renderer.insertFont(AMIRI_12_FONT_ID, amiri12FontFamily);
+  renderer.insertFont(AMIRI_14_FONT_ID, amiri14FontFamily);
+  renderer.insertFont(AMIRI_16_FONT_ID, amiri16FontFamily);
+  renderer.insertFont(AMIRI_18_FONT_ID, amiri18FontFamily);
+  renderer.insertFont(NEIRIZI_12_FONT_ID, neirizi12FontFamily);
+  renderer.insertFont(NEIRIZI_14_FONT_ID, neirizi14FontFamily);
+  renderer.insertFont(NEIRIZI_16_FONT_ID, neirizi16FontFamily);
+  renderer.insertFont(NEIRIZI_18_FONT_ID, neirizi18FontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);
   arabicFontSystem.begin(renderer);
+
+  // Self-heal the extracted Quran (and its default-font sidecar) at boot for
+  // devices where the toggle is already on -- covers SD swaps, torn writes,
+  // and firmware upgrades that changed the embedded copy or sidecar format.
+  if (SETTINGS.quranEnabled) {
+    QuranBook::ensureExtracted();
+  }
 
   LOG_DBG("MAIN", "Fonts setup");
 }

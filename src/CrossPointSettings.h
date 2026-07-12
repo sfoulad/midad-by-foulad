@@ -119,7 +119,7 @@ class CrossPointSettings {
   // ArabicFontSystem. Reuses FONT_SIZE (Small/Medium/Large/X-Large) for arabicFontSize.
   // Noto Sans Arabic / Amiri / Scheherazade New / Cairo (formerly indices 0/2/3/4)
   // were trimmed from flash; out-of-range saved values clamp to Noto Naskh.
-  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, ARABIC_FONT_FAMILY_COUNT };
+  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, AMIRI = 1, NEIRIZI = 2, ARABIC_FONT_FAMILY_COUNT };
   static constexpr uint8_t BUILTIN_ARABIC_FONT_COUNT = ARABIC_FONT_FAMILY_COUNT;
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
@@ -296,6 +296,10 @@ class CrossPointSettings {
   static constexpr char BOOK_FORCE_BUILTIN_FAMILY[2] = "\x01";
   uint8_t bookFontSize = BOOK_NO_OVERRIDE;
   uint8_t bookArabicFontSize = BOOK_NO_OVERRIDE;
+  // Which BUILT-IN Arabic family this book uses when the built-in path is
+  // active (bookSdArabicFontFamilyName forced-builtin or global has no SD
+  // family). The Quran defaults to AMIRI via its extraction-time sidecar.
+  uint8_t bookArabicFontFamily = BOOK_NO_OVERRIDE;
   uint8_t bookLineSpacing = BOOK_NO_OVERRIDE;
   uint8_t bookParagraphAlignment = BOOK_NO_OVERRIDE;
   char bookSdFontFamilyName[32] = "";
@@ -304,6 +308,9 @@ class CrossPointSettings {
   uint8_t effFontSize() const { return bookFontSize != BOOK_NO_OVERRIDE ? bookFontSize : fontSize; }
   uint8_t effArabicFontSize() const {
     return bookArabicFontSize != BOOK_NO_OVERRIDE ? bookArabicFontSize : arabicFontSize;
+  }
+  uint8_t effArabicFontFamily() const {
+    return bookArabicFontFamily != BOOK_NO_OVERRIDE ? bookArabicFontFamily : arabicFontFamily;
   }
   uint8_t effLineSpacing() const { return bookLineSpacing != BOOK_NO_OVERRIDE ? bookLineSpacing : lineSpacing; }
   uint8_t effParagraphAlignment() const {
@@ -321,11 +328,13 @@ class CrossPointSettings {
   }
   bool hasBookOverrides() const {
     return bookFontSize != BOOK_NO_OVERRIDE || bookArabicFontSize != BOOK_NO_OVERRIDE ||
-           bookLineSpacing != BOOK_NO_OVERRIDE || bookParagraphAlignment != BOOK_NO_OVERRIDE ||
-           bookSdFontFamilyName[0] != '\0' || bookSdArabicFontFamilyName[0] != '\0';
+           bookArabicFontFamily != BOOK_NO_OVERRIDE || bookLineSpacing != BOOK_NO_OVERRIDE ||
+           bookParagraphAlignment != BOOK_NO_OVERRIDE || bookSdFontFamilyName[0] != '\0' ||
+           bookSdArabicFontFamilyName[0] != '\0';
   }
   void clearBookOverrides() {
-    bookFontSize = bookArabicFontSize = bookLineSpacing = bookParagraphAlignment = BOOK_NO_OVERRIDE;
+    bookFontSize = bookArabicFontSize = bookArabicFontFamily = bookLineSpacing = bookParagraphAlignment =
+        BOOK_NO_OVERRIDE;
     bookSdFontFamilyName[0] = '\0';
     bookSdArabicFontFamilyName[0] = '\0';
   }

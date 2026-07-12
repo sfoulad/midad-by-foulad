@@ -4,10 +4,55 @@
 #include <Logging.h>
 
 #include <cstdio>
+#include <cstring>
+#include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "util/BookReaderSettings.h"
+
+namespace {
+
+// Same cache-dir formula as the Epub constructor (path-hash keyed).
+std::string quranCachePath() {
+  return "/.crosspoint/epub_" + std::to_string(std::hash<std::string>{}(std::string(QuranBook::PATH)));
+}
+
+// Give the Quran its reading face: a per-book sidecar selecting the built-in
+// Amiri family (revival of the 1924 Cairo mushaf typeface -- renders full
+// harakat with our static pipeline; Neirizi is also in the drawer's Font Name
+// picker). Written only when no sidecar exists yet, so any choice the user
+// later makes in the reader drawer sticks across re-extractions and firmware
+// updates.
+void writeDefaultSidecarIfMissing() {
+  const std::string cacheDir = quranCachePath();
+  const std::string sidecar = cacheDir + BookReaderSettings::FILE_NAME;
+  if (Storage.exists(sidecar.c_str())) return;
+  Storage.mkdir(cacheDir.c_str());
+
+  uint8_t buf[BookReaderSettings::PAYLOAD_SIZE];
+  memset(buf, 0, sizeof(buf));
+  buf[0] = 'B';
+  buf[1] = 'K';
+  buf[2] = BookReaderSettings::FORMAT_VERSION;
+  buf[3] = CrossPointSettings::BOOK_NO_OVERRIDE;  // fontSize: inherit
+  buf[4] = CrossPointSettings::BOOK_NO_OVERRIDE;  // arabicFontSize: inherit
+  buf[5] = CrossPointSettings::BOOK_NO_OVERRIDE;  // lineSpacing: inherit
+  buf[6] = CrossPointSettings::BOOK_NO_OVERRIDE;  // paragraphAlignment: inherit
+  buf[7] = CrossPointSettings::AMIRI;             // built-in Arabic family: Amiri
+  // Arabic family-source: force the built-in path (buf[8..39] Latin stays "").
+  buf[8 + 32] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
+
+  HalFile f;
+  if (Storage.openFileForWrite("QURAN", sidecar, f)) {
+    f.write(buf, sizeof(buf));
+    LOG_INF("QURAN", "Default Quran font sidecar written (Amiri)");
+  }
+}
+
+}  // namespace
 
 #ifndef SIMULATOR
 // Embedded by board_build.embed_files = data/quran.epub (see platformio.ini).
@@ -60,6 +105,7 @@ bool ensureExtracted() {
   if (Storage.exists(PATH)) {
     HalFile existing;
     if (Storage.openFileForRead("QURAN", PATH, existing) && existing.size() == embeddedSize) {
+      writeDefaultSidecarIfMissing();
       return true;
     }
   }
@@ -83,6 +129,7 @@ bool ensureExtracted() {
   }
   out.flush();
   LOG_INF("QURAN", "Extracted %s (%u bytes)", PATH, (unsigned)embeddedSize);
+  writeDefaultSidecarIfMissing();
   return true;
 }
 

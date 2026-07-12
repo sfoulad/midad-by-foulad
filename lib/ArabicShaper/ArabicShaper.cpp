@@ -218,14 +218,18 @@ std::vector<uint32_t> shapeText(const char* text) {
   for (size_t i = 0; i < afterLigatures.size(); i++) {
     uint32_t c = afterLigatures[i];
 
-    // Drop tashkeel/harakat diacritics entirely. This renderer draws each shaped
-    // codepoint as its own left-to-right advancing glyph (drawArabicText) with no
-    // GPOS-style mark-to-base positioning, so a diacritic would render as a stray
-    // floating mark beside its base letter instead of stacked above/below it.
-    // Matches arabic_reshaper's own default (delete_harakat=true) for the same
-    // reason -- confirmed by diffing this shaper's output against
-    // arabic_reshaper+python-bidi across a real 30k-word novel corpus.
+    // Tashkeel/harakat pass through as zero-advance combining marks. A mark is
+    // TRANSPARENT for joining (the prev/next scans skip it), sits right after
+    // its base letter logically, and the RTL run reversal in step 4 therefore
+    // places it immediately BEFORE the base in visual order -- drawArabicText
+    // then draws it at the base's pen position (marks carry ~zero advance) and
+    // the font's static mark offsets stack it above/below the letter. Because
+    // the advance is zero, layout/pagination is unchanged by vocalization.
+    // (These were previously dropped outright, matching arabic_reshaper's
+    // delete_harakat=true default -- acceptable for mostly-unvocalized novels,
+    // catastrophic for the fully-vocalized Quran.)
     if (isArabicDiacritic(c)) {
+      shaped.push_back(c);
       continue;
     }
 

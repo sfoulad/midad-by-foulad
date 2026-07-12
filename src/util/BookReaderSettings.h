@@ -19,11 +19,13 @@
 namespace BookReaderSettings {
 
 constexpr char FILE_NAME[] = "/book_settings.bin";
-// Layout: 'B' 'K' version, then fontSize, arabicFontSize, lineSpacing,
-// paragraphAlignment (0xFF = inherit), then the two 32-byte family names
-// ("" = inherit, "\x01" = force built-in -- same encoding as the fields).
-constexpr uint8_t FORMAT_VERSION = 1;
-constexpr size_t PAYLOAD_SIZE = 3 + 4 + 32 + 32;
+// Layout v2: 'B' 'K' version, then fontSize, arabicFontSize, lineSpacing,
+// paragraphAlignment, arabicFontFamily (0xFF = inherit), then the two 32-byte
+// family names ("" = inherit, "\x01" = force built-in -- same encoding as the
+// fields). v1 lacked the arabicFontFamily byte and is still readable.
+constexpr uint8_t FORMAT_VERSION = 2;
+constexpr size_t PAYLOAD_SIZE = 3 + 5 + 32 + 32;
+constexpr size_t V1_PAYLOAD_SIZE = 3 + 4 + 32 + 32;
 
 inline uint8_t sanitizeEnum(const uint8_t v, const uint8_t count) {
   return v < count ? v : CrossPointSettings::BOOK_NO_OVERRIDE;
@@ -38,16 +40,23 @@ inline void applyToSettings(const std::string& bookCachePath) {
   HalFile f;
   if (!Storage.openFileForRead("BKS", bookCachePath + FILE_NAME, f)) return;
   uint8_t buf[PAYLOAD_SIZE];
-  if (f.read(buf, PAYLOAD_SIZE) != static_cast<int>(PAYLOAD_SIZE)) return;
-  if (buf[0] != 'B' || buf[1] != 'K' || buf[2] != FORMAT_VERSION) return;
+  const int got = f.read(buf, PAYLOAD_SIZE);
+  if (buf[0] != 'B' || buf[1] != 'K') return;
+  const bool v1 = buf[2] == 1 && got == static_cast<int>(V1_PAYLOAD_SIZE);
+  const bool v2 = buf[2] == FORMAT_VERSION && got == static_cast<int>(PAYLOAD_SIZE);
+  if (!v1 && !v2) return;
+  const size_t namesAt = v2 ? 8 : 7;
 
   SETTINGS.bookFontSize = sanitizeEnum(buf[3], CrossPointSettings::FONT_SIZE_COUNT);
   SETTINGS.bookArabicFontSize = sanitizeEnum(buf[4], CrossPointSettings::FONT_SIZE_COUNT);
   SETTINGS.bookLineSpacing = sanitizeEnum(buf[5], CrossPointSettings::LINE_COMPRESSION_COUNT);
   SETTINGS.bookParagraphAlignment = sanitizeEnum(buf[6], CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT);
-  memcpy(SETTINGS.bookSdFontFamilyName, buf + 7, sizeof(SETTINGS.bookSdFontFamilyName));
+  if (v2) {
+    SETTINGS.bookArabicFontFamily = sanitizeEnum(buf[7], CrossPointSettings::ARABIC_FONT_FAMILY_COUNT);
+  }
+  memcpy(SETTINGS.bookSdFontFamilyName, buf + namesAt, sizeof(SETTINGS.bookSdFontFamilyName));
   SETTINGS.bookSdFontFamilyName[sizeof(SETTINGS.bookSdFontFamilyName) - 1] = '\0';
-  memcpy(SETTINGS.bookSdArabicFontFamilyName, buf + 7 + 32, sizeof(SETTINGS.bookSdArabicFontFamilyName));
+  memcpy(SETTINGS.bookSdArabicFontFamilyName, buf + namesAt + 32, sizeof(SETTINGS.bookSdArabicFontFamilyName));
   SETTINGS.bookSdArabicFontFamilyName[sizeof(SETTINGS.bookSdArabicFontFamilyName) - 1] = '\0';
 
   if (SETTINGS.hasBookOverrides()) {
@@ -71,8 +80,9 @@ inline bool saveFromSettings(const std::string& bookCachePath) {
   buf[4] = SETTINGS.bookArabicFontSize;
   buf[5] = SETTINGS.bookLineSpacing;
   buf[6] = SETTINGS.bookParagraphAlignment;
-  memcpy(buf + 7, SETTINGS.bookSdFontFamilyName, sizeof(SETTINGS.bookSdFontFamilyName));
-  memcpy(buf + 7 + 32, SETTINGS.bookSdArabicFontFamilyName, sizeof(SETTINGS.bookSdArabicFontFamilyName));
+  buf[7] = SETTINGS.bookArabicFontFamily;
+  memcpy(buf + 8, SETTINGS.bookSdFontFamilyName, sizeof(SETTINGS.bookSdFontFamilyName));
+  memcpy(buf + 8 + 32, SETTINGS.bookSdArabicFontFamilyName, sizeof(SETTINGS.bookSdArabicFontFamilyName));
 
   HalFile f;
   if (!Storage.openFileForWrite("BKS", path, f)) {

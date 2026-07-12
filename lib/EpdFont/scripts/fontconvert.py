@@ -1,5 +1,6 @@
 #!python3
 import zlib
+import unicodedata
 import sys
 import re
 import math
@@ -23,6 +24,8 @@ parser.add_argument("--additional-intervals", dest="additional_intervals", actio
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
+parser.add_argument("--shape-fallback", dest="shape_fallback", action="store_true", help="Synthesize Arabic presentation-form glyphs missing from cmap by shaping the base letters through the font's own OpenType GSUB rules (HarfBuzz). Needed for Quranic fonts (Neirizi, KFGQPC) that only expose contextual forms via GSUB.")
+parser.add_argument("--reposition-marks", dest="reposition_marks", action="store_true", help="Move combining marks (harakat) to fixed above/below-baseline heights. For fonts that anchor marks at the baseline and rely on OpenType GPOS mark attachment, which the firmware renderer doesn't run.")
 parser.add_argument("--script", dest="script", choices=["latin", "arabic"], default="latin", help="Base code point interval set to export. 'latin' (default) is the existing Latin/Cyrillic/etc. set used by all bundled reading fonts. 'arabic' swaps in a minimal set (basic Latin punctuation/digits + Arabic blocks) sized for a dedicated Arabic-only font, not the full multi-script coverage.")
 args = parser.parse_args()
 
@@ -257,6 +260,56 @@ if args.pnum:
         if count > 0:
             print(f"pnum: {count} glyph substitutions from {font_path}", file=sys.stderr)
 
+# --- Presentation-forms fallback via OpenType shaping (--shape-fallback) ---
+# Quranic fonts often omit cmap entries for Arabic Presentation Forms (they map
+# contextual forms only through GSUB, which the firmware's renderer doesn't
+# run). For every presentation-form codepoint missing from the FIRST face's
+# cmap whose Unicode compatibility decomposition is tagged <isolated>/<final>/
+# <initial>/<medial>, shape its base letter(s) with HarfBuzz in the matching
+# join context (ZWJ neighbours) and record the resulting glyph index as a
+# load_glyph() override -- the rest of the pipeline (metrics, rasterization,
+# kerning) then treats it like any cmap-mapped glyph.
+if args.shape_fallback:
+    import unicodedata
+    import uharfbuzz as hb
+
+    _hb_blob = hb.Blob.from_file_path(args.fontstack[0])
+    _hb_font = hb.Font(hb.Face(_hb_blob))
+    ZWJ = "\u200d"
+    _join_context = {
+        "<isolated>": ("", ""),
+        "<final>": (ZWJ, ""),
+        "<initial>": ("", ZWJ),
+        "<medial>": (ZWJ, ZWJ),
+    }
+    _face0 = font_stack[0]
+    _fallback_count = 0
+    for _cp in list(range(0xFB50, 0xFE00)) + list(range(0xFE70, 0xFF00)):
+        if _face0.get_char_index(_cp) > 0:
+            continue
+        _d = unicodedata.decomposition(chr(_cp))
+        if not _d.startswith("<"):
+            continue
+        _tag, _, _rest = _d.partition("> ")
+        _tag += ">"
+        if _tag not in _join_context:
+            continue
+        _base = "".join(chr(int(h, 16)) for h in _rest.split())
+        _pre, _post = _join_context[_tag]
+        _buf = hb.Buffer()
+        _buf.add_str(_pre + _base + _post)
+        _buf.guess_segment_properties()
+        hb.shape(_hb_font, _buf)
+        _base_start, _base_end = len(_pre), len(_pre) + len(_base)
+        _zwj_gid = _hb_font.get_nominal_glyph(0x200D) or -1
+        _gids = [g.codepoint for g in _buf.glyph_infos
+                 if _base_start <= g.cluster < _base_end and g.codepoint not in (0, _zwj_gid)]
+        if len(_gids) != 1:
+            continue  # only single-glyph results are unambiguous (ligatures collapse to one)
+        pnum_glyph_overrides[(0, _cp)] = _gids[0]
+        _fallback_count += 1
+    print(f"shape-fallback: synthesized {_fallback_count} presentation-form glyphs via GSUB", file=sys.stderr)
+
 def load_glyph(code_point):
     face_index = 0
     while face_index < len(font_stack):
@@ -383,6 +436,26 @@ for i_start, i_end in intervals:
 
         pixels = pixels2b if is2Bit else pixelsbw
 
+        # --reposition-marks: GPOS-reliant fonts anchor combining marks at the
+        # baseline; without mark attachment they'd draw on top of the letter
+        # bodies (observed with Neirizi: harakat invisible). Move them to the
+        # fixed heights statically-positioned fonts use: above-marks just over
+        # the tallest letters, below-marks just under the baseline. Targets
+        # are em-relative (Noto Naskh carries fatha at ~0.89 em, kasra just
+        # below baseline).
+        glyph_top = face.glyph.bitmap_top
+        glyph_left = face.glyph.bitmap_left
+        if args.reposition_marks and unicodedata.category(chr(code_point)) == 'Mn':
+            em_px = size * 150 / 72.0
+            below_marks = {0x0650, 0x064D, 0x0655, 0x0656, 0x065C}  # kasra, kasratan, hamza/subscript below
+            if code_point in below_marks:
+                glyph_top = -max(1, round(em_px * 0.05))
+            else:
+                glyph_top = round(em_px * 0.9)
+            # Center the mark roughly over the preceding (RTL: base) glyph
+            # instead of trusting the anchor-relative bearing.
+            glyph_left = -max(0, (bitmap.width + 2))
+
         # Build output data
         packed = bytes(pixels)
         glyph = GlyphProps(
@@ -391,8 +464,8 @@ for i_start, i_end in intervals:
             # We use linearHoriAdvance (16.16 fixed-point, unhinted) instead of
             # advance.x (26.6 fixed-point, grid-fitted to whole pixels by hinter)
             advance_x = fp4_from_ft16_16(face.glyph.linearHoriAdvance),
-            left = face.glyph.bitmap_left,
-            top = face.glyph.bitmap_top,
+            left = glyph_left,
+            top = glyph_top,
             data_length = len(packed),
             data_offset = total_size,
             code_point = code_point,

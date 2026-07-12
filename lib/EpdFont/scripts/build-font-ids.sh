@@ -32,3 +32,9 @@ done
 for size in 12 14 16 18; do
   echo "#define NOTONASKHARABIC_${size}_FONT_ID ($(id_for ./notonaskharabic_${size}_regular.h))"
 done
+for size in 12 14 16 18; do
+  echo "#define AMIRI_${size}_FONT_ID ($(id_for ./amiri_${size}_regular.h))"
+done
+for size in 12 14 16 18; do
+  echo "#define NEIRIZI_${size}_FONT_ID ($(id_for ./neirizi_${size}_regular.h))"
+done

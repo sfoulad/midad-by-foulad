@@ -21,6 +21,9 @@ constexpr StrId kSpacingLabels[CrossPointSettings::LINE_COMPRESSION_COUNT] = {St
                                                                               StrId::STR_WIDE};
 constexpr StrId kAlignLabels[CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT] = {
     StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT, StrId::STR_BOOK_S_STYLE};
+// In CrossPointSettings::ARABIC_FONT_FAMILY order.
+constexpr StrId kArabicBuiltinLabels[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT] = {
+    StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI, StrId::STR_NEIRIZI};
 
 std::vector<std::string> sdFamilyNames(const SdCardFontRegistry& registry) {
   std::vector<std::string> names;
@@ -77,8 +80,10 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainI
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
   }
   items.push_back({MenuAction::FONT_SIZE, StrId::STR_FONT_SIZE_GENERIC});
-  if (!sdFamilies.empty()) {
-    // With built-ins only there is exactly one family per script -- nothing to pick.
+  if (isArabicBook || !sdFamilies.empty()) {
+    // Arabic books always get the row (three built-in Quran-capable families:
+    // Naskh, Amiri, Neirizi); Latin books only when SD families exist, since
+    // Noto Serif is the single built-in serif.
     items.push_back({MenuAction::FONT_NAME, StrId::STR_FONT_NAME});
   }
   items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
@@ -133,9 +138,22 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
                  : I18N.get(kSizeLabels[book]);
     }
     case MenuAction::FONT_NAME: {
-      const char* book = isArabicBook ? SETTINGS.bookSdArabicFontFamilyName : SETTINGS.bookSdFontFamilyName;
-      const char* global = isArabicBook ? SETTINGS.sdArabicFontFamilyName : SETTINGS.sdFontFamilyName;
-      const char* builtin = I18N.get(isArabicBook ? StrId::STR_NOTO_NASKH_ARABIC : StrId::STR_NOTO_SERIF);
+      if (isArabicBook) {
+        const char* book = SETTINGS.bookSdArabicFontFamilyName;
+        const char* global = SETTINGS.sdArabicFontFamilyName;
+        if (book[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
+          return I18N.get(kArabicBuiltinLabels[std::min<uint8_t>(SETTINGS.effArabicFontFamily(),
+                                                                 CrossPointSettings::ARABIC_FONT_FAMILY_COUNT - 1)]);
+        }
+        if (book[0] != '\0') return book;
+        return globalLabel(global[0] != '\0'
+                               ? global
+                               : I18N.get(kArabicBuiltinLabels[std::min<uint8_t>(
+                                     SETTINGS.arabicFontFamily, CrossPointSettings::ARABIC_FONT_FAMILY_COUNT - 1)]));
+      }
+      const char* book = SETTINGS.bookSdFontFamilyName;
+      const char* global = SETTINGS.sdFontFamilyName;
+      const char* builtin = I18N.get(StrId::STR_NOTO_SERIF);
       if (book[0] == '\0') return globalLabel(global[0] != '\0' ? global : builtin);
       if (book[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) return builtin;
       return book;
@@ -194,12 +212,59 @@ void EpubReaderMenuActivity::openSettingEditor(const MenuAction action) {
                     SETTINGS.bookLineSpacing, SETTINGS.lineSpacing);
       break;
     case MenuAction::FONT_NAME: {
-      // Option 0 = Global, 1 = built-in family, 2+ = SD families (script-appropriate).
-      char* field = isArabicBook ? SETTINGS.bookSdArabicFontFamilyName : SETTINGS.bookSdFontFamilyName;
-      const size_t fieldSize =
-          isArabicBook ? sizeof(SETTINGS.bookSdArabicFontFamilyName) : sizeof(SETTINGS.bookSdFontFamilyName);
-      const char* global = isArabicBook ? SETTINGS.sdArabicFontFamilyName : SETTINGS.sdFontFamilyName;
-      const StrId builtinLabel = isArabicBook ? StrId::STR_NOTO_NASKH_ARABIC : StrId::STR_NOTO_SERIF;
+      if (isArabicBook) {
+        // Option 0 = Global, 1..N = built-in families (Naskh/Amiri/Neirizi),
+        // N+1.. = SD families. Built-in picks set BOTH the forced-builtin
+        // marker and the per-book family index.
+        constexpr int builtinCount = CrossPointSettings::ARABIC_FONT_FAMILY_COUNT;
+        const char* global = SETTINGS.sdArabicFontFamilyName;
+        std::vector<std::string> options;
+        options.reserve(sdFamilies.size() + 1 + builtinCount);
+        options.push_back(globalLabel(global[0] != '\0'
+                                          ? global
+                                          : I18N.get(kArabicBuiltinLabels[std::min<uint8_t>(
+                                                SETTINGS.arabicFontFamily, builtinCount - 1)])));
+        for (int i = 0; i < builtinCount; i++) options.push_back(I18N.get(kArabicBuiltinLabels[i]));
+        options.insert(options.end(), sdFamilies.begin(), sdFamilies.end());
+
+        int current = 0;
+        if (SETTINGS.bookSdArabicFontFamilyName[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
+          current = 1 + std::min<uint8_t>(SETTINGS.effArabicFontFamily(), builtinCount - 1);
+        } else if (SETTINGS.bookSdArabicFontFamilyName[0] != '\0') {
+          for (size_t i = 0; i < sdFamilies.size(); i++) {
+            if (sdFamilies[i] == SETTINGS.bookSdArabicFontFamilyName) {
+              current = static_cast<int>(1 + builtinCount + i);
+              break;
+            }
+          }
+        }
+
+        optionPopup.show(StrId::STR_FONT_NAME, options, current, [this](const int idx) {
+          constexpr int builtins = CrossPointSettings::ARABIC_FONT_FAMILY_COUNT;
+          char newName[32] = "";
+          uint8_t newFamily = CrossPointSettings::BOOK_NO_OVERRIDE;
+          if (idx >= 1 && idx <= builtins) {
+            newName[0] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
+            newFamily = static_cast<uint8_t>(idx - 1);
+          } else if (idx > builtins && idx - 1 - builtins < static_cast<int>(sdFamilies.size())) {
+            setBookFamily(newName, sizeof(newName), sdFamilies[idx - 1 - builtins].c_str());
+          }
+          if (strncmp(SETTINGS.bookSdArabicFontFamilyName, newName, sizeof(SETTINGS.bookSdArabicFontFamilyName)) != 0 ||
+              SETTINGS.bookArabicFontFamily != newFamily) {
+            setBookFamily(SETTINGS.bookSdArabicFontFamilyName, sizeof(SETTINGS.bookSdArabicFontFamilyName), newName);
+            SETTINGS.bookArabicFontFamily = newFamily;
+            bookSettingsChanged = true;
+          }
+          requestUpdate();
+        });
+        break;
+      }
+
+      // Latin: option 0 = Global, 1 = built-in Noto Serif, 2+ = SD families.
+      char* field = SETTINGS.bookSdFontFamilyName;
+      const size_t fieldSize = sizeof(SETTINGS.bookSdFontFamilyName);
+      const char* global = SETTINGS.sdFontFamilyName;
+      const StrId builtinLabel = StrId::STR_NOTO_SERIF;
 
       std::vector<std::string> options;
       options.reserve(sdFamilies.size() + 2);
