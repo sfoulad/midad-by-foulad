@@ -655,9 +655,10 @@ void loop() {
     const unsigned long nowMs = millis();
     if (nowMs - lastSleepDiagLogMs >= 3000) {
       lastSleepDiagLogMs = nowMs;
-      char buf[128];
-      snprintf(buf, sizeof(buf), "%lu pressed=%d released=%d tilt=%d activityBlock=%d", nowMs, anyPressed,
-                anyReleased, tiltActivity, blockedByActivity);
+      char buf[160];
+      snprintf(buf, sizeof(buf), "%lu pressed=%d released=%d tilt=%d activityBlock=%d activity=%s", nowMs, anyPressed,
+                anyReleased, tiltActivity, blockedByActivity,
+                blockedByActivity ? activityManager.currentActivityDebugName() : "-");
       SleepDiagLog::append(buf);
     }
   }

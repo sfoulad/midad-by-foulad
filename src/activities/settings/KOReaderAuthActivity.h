@@ -18,6 +18,7 @@ class KOReaderAuthActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return state == CONNECTING || state == AUTHENTICATING; }
+  const char* activityDebugName() const override { return "KOReaderAuthActivity"; }
 
  private:
   enum State { WIFI_SELECTION, CONNECTING, AUTHENTICATING, SUCCESS, FAILED };

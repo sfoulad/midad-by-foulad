@@ -458,6 +458,55 @@ bool parseSurahMedallionMarker(const char* text, uint32_t* digits, int& digitCou
 int surahMedallionDiameter(const GfxRenderer& renderer, const int arabicFontId) {
   return renderer.getFontAscenderSize(arabicFontId);
 }
+
+// Surah-name marker: the surah NAME wrapped in U+E002/U+E003 Private Use Area
+// sentinels (see tools/quran/build_quran_epub.py) -- another build-tool-controlled
+// pair, like the surah-medallion marker above, so it can never collide with real
+// book text. Unlike the fixed-digit markers, the wrapped payload is arbitrary-length
+// (the name itself), so this returns the inner UTF-8 slice rather than parsed digits.
+// Renders as a code-drawn cartouche: a pointed horizontal band styled after the
+// mushaf's illuminated surah-heading banner, replacing the plain
+// flanked-by-glyph text this line used before.
+bool parseCartoucheMarker(const char* text, std::string& inner) {
+  // U+E002 = EE 80 82, U+E003 = EE 80 83.
+  const auto* p = reinterpret_cast<const uint8_t*>(text);
+  if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x82) return false;
+  const char* innerStart = text + 3;
+  const size_t len = strlen(innerStart);
+  if (len < 3) return false;
+  const auto* tail = reinterpret_cast<const uint8_t*>(innerStart + len - 3);
+  if (tail[0] != 0xEE || tail[1] != 0x80 || tail[2] != 0x83) return false;
+  inner.assign(innerStart, len - 3);
+  return true;
+}
+
+// Geometry shared by the render and width-measurement branches below -- must agree
+// exactly, like surahMedallionDiameter above. `tip` is the length of the pointed
+// cusp at each end, `pad` the gap between the name text and where the flat top/
+// bottom edges begin.
+struct CartoucheGeometry {
+  int height;
+  int tip;
+  int pad;
+  int width;
+};
+CartoucheGeometry cartoucheGeometryFor(const int ascender, const int innerTextWidth) {
+  CartoucheGeometry g;
+  g.height = ascender + ascender / 4;
+  g.tip = g.height / 2;
+  g.pad = g.height / 4;
+  g.width = innerTextWidth + 2 * g.pad + 2 * g.tip;
+  return g;
+}
+
+// ChapterHtmlSlimParser tokenizes on any whitespace byte -- including U+00A0/U+202F
+// no-break spaces -- splitting a multi-word name across separate drawArabicText()
+// calls before the cartouche sentinels could ever be seen together. The build tool
+// replaces spaces inside the name with this PUA sentinel instead (not whitespace to
+// that tokenizer), and both branches below render it as a fixed-width gap rather than
+// looking it up as a font glyph.
+constexpr uint32_t CARTOUCHE_SPACE_CP = 0xE004;
+int cartoucheSpaceWidth(const int ascender) { return ascender / 3; }
 }  // namespace
 
 int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
@@ -493,6 +542,25 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     int digitCount = 0;
     if (parseSurahMedallionMarker(text, digits, digitCount)) {
       return surahMedallionDiameter(*this, resolveArabicFontId(fontId));
+    }
+  }
+
+  // Surah-name cartouches lay out at the code-drawn banner's full width (padding +
+  // pointed tips included) -- must match drawArabicText's cartouche branch exactly.
+  {
+    std::string inner;
+    if (parseCartoucheMarker(text, inner)) {
+      const int ascender = getFontAscenderSize(resolveArabicFontId(fontId));
+      int innerWidth = 0;
+      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str())) {
+        if (cp == CARTOUCHE_SPACE_CP) {
+          innerWidth += cartoucheSpaceWidth(ascender);
+          continue;
+        }
+        const EpdGlyph* glyph = font.getGlyph(cp, style);
+        if (glyph) innerWidth += fp4::toPixel(glyph->advanceX);
+      }
+      return cartoucheGeometryFor(ascender, innerWidth).width;
     }
   }
 
@@ -612,6 +680,50 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
         if (!g) continue;
         renderCharScaled(*this, renderMode, font, digits[i], dx, digitY, /*pixelState=*/false, style);
         dx += fp4::toPixel(g->advanceX) / 2;
+      }
+      return;
+    }
+  }
+
+  // Surah-name cartouches: a code-drawn pointed banner (six-line hexagon outline,
+  // never a font glyph or image) with the surah name centered inside, styled after
+  // the mushaf's illuminated surah-heading banner. Geometry must match
+  // getArabicTextWidth's cartouche branch exactly (layout vs render).
+  {
+    std::string inner;
+    if (parseCartoucheMarker(text, inner)) {
+      const int ascender = getFontAscenderSize(resolvedArabicFontId);
+      int innerWidth = 0;
+      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str())) {
+        if (cp == CARTOUCHE_SPACE_CP) {
+          innerWidth += cartoucheSpaceWidth(ascender);
+          continue;
+        }
+        const EpdGlyph* glyph = font.getGlyph(cp, style);
+        if (glyph) innerWidth += fp4::toPixel(glyph->advanceX);
+      }
+      const CartoucheGeometry g = cartoucheGeometryFor(ascender, innerWidth);
+      const int top = yPos - g.height + g.height / 6;
+      const int midY = top + g.height / 2;
+      constexpr int kLineWidth = 2;
+      // Six-point outline: flat top/bottom edges with a pointed cusp at each end.
+      drawLine(x + g.tip, top, x + g.width - g.tip, top, kLineWidth, true);
+      drawLine(x + g.width - g.tip, top, x + g.width, midY, kLineWidth, true);
+      drawLine(x + g.width, midY, x + g.width - g.tip, top + g.height, kLineWidth, true);
+      drawLine(x + g.width - g.tip, top + g.height, x + g.tip, top + g.height, kLineWidth, true);
+      drawLine(x + g.tip, top + g.height, x, midY, kLineWidth, true);
+      drawLine(x, midY, x + g.tip, top, kLineWidth, true);
+
+      int cursorX = x + (g.width - innerWidth) / 2;
+      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str())) {
+        if (cp == CARTOUCHE_SPACE_CP) {
+          cursorX += cartoucheSpaceWidth(ascender);
+          continue;
+        }
+        const EpdGlyph* glyph = font.getGlyph(cp, style);
+        if (!glyph) continue;
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, cursorX, yPos, black, style);
+        cursorX += fp4::toPixel(glyph->advanceX);
       }
       return;
     }

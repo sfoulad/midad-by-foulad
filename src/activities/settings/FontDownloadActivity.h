@@ -41,6 +41,7 @@ class FontDownloadActivity : public Activity {
            // during downloading.
            state_ == COMPLETE || state_ == ERROR;
   }
+  const char* activityDebugName() const override { return "FontDownloadActivity"; }
   bool skipLoopDelay() override { return true; }
 
  private:

@@ -35,6 +35,7 @@ class SdFirmwareUpdateActivity : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return state == State::UPDATING || state == State::VALIDATING; }
+  const char* activityDebugName() const override { return "SdFirmwareUpdateActivity"; }
   bool skipLoopDelay() override { return state == State::UPDATING; }
 
  private:

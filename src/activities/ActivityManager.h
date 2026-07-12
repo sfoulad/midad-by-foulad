@@ -114,6 +114,7 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  const char* currentActivityDebugName() const;
   bool isReaderActivity() const;
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

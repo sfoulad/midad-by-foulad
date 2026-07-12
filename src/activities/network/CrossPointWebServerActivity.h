@@ -69,4 +69,5 @@ class CrossPointWebServerActivity final : public Activity {
   void render(RenderLock&&) override;
   bool skipLoopDelay() override { return webServer && webServer->isRunning(); }
   bool preventAutoSleep() override { return webServer && webServer->isRunning(); }
+  const char* activityDebugName() const override { return "CrossPointWebServerActivity"; }
 };

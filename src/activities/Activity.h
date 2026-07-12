@@ -43,6 +43,9 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // Class name for diagnostics only (e.g. SleepDiagLog, when preventAutoSleep() is
+  // true) -- a literal per override, not RTTI, so it stays meaningful after mangling.
+  virtual const char* activityDebugName() const { return "Activity"; }
   virtual bool isReaderActivity() const { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 

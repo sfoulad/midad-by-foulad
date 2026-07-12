@@ -66,9 +66,12 @@ def transform_html(text: str, surah: int | None = None) -> str:
     #      marker's rosette-glyph medallion (filled disc, inverted digits)
     #      and deliberately NOT sharing a line with the name, per explicit
     #      user direction.
-    #   2. The surah NAME, centered, flanked by U+06DE RUB EL HIZB -- an
-    #      authentic Quranic manuscript section-marker glyph Amiri renders
-    #      natively.
+    #   2. The surah NAME, centered inside a code-drawn cartouche -- a pointed
+    #      horizontal banner (GfxRenderer::drawArabicText's cartouche branch,
+    #      triggered by wrapping the name in U+E002/U+E003 -- Private Use Area
+    #      sentinels this tool fully controls) styled after the illuminated
+    #      surah-heading banner in the reference mushaf, replacing the plain
+    #      U+06DE-flanked text used before.
     if surah is not None:
         surah_marker = "\ue000" + arabic_digits(str(surah)) + "\ue001"
 
@@ -76,9 +79,16 @@ def transform_html(text: str, surah: int | None = None) -> str:
             toc_id = m.group(1)
             inner = m.group(2)
             name = re.sub(r"^\d+-\s*", "", inner)  # strip the leading "N- " the source writes
+            # ChapterHtmlSlimParser tokenizes on ANY whitespace -- even U+00A0/U+202F
+            # no-break spaces -- splitting the name across separate drawArabicText()
+            # calls (one per word) so the cartouche sentinels would never arrive
+            # together. U+E004 isn't whitespace to that tokenizer, so it keeps the
+            # whole marker as one token; GfxRenderer's cartouche branch renders it
+            # as a fixed-width gap instead of a font glyph (see parseCartoucheMarker).
+            cartouche_name = name.replace(" ", "\ue004")
             return (
                 f'<p class="block_2" dir="rtl" id="{toc_id}" style="text-align: right">{surah_marker}</p>'
-                f'<h1 class="block_2" dir="rtl">\u06de {name} \u06de</h1>'
+                f'<h1 class="block_2" dir="rtl">\ue002{cartouche_name}\ue003</h1>'
             )
 
         text = re.sub(

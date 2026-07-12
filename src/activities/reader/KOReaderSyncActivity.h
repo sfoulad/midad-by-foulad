@@ -41,6 +41,7 @@ class KOReaderSyncActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool preventAutoSleep() override { return state == CONNECTING || state == SYNCING; }
+  const char* activityDebugName() const override { return "KOReaderSyncActivity"; }
 
  private:
   enum State {

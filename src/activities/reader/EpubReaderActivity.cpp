@@ -1468,11 +1468,21 @@ namespace {
 // log with every ordinary ~50-80ms turn) so the next report can tell chapter-open cost apart
 // from per-page-turn cost/leakage.
 constexpr unsigned long SLOW_PAGE_TURN_MS = 150;
-void logSlowPageTurn(unsigned long t0, unsigned long tEnd, int spineIndex, const std::string& title) {
+// prewarm/bw_render/display are common to all three renderContents() exit paths (tiled
+// strip grayscale, non-strip grayscale, and no-AA/no-images); everything after display
+// (grayscale planes + cleanup, when present) is lumped into "rest" so one signature
+// covers all three call sites without duplicating per-path breakdown fields. The
+// simulator's host-filesystem "SD" access is far faster than a real microSD card, so a
+// stall here (e.g. hundreds of per-glyph decompressions each doing a real SD read)
+// never showed up in simulator testing -- this is the only way to see which phase a
+// real multi-second turn is actually spending time in.
+void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBwRender, unsigned long tDisplay,
+                     unsigned long tEnd, int spineIndex, const std::string& title) {
   const unsigned long total = tEnd - t0;
   if (total < SLOW_PAGE_TURN_MS) return;
-  char buf[192];
-  snprintf(buf, sizeof(buf), "%lu turn spine=%d total=%lums heap=%u \"%s\"", millis(), spineIndex, total,
+  char buf[224];
+  snprintf(buf, sizeof(buf), "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u \"%s\"",
+           millis(), spineIndex, tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - tDisplay, total,
            (unsigned)ESP.getFreeHeap(), title.c_str());
   ReaderPerfLog::append(buf);
 }
@@ -1592,7 +1602,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tEnd, currentSpineIndex, epub->getTitle());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle());
     }
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
@@ -1635,14 +1645,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_lsb=%lums gray_msb=%lums gray_display=%lums bw_restore=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tEnd, currentSpineIndex, epub->getTitle());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle());
     } else {
       // No text AA and no images: BW frame already displayed above, no grayscale
       // to render, so no save/restore.
       const auto tEnd = millis();
       LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
-      logSlowPageTurn(t0, tEnd, currentSpineIndex, epub->getTitle());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle());
     }
   }
 }

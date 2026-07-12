@@ -164,4 +164,5 @@ class OpdsBookBrowserActivity final : public Activity {
   // eBooks/OPDS stayed the foreground activity, even fully idle -- a real
   // battery-drain path (user report).
   bool preventAutoSleep() override { return state == BrowserState::LOADING || state == BrowserState::DOWNLOADING; }
+  const char* activityDebugName() const override { return "OpdsBookBrowserActivity"; }
 };

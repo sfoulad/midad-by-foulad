@@ -1,5 +1,6 @@
 #include "EpubReaderMenuActivity.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 
@@ -466,19 +467,34 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
 
   const int itemCount = activeItemCount();
   const int index = view == View::MORE ? moreSelectedIndex : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
-  if (view == View::CHAPTERS) {
-    GUI.drawList(renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index, [this](int i) {
-      auto item = epub->getTocItem(i);
-      std::string indent((item.level - 1) * 2, ' ');
-      return indent + item.title;
-    });
-  } else {
-    const auto& items = activeItems();
-    GUI.drawList(
-        renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index,
-        [&items](int i) { return std::string(I18N.get(items[i].labelId)); }, nullptr, nullptr,
-        [this, &items](int i) { return valueLabel(items[i].action); }, true);
+  // The chapter list draws Arabic surah titles through the same compressed-font path
+  // as the reader page, but -- unlike renderContents() -- never prewarmed them, so
+  // every row hit FontDecompressor's slow per-glyph hot-group fallback on every
+  // redraw (moving the selection redraws the visible rows each time). Scan the rows
+  // once, prewarm, then draw for real -- the same two-pass pattern the reader already
+  // uses. Harmless (nearly free) for the non-Arabic View::MORE/settings branch too.
+  auto* fcm = renderer.getFontCacheManager();
+  auto renderRows = [&](FontCacheManager::PrewarmScope* scope) {
+    if (view == View::CHAPTERS) {
+      GUI.drawList(renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index, [this](int i) {
+        auto item = epub->getTocItem(i);
+        std::string indent((item.level - 1) * 2, ' ');
+        return indent + item.title;
+      });
+    } else {
+      const auto& items = activeItems();
+      GUI.drawList(
+          renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index,
+          [&items](int i) { return std::string(I18N.get(items[i].labelId)); }, nullptr, nullptr,
+          [this, &items](int i) { return valueLabel(items[i].action); }, true);
+    }
+    if (scope) scope->endScanAndPrewarm();
+  };
+  if (fcm) {
+    auto scope = fcm->createPrewarmScope();
+    renderRows(&scope);  // scan pass: drawList's internal drawText calls just record text
   }
+  renderRows(nullptr);  // real draw pass
 
   // Footer / Hints
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
