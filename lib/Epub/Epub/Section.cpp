@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <HalStorage.h>
+#include <ScriptDetector.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <Serialization.h>
@@ -759,7 +760,19 @@ std::string Section::getTextFromSectionFile() {
         const auto& line = static_cast<const PageLine&>(*el);
         if (line.getBlock()) {
           const auto& block = *line.getBlock();
-          for (uint16_t i = 0; i < block.wordCount(); i++) {
+          // Laid-out RTL lines store their words in VISUAL order (already
+          // reversed for right-to-left drawing). Text extracted here gets
+          // re-shaped/re-ordered wherever it's displayed (e.g. the bookmark
+          // list), which reversed Arabic word order a second time -- snippets
+          // read backwards. Walk Arabic lines in reverse to restore logical
+          // order; the display-side bidi pass then reproduces the right visual
+          // order on its own.
+          bool lineHasArabic = false;
+          for (uint16_t i = 0; i < block.wordCount() && !lineHasArabic; i++) {
+            lineHasArabic = ScriptDetector::containsArabic(block.wordText(i));
+          }
+          for (uint16_t n = 0; n < block.wordCount(); n++) {
+            const uint16_t i = lineHasArabic ? static_cast<uint16_t>(block.wordCount() - 1 - n) : n;
             if (!fullText.empty()) fullText += " ";
             fullText += block.wordText(i);
           }
