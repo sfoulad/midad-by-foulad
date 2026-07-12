@@ -569,6 +569,15 @@ void loop() {
   gpio.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
+#ifdef SIMULATOR
+  // The simulator's S key requests a simulated deep sleep (see the simulator
+  // library's HalGPIO); the firmware has to consume it -- exercises the real
+  // SleepActivity render path on the desktop.
+  if (gpio.consumeSimulatorSleepRequest()) {
+    enterDeepSleep();
+  }
+#endif
+
   renderer.setFadingFix(SETTINGS.fadingFix);
 
   if (Serial && millis() - lastMemPrint >= 10000) {

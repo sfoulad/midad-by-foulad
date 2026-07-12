@@ -37,6 +37,7 @@ void SleepActivity::onEnter() {
     GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
   }
 
+  LOG_INF("SLP", "Sleep screen mode=%u fromReader=%d", SETTINGS.sleepScreen, (int)APP_STATE.lastSleepFromReader);
   switch (SETTINGS.sleepScreen) {
     case (CrossPointSettings::SLEEP_SCREEN_MODE::BLANK):
       return renderBlankSleepScreen();
