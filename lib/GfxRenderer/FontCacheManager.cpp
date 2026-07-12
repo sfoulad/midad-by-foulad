@@ -96,7 +96,19 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
-  if (manager_->scanText_.empty()) return;
+  // NOT scanText_.empty() alone: a page that's entirely Arabic (the Quran; any
+  // fully-Arabic book with no incidental Latin digits/punctuation on the page) never
+  // calls recordText(), so scanText_ stays empty even though scanArabicText_ is full.
+  // The old check returned here before EVER reaching the Arabic prewarmCache() call
+  // below -- meaning prewarm silently never ran at all for such a page, every single
+  // glyph fell through to the slow per-glyph hot-group fallback for the entire
+  // render, and every earlier fix to WHAT got recorded (or how fast a miss was
+  // handled) was moot because prewarmCache() was never being invoked in the first
+  // place. Real-device evidence: a mixed-script Arabic novel (incidental Latin
+  // content keeps scanText_ non-empty) hit ~90%; the Quran (deliberately zero Latin
+  // anywhere, including Arabic-Indic page/ayah numbers) hit ~15%, every page, no
+  // matter which other fix landed.
+  if (manager_->scanText_.empty() && manager_->scanArabicText_.empty()) return;
 
   // Build style bitmask from all styles that appeared during the scan
   uint8_t styleMask = 0;
@@ -105,7 +117,9 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   }
   if (styleMask == 0) styleMask = 1;  // default to regular
 
-  manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
+  if (!manager_->scanText_.empty()) {
+    manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
+  }
   if (manager_->scanArabicFontId_ >= 0 && !manager_->scanArabicText_.empty()) {
     // Arabic reading text is always REGULAR style.
     manager_->prewarmCache(manager_->scanArabicFontId_, manager_->scanArabicText_.c_str(), 0x01);

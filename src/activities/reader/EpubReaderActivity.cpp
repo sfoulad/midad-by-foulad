@@ -1482,14 +1482,22 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
   const unsigned long total = tEnd - t0;
   if (total < SLOW_PAGE_TURN_MS) return;
   // Cache hits/misses/decompress time: PrewarmScope resets these at the top of every
-  // page render, so this reflects just this one page -- lets the next report say
-  // definitively whether a slow bw_render is still landing in the hot-group fallback
-  // (misses > 0) rather than needing another guess.
-  char statsPart[96] = "";
+  // page render, so this reflects just this one page. hits+misses were still ~500 vs
+  // ~90 hits on the Quran even after fixing the marker scan/render mismatch, while a
+  // plain Arabic novel on the same device hit ~90%: the gap is too big to be markers
+  // alone (a page has a few dozen ayah numbers at most, not hundreds of missed
+  // glyphs). prewarm_glyphs (how many DISTINCT glyphs the batched prewarm pass
+  // actually cached for this page, from pageGlyphsBytes/12 -- PageGlyphEntry is 12
+  // bytes) says whether the scan pass is only capturing a small fraction of the
+  // page's text in the first place, upstream of anything getBitmap() does.
+  char statsPart[160] = "";
   if (decompressor) {
     const auto& s = decompressor->getStats();
-    snprintf(statsPart, sizeof(statsPart), " hits=%lu misses=%lu decomp=%lums calls=%lu", (unsigned long)s.cacheHits,
-             (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs, (unsigned long)s.getBitmapCalls);
+    snprintf(statsPart, sizeof(statsPart),
+             " hits=%lu misses=%lu decomp=%lums calls=%lu prewarm_glyphs=%lu prewarm_bytes=%lu prewarm_groups=%u",
+             (unsigned long)s.cacheHits, (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs,
+             (unsigned long)s.getBitmapCalls, (unsigned long)(s.pageGlyphsBytes / 12), (unsigned long)s.pageBufferBytes,
+             (unsigned)s.uniqueGroupsAccessed);
   }
   char buf[288];
   snprintf(buf, sizeof(buf),
