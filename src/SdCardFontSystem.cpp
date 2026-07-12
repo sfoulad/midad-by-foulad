@@ -8,9 +8,20 @@
 namespace {
 
 static uint8_t fontSizeEnumFromSettings() {
-  uint8_t e = SETTINGS.fontSize;
+  uint8_t e = SETTINGS.effFontSize();  // per-book override wins when set
   if (e >= CrossPointSettings::FONT_SIZE_COUNT) e = 1;  // default to MEDIUM
   return e;
+}
+
+// A family failed to load / disappeared: clear whichever setting asked for it.
+// A bad per-book override must not wipe the user's global font choice.
+static void clearWantedFamily() {
+  if (SETTINGS.bookSdFontFamilyName[0] != '\0') {
+    SETTINGS.bookSdFontFamilyName[0] = '\0';
+  } else {
+    SETTINGS.sdFontFamilyName[0] = '\0';
+    SETTINGS.saveToFile();
+  }
 }
 
 }  // namespace
@@ -57,7 +68,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     registry_.discover();
   }
 
-  const char* wantedFamily = SETTINGS.sdFontFamilyName;
+  // eff* so per-book overrides win (see CrossPointSettings per-book block).
+  const char* wantedFamily = SETTINGS.effSdFontFamilyName();
   const std::string& currentFamily = manager_.currentFamilyName();
   const uint8_t sizeEnum = fontSizeEnumFromSettings();
 
@@ -77,8 +89,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     if (!family) {
       LOG_DBG("SDFS", "SD font family disappeared: %s (clearing)", wantedFamily);
       manager_.unloadAll(renderer);
-      SETTINGS.sdFontFamilyName[0] = '\0';
-      SETTINGS.saveToFile();
+      clearWantedFamily();
       return;
     }
     const auto* selected = family->findClosestReaderSize(sizeEnum);
@@ -98,13 +109,11 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
       LOG_DBG("SDFS", "Loaded SD font family: %s", wantedFamily);
     } else {
       LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", wantedFamily);
-      SETTINGS.sdFontFamilyName[0] = '\0';
-      SETTINGS.saveToFile();
+      clearWantedFamily();
     }
   } else {
     LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
-    SETTINGS.sdFontFamilyName[0] = '\0';
-    SETTINGS.saveToFile();
+    clearWantedFamily();
   }
 }
 

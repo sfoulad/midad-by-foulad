@@ -17,6 +17,8 @@
 #include <iterator>
 #include <limits>
 
+#include "ArabicFontSystem.h"
+#include "BookSettingsActivity.h"
 #include "BookmarkEntry.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -32,8 +34,10 @@
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookReaderSettings.h"
 #include "util/BookmarkUtil.h"
 #include "util/ScreenshotUtil.h"
 
@@ -161,6 +165,15 @@ void EpubReaderActivity::onEnter() {
 
   epub->setupCacheDir();
 
+  // Per-book reading overrides: load this book's sidecar into SETTINGS.book*
+  // (cleared again in onExit). ReaderActivity already ensured the GLOBAL fonts,
+  // so the font systems only need a second pass when this book overrides them.
+  BookReaderSettings::applyToSettings(epub->getCachePath());
+  if (SETTINGS.hasBookOverrides()) {
+    sdFontSystem.ensureLoaded(renderer);
+    arabicFontSystem.ensureLoaded(renderer);
+  }
+
   HalFile f;
   if (Storage.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
     uint8_t data[6];
@@ -251,6 +264,15 @@ void EpubReaderActivity::onExit() {
     moveFinishedBookToReadFolder(srcPath, dstPath, oldCachePath);
   } else {
     epub.reset();
+  }
+
+  // Drop this book's per-book overrides so the rest of the UI (and the next
+  // book) resolves the global settings again. Cheap when the book had none:
+  // ensureLoaded no-ops when the wanted family/size is already loaded.
+  if (SETTINGS.hasBookOverrides()) {
+    SETTINGS.clearBookOverrides();
+    sdFontSystem.ensureLoaded(renderer);
+    arabicFontSystem.ensureLoaded(renderer);
   }
 }
 
@@ -740,6 +762,9 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
           if (!saveProgress(backupSpine, backupPage, backupPageCount)) {
             LOG_ERR("ERS", "Failed to save progress before cache clear");
           }
+          // The per-book settings sidecar lived in the cleared cache dir; the
+          // overrides are still in RAM, so re-persist them like progress above.
+          BookReaderSettings::saveFromSettings(epub->getCachePath());
         }
       }
       onGoHome();
@@ -765,6 +790,35 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::TOGGLE_BOOKMARK: {
       addBookmark();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::BOOK_SETTINGS: {
+      startActivityForResult(std::make_unique<BookSettingsActivity>(renderer, mappedInput),
+                             [this](const ActivityResult& result) {
+                               const auto* bookSettings = std::get_if<BookSettingsResult>(&result.data);
+                               if (!bookSettings || !bookSettings->changed || !epub) {
+                                 requestUpdate();
+                                 return;
+                               }
+                               BookReaderSettings::saveFromSettings(epub->getCachePath());
+                               {
+                                 // Same mid-book re-layout dance as applyOrientation(): preserve the
+                                 // position, reload the font systems for the new per-book values, and
+                                 // reset the section -- the changed fontId/arabicFontId/lineCompression/
+                                 // alignment in the section cache key forces a rebuild, and
+                                 // applyDeferredReposition() remaps the page once the count is known.
+                                 RenderLock lock(*this);
+                                 if (section) {
+                                   cachedSpineIndex = currentSpineIndex;
+                                   cachedChapterTotalPageCount = section->pageCount;
+                                   nextPageNumber = section->currentPage;
+                                 }
+                                 sdFontSystem.ensureLoaded(renderer);
+                                 arabicFontSystem.ensureLoaded(renderer);
+                                 section.reset();
+                               }
+                               requestUpdate();
+                             });
       break;
     }
   }
@@ -1055,7 +1109,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // pages are deterministic) and finalizes, so the partial machinery retires itself.
     const bool cacheLoaded = section->loadSectionFile(
         SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
-        SETTINGS.paragraphAlignment, viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
+        SETTINGS.effParagraphAlignment(), viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
         SETTINGS.imageRendering, SETTINGS.focusReadingEnabled);
     if (cacheLoaded) {
       // Matching render params means identical pagination, so the saved page number is valid
@@ -1104,7 +1158,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         pagesUntilFullRefresh = 1;
         const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
         if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                        SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
+                                        SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
                                         viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
                                         SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, popupFn)) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
@@ -1146,7 +1200,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           pagesUntilFullRefresh = 1;
         }
         if (!section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                 SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth,
+                                 SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
                                  viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
                                  SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
           LOG_ERR("ERS", "Failed to start section build");
@@ -1211,7 +1265,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // Start a build to extend a partial toward the requested page.
     if (!section->isBuilding() &&
         !section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                             SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment, viewportWidth, viewportHeight,
+                             SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth, viewportHeight,
                              SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
                              SETTINGS.focusReadingEnabled)) {
       LOG_ERR("ERS", "Failed to start partial extension build");

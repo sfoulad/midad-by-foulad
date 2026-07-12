@@ -269,9 +269,10 @@ bool CrossPointSettings::loadFromBinaryFile() {
 }
 
 float CrossPointSettings::getReaderLineCompression() const {
-  // SD card fonts use same compression as Bookerly (the most neutral values)
-  if (sdFontFamilyName[0] != '\0') {
-    switch (lineSpacing) {
+  // eff* so per-book overrides win. (Both branches use identical values today;
+  // the split predates the fork and is kept for upstream-merge friendliness.)
+  if (effSdFontFamilyName()[0] != '\0') {
+    switch (effLineSpacing()) {
       case TIGHT:
         return 0.95f;
       case NORMAL:
@@ -282,7 +283,7 @@ float CrossPointSettings::getReaderLineCompression() const {
     }
   }
 
-  switch (lineSpacing) {
+  switch (effLineSpacing()) {
     case TIGHT:
       return 0.95f;
     case NORMAL:
@@ -317,14 +318,16 @@ int CrossPointSettings::getRefreshFrequency() const {
 }
 
 int CrossPointSettings::getReaderFontId() const {
-  // Check SD card font first
-  if (sdFontFamilyName[0] != '\0' && sdFontIdResolver) {
-    int id = sdFontIdResolver(sdFontResolverCtx, sdFontFamilyName, fontSize);
+  // Check SD card font first (eff* so a per-book override wins -- see the
+  // per-book overrides block in CrossPointSettings.h)
+  const char* sdFamily = effSdFontFamilyName();
+  if (sdFamily[0] != '\0' && sdFontIdResolver) {
+    int id = sdFontIdResolver(sdFontResolverCtx, sdFamily, effFontSize());
     if (id != 0) return id;
     // Fall through to built-in if SD font not found
   }
 
-  switch (fontSize) {
+  switch (effFontSize()) {
     case SMALL:
       return NOTOSERIF_12_FONT_ID;
     case MEDIUM:

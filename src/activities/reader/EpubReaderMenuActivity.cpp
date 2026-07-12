@@ -22,8 +22,9 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes,
                                                                                      bool hasBookmarks) {
   std::vector<MenuItem> items;
-  items.reserve(12);
+  items.reserve(13);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+  items.push_back({MenuAction::BOOK_SETTINGS, StrId::STR_BOOK_SETTINGS});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
@@ -101,13 +102,22 @@ void EpubReaderMenuActivity::loop() {
 void EpubReaderMenuActivity::render(RenderLock&&) {
   if (optionPopup.processRender(renderer, mappedInput)) return;
 
-  renderer.clearScreen();
-
   auto metrics = UITheme::getInstance().getMetrics();
   Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
 
-  GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
-                 title.c_str());
+  // Bottom drawer over the live page: no clearScreen -- the reader's page is
+  // still in the framebuffer, so its top stays visible above the drawer. The
+  // list paginates inside the drawer when the items don't fit (drawList).
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int drawerTop = pageHeight / 5;
+  renderer.fillRect(0, drawerTop, pageWidth, pageHeight - drawerTop, false);
+  renderer.fillRect(0, drawerTop, pageWidth, 3, true);
+  constexpr int handleWidth = 48;
+  renderer.fillRoundedRect((pageWidth - handleWidth) / 2, drawerTop + 8, handleWidth, 6, 3, Color::Black);
+
+  const int headerTop = drawerTop + 16;
+  GUI.drawHeader(renderer, Rect{screen.x, headerTop, screen.width, metrics.headerHeight}, title.c_str());
 
   // Progress summary
   std::string progressLine;
@@ -116,14 +126,12 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
                    std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
   }
   progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
-  GUI.drawSubHeader(
-      renderer,
-      Rect{screen.x, screen.y + metrics.topPadding + metrics.headerHeight, screen.width, metrics.tabBarHeight},
-      progressLine.c_str());
+  GUI.drawSubHeader(renderer, Rect{screen.x, headerTop + metrics.headerHeight, screen.width, metrics.tabBarHeight},
+                    progressLine.c_str());
 
-  const int contentTop =
-      screen.y + metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
-  const int contentHeight = screen.height - contentTop - metrics.verticalSpacing;
+  const int contentTop = headerTop + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
+  // Safe area already excludes the button-hints strip at the bottom.
+  const int contentHeight = (screen.y + screen.height) - contentTop - metrics.verticalSpacing;
 
   GUI.drawList(
       renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, menuItems.size(), selectedIndex,

@@ -58,7 +58,8 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
     registry_.discover();
   }
 
-  const char* wantedFamily = SETTINGS.sdArabicFontFamilyName;
+  // eff* so per-book overrides win (see CrossPointSettings per-book block).
+  const char* wantedFamily = SETTINGS.effSdArabicFontFamilyName();
   const std::string& currentFamily = manager_.currentFamilyName();
 
   if (wantedFamily[0] == '\0') {
@@ -71,11 +72,11 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
       loadedSdSizeEnum_ = 0xFF;
     }
     applyArabicMappings(renderer,
-                        resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.arabicFontSize));
+                        resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.effArabicFontSize()));
     return;
   }
 
-  if (currentFamily == wantedFamily && loadedSdSizeEnum_ == SETTINGS.arabicFontSize) {
+  if (currentFamily == wantedFamily && loadedSdSizeEnum_ == SETTINGS.effArabicFontSize()) {
     // Same family at the same size: just re-apply the mappings. The size check
     // matters -- matching on name alone kept serving the previously loaded size
     // after an Arabic Font Size change (user report: size setting did nothing,
@@ -90,14 +91,18 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
   }
 
   const auto* family = registry_.findFamily(wantedFamily);
-  if (family && manager_.loadFamily(*family, renderer, SETTINGS.arabicFontSize)) {
-    LOG_DBG("ARFS", "Loaded Arabic font family: %s (sizeEnum=%u)", wantedFamily, SETTINGS.arabicFontSize);
-    loadedSdSizeEnum_ = SETTINGS.arabicFontSize;
+  if (family && manager_.loadFamily(*family, renderer, SETTINGS.effArabicFontSize())) {
+    LOG_DBG("ARFS", "Loaded Arabic font family: %s (sizeEnum=%u)", wantedFamily, SETTINGS.effArabicFontSize());
+    loadedSdSizeEnum_ = SETTINGS.effArabicFontSize();
     applyArabicMappings(renderer, manager_.getFontId(wantedFamily));
   } else {
     LOG_ERR("ARFS", "Failed to load Arabic font family: %s (falling back to built-in)", wantedFamily);
-    SETTINGS.sdArabicFontFamilyName[0] = '\0';
+    if (SETTINGS.bookSdArabicFontFamilyName[0] != '\0') {
+      SETTINGS.bookSdArabicFontFamilyName[0] = '\0';  // bad per-book override, not the global
+    } else {
+      SETTINGS.sdArabicFontFamilyName[0] = '\0';
+    }
     applyArabicMappings(renderer,
-                        resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.arabicFontSize));
+                        resolveBuiltinReadingFontId(SETTINGS.arabicFontFamily, SETTINGS.effArabicFontSize()));
   }
 }

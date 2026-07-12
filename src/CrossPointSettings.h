@@ -279,6 +279,52 @@ class CrossPointSettings {
   // fontFamily/fontSize (the Latin reading font) -- see ArabicFontSystem.
   uint8_t arabicFontFamily = NOTONASKHARABIC;
   uint8_t arabicFontSize = MEDIUM;
+
+  // --- Per-book reading overrides (RAM ONLY -- never serialized) ---
+  // Applied by EpubReaderActivity from the book's own settings file (see
+  // BookReaderSettings) on open and cleared on exit, so every consumer of the
+  // eff*() accessors below -- getReaderFontId(), section cache keys, the font
+  // systems -- resolves per-book values without touching the global fields
+  // that saveToFile() persists. BOOK_NO_OVERRIDE / an empty name = inherit the
+  // global setting; BOOK_FORCE_BUILTIN_FAMILY as a name forces the built-in
+  // font family even when the global setting points at an SD family.
+  static constexpr uint8_t BOOK_NO_OVERRIDE = 0xFF;
+  static constexpr char BOOK_FORCE_BUILTIN_FAMILY[2] = "\x01";
+  uint8_t bookFontSize = BOOK_NO_OVERRIDE;
+  uint8_t bookArabicFontSize = BOOK_NO_OVERRIDE;
+  uint8_t bookLineSpacing = BOOK_NO_OVERRIDE;
+  uint8_t bookParagraphAlignment = BOOK_NO_OVERRIDE;
+  char bookSdFontFamilyName[32] = "";
+  char bookSdArabicFontFamilyName[32] = "";
+
+  uint8_t effFontSize() const { return bookFontSize != BOOK_NO_OVERRIDE ? bookFontSize : fontSize; }
+  uint8_t effArabicFontSize() const {
+    return bookArabicFontSize != BOOK_NO_OVERRIDE ? bookArabicFontSize : arabicFontSize;
+  }
+  uint8_t effLineSpacing() const { return bookLineSpacing != BOOK_NO_OVERRIDE ? bookLineSpacing : lineSpacing; }
+  uint8_t effParagraphAlignment() const {
+    return bookParagraphAlignment != BOOK_NO_OVERRIDE ? bookParagraphAlignment : paragraphAlignment;
+  }
+  // Empty string means "no SD family": either forced built-in for this book, or
+  // the global setting itself is built-in.
+  const char* effSdFontFamilyName() const {
+    if (bookSdFontFamilyName[0] == BOOK_FORCE_BUILTIN_FAMILY[0]) return "";
+    return bookSdFontFamilyName[0] != '\0' ? bookSdFontFamilyName : sdFontFamilyName;
+  }
+  const char* effSdArabicFontFamilyName() const {
+    if (bookSdArabicFontFamilyName[0] == BOOK_FORCE_BUILTIN_FAMILY[0]) return "";
+    return bookSdArabicFontFamilyName[0] != '\0' ? bookSdArabicFontFamilyName : sdArabicFontFamilyName;
+  }
+  bool hasBookOverrides() const {
+    return bookFontSize != BOOK_NO_OVERRIDE || bookArabicFontSize != BOOK_NO_OVERRIDE ||
+           bookLineSpacing != BOOK_NO_OVERRIDE || bookParagraphAlignment != BOOK_NO_OVERRIDE ||
+           bookSdFontFamilyName[0] != '\0' || bookSdArabicFontFamilyName[0] != '\0';
+  }
+  void clearBookOverrides() {
+    bookFontSize = bookArabicFontSize = bookLineSpacing = bookParagraphAlignment = BOOK_NO_OVERRIDE;
+    bookSdFontFamilyName[0] = '\0';
+    bookSdArabicFontFamilyName[0] = '\0';
+  }
   // Track reading time/stats (session time, pace, streaks -- see
   // src/reading/ReadingStatsStore.h). 1 = on. Turning it off stops accumulation;
   // already-saved stats are kept.

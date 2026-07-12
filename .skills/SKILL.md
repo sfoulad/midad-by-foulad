@@ -809,6 +809,15 @@ build_flags =
    `fs_/.crosspoint/` (e.g. section `.bin` version bytes). OPDS flows reach real servers via
    host curl — **always use the Foulad eBooks TEST account for simulator/testing logins:
    username `11`, password `11`** (never a real account).
+   **Known simulator fidelity gap**: the simulator lib's `HalStorage::openFileForWrite`
+   opens `O_WRONLY` while the device's SDCardManager opens `O_RDWR`. Section's
+   `loadPageDuringBuild()` reads pages back through the build's write handle, so in an
+   unpatched simulator every page rendered while a section build is still in progress
+   deserializes as EMPTY (blank page, `bw_render≈1ms`, zero glyph prewarm) — the device
+   renders these fine. If reader pages come up blank mid-build in the sim, re-apply the
+   one-line patch in `.pio/libdeps/simulator/simulator/src/HalStorage.cpp`
+   (`O_WRONLY | O_CREAT | O_TRUNC` → `O_RDWR | O_CREAT | O_TRUNC`); `pio clean` or a
+   libdeps re-fetch reverts it (upstream fix candidate: crosspoint-simulator repo).
 
 **Human tester scope** (flag these for the user):
 7. 🔲 **Device**: Test on hardware
