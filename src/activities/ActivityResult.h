@@ -21,6 +21,10 @@ struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
   uint8_t pageTurnOption = 0;
+  // Per-book reading overrides (SETTINGS.book*) were edited inside the menu;
+  // the reader persists the sidecar and re-lays-out. Applies even on cancel
+  // (Back just closes the drawer -- the edits still count).
+  bool bookSettingsChanged = false;
 };
 
 struct ChapterResult {
@@ -63,14 +67,9 @@ struct FilePathResult {
   std::string path;
 };
 
-struct BookSettingsResult {
-  bool changed = false;
-};
-
 using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult,
-                 BookSettingsResult>;
+                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

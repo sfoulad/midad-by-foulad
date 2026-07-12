@@ -10,6 +10,7 @@
 #include <JsonSettingsIO.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <ScriptDetector.h>
 #include <esp_system.h>
 
 #include <algorithm>
@@ -18,7 +19,6 @@
 #include <limits>
 
 #include "ArabicFontSystem.h"
-#include "BookSettingsActivity.h"
 #include "BookmarkEntry.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -286,18 +286,47 @@ void EpubReaderActivity::openReaderMenu() {
     bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
   }
   const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
-  startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
-                             renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
-                             SETTINGS.orientation, !currentPageFootnotes.empty(), !cachedBookmarks.empty()),
-                         [this](const ActivityResult& result) {
-                           // Always apply orientation change even if the menu was cancelled
-                           const auto& menu = std::get<MenuResult>(result.data);
-                           applyOrientation(menu.orientation);
-                           toggleAutoPageTurn(menu.pageTurnOption);
-                           if (!result.isCancelled) {
-                             onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
-                           }
-                         });
+  // Script-aware menu: an Arabic book gets the Arabic font rows, anything else
+  // the English ones. Title script is the primary signal (dc:language metadata
+  // is often missing or wrong in Arabic EPUBs); Arabic-script language codes
+  // cover Arabic-titled books published under a Latin title.
+  const std::string& lang = epub->getLanguage();
+  const bool isArabicBook = ScriptDetector::containsArabic(epub->getTitle().c_str()) || lang.rfind("ar", 0) == 0 ||
+                            lang.rfind("fa", 0) == 0 || lang.rfind("ur", 0) == 0;
+  startActivityForResult(
+      std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, epub->getTitle(), currentPage, totalPages,
+                                               bookProgressPercent, SETTINGS.orientation, !currentPageFootnotes.empty(),
+                                               !cachedBookmarks.empty(), isArabicBook),
+      [this](const ActivityResult& result) {
+        // Always apply orientation / auto-turn / per-book setting edits, even
+        // if the menu was cancelled (Back just closes the drawer).
+        const auto& menu = std::get<MenuResult>(result.data);
+        applyOrientation(menu.orientation);
+        toggleAutoPageTurn(menu.pageTurnOption);
+        if (menu.bookSettingsChanged && epub) {
+          BookReaderSettings::saveFromSettings(epub->getCachePath());
+          {
+            // Same mid-book re-layout dance as applyOrientation(): preserve the
+            // position, reload the font systems for the new per-book values, and
+            // reset the section -- the changed fontId/arabicFontId/lineCompression/
+            // alignment in the section cache key forces a rebuild, and
+            // applyDeferredReposition() remaps the page once the count is known.
+            RenderLock lock(*this);
+            if (section) {
+              cachedSpineIndex = currentSpineIndex;
+              cachedChapterTotalPageCount = section->pageCount;
+              nextPageNumber = section->currentPage;
+            }
+            sdFontSystem.ensureLoaded(renderer);
+            arabicFontSystem.ensureLoaded(renderer);
+            section.reset();
+          }
+          requestUpdate();
+        }
+        if (!result.isCancelled) {
+          onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
+        }
+      });
 }
 
 void EpubReaderActivity::loop() {
@@ -792,35 +821,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       addBookmark();
       break;
     }
-    case EpubReaderMenuActivity::MenuAction::BOOK_SETTINGS: {
-      startActivityForResult(std::make_unique<BookSettingsActivity>(renderer, mappedInput),
-                             [this](const ActivityResult& result) {
-                               const auto* bookSettings = std::get_if<BookSettingsResult>(&result.data);
-                               if (!bookSettings || !bookSettings->changed || !epub) {
-                                 requestUpdate();
-                                 return;
-                               }
-                               BookReaderSettings::saveFromSettings(epub->getCachePath());
-                               {
-                                 // Same mid-book re-layout dance as applyOrientation(): preserve the
-                                 // position, reload the font systems for the new per-book values, and
-                                 // reset the section -- the changed fontId/arabicFontId/lineCompression/
-                                 // alignment in the section cache key forces a rebuild, and
-                                 // applyDeferredReposition() remaps the page once the count is known.
-                                 RenderLock lock(*this);
-                                 if (section) {
-                                   cachedSpineIndex = currentSpineIndex;
-                                   cachedChapterTotalPageCount = section->pageCount;
-                                   nextPageNumber = section->currentPage;
-                                 }
-                                 sdFontSystem.ensureLoaded(renderer);
-                                 arabicFontSystem.ensureLoaded(renderer);
-                                 section.reset();
-                               }
-                               requestUpdate();
-                             });
+    default:
+      // FONT_SIZE / FONT_NAME / TEXT_ALIGN / LINE_SPACING / RESET_BOOK_SETTINGS /
+      // MORE are handled inside the drawer and never arrive here.
       break;
-    }
   }
 }
 

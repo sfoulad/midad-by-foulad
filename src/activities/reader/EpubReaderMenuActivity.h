@@ -9,10 +9,19 @@
 #include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
+// In-book menu, rendered as a bottom drawer (~85% of the screen, live page
+// visible above). The main list carries the most-used actions plus the
+// per-book reading settings (font size/name, alignment -- script-aware: an
+// Arabic book shows only the Arabic font rows, a Latin book only the English
+// ones); everything else lives in a "More" sub-list. Setting rows edit the
+// RAM-only SETTINGS.book* overrides in place (see CrossPointSettings.h) and
+// are reported back via MenuResult::bookSettingsChanged so the reader
+// persists the sidecar and re-lays-out on close.
 class EpubReaderMenuActivity final : public Activity {
  public:
   // Menu actions available from the reader menu.
   enum class MenuAction {
+    // Returned to the reader through MenuResult:
     SELECT_CHAPTER,
     FOOTNOTES,
     GO_TO_PERCENT,
@@ -25,12 +34,19 @@ class EpubReaderMenuActivity final : public Activity {
     GO_HOME,
     SYNC,
     DELETE_CACHE,
-    BOOK_SETTINGS
+    // Handled inside the drawer (never returned as a result):
+    FONT_SIZE,
+    FONT_NAME,
+    TEXT_ALIGN,
+    LINE_SPACING,
+    RESET_BOOK_SETTINGS,
+    MORE
   };
 
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
                                   const int currentPage, const int totalPages, const int bookProgressPercent,
-                                  const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks);
+                                  const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks,
+                                  bool isArabicBook);
 
   void onEnter() override;
   void onExit() override;
@@ -43,12 +59,27 @@ class EpubReaderMenuActivity final : public Activity {
     StrId labelId;
   };
 
-  static std::vector<MenuItem> buildMenuItems(bool hasFootnotes, bool hasBookmarks);
+  std::vector<MenuItem> buildMainItems(bool hasBookmarks) const;
+  std::vector<MenuItem> buildMoreItems(bool hasFootnotes) const;
+
+  std::string valueLabel(MenuAction action) const;
+  std::string globalLabel(const char* effectiveValueLabel) const;
+  void openSettingEditor(MenuAction action);
+  void finishWithAction(int action, bool cancelled);
+
+  const std::vector<MenuItem>& activeItems() const { return inMore ? moreItems : mainItems; }
 
   // Fixed menu layout
-  const std::vector<MenuItem> menuItems;
-
+  std::vector<MenuItem> mainItems;
+  std::vector<MenuItem> moreItems;
+  bool inMore = false;
   int selectedIndex = 0;
+  int moreSelectedIndex = 0;
+
+  const bool isArabicBook;
+  bool bookSettingsChanged = false;
+  // SD families for the book's script (drives the Font Name row; empty = row hidden).
+  std::vector<std::string> sdFamilies;
 
   ButtonNavigator buttonNavigator;
   OptionPopup optionPopup;
