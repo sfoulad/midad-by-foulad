@@ -12,6 +12,7 @@
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
 #include "CrossPointSettings.h"
+#include "QuranBook.h"
 #include "FontDownloadActivity.h"
 #include "FontSelectionActivity.h"
 #include "FouladEbooksConfig.h"
@@ -231,6 +232,15 @@ void SettingsActivity::toggleCurrentSetting() {
     // Toggle the boolean value using the member pointer
     const bool currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = !currentValue;
+    if (setting.valuePtr == &CrossPointSettings::quranEnabled && SETTINGS.quranEnabled) {
+      // Enabling the Quran extracts the firmware-embedded EPUB to the SD card
+      // (a few seconds on first enable; instant when already extracted).
+      GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      if (!QuranBook::ensureExtracted()) {
+        SETTINGS.quranEnabled = 0;  // no SD / write failure: stay honest, keep it off
+      }
+      requestUpdate();
+    }
   } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
     const uint8_t currentValue = SETTINGS.*(setting.valuePtr);
     if (setting.enumValues.size() > 2) {

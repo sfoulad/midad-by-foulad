@@ -280,6 +280,10 @@ class CrossPointSettings {
   uint8_t arabicFontFamily = NOTONASKHARABIC;
   uint8_t arabicFontSize = MEDIUM;
 
+  // Settings -> System -> Quran: the firmware-embedded Quran EPUB is extracted
+  // to SD and pinned as the first book in My Books (see QuranBook.h).
+  uint8_t quranEnabled = 0;
+
   // --- Per-book reading overrides (RAM ONLY -- never serialized) ---
   // Applied by EpubReaderActivity from the book's own settings file (see
   // BookReaderSettings) on open and cleared on exit, so every consumer of the

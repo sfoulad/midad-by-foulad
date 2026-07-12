@@ -13,6 +13,8 @@
 #include <memory>
 
 #include "MappedInputManager.h"
+#include "CrossPointSettings.h"
+#include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
@@ -137,6 +139,20 @@ void RecentBooksActivity::loadRecentBooks() {
             [](const RecentBook& a, const RecentBook& b) { return a.title < b.title; });
   recentBooks.insert(recentBooks.end(), std::make_move_iterator(discovered.begin()),
                      std::make_move_iterator(discovered.end()));
+
+  // Pinned Quran: when enabled in Settings -> System (and extracted), it is
+  // always the FIRST book -- drop whatever entry the scan/recents produced for
+  // it and re-insert at the front with its canonical Arabic title.
+  if (SETTINGS.quranEnabled && Storage.exists(QuranBook::PATH)) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == QuranBook::PATH; }),
+                      recentBooks.end());
+    RecentBook quran;
+    quran.path = QuranBook::PATH;
+    quran.title = QuranBook::TITLE;
+    quran.coverBmpPath = Epub(QuranBook::PATH, "/.crosspoint").getThumbBmpPath();
+    recentBooks.insert(recentBooks.begin(), std::move(quran));
+  }
 }
 
 void RecentBooksActivity::onEnter() {
@@ -177,6 +193,7 @@ void RecentBooksActivity::loop() {
   // Fires when the hold times out while still held (firmware hold-to-act pattern,
   // cf. FileBrowserActivity BACK long-press).
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
+      recentBooks[selectorIndex].path != QuranBook::PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -368,7 +385,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
           // there is a lot of books"). OPDS downloads auto-open, so they carry
           // caches (and catalog cover art) already.
           const auto& storedRecents = RECENT_BOOKS.getBooks();
-          const bool everOpened = std::any_of(storedRecents.begin(), storedRecents.end(),
+          const bool everOpened = book.path == QuranBook::PATH ||
+                                  std::any_of(storedRecents.begin(), storedRecents.end(),
                                               [&book](const RecentBook& r) { return r.path == book.path; });
           if (!loaded && everOpened) {
             // Metadata cache missing (cache cleared): build it now behind the

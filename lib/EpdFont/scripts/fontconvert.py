@@ -157,6 +157,7 @@ if args.script == "arabic":
         (0xFBA4, 0xFBA5),  # Heh with Yeh Above forms (Persian)
         (0xFBD3, 0xFBD6),  # Ng forms (Ottoman Turkish)
         (0xFBFC, 0xFBFF),  # Farsi Yeh forms (dotless-final yeh)
+        (0xFD3E, 0xFD3F),  # Ornate parentheses -- Quran ayah-number markers, e.g. "﴿١٢٣﴾"
         (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
     ]
 
