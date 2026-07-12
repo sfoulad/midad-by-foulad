@@ -1285,6 +1285,16 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       section->currentPage = newPage;
       pendingPercentJump = false;
     }
+
+    // Every branch above (pending jump, resume, anchor, percent jump) is meant to land on a
+    // valid page, but a stale/corrupt saved position or an unclamped upstream computation can
+    // still hand us a negative value here -- which would otherwise flow straight into the
+    // footer ("-6/87") and into loadPage(). This is the single chokepoint all of them funnel
+    // through before anything reads currentPage, so floor it here once rather than re-guarding
+    // every call site above.
+    if (section->currentPage < 0) {
+      section->currentPage = 0;
+    }
   }
 
   // Extend the build to the requested page if needed (for partials and in-progress builds).
@@ -1450,6 +1460,24 @@ bool EpubReaderActivity::applyDeferredReposition() {
 bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageCount) {
   return EpubReaderUtils::saveProgress(*epub, spineIndex, currentPage, pageCount);
 }
+
+namespace {
+// A "built"/"cache" chapter-load line only shows the cost of opening a chapter, not turning
+// pages within it -- and real-device logs showed heap dropping between two page turns on an
+// already-cached chapter. Log the slow turns themselves (threshold avoids spamming the bounded
+// log with every ordinary ~50-80ms turn) so the next report can tell chapter-open cost apart
+// from per-page-turn cost/leakage.
+constexpr unsigned long SLOW_PAGE_TURN_MS = 150;
+void logSlowPageTurn(unsigned long t0, unsigned long tEnd, int spineIndex, const std::string& title) {
+  const unsigned long total = tEnd - t0;
+  if (total < SLOW_PAGE_TURN_MS) return;
+  char buf[192];
+  snprintf(buf, sizeof(buf), "%lu turn spine=%d total=%lums heap=%u \"%s\"", millis(), spineIndex, total,
+           (unsigned)ESP.getFreeHeap(), title.c_str());
+  ReaderPerfLog::append(buf);
+}
+}  // namespace
+
 void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int orientedMarginTop,
                                         const int orientedMarginRight, const int orientedMarginBottom,
                                         const int orientedMarginLeft) {
@@ -1564,6 +1592,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
+      logSlowPageTurn(t0, tEnd, currentSpineIndex, epub->getTitle());
     }
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
@@ -1606,12 +1635,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_lsb=%lums gray_msb=%lums gray_display=%lums bw_restore=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
+      logSlowPageTurn(t0, tEnd, currentSpineIndex, epub->getTitle());
     } else {
       // No text AA and no images: BW frame already displayed above, no grayscale
       // to render, so no save/restore.
       const auto tEnd = millis();
       LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
+      logSlowPageTurn(t0, tEnd, currentSpineIndex, epub->getTitle());
     }
   }
 }

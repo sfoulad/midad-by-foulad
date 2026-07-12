@@ -36,6 +36,7 @@
 #include "images/LoadingIcon.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+#include "util/SleepDiagLog.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -479,6 +480,15 @@ void setup() {
 
   // First serial output only here to avoid timing inconsistencies for power button press duration verification
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
+  {
+    // Record what the loaded auto-sleep timeout actually resolves to -- separates "the
+    // saved setting is wrong" from "the setting is right but something keeps resetting
+    // the inactivity timer" for a user reporting auto-sleep never triggers.
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%lu boot sleepTimeoutMinutes=%u sleepTimeoutMs=%lu", millis(),
+             (unsigned)SETTINGS.sleepTimeoutMinutes, SETTINGS.getSleepTimeoutMs());
+    SleepDiagLog::append(buf);
+  }
 
   // Resolve the single boot-presentation decision. Skipping the splash also
   // skips the panel-clearing pass and the X3 initial-full-sync arming (see
@@ -630,10 +640,26 @@ void loop() {
 
   // Check for any user activity (button press or release) or active background work
   static unsigned long lastActivityTime = millis();
-  if (gpio.wasAnyPressed() || gpio.wasAnyReleased() || halTiltSensor.hadActivity() ||
-      activityManager.preventAutoSleep()) {
+  const bool anyPressed = gpio.wasAnyPressed();
+  const bool anyReleased = gpio.wasAnyReleased();
+  const bool tiltActivity = halTiltSensor.hadActivity();
+  const bool blockedByActivity = activityManager.preventAutoSleep();
+  if (anyPressed || anyReleased || tiltActivity || blockedByActivity) {
     lastActivityTime = millis();         // Reset inactivity timer
     powerManager.setPowerSaving(false);  // Restore normal CPU frequency on user activity
+
+    // A user report of "auto-sleep never triggers" is otherwise unreproducible off-device
+    // (no serial cable in hand) -- log which condition(s) actually kept resetting the
+    // timer, throttled so a stuck/noisy button doesn't spam the bounded log every loop.
+    static unsigned long lastSleepDiagLogMs = 0;
+    const unsigned long nowMs = millis();
+    if (nowMs - lastSleepDiagLogMs >= 3000) {
+      lastSleepDiagLogMs = nowMs;
+      char buf[128];
+      snprintf(buf, sizeof(buf), "%lu pressed=%d released=%d tilt=%d activityBlock=%d", nowMs, anyPressed,
+                anyReleased, tiltActivity, blockedByActivity);
+      SleepDiagLog::append(buf);
+    }
   }
 
   static bool screenshotButtonsReleased = true;
