@@ -427,6 +427,37 @@ bool parseAyahMarker(const char* text, uint32_t* digits, int& digitCount) {
   if (p[0] != 0xEF || p[1] != 0xB4 || p[2] != 0xBE) return false;
   return p[3] == '\0';
 }
+
+// Surah-number marker word: exactly "<Arabic-Indic digits>" wrapped in two
+// Private Use Area sentinels the build tool controls entirely -- see
+// tools/quran/build_quran_epub.py -- so this can never collide with real
+// book text. Deliberately a DIFFERENT visual style from the ayah marker
+// above (a filled black disc with inverted white digits, code-drawn rather
+// than a font glyph) so the two are never confused at a glance; this marker
+// is meant to stand alone on its own right-aligned line, not inline with
+// running text.
+bool parseSurahMedallionMarker(const char* text, uint32_t* digits, int& digitCount) {
+  // U+E000 = EE 80 80, U+0660..0669 = D9 A0..A9, U+E001 = EE 80 81.
+  const auto* p = reinterpret_cast<const uint8_t*>(text);
+  if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x80) return false;
+  p += 3;
+  digitCount = 0;
+  while (p[0] == 0xD9 && p[1] >= 0xA0 && p[1] <= 0xA9) {
+    if (digitCount >= 3) return false;
+    digits[digitCount++] = 0x0660 + (p[1] - 0xA0);
+    p += 2;
+  }
+  if (digitCount == 0) return false;
+  if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x81) return false;
+  return p[3] == '\0';
+}
+
+// Diameter shared by the render and width-measurement branches below -- they
+// must agree exactly, or the medallion's own layout (a right-aligned line
+// containing nothing else) would center/clip against the wrong width.
+int surahMedallionDiameter(const GfxRenderer& renderer, const int arabicFontId) {
+  return renderer.getFontAscenderSize(arabicFontId);
+}
 }  // namespace
 
 int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
@@ -452,6 +483,16 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
       if (const EpdGlyph* rosette = font.getGlyph(0x06DD, style)) {
         return fp4::toPixel(rosette->advanceX);
       }
+    }
+  }
+
+  // Surah medallions lay out at the code-drawn disc's diameter -- must match
+  // drawArabicText's medallion branch exactly.
+  {
+    uint32_t digits[3];
+    int digitCount = 0;
+    if (parseSurahMedallionMarker(text, digits, digitCount)) {
+      return surahMedallionDiameter(*this, resolveArabicFontId(fontId));
     }
   }
 
@@ -538,6 +579,39 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
         const int digitCenter = (d->top - d->height / 2) / 2;
         renderCharScaled(*this, renderMode, font, digits[i], dx, yPos - rosetteCenter + digitCenter, black, style);
         dx += fp4::toPixel(d->advanceX) / 2;
+      }
+      return;
+    }
+  }
+
+  // Surah medallions: a code-drawn filled disc (never a font glyph, so it
+  // can't be confused with the ayah rosette above) with the surah number in
+  // inverted white digits at half scale. Diameter must match
+  // getArabicTextWidth's marker branch exactly (layout vs render). Meant to
+  // stand alone on its own right-aligned line (see
+  // tools/quran/build_quran_epub.py) -- always drawn black-on-white
+  // regardless of the caller's `black`, since the visual point is the
+  // stamp-like contrast, not matching surrounding (nonexistent) text.
+  {
+    uint32_t digits[3];
+    int digitCount = 0;
+    if (parseSurahMedallionMarker(text, digits, digitCount)) {
+      const int d = surahMedallionDiameter(*this, resolvedArabicFontId);
+      const int top = yPos - d;
+      fillRoundedRect(x, top, d, d, d / 2, Color::Black);
+
+      int digitsW = 0;
+      for (int i = 0; i < digitCount; i++) {
+        const EpdGlyph* g = font.getGlyph(digits[i], style);
+        if (g) digitsW += fp4::toPixel(g->advanceX) / 2;
+      }
+      int dx = x + std::max(0, d - digitsW) / 2;
+      const int digitY = top + d / 2 + getFontAscenderSize(resolvedArabicFontId) / 4;
+      for (int i = 0; i < digitCount; i++) {
+        const EpdGlyph* g = font.getGlyph(digits[i], style);
+        if (!g) continue;
+        renderCharScaled(*this, renderMode, font, digits[i], dx, digitY, /*pixelState=*/false, style);
+        dx += fp4::toPixel(g->advanceX) / 2;
       }
       return;
     }

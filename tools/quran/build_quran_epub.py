@@ -55,15 +55,35 @@ def transform_html(text: str, surah: int | None = None) -> str:
     # pre-rendered banner PNGs came out as visual noise on real e-ink hardware
     # -- the reader's <img> layout box doesn't preserve the banner's native
     # pixel grid, and rescaling an already-dithered 1-bit image produces
-    # moire). Ornamented with real text instead: U+06DE RUB EL HIZB, an
-    # authentic Quranic manuscript section-marker rosette that Amiri renders
-    # natively, flanking the Arabic-Indic surah number and name. Renders
-    # through the exact same font/shaping/layout pipeline as body text, so it
-    # can't come out wrong the image did.
+    # moire). Two text lines instead, each rendering through the exact same
+    # font/shaping/layout pipeline as body text, so neither can come out
+    # wrong the way an image can:
+    #   1. The surah NUMBER as its own right-aligned line: a code-drawn
+    #      medallion (GfxRenderer::drawArabicText's surah-medallion branch,
+    #      triggered by wrapping the digits in U+E000/U+E001 -- Private Use
+    #      Area sentinels this tool fully controls, so they can never appear
+    #      in real book text). Deliberately a DIFFERENT shape from the ayah
+    #      marker's rosette-glyph medallion (filled disc, inverted digits)
+    #      and deliberately NOT sharing a line with the name, per explicit
+    #      user direction.
+    #   2. The surah NAME, centered, flanked by U+06DE RUB EL HIZB -- an
+    #      authentic Quranic manuscript section-marker glyph Amiri renders
+    #      natively.
     if surah is not None:
+        surah_marker = "\ue000" + arabic_digits(str(surah)) + "\ue001"
+
+        def replace_header(m: "re.Match[str]") -> str:
+            toc_id = m.group(1)
+            inner = m.group(2)
+            name = re.sub(r"^\d+-\s*", "", inner)  # strip the leading "N- " the source writes
+            return (
+                f'<p class="block_2" dir="rtl" id="{toc_id}" style="text-align: right">{surah_marker}</p>'
+                f'<h1 class="block_2" dir="rtl">\u06de {name} \u06de</h1>'
+            )
+
         text = re.sub(
-            r'(<h1 class="block_2" dir="rtl" id="toc_id_\d+">)([^<]*)(</h1>)',
-            lambda m: m.group(1) + "\u06de " + m.group(2) + " \u06de" + m.group(3),
+            r'<h1 class="block_2" dir="rtl" id="(toc_id_\d+)">([^<]*)</h1>',
+            replace_header,
             text)
     # Remaining headers (title page etc.): Arabic-Indic digits.
     text = re.sub(r"(\d+)- سورة", lambda m: arabic_digits(m.group(1)) + " - سورة", text)
