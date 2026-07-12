@@ -3,6 +3,7 @@
 #include <Epub/Page.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
+#include <FontDecompressor.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -1477,13 +1478,24 @@ constexpr unsigned long SLOW_PAGE_TURN_MS = 150;
 // never showed up in simulator testing -- this is the only way to see which phase a
 // real multi-second turn is actually spending time in.
 void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBwRender, unsigned long tDisplay,
-                     unsigned long tEnd, int spineIndex, const std::string& title) {
+                     unsigned long tEnd, int spineIndex, const std::string& title, FontDecompressor* decompressor) {
   const unsigned long total = tEnd - t0;
   if (total < SLOW_PAGE_TURN_MS) return;
-  char buf[224];
-  snprintf(buf, sizeof(buf), "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u \"%s\"",
+  // Cache hits/misses/decompress time: PrewarmScope resets these at the top of every
+  // page render, so this reflects just this one page -- lets the next report say
+  // definitively whether a slow bw_render is still landing in the hot-group fallback
+  // (misses > 0) rather than needing another guess.
+  char statsPart[96] = "";
+  if (decompressor) {
+    const auto& s = decompressor->getStats();
+    snprintf(statsPart, sizeof(statsPart), " hits=%lu misses=%lu decomp=%lums calls=%lu", (unsigned long)s.cacheHits,
+             (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs, (unsigned long)s.getBitmapCalls);
+  }
+  char buf[288];
+  snprintf(buf, sizeof(buf),
+           "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u%s \"%s\"",
            millis(), spineIndex, tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - tDisplay, total,
-           (unsigned)ESP.getFreeHeap(), title.c_str());
+           (unsigned)ESP.getFreeHeap(), statsPart, title.c_str());
   ReaderPerfLog::append(buf);
 }
 }  // namespace
@@ -1602,7 +1614,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm->getDecompressor());
     }
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
@@ -1645,14 +1657,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_lsb=%lums gray_msb=%lums gray_display=%lums bw_restore=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm->getDecompressor());
     } else {
       // No text AA and no images: BW frame already displayed above, no grayscale
       // to render, so no save/restore.
       const auto tEnd = millis();
       LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm->getDecompressor());
     }
   }
 }

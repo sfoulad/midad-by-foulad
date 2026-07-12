@@ -17,11 +17,19 @@ bool FontDecompressor::init() {
 void FontDecompressor::deinit() {
   freePageBuffer();
   freeHotGroup();
+  free(alignedOffsetTable);
+  alignedOffsetTable = nullptr;
+  alignedOffsetTableFont = nullptr;
+  alignedOffsetTableSize = 0;
 }
 
 void FontDecompressor::clearCache() {
   freePageBuffer();
   freeHotGroup();
+  // alignedOffsetTable is deliberately NOT cleared here: it depends only on the font's
+  // static group/glyph layout, never on the per-page prewarm/hot-group state this
+  // function resets, so it stays valid (and cheap to reuse) across every page turn for
+  // as long as the same font is active. See ensureAlignedOffsetTable().
 }
 
 void FontDecompressor::freePageBuffer() {
@@ -113,6 +121,69 @@ uint32_t FontDecompressor::getAlignedOffset(const EpdFontData* fontData, uint16_
   }
 
   return offset;
+}
+
+// Precompute getAlignedOffset() for every glyph in the font in one O(totalGlyphs) pass,
+// instead of paying that scan's per-glyph cost (O(glyphIndex) for a frequency-grouped
+// font) on every hot-group fallback lookup in getBitmap(). No-ops if fontData already
+// matches the cached table (the common case: the same font serves every lookup for a
+// whole reading session). Returns false only on allocation failure, in which case the
+// caller falls back to the direct per-call computation.
+bool FontDecompressor::ensureAlignedOffsetTable(const EpdFontData* fontData) {
+  if (alignedOffsetTableFont == fontData && alignedOffsetTable) return true;
+
+  free(alignedOffsetTable);
+  alignedOffsetTable = nullptr;
+  alignedOffsetTableFont = nullptr;
+  alignedOffsetTableSize = 0;
+
+  if (fontData->intervalCount == 0) return false;
+  const auto& lastInterval = fontData->intervals[fontData->intervalCount - 1];
+  const uint32_t totalGlyphs = lastInterval.offset + (lastInterval.last - lastInterval.first + 1);
+  if (totalGlyphs == 0) return false;
+
+  auto* table = static_cast<uint32_t*>(malloc(totalGlyphs * sizeof(uint32_t)));
+  if (!table) {
+    LOG_ERR("FDC", "OOM allocating %lu-entry aligned-offset table", (unsigned long)totalGlyphs);
+    return false;
+  }
+
+  auto accumGlyph = [](uint32_t& offset, const EpdGlyph& g) {
+    if (g.width > 0 && g.height > 0) {
+      offset += ((g.width + 3) / 4) * g.height;
+    }
+  };
+
+  if (fontData->glyphToGroup) {
+    // Frequency-grouped: one running offset per group, single pass over all glyphs.
+    auto perGroupOffset = makeUniqueNoThrow<uint32_t[]>(fontData->groupCount);
+    if (!perGroupOffset) {
+      free(table);
+      LOG_ERR("FDC", "OOM allocating %u-entry per-group offset tracker", fontData->groupCount);
+      return false;
+    }
+    for (uint32_t i = 0; i < totalGlyphs; i++) {
+      const uint16_t gi = fontData->glyphToGroup[i];
+      table[i] = perGroupOffset[gi];
+      accumGlyph(perGroupOffset[gi], fontData->glyph[i]);
+    }
+  } else {
+    // Contiguous-group: offset resets to 0 at each group's firstGlyphIndex.
+    for (uint16_t gi = 0; gi < fontData->groupCount; gi++) {
+      const EpdFontGroup& group = fontData->groups[gi];
+      uint32_t offset = 0;
+      for (uint32_t i = 0; i < group.glyphCount; i++) {
+        const uint32_t glyphI = group.firstGlyphIndex + i;
+        table[glyphI] = offset;
+        accumGlyph(offset, fontData->glyph[glyphI]);
+      }
+    }
+  }
+
+  alignedOffsetTable = table;
+  alignedOffsetTableFont = fontData;
+  alignedOffsetTableSize = totalGlyphs;
+  return true;
 }
 
 void FontDecompressor::compactSingleGlyph(const uint8_t* alignedSrc, uint8_t* packedDst, uint8_t width,
@@ -215,7 +286,14 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     return nullptr;
   }
 
-  uint32_t alignedOff = getAlignedOffset(fontData, groupIndex, glyphIndex);
+  uint32_t alignedOff;
+  if (ensureAlignedOffsetTable(fontData) && glyphIndex < alignedOffsetTableSize) {
+    alignedOff = alignedOffsetTable[glyphIndex];
+  } else {
+    // Table build failed (OOM) or glyphIndex is out of range for some reason -- fall
+    // back to the direct per-call computation rather than reading garbage/OOB.
+    alignedOff = getAlignedOffset(fontData, groupIndex, glyphIndex);
+  }
   compactSingleGlyph(&hotGroup[alignedOff], hotGlyphBuf, glyph->width, glyph->height);
   stats.getBitmapTimeUs += micros() - tStart;
   return hotGlyphBuf;

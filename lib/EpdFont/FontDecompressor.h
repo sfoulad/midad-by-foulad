@@ -101,4 +101,18 @@ class FontDecompressor {
   bool decompressGroup(const EpdFontData* fontData, uint16_t groupIndex, uint8_t* outBuf, uint32_t outSize);
   static void compactSingleGlyph(const uint8_t* alignedSrc, uint8_t* packedDst, uint8_t width, uint8_t height);
   static int32_t findGlyphIndex(const EpdFontData* fontData, uint32_t codepoint);
+
+  // Every glyph's byte-aligned offset within its own group, precomputed for the WHOLE
+  // font in one pass and cached for the FontDecompressor's lifetime -- the offset only
+  // depends on the font's static group/glyph layout, never on runtime state, so there's
+  // no reason to recompute it per lookup. Replaces getAlignedOffset()'s per-call scan
+  // (O(glyphIndex) for a frequency-grouped font) on the hot-group fallback path in
+  // getBitmap(): a fully-vocalized Arabic page can miss the batched prewarm cache for
+  // hundreds of distinct glyphs, and each miss re-scanning from glyph 0 dominated
+  // render time on real hardware (13+ SECONDS per page turn, unmoved by raising the
+  // prewarm cap -- the bottleneck was this per-glyph rescan, not prewarm coverage).
+  bool ensureAlignedOffsetTable(const EpdFontData* fontData);
+  const EpdFontData* alignedOffsetTableFont = nullptr;
+  uint32_t* alignedOffsetTable = nullptr;  // indexed directly by glyphIndex; owned, freed in deinit()/dtor
+  uint32_t alignedOffsetTableSize = 0;
 };
