@@ -51,15 +51,19 @@ def transform_html(text: str, surah: int | None = None) -> str:
     # Basmala: strip the plain parentheses and vocalize it.
     text = text.replace("(" + BASMALA_PLAIN + ")", BASMALA_PLAIN)
     text = text.replace(BASMALA_PLAIN, BASMALA_VOCALIZED)
-    # Surah headers become the ornamental mushaf banner images (rendered by
-    # tools/quran/build_surah_banners.py from the user-supplied band, with the
-    # surah name + Arabic-Indic number set in Amiri). The toc_id anchor moves
-    # to the wrapper so TOC jumps keep working.
+    # Surah headers: NOT a raster image (a first attempt shipping 114
+    # pre-rendered banner PNGs came out as visual noise on real e-ink hardware
+    # -- the reader's <img> layout box doesn't preserve the banner's native
+    # pixel grid, and rescaling an already-dithered 1-bit image produces
+    # moire). Ornamented with real text instead: U+06DE RUB EL HIZB, an
+    # authentic Quranic manuscript section-marker rosette that Amiri renders
+    # natively, flanking the Arabic-Indic surah number and name. Renders
+    # through the exact same font/shaping/layout pipeline as body text, so it
+    # can't come out wrong the image did.
     if surah is not None:
         text = re.sub(
-            r'<h1 class="block_2" dir="rtl" id="(toc_id_\d+)">[^<]*</h1>',
-            lambda m: '<div id="{}" class="block_2"><img alt="surah header" src="../images/surah_{:03d}.png"/></div>'.format(
-                m.group(1), surah),
+            r'(<h1 class="block_2" dir="rtl" id="toc_id_\d+">)([^<]*)(</h1>)',
+            lambda m: m.group(1) + "\u06de " + m.group(2) + " \u06de" + m.group(3),
             text)
     # Remaining headers (title page etc.): Arabic-Indic digits.
     text = re.sub(r"(\d+)- سورة", lambda m: arabic_digits(m.group(1)) + " - سورة", text)
@@ -111,28 +115,13 @@ def main() -> int:
                             '<image width="600" height="880" xlink:href="images/cover.png"/>')
             p.write_text(tp, encoding="utf-8")
 
-    # Surah banner images: generate if missing, then stage into the package
-    # and register them in the OPF manifest.
-    banners = HERE / "build-banners"
-    if not banners.exists() or len(list(banners.glob("surah_*.png"))) != 114:
-        import build_surah_banners
-        build_surah_banners.main()
+    # Cover only (no surah banner images -- see the transform_html comment
+    # above for why those were dropped): 1-bit ornamental PNG in, source
+    # JPEG out.
     (WORK / "images").mkdir(exist_ok=True)
-    # Swap the cover: 1-bit ornamental PNG in, source JPEG out.
     (WORK / "images" / "cover.png").write_bytes((HERE / "source" / "quran_cover.png").read_bytes())
     (WORK / "images" / "00001.jpeg").unlink(missing_ok=True)
     names = [n for n in names if n != "images/00001.jpeg"] + ["images/cover.png"]
-    banner_names = []
-    for f in sorted(banners.glob("surah_*.png")):
-        (WORK / "images" / f.name).write_bytes(f.read_bytes())
-        banner_names.append("images/" + f.name)
-    opf = (WORK / "content.opf").read_text(encoding="utf-8")
-    items = "".join(
-        '\n    <item href="{0}" id="banner{1:03d}" media-type="image/png"/>'.format(n, i)
-        for i, n in enumerate(banner_names, start=1))
-    opf = opf.replace("</manifest>", items + "\n  </manifest>")
-    (WORK / "content.opf").write_text(opf, encoding="utf-8")
-    names = names + banner_names
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     # EPUB spec: "mimetype" first and stored uncompressed. Fixed date_time for

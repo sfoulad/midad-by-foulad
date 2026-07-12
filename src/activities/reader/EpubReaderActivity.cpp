@@ -38,6 +38,7 @@
 #include "fontIds.h"
 #include "util/BookReaderSettings.h"
 #include "util/BookmarkUtil.h"
+#include "util/ReaderPerfLog.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -1115,6 +1116,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
+    const unsigned long chapterLoadStartMs = millis();
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
 
     // A finalized cache serves every page as-is. A partial cache (suspended build from a
@@ -1237,6 +1239,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       }
     } else {
       LOG_DBG("ERS", "Cache found, skipping build...");
+    }
+
+    {
+      // "cache" = pagination was already on disk (finalized or partial-then-
+      // extended); "built" = this open ran the HTML/CSS/layout pipeline from
+      // scratch. A run of "built" entries for the SAME book is the signature
+      // of a section cache that never sticks (e.g. a settings/font mismatch
+      // re-triggering a rebuild every open) rather than genuinely slow layout.
+      char buf[192];
+      snprintf(buf, sizeof(buf), "%lu spine=%d %s elapsed=%lums heap=%u pages=%u \"%s\"", millis(), currentSpineIndex,
+               cacheComplete ? "cache" : "built", millis() - chapterLoadStartMs, (unsigned)ESP.getFreeHeap(),
+               (unsigned)section->pageCount, epub->getTitle().c_str());
+      ReaderPerfLog::append(buf);
     }
 
     if (pendingPageJump.has_value()) {
