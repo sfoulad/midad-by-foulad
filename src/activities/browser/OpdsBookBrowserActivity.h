@@ -157,5 +157,11 @@ class OpdsBookBrowserActivity final : public Activity {
   void downloadBook(const OpdsEntry& book);
   void launchSearch();
   void performSearch(const std::string& query);
-  bool preventAutoSleep() override { return true; }
+  // Only actually in-flight network work should block auto-sleep -- a page
+  // sitting open in BROWSING/SEARCH_INPUT/ERROR is idle, no different from any
+  // other screen the user walked away from. The previous unconditional `true`
+  // kept the device (and its WiFi radio) awake for as long as Foulad
+  // eBooks/OPDS stayed the foreground activity, even fully idle -- a real
+  // battery-drain path (user report).
+  bool preventAutoSleep() override { return state == BrowserState::LOADING || state == BrowserState::DOWNLOADING; }
 };

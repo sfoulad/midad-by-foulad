@@ -1,6 +1,7 @@
 #include "SettingsActivity.h"
 
 #include <GfxRenderer.h>
+#include <WiFi.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -331,7 +332,24 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::Network:
-        startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
+        // Settings -> Wi-Fi Networks is the ONE WiFi surface with no parent
+        // flow and no exit reboot: WifiSelectionActivity deliberately leaves
+        // the connection to its caller, and every other caller reboots (which
+        // powers the modem off). Coming back here, fully power the radio down
+        // or it idles in STA mode (~20-30 mA) until the next deep sleep --
+        // confirmed as the fast-battery-drain path (user report). Saved
+        // credentials auto-reconnect the next time a flow needs WiFi.
+        startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false),
+                               [this](const ActivityResult& result) {
+                                 if (WiFi.getMode() != WIFI_MODE_NULL) {
+                                   WiFi.disconnect(true);
+                                   WiFi.mode(WIFI_OFF);
+                                   LOG_INF("SETTINGS", "WiFi radio powered off after network screen");
+                                 }
+                                 SETTINGS.saveToFile();
+                                 rebuildSettingsLists();
+                                 requestUpdate();
+                               });
         break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);

@@ -74,6 +74,10 @@ def transform_opf(text: str) -> str:
     text = re.sub(r"<dc:title>[^<]*</dc:title>", "<dc:title>القرآن الكريم</dc:title>", text)
     # Drop the creator line entirely; the Quran carries no author byline.
     text = re.sub(r"\s*<dc:creator[^>]*>[^<]*</dc:creator>", "", text)
+    # The ornamental line-art cover ships as a 1-bit PNG (crisper on e-ink and
+    # ~6% of the source JPEG's size); repoint the manifest entry.
+    text = text.replace('href="images/00001.jpeg" media-type="image/jpeg"',
+                        'href="images/cover.png" media-type="image/png"')
     return text
 
 
@@ -101,7 +105,11 @@ def main() -> int:
         elif name == "content.opf":
             p.write_text(transform_opf(p.read_text(encoding="utf-8")), encoding="utf-8")
         elif name == "titlepage.xhtml":
-            p.write_text(transform_html(p.read_text(encoding="utf-8")), encoding="utf-8")
+            tp = transform_html(p.read_text(encoding="utf-8"))
+            tp = tp.replace('viewBox="0 0 314 475"', 'viewBox="0 0 600 880"')
+            tp = tp.replace('<image width="314" height="475" xlink:href="images/00001.jpeg"/>',
+                            '<image width="600" height="880" xlink:href="images/cover.png"/>')
+            p.write_text(tp, encoding="utf-8")
 
     # Surah banner images: generate if missing, then stage into the package
     # and register them in the OPF manifest.
@@ -110,6 +118,10 @@ def main() -> int:
         import build_surah_banners
         build_surah_banners.main()
     (WORK / "images").mkdir(exist_ok=True)
+    # Swap the cover: 1-bit ornamental PNG in, source JPEG out.
+    (WORK / "images" / "cover.png").write_bytes((HERE / "source" / "quran_cover.png").read_bytes())
+    (WORK / "images" / "00001.jpeg").unlink(missing_ok=True)
+    names = [n for n in names if n != "images/00001.jpeg"] + ["images/cover.png"]
     banner_names = []
     for f in sorted(banners.glob("surah_*.png")):
         (WORK / "images" / f.name).write_bytes(f.read_bytes())
