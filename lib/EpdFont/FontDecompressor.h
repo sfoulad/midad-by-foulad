@@ -6,7 +6,19 @@
 
 class FontDecompressor {
  public:
-  static constexpr uint16_t MAX_PAGE_GLYPHS = 512;
+  // Ceiling on distinct glyphs/groups prewarmCache() can batch-decompress for one page.
+  // Was 512/128 (fine for Latin scripts, where a page can't realistically use more than
+  // a few dozen distinct glyphs) but far too low for fully-vocalized Arabic: each base
+  // letter has multiple positional forms combined with multiple diacritics, so a dense
+  // page can need well over a thousand distinct glyphs. Anything past the cap silently
+  // fell back to per-glyph hot-group decompression *during* the render pass instead of
+  // the batched prewarm pass -- real-device logs showed prewarm consistently fast
+  // (12-25ms) while the render pass that followed it took 8-15 SECONDS on pages that
+  // exceeded the old cap (see EpubReaderActivity's per-page-turn perf log). Raised with
+  // real headroom now that these are heap-allocated (see prewarmCache()), not a fixed
+  // stack array sized for the old, much smaller cap.
+  static constexpr uint16_t MAX_PAGE_GLYPHS = 4096;
+  static constexpr uint16_t MAX_PAGE_GROUPS = 512;
   static constexpr uint8_t MAX_PAGE_SLOTS = 4;  // One per font style (R/B/I/BI)
 
   FontDecompressor() = default;
