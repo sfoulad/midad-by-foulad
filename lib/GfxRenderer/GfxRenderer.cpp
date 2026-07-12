@@ -607,12 +607,34 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   const auto& font = fontIt->second;
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
-    // Record the SHAPED codepoints under the resolved Arabic font so the page
-    // prewarm decompresses this page's Arabic glyphs into a page slot -- see
-    // FontCacheManager::recordArabicText.
+    // Record the codepoints this call will ACTUALLY draw -- not just the raw input
+    // shaped as plain text. The marker branches below never draw their literal
+    // syntax (brackets, PUA sentinels): an ayah marker draws U+06DD + digit glyphs,
+    // a surah medallion draws only digit glyphs, a cartouche draws its inner text
+    // glyphs. Recording the wrong codepoints here means the real render pass's
+    // marker glyphs never land in the prewarmed page slot and always fall through to
+    // FontDecompressor's slow per-glyph hot-group fallback -- confirmed on a real
+    // device: 432 of 514 glyph draws missing the cache on a single page, ~13s spent
+    // re-decompressing groups from scratch for glyphs that were "prewarmed" under the
+    // wrong codepoints entirely. Must stay in exact sync with the render branches
+    // below (same reasoning as getArabicTextWidth's marker branches vs. render).
     std::string shaped;
     shaped.reserve(64);
-    for (const uint32_t cp : ArabicShaper::shapeText(text)) appendUtf8(shaped, cp);
+    uint32_t digits[3];
+    int digitCount = 0;
+    std::string cartoucheInner;
+    if (parseAyahMarker(text, digits, digitCount)) {
+      appendUtf8(shaped, 0x06DD);
+      for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
+    } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
+      for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
+    } else if (parseCartoucheMarker(text, cartoucheInner)) {
+      for (const uint32_t cp : ArabicShaper::shapeText(cartoucheInner.c_str())) {
+        if (cp != CARTOUCHE_SPACE_CP) appendUtf8(shaped, cp);
+      }
+    } else {
+      for (const uint32_t cp : ArabicShaper::shapeText(text)) appendUtf8(shaped, cp);
+    }
     fontCacheManager_->recordArabicText(shaped.c_str(), resolvedArabicFontId);
     return;
   }
