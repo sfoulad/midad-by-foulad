@@ -23,7 +23,6 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "EpubReaderBookmarksActivity.h"
-#include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
@@ -294,13 +293,15 @@ void EpubReaderActivity::openReaderMenu() {
   const bool isArabicBook = ScriptDetector::containsArabic(epub->getTitle().c_str()) || lang.rfind("ar", 0) == 0 ||
                             lang.rfind("fa", 0) == 0 || lang.rfind("ur", 0) == 0;
   startActivityForResult(
-      std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, epub->getTitle(), currentPage, totalPages,
-                                               bookProgressPercent, SETTINGS.orientation, !currentPageFootnotes.empty(),
-                                               !cachedBookmarks.empty(), isArabicBook),
+      std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, epub.get(), currentSpineIndex, currentPage,
+                                               totalPages, bookProgressPercent, SETTINGS.orientation,
+                                               !currentPageFootnotes.empty(), !cachedBookmarks.empty(), isArabicBook),
       [this](const ActivityResult& result) {
         // Always apply orientation / auto-turn / per-book setting edits, even
         // if the menu was cancelled (Back just closes the drawer).
         const auto& menu = std::get<MenuResult>(result.data);
+        LOG_INF("ERS", "Drawer closed: action=%d cancelled=%d settingsChanged=%d chapterSpine=%d", menu.action,
+                result.isCancelled ? 1 : 0, menu.bookSettingsChanged ? 1 : 0, menu.chapterSpineIndex);
         applyOrientation(menu.orientation);
         toggleAutoPageTurn(menu.pageTurnOption);
         if (menu.bookSettingsChanged && epub) {
@@ -324,7 +325,7 @@ void EpubReaderActivity::openReaderMenu() {
           requestUpdate();
         }
         if (!result.isCancelled) {
-          onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
+          onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action), menu);
         }
       });
 }
@@ -674,7 +675,7 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   }
 }
 
-void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
+void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu) {
   auto progressChangeResultHandler = [this](const ActivityResult& result) {
     loadCachedBookmarks();
     if (!result.isCancelled) {
@@ -711,27 +712,21 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
 
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
-      const int spineIdx = currentSpineIndex;
-      const std::string path = epub->getPath();
-      startActivityForResult(
-          std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, path, spineIdx),
-          [this](const ActivityResult& result) {
-            if (!result.isCancelled) {
-              const auto& chapterResult = std::get<ChapterResult>(result.data);
-              statsOnJump();
-              RenderLock lock(*this);
+      // The chapter was already picked from the in-drawer TOC list.
+      if (menu.chapterSpineIndex >= 0) {
+        statsOnJump();
+        RenderLock lock(*this);
 
-              currentSpineIndex = chapterResult.spineIndex;
+        currentSpineIndex = menu.chapterSpineIndex;
 
-              // If anchor is not empty, it will be used later to calculate the page number.
-              pendingAnchor = chapterResult.anchor;
+        // If anchor is not empty, it will be used later to calculate the page number.
+        pendingAnchor = menu.chapterAnchor;
 
-              // Otherwise page 0 will be used.
-              nextPageNumber = 0;
+        // Otherwise page 0 will be used.
+        nextPageNumber = 0;
 
-              section.reset();
-            }
-          });
+        section.reset();
+      }
       break;
     }
     case EpubReaderMenuActivity::MenuAction::FOOTNOTES: {

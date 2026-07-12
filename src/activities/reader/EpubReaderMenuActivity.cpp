@@ -35,17 +35,29 @@ void setBookFamily(char* field, const size_t fieldSize, const char* name) {
   field[fieldSize - 1] = '\0';
 }
 
+// Book titles can carry embedded newlines/tabs from EPUB metadata; the header
+// bar is strictly one line, so flatten whitespace before truncating.
+std::string flattenedTitle(const std::string& title) {
+  std::string out = title;
+  for (char& c : out) {
+    if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+  }
+  return out;
+}
+
 }  // namespace
 
-EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                               const std::string& title, const int currentPage, const int totalPages,
-                                               const int bookProgressPercent, const uint8_t currentOrientation,
-                                               const bool hasFootnotes, const bool hasBookmarks,
-                                               const bool isArabicBook)
+EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, Epub* epub,
+                                               const int currentSpineIndex, const int currentPage,
+                                               const int totalPages, const int bookProgressPercent,
+                                               const uint8_t currentOrientation, const bool hasFootnotes,
+                                               const bool hasBookmarks, const bool isArabicBook)
     : Activity("EpubReaderMenu", renderer, mappedInput),
+      epub(epub),
+      currentSpineIndex(currentSpineIndex),
       isArabicBook(isArabicBook),
       sdFamilies(sdFamilyNames(isArabicBook ? arabicFontSystem.registry() : sdFontSystem.registry())),
-      title(title),
+      title(epub ? flattenedTitle(epub->getTitle()) : std::string()),
       pendingOrientation(currentOrientation),
       currentPage(currentPage),
       totalPages(totalPages),
@@ -58,7 +70,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 // then orientation; everything else is one level down behind "More".
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainItems(const bool hasBookmarks) const {
   std::vector<MenuItem> items;
-  items.reserve(8);
+  items.reserve(9);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
   if (hasBookmarks) {
@@ -69,6 +81,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainI
     // With built-ins only there is exactly one family per script -- nothing to pick.
     items.push_back({MenuAction::FONT_NAME, StrId::STR_FONT_NAME});
   }
+  items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
   items.push_back({MenuAction::TEXT_ALIGN, StrId::STR_TEXT_ALIGNMENT});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
   items.push_back({MenuAction::MORE, StrId::STR_MORE});
@@ -77,13 +90,12 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainI
 
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMoreItems(const bool hasFootnotes) const {
   std::vector<MenuItem> items;
-  items.reserve(10);
+  items.reserve(9);
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
-  items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
   items.push_back({MenuAction::RESET_BOOK_SETTINGS, StrId::STR_RESET_BOOK_SETTINGS});
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
@@ -99,6 +111,13 @@ void EpubReaderMenuActivity::onEnter() {
 }
 
 void EpubReaderMenuActivity::onExit() { Activity::onExit(); }
+
+int EpubReaderMenuActivity::activeItemCount() const {
+  if (view == View::CHAPTERS) {
+    return epub ? epub->getTocItemsCount() : 0;
+  }
+  return static_cast<int>(activeItems().size());
+}
 
 std::string EpubReaderMenuActivity::globalLabel(const char* effectiveValueLabel) const {
   return std::string(tr(STR_GLOBAL_SETTING)) + " (" + effectiveValueLabel + ")";
@@ -235,62 +254,90 @@ void EpubReaderMenuActivity::finishWithAction(const int action, const bool cance
   finish();
 }
 
+void EpubReaderMenuActivity::handleListConfirm() {
+  if (view == View::CHAPTERS) {
+    if (!epub) return;
+    const auto tocItem = epub->getTocItem(chapterSelectedIndex);
+    if (tocItem.spineIndex == -1) return;  // non-navigable TOC row
+    MenuResult menuResult{static_cast<int>(MenuAction::SELECT_CHAPTER), pendingOrientation, selectedPageTurnOption,
+                          bookSettingsChanged};
+    menuResult.chapterSpineIndex = tocItem.spineIndex;
+    menuResult.chapterAnchor = tocItem.anchor;
+    ActivityResult result;
+    result.isCancelled = false;
+    result.data = std::move(menuResult);
+    setResult(std::move(result));
+    finish();
+    return;
+  }
+
+  const auto selectedAction = activeItems()[activeIndex()].action;
+  switch (selectedAction) {
+    case MenuAction::SELECT_CHAPTER:
+      // Chapter list is an in-drawer view, not a separate full-screen activity.
+      view = View::CHAPTERS;
+      chapterSelectedIndex = epub ? std::max(0, epub->getTocIndexForSpineIndex(currentSpineIndex)) : 0;
+      requestUpdate();
+      return;
+    case MenuAction::MORE:
+      view = View::MORE;
+      moreSelectedIndex = 0;
+      requestUpdate();
+      return;
+    case MenuAction::ROTATE_SCREEN:
+      optionPopup.show(StrId::STR_ORIENTATION, orientationLabels.data(), static_cast<int>(orientationLabels.size()),
+                       pendingOrientation, [this](int idx) {
+                         pendingOrientation = idx;
+                         requestUpdate();
+                       });
+      requestUpdate();
+      return;
+    case MenuAction::AUTO_PAGE_TURN:
+      optionPopup.show(I18N.get(StrId::STR_AUTO_TURN_PAGES_PER_MIN), pageTurnLabels.data(),
+                       static_cast<int>(pageTurnLabels.size()), selectedPageTurnOption, [this](int idx) {
+                         selectedPageTurnOption = idx;
+                         requestUpdate();
+                       });
+      requestUpdate();
+      return;
+    case MenuAction::FONT_SIZE:
+    case MenuAction::FONT_NAME:
+    case MenuAction::TEXT_ALIGN:
+    case MenuAction::LINE_SPACING:
+    case MenuAction::RESET_BOOK_SETTINGS:
+      openSettingEditor(selectedAction);
+      requestUpdate();
+      return;
+    default:
+      finishWithAction(static_cast<int>(selectedAction), /*cancelled=*/false);
+      return;
+  }
+}
+
 void EpubReaderMenuActivity::loop() {
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
-  int& index = inMore ? moreSelectedIndex : selectedIndex;
-  const auto& items = activeItems();
+  const int itemCount = activeItemCount();
 
   // Handle navigation
-  buttonNavigator.onNext([this, &index, &items] {
-    index = ButtonNavigator::nextIndex(index, static_cast<int>(items.size()));
+  buttonNavigator.onNext([this, itemCount] {
+    activeIndex() = ButtonNavigator::nextIndex(activeIndex(), itemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onPrevious([this, &index, &items] {
-    index = ButtonNavigator::previousIndex(index, static_cast<int>(items.size()));
+  buttonNavigator.onPrevious([this, itemCount] {
+    activeIndex() = ButtonNavigator::previousIndex(activeIndex(), itemCount);
     requestUpdate();
   });
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    const auto selectedAction = items[index].action;
-    switch (selectedAction) {
-      case MenuAction::MORE:
-        inMore = true;
-        moreSelectedIndex = 0;
-        requestUpdate();
-        return;
-      case MenuAction::ROTATE_SCREEN:
-        optionPopup.show(StrId::STR_ORIENTATION, orientationLabels.data(), static_cast<int>(orientationLabels.size()),
-                         pendingOrientation, [this](int idx) {
-                           pendingOrientation = idx;
-                           requestUpdate();
-                         });
-        requestUpdate();
-        return;
-      case MenuAction::AUTO_PAGE_TURN:
-        optionPopup.show(I18N.get(StrId::STR_AUTO_TURN_PAGES_PER_MIN), pageTurnLabels.data(),
-                         static_cast<int>(pageTurnLabels.size()), selectedPageTurnOption, [this](int idx) {
-                           selectedPageTurnOption = idx;
-                           requestUpdate();
-                         });
-        requestUpdate();
-        return;
-      case MenuAction::FONT_SIZE:
-      case MenuAction::FONT_NAME:
-      case MenuAction::TEXT_ALIGN:
-      case MenuAction::LINE_SPACING:
-      case MenuAction::RESET_BOOK_SETTINGS:
-        openSettingEditor(selectedAction);
-        requestUpdate();
-        return;
-      default:
-        finishWithAction(static_cast<int>(selectedAction), /*cancelled=*/false);
-        return;
-    }
-  } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (inMore) {
-      inMore = false;
+    if (itemCount > 0) handleListConfirm();
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (view != View::MAIN) {
+      view = View::MAIN;
       requestUpdate();
       return;
     }
@@ -315,40 +362,58 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   constexpr int handleWidth = 48;
   renderer.fillRoundedRect((pageWidth - handleWidth) / 2, drawerTop + 5, handleWidth, 6, 3, Color::Black);
 
-  // Material-style header: full-width black bar, book title in white, no battery.
+  // Material-style header: compact one-line black bar, title in white,
+  // no battery. Sized off the font line height (not theme headerHeight) so
+  // it stays a slim single line on every theme.
   const int headerTop = drawerTop + 14;
-  const int headerHeight = metrics.headerHeight;
+  const int titleLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const int headerHeight = titleLineHeight + 12;
   renderer.fillRect(0, headerTop, pageWidth, headerHeight, true);
   {
     const int titleMargin = 16;
     const std::string shownTitle =
-        renderer.truncatedText(UI_12_FONT_ID, title.c_str(), pageWidth - titleMargin * 2, EpdFontFamily::BOLD);
-    const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, shownTitle.c_str(), EpdFontFamily::BOLD);
-    const int titleY = headerTop + (headerHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-    renderer.drawText(UI_12_FONT_ID, (pageWidth - titleWidth) / 2, titleY, shownTitle.c_str(), /*black=*/false,
+        renderer.truncatedText(UI_10_FONT_ID, title.c_str(), pageWidth - titleMargin * 2, EpdFontFamily::BOLD);
+    const int titleWidth = renderer.getTextWidth(UI_10_FONT_ID, shownTitle.c_str(), EpdFontFamily::BOLD);
+    renderer.drawText(UI_10_FONT_ID, (pageWidth - titleWidth) / 2, headerTop + 6, shownTitle.c_str(), /*black=*/false,
                       EpdFontFamily::BOLD);
   }
 
-  // Progress summary
+  // Progress summary on a light-gray dithered band under the header.
   std::string progressLine;
   if (totalPages > 0) {
     progressLine = std::string(tr(STR_CHAPTER_PREFIX)) + std::to_string(currentPage) + "/" +
                    std::to_string(totalPages) + std::string(tr(STR_PAGES_SEPARATOR));
   }
   progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
-  GUI.drawSubHeader(renderer, Rect{screen.x, headerTop + headerHeight, screen.width, metrics.tabBarHeight},
-                    progressLine.c_str());
+  const int subTop = headerTop + headerHeight;
+  const int subLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  const int subHeight = subLineHeight + 10;
+  renderer.fillRectDither(0, subTop, pageWidth, subHeight, Color::LightGray);
+  {
+    const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progressLine.c_str(), EpdFontFamily::BOLD);
+    renderer.drawText(SMALL_FONT_ID, (pageWidth - progressWidth) / 2, subTop + 5, progressLine.c_str(), true,
+                      EpdFontFamily::BOLD);
+  }
 
-  const int contentTop = headerTop + headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
+  const int contentTop = subTop + subHeight + metrics.verticalSpacing;
   // Safe area already excludes the button-hints strip at the bottom.
   const int contentHeight = (screen.y + screen.height) - contentTop - metrics.verticalSpacing;
 
-  const auto& items = activeItems();
-  const int index = inMore ? moreSelectedIndex : selectedIndex;
-  GUI.drawList(
-      renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, static_cast<int>(items.size()), index,
-      [&items](int i) { return std::string(I18N.get(items[i].labelId)); }, nullptr, nullptr,
-      [this, &items](int i) { return valueLabel(items[i].action); }, true);
+  const int itemCount = activeItemCount();
+  const int index = view == View::MORE ? moreSelectedIndex : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
+  if (view == View::CHAPTERS) {
+    GUI.drawList(renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index, [this](int i) {
+      auto item = epub->getTocItem(i);
+      std::string indent((item.level - 1) * 2, ' ');
+      return indent + item.title;
+    });
+  } else {
+    const auto& items = activeItems();
+    GUI.drawList(
+        renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index,
+        [&items](int i) { return std::string(I18N.get(items[i].labelId)); }, nullptr, nullptr,
+        [this, &items](int i) { return valueLabel(items[i].action); }, true);
+  }
 
   // Footer / Hints
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

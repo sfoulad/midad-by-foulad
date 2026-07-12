@@ -25,6 +25,10 @@ struct MenuResult {
   // the reader persists the sidecar and re-lays-out. Applies even on cancel
   // (Back just closes the drawer -- the edits still count).
   bool bookSettingsChanged = false;
+  // Set when action == SELECT_CHAPTER: the chapter picked from the in-drawer
+  // TOC list (the drawer owns the chapter list; no separate activity).
+  int chapterSpineIndex = -1;
+  std::string chapterAnchor;
 };
 
 struct ChapterResult {

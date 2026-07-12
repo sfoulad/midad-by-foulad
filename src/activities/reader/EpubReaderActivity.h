@@ -101,7 +101,7 @@ class EpubReaderActivity final : public Activity {
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
-  void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
+  void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu);
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op

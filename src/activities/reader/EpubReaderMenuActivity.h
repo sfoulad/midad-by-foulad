@@ -11,18 +11,20 @@
 
 // In-book menu, rendered as a bottom drawer (~85% of the screen, live page
 // visible above). The main list carries the most-used actions plus the
-// per-book reading settings (font size/name, alignment -- script-aware: an
-// Arabic book shows only the Arabic font rows, a Latin book only the English
-// ones); everything else lives in a "More" sub-list. Setting rows edit the
-// RAM-only SETTINGS.book* overrides in place (see CrossPointSettings.h) and
-// are reported back via MenuResult::bookSettingsChanged so the reader
-// persists the sidecar and re-lays-out on close.
+// per-book reading settings (font size/name, line spacing, alignment --
+// script-aware: an Arabic book shows only the Arabic font rows, a Latin book
+// only the English ones); everything else lives in a "More" sub-list, and the
+// chapter list opens as a third in-drawer view (no separate activity).
+// Setting rows edit the RAM-only SETTINGS.book* overrides in place (see
+// CrossPointSettings.h) and are reported back via
+// MenuResult::bookSettingsChanged so the reader persists the sidecar and
+// re-lays-out on close.
 class EpubReaderMenuActivity final : public Activity {
  public:
   // Menu actions available from the reader menu.
   enum class MenuAction {
     // Returned to the reader through MenuResult:
-    SELECT_CHAPTER,
+    SELECT_CHAPTER,  // returned with chapterSpineIndex/chapterAnchor already picked
     FOOTNOTES,
     GO_TO_PERCENT,
     AUTO_PAGE_TURN,
@@ -43,10 +45,12 @@ class EpubReaderMenuActivity final : public Activity {
     MORE
   };
 
-  explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& title,
-                                  const int currentPage, const int totalPages, const int bookProgressPercent,
-                                  const uint8_t currentOrientation, const bool hasFootnotes, bool hasBookmarks,
-                                  bool isArabicBook);
+  // `epub` is non-owning: the reader keeps the Epub alive for the whole time
+  // this (child) activity exists. Used for the in-drawer TOC list.
+  explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, Epub* epub,
+                                  const int currentSpineIndex, const int currentPage, const int totalPages,
+                                  const int bookProgressPercent, const uint8_t currentOrientation,
+                                  const bool hasFootnotes, bool hasBookmarks, bool isArabicBook);
 
   void onEnter() override;
   void onExit() override;
@@ -54,6 +58,8 @@ class EpubReaderMenuActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
+  enum class View : uint8_t { MAIN, MORE, CHAPTERS };
+
   struct MenuItem {
     MenuAction action;
     StrId labelId;
@@ -66,15 +72,31 @@ class EpubReaderMenuActivity final : public Activity {
   std::string globalLabel(const char* effectiveValueLabel) const;
   void openSettingEditor(MenuAction action);
   void finishWithAction(int action, bool cancelled);
+  void handleListConfirm();
 
-  const std::vector<MenuItem>& activeItems() const { return inMore ? moreItems : mainItems; }
+  const std::vector<MenuItem>& activeItems() const { return view == View::MORE ? moreItems : mainItems; }
+  int& activeIndex() {
+    switch (view) {
+      case View::MORE:
+        return moreSelectedIndex;
+      case View::CHAPTERS:
+        return chapterSelectedIndex;
+      default:
+        return selectedIndex;
+    }
+  }
+  int activeItemCount() const;
+
+  Epub* const epub;  // non-owning (see ctor note)
+  const int currentSpineIndex;
 
   // Fixed menu layout
   std::vector<MenuItem> mainItems;
   std::vector<MenuItem> moreItems;
-  bool inMore = false;
+  View view = View::MAIN;
   int selectedIndex = 0;
   int moreSelectedIndex = 0;
+  int chapterSelectedIndex = 0;
 
   const bool isArabicBook;
   bool bookSettingsChanged = false;
