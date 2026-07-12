@@ -1,5 +1,7 @@
 #include "LyraTheme.h"
 
+#include <ScriptDetector.h>
+
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
@@ -291,7 +293,11 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
     auto itemName = rowTitle(i);
     auto item = renderer.truncatedText(UI_10_FONT_ID, itemName.c_str(), rowTextWidth);
-    const int titleX = rtl ? textRightEdge - renderer.getTextWidth(UI_10_FONT_ID, item.c_str()) : textX;
+    // Arabic rows lay out RTL regardless of the UI language: an English-UI
+    // device still shows Arabic book chapter lists (e.g. the Quran's surah
+    // list) with the title anchored right and the value left (user report).
+    const bool rowRtl = rtl || ScriptDetector::containsArabic(item.c_str());
+    const int titleX = rowRtl ? textRightEdge - renderer.getTextWidth(UI_10_FONT_ID, item.c_str()) : textX;
     renderer.drawText(UI_10_FONT_ID, titleX, itemY + 7, item.c_str(), true);
 
     // Apply checkerboard dither to create gray text effect for dimmed items
@@ -318,14 +324,14 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       // Draw subtitle
       std::string subtitleText = rowSubtitle(i);
       auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
-      const int subtitleX = rtl ? textRightEdge - renderer.getTextWidth(SMALL_FONT_ID, subtitle.c_str()) : textX;
+      const int subtitleX = rowRtl ? textRightEdge - renderer.getTextWidth(SMALL_FONT_ID, subtitle.c_str()) : textX;
       renderer.drawText(SMALL_FONT_ID, subtitleX, itemY + 30, subtitle.c_str(), true);
     }
 
     // Draw value
     if (!valueText.empty()) {
-      const int valueX = rtl ? rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection
-                             : rect.x + contentWidth - LyraMetrics::values.contentSidePadding - valueWidth;
+      const int valueX = rowRtl ? rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection
+                                : rect.x + contentWidth - LyraMetrics::values.contentSidePadding - valueWidth;
       if (i == selectedIndex && highlightValue) {
         renderer.fillRoundedRect(valueX - hPaddingInSelection, itemY, valueWidth + hPaddingInSelection, rowHeight,
                                  cornerRadius, Color::Black);

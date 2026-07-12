@@ -23,6 +23,13 @@ class FontCacheManager {
   // Scan-mode API: called by GfxRenderer::drawText() during scan pass
   bool isScanning() const;
   void recordText(const char* text, int fontId, EpdFontFamily::Style style);
+  // Arabic body text renders from the RESOLVED Arabic font (not the caller's
+  // fontId), with codepoints already shaped into presentation forms -- record
+  // that stream separately so the page prewarm also fills a slot for the
+  // Arabic font. Without this every Arabic glyph draw went through the
+  // FontDecompressor hot-group fallback (repeated group decompression), which
+  // made vocalized pages (the Quran) noticeably slow to turn.
+  void recordArabicText(const char* shapedUtf8, int fontId);
 
   // The FontDecompressor pointer, needed by GfxRenderer::getGlyphBitmap()
   FontDecompressor* getDecompressor() const { return fontDecompressor_; }
@@ -54,4 +61,6 @@ class FontCacheManager {
   std::string scanText_;
   uint32_t scanStyleCounts_[4] = {};
   int scanFontId_ = -1;
+  std::string scanArabicText_;
+  int scanArabicFontId_ = -1;
 };

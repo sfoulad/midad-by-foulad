@@ -74,6 +74,11 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
   scanStyleCounts_[baseStyle] += cpCount;
 }
 
+void FontCacheManager::recordArabicText(const char* shapedUtf8, int fontId) {
+  scanArabicText_ += shapedUtf8;
+  if (scanArabicFontId_ < 0) scanArabicFontId_ = fontId;
+}
+
 // --- PrewarmScope implementation ---
 
 FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {
@@ -82,6 +87,9 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   manager_->resetStats();
   manager_->scanText_.clear();
   manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
+  manager_->scanArabicText_.clear();
+  manager_->scanArabicText_.reserve(2048);
+  manager_->scanArabicFontId_ = -1;
   memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
   manager_->scanFontId_ = -1;
 }
@@ -98,10 +106,17 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   if (styleMask == 0) styleMask = 1;  // default to regular
 
   manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
+  if (manager_->scanArabicFontId_ >= 0 && !manager_->scanArabicText_.empty()) {
+    // Arabic reading text is always REGULAR style.
+    manager_->prewarmCache(manager_->scanArabicFontId_, manager_->scanArabicText_.c_str(), 0x01);
+  }
 
   // Free scan string memory
   manager_->scanText_.clear();
   manager_->scanText_.shrink_to_fit();
+  manager_->scanArabicText_.clear();
+  manager_->scanArabicText_.shrink_to_fit();
+  manager_->scanArabicFontId_ = -1;
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {

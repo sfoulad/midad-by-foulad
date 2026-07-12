@@ -337,29 +337,44 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  // Drive any in-progress incremental section build forward, off the page-turn critical path,
-  // but only within a small window ahead of the reader: an unbounded build monopolized the
-  // RenderLock and locked out page turns. The build follows the reader instead, and instant
-  // reopen comes from suspendBuild() persisting the laid-out pages as a partial on exit.
-  // Skip while the render mutex is busy so we never delay a pending render; re-check
-  // isBuilding() under the lock since render() may have just finished it.
-  if (section && section->isBuilding() && !RenderLock::peek() &&
-      static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD) {
-    RenderLock lock;
-    // Re-check under the lock: render() (which also holds the RenderLock) may have finalized the
-    // build between the outer isBuilding() check and acquiring the lock here, in which case
-    // buildSomeMore() would fail and wrongly reset the section. cppcheck can't see the cross-task
-    // mutation, so it flags this as always true.
-    // cppcheck-suppress knownConditionTrueFalse
-    if (section->isBuilding()) {
-      if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
-        LOG_ERR("ERS", "Background section build failed");
-        section.reset();
-        requestUpdate();
-      } else if (section->isBuildComplete() && applyDeferredReposition()) {
-        // The chapter re-paginated since the saved progress (settings changed): we now know the
-        // real page count, so re-render at the remapped page. No-op for an unchanged resume.
-        requestUpdate();
+  // Background section build tick. Runs only on ticks with NO button input:
+  // a page-turn (or any) press is handled first and never waits behind a
+  // build chunk -- pressing forward through a long, still-indexing surah used
+  // to queue each turn behind layout work (user report: Quran page flips
+  // "very slow").
+  bool anyButtonEvent = mappedInput.isPressed(MappedInputManager::Button::Confirm);
+  for (const auto b : {MappedInputManager::Button::Back, MappedInputManager::Button::Confirm,
+                       MappedInputManager::Button::Left, MappedInputManager::Button::Right,
+                       MappedInputManager::Button::Up, MappedInputManager::Button::Down,
+                       MappedInputManager::Button::PageBack, MappedInputManager::Button::PageForward,
+                       MappedInputManager::Button::NavNext, MappedInputManager::Button::NavPrevious}) {
+    anyButtonEvent = anyButtonEvent || mappedInput.wasPressed(b) || mappedInput.wasReleased(b);
+  }
+  if (!anyButtonEvent) {
+    // Drive any in-progress incremental section build forward, off the page-turn critical path,
+    // but only within a small window ahead of the reader: an unbounded build monopolized the
+    // RenderLock and locked out page turns. The build follows the reader instead, and instant
+    // reopen comes from suspendBuild() persisting the laid-out pages as a partial on exit.
+    // Skip while the render mutex is busy so we never delay a pending render; re-check
+    // isBuilding() under the lock since render() may have just finished it.
+    if (section && section->isBuilding() && !RenderLock::peek() &&
+        static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD) {
+      RenderLock lock;
+      // Re-check under the lock: render() (which also holds the RenderLock) may have finalized the
+      // build between the outer isBuilding() check and acquiring the lock here, in which case
+      // buildSomeMore() would fail and wrongly reset the section. cppcheck can't see the cross-task
+      // mutation, so it flags this as always true.
+      // cppcheck-suppress knownConditionTrueFalse
+      if (section->isBuilding()) {
+        if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
+          LOG_ERR("ERS", "Background section build failed");
+          section.reset();
+          requestUpdate();
+        } else if (section->isBuildComplete() && applyDeferredReposition()) {
+          // The chapter re-paginated since the saved progress (settings changed): we now know the
+          // real page count, so re-render at the remapped page. No-op for an unchanged resume.
+          requestUpdate();
+        }
       }
     }
   }

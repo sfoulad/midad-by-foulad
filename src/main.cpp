@@ -128,16 +128,6 @@ EpdFontFamily amiri16FontFamily(&amiri16RegularFont);
 EpdFont amiri18RegularFont(&amiri_18_regular);
 EpdFontFamily amiri18FontFamily(&amiri18RegularFont);
 
-// Neirizi (user-selected Quranic mushaf face) -- Quran default via per-book
-// sidecar; see QuranBook.h and ArabicFontSystem.cpp.
-EpdFont neirizi12RegularFont(&neirizi_12_regular);
-EpdFontFamily neirizi12FontFamily(&neirizi12RegularFont);
-EpdFont neirizi14RegularFont(&neirizi_14_regular);
-EpdFontFamily neirizi14FontFamily(&neirizi14RegularFont);
-EpdFont neirizi16RegularFont(&neirizi_16_regular);
-EpdFontFamily neirizi16FontFamily(&neirizi16RegularFont);
-EpdFont neirizi18RegularFont(&neirizi_18_regular);
-EpdFontFamily neirizi18FontFamily(&neirizi18RegularFont);
 
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
@@ -382,10 +372,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(AMIRI_14_FONT_ID, amiri14FontFamily);
   renderer.insertFont(AMIRI_16_FONT_ID, amiri16FontFamily);
   renderer.insertFont(AMIRI_18_FONT_ID, amiri18FontFamily);
-  renderer.insertFont(NEIRIZI_12_FONT_ID, neirizi12FontFamily);
-  renderer.insertFont(NEIRIZI_14_FONT_ID, neirizi14FontFamily);
-  renderer.insertFont(NEIRIZI_16_FONT_ID, neirizi16FontFamily);
-  renderer.insertFont(NEIRIZI_18_FONT_ID, neirizi18FontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

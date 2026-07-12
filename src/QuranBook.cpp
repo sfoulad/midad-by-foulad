@@ -40,7 +40,7 @@ void writeDefaultSidecarIfMissing() {
   buf[3] = CrossPointSettings::BOOK_NO_OVERRIDE;  // fontSize: inherit
   buf[4] = CrossPointSettings::BOOK_NO_OVERRIDE;  // arabicFontSize: inherit
   buf[5] = CrossPointSettings::BOOK_NO_OVERRIDE;  // lineSpacing: inherit
-  buf[6] = CrossPointSettings::BOOK_NO_OVERRIDE;  // paragraphAlignment: inherit
+  buf[6] = CrossPointSettings::JUSTIFIED;         // mushaf convention: justified lines
   buf[7] = CrossPointSettings::AMIRI;             // built-in Arabic family: Amiri
   // Arabic family-source: force the built-in path (buf[8..39] Latin stays "").
   buf[8 + 32] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
@@ -107,6 +107,30 @@ bool ensureExtracted() {
     if (Storage.openFileForRead("QURAN", PATH, existing) && existing.size() == embeddedSize) {
       writeDefaultSidecarIfMissing();
       return true;
+    }
+  }
+
+  // The embedded text changed (firmware update): the parsed cache under the
+  // Quran's cache dir describes the OLD content -- clear it or the reader
+  // keeps showing stale pages. The user's font/size sidecar survives.
+  {
+    const std::string cacheDir = quranCachePath();
+    const std::string sidecar = cacheDir + BookReaderSettings::FILE_NAME;
+    std::vector<uint8_t> savedSidecar;
+    HalFile sf;
+    if (Storage.openFileForRead("QURAN", sidecar, sf)) {
+      savedSidecar.resize(sf.size());
+      if (sf.read(savedSidecar.data(), savedSidecar.size()) != static_cast<int>(savedSidecar.size())) {
+        savedSidecar.clear();
+      }
+    }
+    Storage.removeDir(cacheDir.c_str());
+    if (!savedSidecar.empty()) {
+      Storage.mkdir(cacheDir.c_str());
+      HalFile rf;
+      if (Storage.openFileForWrite("QURAN", sidecar, rf)) {
+        rf.write(savedSidecar.data(), savedSidecar.size());
+      }
     }
   }
 

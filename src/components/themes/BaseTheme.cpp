@@ -338,8 +338,13 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     auto itemName = rowTitle(i);
     auto font = UI_10_FONT_ID;
     auto item = renderer.truncatedText(font, itemName.c_str(), rowTextWidth);
+    // Arabic rows lay out RTL regardless of the UI language: an English-UI
+    // device still shows Arabic book chapter lists (e.g. the Quran's surah
+    // list) with the title anchored right and the value left (user report).
+    const bool rowRtl = rtl || ScriptDetector::containsArabic(item.c_str());
     const int titleX =
-        rtl ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding - renderer.getTextWidth(font, item.c_str())
+        rowRtl
+            ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding - renderer.getTextWidth(font, item.c_str())
             : rect.x + BaseMetrics::values.contentSidePadding;
     renderer.drawText(font, titleX, itemY, item.c_str(), i != selectedIndex);
 
@@ -356,9 +361,9 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       std::string subtitleText = rowSubtitle(i);
       if (!subtitleText.empty()) {
         auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
-        const int subtitleX = rtl ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding -
-                                        renderer.getTextWidth(SMALL_FONT_ID, subtitle.c_str())
-                                  : rect.x + BaseMetrics::values.contentSidePadding;
+        const int subtitleX = rowRtl ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding -
+                                           renderer.getTextWidth(SMALL_FONT_ID, subtitle.c_str())
+                                     : rect.x + BaseMetrics::values.contentSidePadding;
         renderer.drawText(SMALL_FONT_ID, subtitleX, itemY + 22, subtitle.c_str(), i != selectedIndex);
       }
     }
@@ -369,8 +374,8 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       if (rowSubtitle != nullptr) {
         valueY = itemY + 10;
       }
-      const int valueX = rtl ? rect.x + BaseMetrics::values.contentSidePadding
-                             : rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth;
+      const int valueX = rowRtl ? rect.x + BaseMetrics::values.contentSidePadding
+                                : rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth;
       renderer.drawText(UI_10_FONT_ID, valueX, valueY, valueText.c_str(), i != selectedIndex);
     }
   }

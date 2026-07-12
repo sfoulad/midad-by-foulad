@@ -19,11 +19,6 @@ constexpr int
         // the Quran's default reading face (per-book sidecar written at
         // extraction; see QuranBook::ensureExtracted).
         {AMIRI_12_FONT_ID, AMIRI_14_FONT_ID, AMIRI_16_FONT_ID, AMIRI_18_FONT_ID},
-        // Neirizi: classical Quranic mushaf face (user-supplied) -- the Quran's
-        // default reading family via its extraction-time sidecar (QuranBook).
-        // Converted with fontconvert --shape-fallback: its contextual forms
-        // only exist through GSUB, which the fallback bakes into the bitmaps.
-        {NEIRIZI_12_FONT_ID, NEIRIZI_14_FONT_ID, NEIRIZI_16_FONT_ID, NEIRIZI_18_FONT_ID},
 };
 
 // One mapping scheme for both the built-in and SD-override cases: the three

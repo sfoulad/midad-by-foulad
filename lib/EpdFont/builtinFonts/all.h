@@ -24,10 +24,6 @@
 #include <builtinFonts/amiri_14_regular.h>
 #include <builtinFonts/amiri_16_regular.h>
 #include <builtinFonts/amiri_18_regular.h>
-#include <builtinFonts/neirizi_12_regular.h>
-#include <builtinFonts/neirizi_14_regular.h>
-#include <builtinFonts/neirizi_16_regular.h>
-#include <builtinFonts/neirizi_18_regular.h>
 #include <builtinFonts/notonaskharabic_12_regular.h>
 #include <builtinFonts/notonaskharabic_14_regular.h>
 #include <builtinFonts/notonaskharabic_16_regular.h>

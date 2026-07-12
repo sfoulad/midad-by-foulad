@@ -388,6 +388,47 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
   return w;
 }
 
+namespace {
+void appendUtf8(std::string& out, const uint32_t cp) {
+  if (cp < 0x80) {
+    out += static_cast<char>(cp);
+  } else if (cp < 0x800) {
+    out += static_cast<char>(0xC0 | (cp >> 6));
+    out += static_cast<char>(0x80 | (cp & 0x3F));
+  } else if (cp < 0x10000) {
+    out += static_cast<char>(0xE0 | (cp >> 12));
+    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (cp & 0x3F));
+  } else {
+    out += static_cast<char>(0xF0 | (cp >> 18));
+    out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+    out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (cp & 0x3F));
+  }
+}
+
+// Ayah-number marker word: exactly "﴿<arabic-indic digits>﴾" (U+FD3F, digits,
+// U+FD3E -- see tools/quran/build_quran_epub.py). Rendered as the traditional
+// round medallion: the END OF AYAH rosette (U+06DD) with the number drawn
+// half-scale inside it.
+bool parseAyahMarker(const char* text, uint32_t* digits, int& digitCount) {
+  // Byte-level match (fixed UTF-8 sequences): U+FD3F = EF B4 BF,
+  // U+0660..0669 = D9 A0..A9, U+FD3E = EF B4 BE.
+  const auto* p = reinterpret_cast<const uint8_t*>(text);
+  if (p[0] != 0xEF || p[1] != 0xB4 || p[2] != 0xBF) return false;
+  p += 3;
+  digitCount = 0;
+  while (p[0] == 0xD9 && p[1] >= 0xA0 && p[1] <= 0xA9) {
+    if (digitCount >= 3) return false;
+    digits[digitCount++] = 0x0660 + (p[1] - 0xA0);
+    p += 2;
+  }
+  if (digitCount == 0) return false;
+  if (p[0] != 0xEF || p[1] != 0xB4 || p[2] != 0xBE) return false;
+  return p[3] == '\0';
+}
+}  // namespace
+
 int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
   if (text == nullptr || *text == '\0') return 0;
 
@@ -401,6 +442,18 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     return 0;
   }
   const auto& font = fontIt->second;
+
+  // Ayah markers lay out at the rosette's advance -- must match
+  // drawArabicText's medallion branch exactly.
+  {
+    uint32_t digits[3];
+    int digitCount = 0;
+    if (parseAyahMarker(text, digits, digitCount)) {
+      if (const EpdGlyph* rosette = font.getGlyph(0x06DD, style)) {
+        return fp4::toPixel(rosette->advanceX);
+      }
+    }
+  }
 
   int width = 0;
   for (const uint32_t cp : ArabicShaper::shapeText(text)) {
@@ -445,9 +498,13 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   const auto& font = fontIt->second;
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
-    // Cache-prewarm scanning is scoped to fontId's own font; the Arabic path always
-    // renders from the resolved Arabic font instead, so there's nothing meaningful to
-    // record here.
+    // Record the SHAPED codepoints under the resolved Arabic font so the page
+    // prewarm decompresses this page's Arabic glyphs into a page slot -- see
+    // FontCacheManager::recordArabicText.
+    std::string shaped;
+    shaped.reserve(64);
+    for (const uint32_t cp : ArabicShaper::shapeText(text)) appendUtf8(shaped, cp);
+    fontCacheManager_->recordArabicText(shaped.c_str(), resolvedArabicFontId);
     return;
   }
 
@@ -457,6 +514,35 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   // arabicBaselineMatchFontIds_ in the header for the full reasoning.
   const bool matchLatinBaseline = arabicBaselineMatchFontIds_.count(fontId) > 0 && fontMap.count(fontId) > 0;
   const int yPos = y + getFontAscenderSize(matchLatinBaseline ? fontId : resolvedArabicFontId);
+
+  // Ayah markers render as the traditional round medallion: the END OF AYAH
+  // rosette (U+06DD) with the number half-scaled inside it. Width must match
+  // getArabicTextWidth's marker branch exactly (layout vs render).
+  {
+    uint32_t digits[3];
+    int digitCount = 0;
+    const EpdGlyph* rosette = nullptr;
+    if (parseAyahMarker(text, digits, digitCount) && (rosette = font.getGlyph(0x06DD, style)) != nullptr) {
+      renderCharImpl<TextRotation::None>(*this, renderMode, font, 0x06DD, x, yPos, black, style);
+      // Digits in visual order (multi-digit numbers read left-to-right).
+      int digitsW = 0;
+      const int rosetteCenter = rosette->top - rosette->height / 2;  // ink centre above baseline
+      for (int i = 0; i < digitCount; i++) {
+        const EpdGlyph* d = font.getGlyph(digits[i], style);
+        if (d) digitsW += fp4::toPixel(d->advanceX) / 2;
+      }
+      int dx = x + rosette->left + (std::max(0, rosette->width - digitsW)) / 2;
+      for (int i = 0; i < digitCount; i++) {
+        const EpdGlyph* d = font.getGlyph(digits[i], style);
+        if (!d) continue;
+        const int digitCenter = (d->top - d->height / 2) / 2;
+        renderCharScaled(*this, renderMode, font, digits[i], dx, yPos - rosetteCenter + digitCenter, black, style);
+        dx += fp4::toPixel(d->advanceX) / 2;
+      }
+      return;
+    }
+  }
+
   int cursorX = x;
   for (const uint32_t cp : ArabicShaper::shapeText(text)) {
     const EpdGlyph* glyph = font.getGlyph(cp, style);

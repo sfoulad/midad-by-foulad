@@ -23,7 +23,7 @@ constexpr StrId kAlignLabels[CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT] = {
     StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT, StrId::STR_BOOK_S_STYLE};
 // In CrossPointSettings::ARABIC_FONT_FAMILY order.
 constexpr StrId kArabicBuiltinLabels[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT] = {
-    StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI, StrId::STR_NEIRIZI};
+    StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI};
 
 std::vector<std::string> sdFamilyNames(const SdCardFontRegistry& registry) {
   std::vector<std::string> names;

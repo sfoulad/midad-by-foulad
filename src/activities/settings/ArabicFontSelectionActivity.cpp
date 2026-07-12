@@ -21,7 +21,6 @@ constexpr const char* ELLIPSIS_UTF8 = "\xe2\x80\xa6";
 constexpr StrId kBuiltinArabicFontNames[CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT] = {
     StrId::STR_NOTO_NASKH_ARABIC,
     StrId::STR_AMIRI,
-    StrId::STR_NEIRIZI,
 };
 
 int findCurrentArabicFontIndex(const SdCardFontRegistry* registry, const char* sdArabicFontFamilyName,

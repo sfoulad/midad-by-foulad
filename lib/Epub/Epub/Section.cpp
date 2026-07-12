@@ -26,7 +26,11 @@ namespace {
 // NUL-terminated text blob, upstream v29) and lazy incremental section indexing.
 // Upstream numbers this format 29; this fork already used 29-34, so it continues at
 // 35 with the arabicFontId header field retained.
-constexpr uint8_t SECTION_FILE_VERSION = 35;
+// v36: ayah-number marker words ("\xEF\xB4\xBF<digits>\xEF\xB4\xBE") lay out at
+// the U+06DD rosette advance instead of their per-glyph text width (the
+// renderer draws them as a medallion) -- cached x-positions from v35 no
+// longer match.
+constexpr uint8_t SECTION_FILE_VERSION = 36;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
