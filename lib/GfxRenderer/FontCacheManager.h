@@ -34,6 +34,17 @@ class FontCacheManager {
   // The FontDecompressor pointer, needed by GfxRenderer::getGlyphBitmap()
   FontDecompressor* getDecompressor() const { return fontDecompressor_; }
 
+  // Diagnostics only, set by endScanAndPrewarm(): real-device logs showed
+  // prewarm_glyphs staying at 0 for the Quran even after fixing the scanText_.empty()
+  // early return (which was skipping the Arabic prewarmCache() call entirely) --
+  // meaning either the scan pass still isn't capturing the page's Arabic text, or
+  // prewarmCache() is resolving the Arabic font id to something other than the
+  // compressed-font path FontDecompressor::Stats tracks. These say which.
+  enum class LastPrewarmPath : uint8_t { NotAttempted, NoFontFound, SdCardFont, Compressed };
+  LastPrewarmPath getLastArabicPrewarmPath() const { return lastArabicPrewarmPath_; }
+  int getLastArabicPrewarmFontId() const { return lastArabicPrewarmFontId_; }
+  size_t getLastArabicScanTextBytes() const { return lastArabicScanTextBytes_; }
+
   // RAII scope for two-pass prewarm pattern
   class PrewarmScope {
    public:
@@ -63,4 +74,8 @@ class FontCacheManager {
   int scanFontId_ = -1;
   std::string scanArabicText_;
   int scanArabicFontId_ = -1;
+
+  LastPrewarmPath lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
+  int lastArabicPrewarmFontId_ = -1;
+  size_t lastArabicScanTextBytes_ = 0;
 };

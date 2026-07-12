@@ -15,6 +15,7 @@
 #include <esp_system.h>
 
 #include <algorithm>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -1478,7 +1479,7 @@ constexpr unsigned long SLOW_PAGE_TURN_MS = 150;
 // never showed up in simulator testing -- this is the only way to see which phase a
 // real multi-second turn is actually spending time in.
 void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBwRender, unsigned long tDisplay,
-                     unsigned long tEnd, int spineIndex, const std::string& title, FontDecompressor* decompressor) {
+                     unsigned long tEnd, int spineIndex, const std::string& title, FontCacheManager* fcm) {
   const unsigned long total = tEnd - t0;
   if (total < SLOW_PAGE_TURN_MS) return;
   // Cache hits/misses/decompress time: PrewarmScope resets these at the top of every
@@ -1490,16 +1491,47 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
   // actually cached for this page, from pageGlyphsBytes/12 -- PageGlyphEntry is 12
   // bytes) says whether the scan pass is only capturing a small fraction of the
   // page's text in the first place, upstream of anything getBitmap() does.
-  char statsPart[160] = "";
-  if (decompressor) {
-    const auto& s = decompressor->getStats();
-    snprintf(statsPart, sizeof(statsPart),
-             " hits=%lu misses=%lu decomp=%lums calls=%lu prewarm_glyphs=%lu prewarm_bytes=%lu prewarm_groups=%u",
-             (unsigned long)s.cacheHits, (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs,
-             (unsigned long)s.getBitmapCalls, (unsigned long)(s.pageGlyphsBytes / 12), (unsigned long)s.pageBufferBytes,
-             (unsigned)s.uniqueGroupsAccessed);
+  //
+  // prewarm_glyphs stayed 0 even after fixing the scanText_.empty() early return that
+  // was skipping the Arabic prewarmCache() call outright -- so this also logs WHERE
+  // that call actually went: scan_bytes (how much Arabic text the scan pass recorded
+  // -- 0 means the scan itself isn't seeing the page's text at all, upstream of
+  // prewarm), and path (which branch FontCacheManager::prewarmCache() took for that
+  // font id: sd=SD-card font tracked by separate stats getBitmap() never touches,
+  // none=font id not found anywhere, compressed=the path FontDecompressor::Stats
+  // above actually measures).
+  char statsPart[224] = "";
+  if (fcm) {
+    FontDecompressor* decompressor = fcm->getDecompressor();
+    if (decompressor) {
+      const auto& s = decompressor->getStats();
+      snprintf(statsPart, sizeof(statsPart),
+               " hits=%lu misses=%lu decomp=%lums calls=%lu prewarm_glyphs=%lu prewarm_bytes=%lu prewarm_groups=%u",
+               (unsigned long)s.cacheHits, (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs,
+               (unsigned long)s.getBitmapCalls, (unsigned long)(s.pageGlyphsBytes / 12),
+               (unsigned long)s.pageBufferBytes, (unsigned)s.uniqueGroupsAccessed);
+    }
+    const char* pathStr = "?";
+    switch (fcm->getLastArabicPrewarmPath()) {
+      case FontCacheManager::LastPrewarmPath::NotAttempted:
+        pathStr = "not_attempted";
+        break;
+      case FontCacheManager::LastPrewarmPath::NoFontFound:
+        pathStr = "no_font";
+        break;
+      case FontCacheManager::LastPrewarmPath::SdCardFont:
+        pathStr = "sd";
+        break;
+      case FontCacheManager::LastPrewarmPath::Compressed:
+        pathStr = "compressed";
+        break;
+    }
+    char pathPart[80];
+    snprintf(pathPart, sizeof(pathPart), " scan_bytes=%lu scan_font=%d path=%s",
+             (unsigned long)fcm->getLastArabicScanTextBytes(), fcm->getLastArabicPrewarmFontId(), pathStr);
+    strncat(statsPart, pathPart, sizeof(statsPart) - strlen(statsPart) - 1);
   }
-  char buf[288];
+  char buf[352];
   snprintf(buf, sizeof(buf),
            "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u%s \"%s\"",
            millis(), spineIndex, tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - tDisplay, total,
@@ -1622,7 +1654,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm->getDecompressor());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm);
     }
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
@@ -1665,14 +1697,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_lsb=%lums gray_msb=%lums gray_display=%lums bw_restore=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm->getDecompressor());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm);
     } else {
       // No text AA and no images: BW frame already displayed above, no grayscale
       // to render, so no save/restore.
       const auto tEnd = millis();
       LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm->getDecompressor());
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm);
     }
   }
 }

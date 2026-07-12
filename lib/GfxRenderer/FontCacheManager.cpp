@@ -121,8 +121,21 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
     manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
   }
   if (manager_->scanArabicFontId_ >= 0 && !manager_->scanArabicText_.empty()) {
+    manager_->lastArabicScanTextBytes_ = manager_->scanArabicText_.size();
+    manager_->lastArabicPrewarmFontId_ = manager_->scanArabicFontId_;
+    if (manager_->sdCardFonts_.count(manager_->scanArabicFontId_) > 0) {
+      manager_->lastArabicPrewarmPath_ = LastPrewarmPath::SdCardFont;
+    } else if (manager_->fontMap_.count(manager_->scanArabicFontId_) > 0) {
+      manager_->lastArabicPrewarmPath_ = LastPrewarmPath::Compressed;
+    } else {
+      manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NoFontFound;
+    }
     // Arabic reading text is always REGULAR style.
     manager_->prewarmCache(manager_->scanArabicFontId_, manager_->scanArabicText_.c_str(), 0x01);
+  } else {
+    manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
+    manager_->lastArabicScanTextBytes_ = 0;
+    manager_->lastArabicPrewarmFontId_ = -1;
   }
 
   // Free scan string memory
