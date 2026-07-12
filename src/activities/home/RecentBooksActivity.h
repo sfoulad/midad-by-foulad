@@ -48,6 +48,13 @@ class RecentBooksActivity final : public Activity {
   static constexpr int GRID_TITLE_TOP_GAP = 4;  // gap between cover bottom and first title line
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
+  // Selection-move fast path: which composed grid page (and which selection on
+  // it) the framebuffer currently holds. A move within the same page repaints
+  // only the selection ring instead of re-reading and re-scaling every cover
+  // BMP from SD -- the full redraw made each keypress in My Books visibly slow
+  // on device (user report).
+  int renderedGridPageStart = NO_GRID_PAGE_LOADED;
+  int renderedSelectorIndex = -1;
 
   struct GridGeometry {
     int columns = 1;

@@ -153,6 +153,8 @@ void RecentBooksActivity::onEnter() {
 
   selectorIndex = 0;
   loadedGridPageStart = NO_GRID_PAGE_LOADED;
+  renderedGridPageStart = NO_GRID_PAGE_LOADED;
+  renderedSelectorIndex = -1;
   requestUpdate();
 }
 
@@ -243,6 +245,8 @@ void RecentBooksActivity::promptRemoveBook(const std::string& path, const std::s
         selectorIndex = recentBooks.size() - 1;
       }
       loadedGridPageStart = NO_GRID_PAGE_LOADED;
+      renderedGridPageStart = NO_GRID_PAGE_LOADED;
+      renderedSelectorIndex = -1;
       requestUpdate(true);
     }
   };
@@ -413,11 +417,42 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
 
   loadedGridPageStart = pageStart;
   if (showingLoading) {
+    // The loading popup painted over the composed page and new covers exist:
+    // force the next render down the full-redraw path.
+    renderedGridPageStart = NO_GRID_PAGE_LOADED;
     requestUpdate();
   }
 }
 
 void RecentBooksActivity::render(RenderLock&&) {
+  // Selection-move fast path: the framebuffer already holds this grid page,
+  // so just move the 4px selection ring (it lives entirely in the gutter
+  // around the cell -- GRID_GUTTER=12, GRID_TITLE_TOP_GAP=4 -- so erasing it
+  // with white touches neither covers nor titles). Skips the per-keypress SD
+  // reads + bitmap downscales of a full redraw.
+  if (!recentBooks.empty() && renderedGridPageStart != NO_GRID_PAGE_LOADED && renderedSelectorIndex >= 0) {
+    const GridGeometry geometry = computeGridGeometry();
+    const int gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
+    if (gridPageStart == renderedGridPageStart && static_cast<int>(selectorIndex) != renderedSelectorIndex) {
+      const auto& metrics = UITheme::getInstance().getMetrics();
+      const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+      const int titleHeight = getGridTitleHeight();
+      const int totalGridWidth = geometry.columns * (geometry.coverWidth + GRID_GUTTER) - GRID_GUTTER;
+      const int gridStartX = std::max(0, (static_cast<int>(renderer.getScreenWidth()) - totalGridWidth) / 2);
+      const auto ringRect = [&](const int bookIdx, const bool black) {
+        const int i = bookIdx - gridPageStart;
+        const int cellX = gridStartX + (i % geometry.columns) * (geometry.coverWidth + GRID_GUTTER);
+        const int cellY = contentTop + (i / geometry.columns) * (geometry.coverHeight + titleHeight + GRID_GUTTER);
+        renderer.drawRect(cellX - 4, cellY - 4, geometry.coverWidth + 8, geometry.coverHeight + 8, 4, black);
+      };
+      ringRect(renderedSelectorIndex, false);
+      ringRect(static_cast<int>(selectorIndex), true);
+      renderedSelectorIndex = static_cast<int>(selectorIndex);
+      renderer.displayBuffer();
+      return;
+    }
+  }
+
   renderer.clearScreen();
 
   const auto pageWidth = renderer.getScreenWidth();
@@ -494,6 +529,8 @@ void RecentBooksActivity::render(RenderLock&&) {
     }
   }
 
+  renderedGridPageStart = recentBooks.empty() ? NO_GRID_PAGE_LOADED : gridPageStart;
+  renderedSelectorIndex = static_cast<int>(selectorIndex);
   renderer.displayBuffer();
 
   if (!recentBooks.empty() && loadedGridPageStart != gridPageStart) {
