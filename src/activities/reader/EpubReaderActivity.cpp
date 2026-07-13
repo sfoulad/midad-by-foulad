@@ -1468,8 +1468,14 @@ namespace {
 // pages within it -- and real-device logs showed heap dropping between two page turns on an
 // already-cached chapter. Log the slow turns themselves (threshold avoids spamming the bounded
 // log with every ordinary ~50-80ms turn) so the next report can tell chapter-open cost apart
-// from per-page-turn cost/leakage.
-constexpr unsigned long SLOW_PAGE_TURN_MS = 150;
+// from per-page-turn cost/leakage. Was 150ms while chasing the Arabic-prewarm bug (fixed in
+// v1.6.80); left that low, a heavy Arabic-font page (~780-800ms even when everything is
+// working correctly) tripped this on literally every turn, and the resulting every-page SD
+// read-modify-write in ReaderPerfLog::append() was itself a contributor to the heap pressure
+// that crashed a real device (see RollingSdLog.h). 3000ms sits above every currently-observed
+// good case (including the periodic ~2.5-2.7s full e-ink refresh) while still catching a
+// regression back toward multi-second turns.
+constexpr unsigned long SLOW_PAGE_TURN_MS = 3000;
 // prewarm/bw_render/display are common to all three renderContents() exit paths (tiled
 // strip grayscale, non-strip grayscale, and no-AA/no-images); everything after display
 // (grayscale planes + cleanup, when present) is lumped into "rest" so one signature

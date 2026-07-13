@@ -408,9 +408,14 @@ void appendUtf8(std::string& out, const uint32_t cp) {
 }
 
 // Ayah-number marker word: exactly "﴿<arabic-indic digits>﴾" (U+FD3F, digits,
-// U+FD3E -- see tools/quran/build_quran_epub.py). Rendered as the traditional
-// round medallion: the END OF AYAH rosette (U+06DD) with the number drawn
-// half-scale inside it.
+// U+FD3E -- see tools/quran/build_quran_epub.py). Rendered as a code-drawn
+// circular rosette outline (see ayahRosetteDiameter below) with the number
+// drawn half-scale inside it -- not the U+06DD font glyph the name might
+// suggest: real-device testing found a user's selected Arabic font simply
+// lacked that one specific decorative codepoint, silently dropping every
+// single ayah marker in the entire Quran with no fallback (the old code's
+// `font.getGlyph(0x06DD, style) != nullptr` guard skipped the whole branch,
+// including the digits, whenever it was missing).
 bool parseAyahMarker(const char* text, uint32_t* digits, int& digitCount) {
   // Byte-level match (fixed UTF-8 sequences): U+FD3F = EF B4 BF,
   // U+0660..0669 = D9 A0..A9, U+FD3E = EF B4 BE.
@@ -450,6 +455,15 @@ bool parseSurahMedallionMarker(const char* text, uint32_t* digits, int& digitCou
   if (digitCount == 0) return false;
   if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x81) return false;
   return p[3] == '\0';
+}
+
+// Diameter shared by the render and width-measurement branches below -- they
+// must agree exactly, or the ayah marker's own advance width (inline with
+// running text, unlike the surah medallion's standalone line) would be
+// computed against the wrong shape. Smaller than the surah medallion below
+// since this sits inline with body text rather than standing alone.
+int ayahRosetteDiameter(const GfxRenderer& renderer, const int arabicFontId) {
+  return renderer.getFontAscenderSize(arabicFontId) * 3 / 4;
 }
 
 // Diameter shared by the render and width-measurement branches below -- they
@@ -523,15 +537,13 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
   }
   const auto& font = fontIt->second;
 
-  // Ayah markers lay out at the rosette's advance -- must match
-  // drawArabicText's medallion branch exactly.
+  // Ayah markers lay out at the code-drawn rosette's diameter -- must match
+  // drawArabicText's ayah branch exactly.
   {
     uint32_t digits[3];
     int digitCount = 0;
     if (parseAyahMarker(text, digits, digitCount)) {
-      if (const EpdGlyph* rosette = font.getGlyph(0x06DD, style)) {
-        return fp4::toPixel(rosette->advanceX);
-      }
+      return ayahRosetteDiameter(*this, resolveArabicFontId(fontId));
     }
   }
 
@@ -619,22 +631,23 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     // Record the codepoints this call will ACTUALLY draw -- not just the raw input
     // shaped as plain text. The marker branches below never draw their literal
-    // syntax (brackets, PUA sentinels): an ayah marker draws U+06DD + digit glyphs,
-    // a surah medallion draws only digit glyphs, a cartouche draws its inner text
-    // glyphs. Recording the wrong codepoints here means the real render pass's
-    // marker glyphs never land in the prewarmed page slot and always fall through to
-    // FontDecompressor's slow per-glyph hot-group fallback -- confirmed on a real
-    // device: 432 of 514 glyph draws missing the cache on a single page, ~13s spent
-    // re-decompressing groups from scratch for glyphs that were "prewarmed" under the
-    // wrong codepoints entirely. Must stay in exact sync with the render branches
-    // below (same reasoning as getArabicTextWidth's marker branches vs. render).
+    // syntax (brackets, PUA sentinels): an ayah marker draws only digit glyphs (the
+    // rosette outline itself is code-drawn, not a font glyph -- see
+    // parseAyahMarker's comment above), a surah medallion draws only digit glyphs,
+    // a cartouche draws its inner text glyphs. Recording the wrong codepoints here
+    // means the real render pass's marker glyphs never land in the prewarmed page
+    // slot and always fall through to FontDecompressor's slow per-glyph hot-group
+    // fallback -- confirmed on a real device: 432 of 514 glyph draws missing the
+    // cache on a single page, ~13s spent re-decompressing groups from scratch for
+    // glyphs that were "prewarmed" under the wrong codepoints entirely. Must stay
+    // in exact sync with the render branches below (same reasoning as
+    // getArabicTextWidth's marker branches vs. render).
     std::string shaped;
     shaped.reserve(64);
     uint32_t digits[3];
     int digitCount = 0;
     std::string cartoucheInner;
     if (parseAyahMarker(text, digits, digitCount)) {
-      appendUtf8(shaped, 0x06DD);
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
     } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
@@ -656,29 +669,33 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   const bool matchLatinBaseline = arabicBaselineMatchFontIds_.count(fontId) > 0 && fontMap.count(fontId) > 0;
   const int yPos = y + getFontAscenderSize(matchLatinBaseline ? fontId : resolvedArabicFontId);
 
-  // Ayah markers render as the traditional round medallion: the END OF AYAH
-  // rosette (U+06DD) with the number half-scaled inside it. Width must match
+  // Ayah markers render as a code-drawn circular rosette outline (see
+  // ayahRosetteDiameter/parseAyahMarker comments above for why this isn't a
+  // font glyph) with the number half-scaled inside it. Width must match
   // getArabicTextWidth's marker branch exactly (layout vs render).
   {
     uint32_t digits[3];
     int digitCount = 0;
-    const EpdGlyph* rosette = nullptr;
-    if (parseAyahMarker(text, digits, digitCount) && (rosette = font.getGlyph(0x06DD, style)) != nullptr) {
-      renderCharImpl<TextRotation::None>(*this, renderMode, font, 0x06DD, x, yPos, black, style);
-      // Digits in visual order (multi-digit numbers read left-to-right).
+    if (parseAyahMarker(text, digits, digitCount)) {
+      const int d = ayahRosetteDiameter(*this, resolvedArabicFontId);
+      const int top = yPos - d;
+      constexpr int kLineWidth = 2;
+      drawRoundedRect(x, top, d, d, kLineWidth, d / 2, true);
+
+      // Digits in visual order (multi-digit numbers read left-to-right), centered
+      // inside the outline -- same centering math as the surah medallion below.
       int digitsW = 0;
-      const int rosetteCenter = rosette->top - rosette->height / 2;  // ink centre above baseline
       for (int i = 0; i < digitCount; i++) {
-        const EpdGlyph* d = font.getGlyph(digits[i], style);
-        if (d) digitsW += fp4::toPixel(d->advanceX) / 2;
+        const EpdGlyph* g = font.getGlyph(digits[i], style);
+        if (g) digitsW += fp4::toPixel(g->advanceX) / 2;
       }
-      int dx = x + rosette->left + (std::max(0, rosette->width - digitsW)) / 2;
+      int dx = x + std::max(0, d - digitsW) / 2;
+      const int digitY = top + d / 2 + getFontAscenderSize(resolvedArabicFontId) / 4;
       for (int i = 0; i < digitCount; i++) {
-        const EpdGlyph* d = font.getGlyph(digits[i], style);
-        if (!d) continue;
-        const int digitCenter = (d->top - d->height / 2) / 2;
-        renderCharScaled(*this, renderMode, font, digits[i], dx, yPos - rosetteCenter + digitCenter, black, style);
-        dx += fp4::toPixel(d->advanceX) / 2;
+        const EpdGlyph* g = font.getGlyph(digits[i], style);
+        if (!g) continue;
+        renderCharScaled(*this, renderMode, font, digits[i], dx, digitY, black, style);
+        dx += fp4::toPixel(g->advanceX) / 2;
       }
       return;
     }
