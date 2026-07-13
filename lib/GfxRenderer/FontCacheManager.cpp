@@ -129,7 +129,17 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   if (!manager_->scanText_.empty()) {
     manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
   }
-  if (manager_->scanArabicFontId_ >= 0 && !manager_->scanArabicText_.empty()) {
+  // NOT `scanArabicFontId_ >= 0`: SD-card font ids are FNV-1a hashes cast to `int`
+  // (SdCardFontManager::computeFontId), which are legitimately negative about half
+  // the time. That stray sign check meant every SD-card Arabic font whose hash came
+  // out negative silently skipped this branch on every single page -- scanArabicText_
+  // was full (see peekScanArabicTextSize() diagnostics: pre_bytes>0 every page) but
+  // this guard rejected it before prewarmCache() was ever called, so the Quran (whose
+  // configured Arabic font hashed to a negative id) always fell through to the slow
+  // per-glyph decompression path. scanArabicText_ non-empty already proves
+  // recordArabicText() ran at least once, which is all this needs to know -- same
+  // check the Latin branch above already uses without a sign gate on scanFontId_.
+  if (!manager_->scanArabicText_.empty()) {
     manager_->lastArabicScanTextBytes_ = manager_->scanArabicText_.size();
     manager_->lastArabicPrewarmFontId_ = manager_->scanArabicFontId_;
     if (manager_->sdCardFonts_.count(manager_->scanArabicFontId_) > 0) {
