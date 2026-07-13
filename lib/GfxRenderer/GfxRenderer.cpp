@@ -600,6 +600,16 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
 
   const int resolvedArabicFontId = resolveArabicFontId(fontId);
   const auto fontIt = fontMap.find(resolvedArabicFontId);
+
+  // Diagnostics only: real-device logs showed the Arabic prewarm scan capturing 0
+  // bytes on every single Quran page turn, with no way to tell whether this function
+  // is even being entered during the scan pass, or entered but bailing out below
+  // before ever reaching recordArabicText(). Counted unconditionally, before the
+  // early return, so it can't itself be skipped by whatever's causing the mismatch.
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) {
+    fontCacheManager_->noteArabicScanEntry(fontIt != fontMap.end(), resolvedArabicFontId);
+  }
+
   if (fontIt == fontMap.end()) {
     // No Arabic font loaded -- nothing we can draw with. Matches the width path above.
     return;

@@ -79,6 +79,12 @@ void FontCacheManager::recordArabicText(const char* shapedUtf8, int fontId) {
   if (scanArabicFontId_ < 0) scanArabicFontId_ = fontId;
 }
 
+void FontCacheManager::noteArabicScanEntry(bool fontFound, int resolvedFontId) {
+  arabicScanEntries_++;
+  if (!fontFound) arabicScanFontMissing_++;
+  arabicScanLastResolvedFontId_ = resolvedFontId;
+}
+
 // --- PrewarmScope implementation ---
 
 FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {
@@ -92,6 +98,9 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   manager_->scanArabicFontId_ = -1;
   memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
   manager_->scanFontId_ = -1;
+  manager_->arabicScanEntries_ = 0;
+  manager_->arabicScanFontMissing_ = 0;
+  manager_->arabicScanLastResolvedFontId_ = -1;
 }
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {

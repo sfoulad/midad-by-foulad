@@ -45,6 +45,19 @@ class FontCacheManager {
   int getLastArabicPrewarmFontId() const { return lastArabicPrewarmFontId_; }
   size_t getLastArabicScanTextBytes() const { return lastArabicScanTextBytes_; }
 
+  // Diagnostics only, called from GfxRenderer::drawArabicText() at every call made
+  // while isScanning() is true -- BEFORE that function's own early return if the
+  // resolved Arabic font isn't in fontMap. scan_bytes/path above showed prewarm never
+  // captures the Quran's Arabic text at all (0 bytes, every single page), which is
+  // only possible if either drawArabicText() is never entered during the scan pass,
+  // or it's entered but exits before ever reaching recordArabicText() -- this counter
+  // pair distinguishes the two: entries vs. entries where the font lookup failed.
+  // Reset by PrewarmScope's constructor, same as the other per-page scan state.
+  void noteArabicScanEntry(bool fontFound, int resolvedFontId);
+  uint32_t getArabicScanEntries() const { return arabicScanEntries_; }
+  uint32_t getArabicScanFontMissing() const { return arabicScanFontMissing_; }
+  int getArabicScanLastResolvedFontId() const { return arabicScanLastResolvedFontId_; }
+
   // RAII scope for two-pass prewarm pattern
   class PrewarmScope {
    public:
@@ -78,4 +91,8 @@ class FontCacheManager {
   LastPrewarmPath lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
   int lastArabicPrewarmFontId_ = -1;
   size_t lastArabicScanTextBytes_ = 0;
+
+  uint32_t arabicScanEntries_ = 0;
+  uint32_t arabicScanFontMissing_ = 0;
+  int arabicScanLastResolvedFontId_ = -1;
 };

@@ -1500,7 +1500,7 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
   // font id: sd=SD-card font tracked by separate stats getBitmap() never touches,
   // none=font id not found anywhere, compressed=the path FontDecompressor::Stats
   // above actually measures).
-  char statsPart[224] = "";
+  char statsPart[340] = "";
   if (fcm) {
     FontDecompressor* decompressor = fcm->getDecompressor();
     if (decompressor) {
@@ -1526,12 +1526,21 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
         pathStr = "compressed";
         break;
     }
-    char pathPart[80];
-    snprintf(pathPart, sizeof(pathPart), " scan_bytes=%lu scan_font=%d path=%s",
-             (unsigned long)fcm->getLastArabicScanTextBytes(), fcm->getLastArabicPrewarmFontId(), pathStr);
+    // entries: how many times drawArabicText() was called during THIS page's scan
+    // pass (counted before its own early return, so this can't be skipped by
+    // whatever's causing scan_bytes=0). font_missing: how many of those calls found
+    // the resolved Arabic font id absent from fontMap (the early-return path) --
+    // if entries>0 and font_missing==entries, that early return is exactly why
+    // nothing ever gets recorded. If entries==0, drawArabicText() isn't even being
+    // reached during scan, and the bug is further upstream (TextBlock/drawText).
+    char pathPart[140];
+    snprintf(pathPart, sizeof(pathPart), " scan_bytes=%lu scan_font=%d path=%s entries=%lu font_missing=%lu last_font=%d",
+             (unsigned long)fcm->getLastArabicScanTextBytes(), fcm->getLastArabicPrewarmFontId(), pathStr,
+             (unsigned long)fcm->getArabicScanEntries(), (unsigned long)fcm->getArabicScanFontMissing(),
+             fcm->getArabicScanLastResolvedFontId());
     strncat(statsPart, pathPart, sizeof(statsPart) - strlen(statsPart) - 1);
   }
-  char buf[352];
+  char buf[512];
   snprintf(buf, sizeof(buf),
            "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u%s \"%s\"",
            millis(), spineIndex, tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - tDisplay, total,
