@@ -537,12 +537,16 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
   }
   const auto& font = fontIt->second;
 
-  // Ayah markers lay out at the code-drawn rosette's diameter -- must match
-  // drawArabicText's ayah branch exactly.
+  // Ayah markers lay out at the font glyph's advance when U+06DD is present, or
+  // the code-drawn rosette's diameter when it's not -- must match drawArabicText's
+  // ayah branch exactly.
   {
     uint32_t digits[3];
     int digitCount = 0;
     if (parseAyahMarker(text, digits, digitCount)) {
+      if (const EpdGlyph* rosette = font.getGlyph(0x06DD, style)) {
+        return fp4::toPixel(rosette->advanceX);
+      }
       return ayahRosetteDiameter(*this, resolveArabicFontId(fontId));
     }
   }
@@ -631,27 +635,31 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     // Record the codepoints this call will ACTUALLY draw -- not just the raw input
     // shaped as plain text. The marker branches below never draw their literal
-    // syntax (brackets, PUA sentinels): an ayah marker draws nothing from THIS font
-    // at all (its digits come from arabicDigitFallbackFontId_, a different font --
-    // see the ayah branch below -- so there's nothing of resolvedArabicFontId's to
-    // prewarm here; a handful of un-prewarmed digit glyphs per page is cheap after
-    // the FontDecompressor offset-table fix, not worth a second per-page scan
-    // accumulator), a surah medallion draws only digit glyphs, a cartouche draws
-    // its inner text glyphs. Recording the wrong codepoints here means the real
-    // render pass's marker glyphs never land in the prewarmed page slot and always
-    // fall through to FontDecompressor's slow per-glyph hot-group fallback --
-    // confirmed on a real device: 432 of 514 glyph draws missing the cache on a
-    // single page, ~13s spent re-decompressing groups from scratch for glyphs that
-    // were "prewarmed" under the wrong codepoints entirely. Must stay in exact sync
-    // with the render branches below (same reasoning as getArabicTextWidth's
-    // marker branches vs. render).
+    // syntax (brackets, PUA sentinels): an ayah marker draws U+06DD + digit glyphs
+    // when the font has that glyph, or just digit glyphs sourced from a different
+    // font (arabicDigitFallbackFontId_, nothing of resolvedArabicFontId's to
+    // prewarm) when it doesn't -- must check the exact same font.getGlyph(0x06DD,
+    // ...) condition as the render branch below so the codepoints recorded here
+    // match what actually gets drawn. A surah medallion draws only digit glyphs,
+    // a cartouche draws its inner text glyphs. Recording the wrong codepoints here
+    // means the real render pass's marker glyphs never land in the prewarmed page
+    // slot and always fall through to FontDecompressor's slow per-glyph hot-group
+    // fallback -- confirmed on a real device: 432 of 514 glyph draws missing the
+    // cache on a single page, ~13s spent re-decompressing groups from scratch for
+    // glyphs that were "prewarmed" under the wrong codepoints entirely. Must stay
+    // in exact sync with the render branches below (same reasoning as
+    // getArabicTextWidth's marker branches vs. render).
     std::string shaped;
     shaped.reserve(64);
     uint32_t digits[3];
     int digitCount = 0;
     std::string cartoucheInner;
     if (parseAyahMarker(text, digits, digitCount)) {
-      // Nothing to record -- see comment above.
+      if (font.getGlyph(0x06DD, style) != nullptr) {
+        appendUtf8(shaped, 0x06DD);
+        for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
+      }
+      // else: digits come from arabicDigitFallbackFontId_, nothing to record here.
     } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
     } else if (parseCartoucheMarker(text, cartoucheInner)) {
@@ -672,23 +680,43 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   const bool matchLatinBaseline = arabicBaselineMatchFontIds_.count(fontId) > 0 && fontMap.count(fontId) > 0;
   const int yPos = y + getFontAscenderSize(matchLatinBaseline ? fontId : resolvedArabicFontId);
 
-  // Ayah markers always render as a code-drawn circular rosette outline (see
-  // ayahRosetteDiameter above), never the font's own U+06DD glyph -- deliberately
-  // NOT conditional on whether the active font happens to have that glyph. An
-  // earlier version preferred the font glyph when present and only drew this
-  // outline as a fallback; that meant the marker's appearance silently varied by
-  // font (some fonts: a nicely styled glyph: others, missing the glyph entirely,
-  // this fallback), which is worse than one consistent design every font gets.
+  // Ayah markers prefer the font's own END OF AYAH ornament glyph (U+06DD): a
+  // properly designed Quranic font's rosette looks much better than any code-drawn
+  // substitute, and after regenerating Amiri's compiled font data (fixing the
+  // GPOS mark-repositioning bug -- see parseAyahMarker's history above), Amiri's
+  // own U+06DD glyph renders correctly again (confirmed: valid, non-empty glyph
+  // dimensions in the regenerated font data). A user comparison photo confirmed
+  // this glyph-based rosette IS the "correct"/expected look, not the plain
+  // circle outline this code drew as a stopgap while U+06DD appeared broken.
+  // Falls back to a code-drawn circle outline only if the glyph is genuinely
+  // absent, so the marker still isn't silently invisible for some other font.
   // Width must match getArabicTextWidth's marker branch exactly (layout vs render).
   {
     uint32_t digits[3];
     int digitCount = 0;
     if (parseAyahMarker(text, digits, digitCount)) {
-      // Digit glyphs come from arabicDigitFallbackFontId_ (a known-complete built-in
-      // font), NOT the active reading font -- some reading fonts (Amiri, the Quran's
-      // own default) lack Arabic-Indic digit glyphs entirely, which rendered as an
-      // empty numberless circle. Falls back to the active font only in the
-      // pre-ArabicFontSystem::begin() window when that id isn't registered yet.
+      if (const EpdGlyph* rosette = font.getGlyph(0x06DD, style)) {
+        renderCharImpl<TextRotation::None>(*this, renderMode, font, 0x06DD, x, yPos, black, style);
+        int digitsW = 0;
+        const int rosetteCenter = rosette->top - rosette->height / 2;  // ink centre above baseline
+        for (int i = 0; i < digitCount; i++) {
+          const EpdGlyph* d = font.getGlyph(digits[i], style);
+          if (d) digitsW += fp4::toPixel(d->advanceX) / 2;
+        }
+        int dx = x + rosette->left + (std::max(0, rosette->width - digitsW)) / 2;
+        for (int i = 0; i < digitCount; i++) {
+          const EpdGlyph* d = font.getGlyph(digits[i], style);
+          if (!d) continue;
+          const int digitCenter = (d->top - d->height / 2) / 2;
+          renderCharScaled(*this, renderMode, font, digits[i], dx, yPos - rosetteCenter + digitCenter, black, style);
+          dx += fp4::toPixel(d->advanceX) / 2;
+        }
+        return;
+      }
+
+      // Fallback: no U+06DD glyph in this font. Digit glyphs still come from
+      // arabicDigitFallbackFontId_ (a known-complete built-in font) rather than
+      // the active reading font, which is presumably the one missing glyphs here.
       const auto digitFontIt = fontMap.find(arabicDigitFallbackFontId_);
       const EpdFontFamily& digitFont = digitFontIt != fontMap.end() ? digitFontIt->second : font;
 
