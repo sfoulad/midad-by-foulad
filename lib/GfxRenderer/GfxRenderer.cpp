@@ -632,7 +632,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     // Record the codepoints this call will ACTUALLY draw -- not just the raw input
     // shaped as plain text. The marker branches below never draw their literal
     // syntax (brackets, PUA sentinels): an ayah marker draws only digit glyphs (the
-    // rosette outline itself is code-drawn, not a font glyph -- see
+    // rosette outline itself is always code-drawn, never a font glyph -- see
     // parseAyahMarker's comment above), a surah medallion draws only digit glyphs,
     // a cartouche draws its inner text glyphs. Recording the wrong codepoints here
     // means the real render pass's marker glyphs never land in the prewarmed page
@@ -669,10 +669,14 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   const bool matchLatinBaseline = arabicBaselineMatchFontIds_.count(fontId) > 0 && fontMap.count(fontId) > 0;
   const int yPos = y + getFontAscenderSize(matchLatinBaseline ? fontId : resolvedArabicFontId);
 
-  // Ayah markers render as a code-drawn circular rosette outline (see
-  // ayahRosetteDiameter/parseAyahMarker comments above for why this isn't a
-  // font glyph) with the number half-scaled inside it. Width must match
-  // getArabicTextWidth's marker branch exactly (layout vs render).
+  // Ayah markers always render as a code-drawn circular rosette outline (see
+  // ayahRosetteDiameter above), never the font's own U+06DD glyph -- deliberately
+  // NOT conditional on whether the active font happens to have that glyph. An
+  // earlier version preferred the font glyph when present and only drew this
+  // outline as a fallback; that meant the marker's appearance silently varied by
+  // font (some fonts: a nicely styled glyph: others, missing the glyph entirely,
+  // this fallback), which is worse than one consistent design every font gets.
+  // Width must match getArabicTextWidth's marker branch exactly (layout vs render).
   {
     uint32_t digits[3];
     int digitCount = 0;
@@ -683,14 +687,17 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
       drawRoundedRect(x, top, d, d, kLineWidth, d / 2, true);
 
       // Digits in visual order (multi-digit numbers read left-to-right), centered
-      // inside the outline -- same centering math as the surah medallion below.
+      // inside the outline. digitY is 3/4 of the way down the circle's OWN
+      // diameter, not a fixed ascender-based offset -- must stay proportional to
+      // d so it still centers correctly if ayahRosetteDiameter's scale factor
+      // ever changes.
       int digitsW = 0;
       for (int i = 0; i < digitCount; i++) {
         const EpdGlyph* g = font.getGlyph(digits[i], style);
         if (g) digitsW += fp4::toPixel(g->advanceX) / 2;
       }
       int dx = x + std::max(0, d - digitsW) / 2;
-      const int digitY = top + d / 2 + getFontAscenderSize(resolvedArabicFontId) / 4;
+      const int digitY = top + d * 3 / 4;
       for (int i = 0; i < digitCount; i++) {
         const EpdGlyph* g = font.getGlyph(digits[i], style);
         if (!g) continue;
