@@ -35,3 +35,6 @@ done
 for size in 12 14 16 18; do
   echo "#define AMIRI_${size}_FONT_ID ($(id_for ./amiri_${size}_regular.h))"
 done
+for size in 12 14 16 18; do
+  echo "#define UTHMANICHAFS_${size}_FONT_ID ($(id_for ./uthmanichafs_${size}_regular.h))"
+done

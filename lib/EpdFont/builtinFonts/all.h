@@ -28,6 +28,10 @@
 #include <builtinFonts/notonaskharabic_14_regular.h>
 #include <builtinFonts/notonaskharabic_16_regular.h>
 #include <builtinFonts/notonaskharabic_18_regular.h>
+#include <builtinFonts/uthmanichafs_12_regular.h>
+#include <builtinFonts/uthmanichafs_14_regular.h>
+#include <builtinFonts/uthmanichafs_16_regular.h>
+#include <builtinFonts/uthmanichafs_18_regular.h>
 #include <builtinFonts/ubuntu_10_bold.h>
 #include <builtinFonts/ubuntu_10_regular.h>
 #include <builtinFonts/ubuntu_12_bold.h>

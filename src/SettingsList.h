@@ -101,7 +101,7 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
 inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* registry) {
   // Built-in font labels (StrId), in CrossPointSettings::ARABIC_FONT_FAMILY order --
   // mirrors ArabicFontSelectionActivity.cpp's own kBuiltinArabicFontNames.
-  std::vector<StrId> enumValues = {StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI};
+  std::vector<StrId> enumValues = {StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI, StrId::STR_UTHMANI_HAFS};
   std::vector<std::string> enumStringValues;
 
   if (registry) {

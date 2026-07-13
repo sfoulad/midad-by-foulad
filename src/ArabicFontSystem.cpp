@@ -9,16 +9,17 @@
 namespace {
 // [family][size] -> font ID, for the built-in Arabic reading-font family at the
 // 4 reading sizes (12/14/16/18pt = Small/Medium/Large/X-Large). Order matches
-// CrossPointSettings::ARABIC_FONT_FAMILY and FONT_SIZE. Only Noto Naskh Arabic
-// ships in flash (other families were trimmed to keep OTA images small).
+// CrossPointSettings::ARABIC_FONT_FAMILY and FONT_SIZE.
 constexpr int
     kBuiltinArabicReadingFontIds[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT][CrossPointSettings::FONT_SIZE_COUNT] = {
         {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
          NOTONASKHARABIC_18_FONT_ID},
-        // Amiri: revival of the Amiria Press (1924 Cairo mushaf) typeface --
-        // the Quran's default reading face (per-book sidecar written at
-        // extraction; see QuranBook::ensureExtracted).
+        // Amiri: revival of the Amiria Press (1924 Cairo mushaf) typeface.
         {AMIRI_12_FONT_ID, AMIRI_14_FONT_ID, AMIRI_16_FONT_ID, AMIRI_18_FONT_ID},
+        // KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface -- the Quran's
+        // default reading face (per-book sidecar written at extraction; see
+        // QuranBook::ensureExtracted).
+        {UTHMANICHAFS_12_FONT_ID, UTHMANICHAFS_14_FONT_ID, UTHMANICHAFS_16_FONT_ID, UTHMANICHAFS_18_FONT_ID},
 };
 
 // One mapping scheme for both the built-in and SD-override cases: the three

@@ -332,19 +332,36 @@ for i_start, i_end in unmerged_intervals:
         continue
     unvalidated_intervals.append((i_start, i_end))
 
+# Must run before validation (not after, as originally): EpdGlyph.width/height are
+# uint8_t in the C++ struct, so validation needs to see bitmaps rasterized at our
+# actual target size to catch any codepoint whose glyph is too big to fit before
+# it ends up in `intervals` and reaches the C++ output as a > 255 literal (observed
+# with KFGQPC Uthmanic Hafs's U+0600/U+0601 ARABIC NUMBER SIGN glyphs, which are
+# wide decorative overlays spanning an entire following digit sequence -- not
+# needed for body text, so simply excluding them like any other missing glyph is
+# the right behavior, not a bug to work around glyph-by-glyph).
+for face in font_stack:
+    face.set_char_size(size << 6, size << 6, 150, 150)
+
+MAX_GLYPH_DIM = 255  # EpdGlyph.width/height are uint8_t
+oversized_warned = False
 for i_start, i_end in unvalidated_intervals:
     start = i_start
     for code_point in range(i_start, i_end + 1):
         face = load_glyph(code_point)
+        if face is not None and (face.glyph.bitmap.width > MAX_GLYPH_DIM or face.glyph.bitmap.rows > MAX_GLYPH_DIM):
+            if not oversized_warned:
+                print(f"WARNING: skipping oversized glyph(s) (> {MAX_GLYPH_DIM}px, doesn't fit EpdGlyph's uint8_t "
+                      f"width/height) starting at U+{code_point:04X} "
+                      f"({face.glyph.bitmap.width}x{face.glyph.bitmap.rows})", file=sys.stderr)
+                oversized_warned = True
+            face = None
         if face is None:
             if start < code_point:
                 intervals.append((start, code_point - 1))
             start = code_point + 1
     if start != i_end + 1:
         intervals.append((start, i_end))
-
-for face in font_stack:
-    face.set_char_size(size << 6, size << 6, 150, 150)
 
 total_size = 0
 all_glyphs = []
@@ -1096,14 +1113,20 @@ if ligature_pairs:
         print(f"    {{ 0x{packed_pair:08X}, 0x{lig_cp:04X} }}, // {cp_label(packed_pair >> 16)} {cp_label(packed_pair & 0xFFFF)} -> {cp_label(lig_cp)}")
     print("};\n")
 
+# Face-level metrics (height/ascender/descender) are identical across every face
+# in font_stack once set_char_size() ran on all of them above -- use font_stack[0]
+# directly rather than the `face` loop variable, which is left over from whichever
+# codepoint the glyph-rendering loop processed last (or, if `intervals` ended up
+# empty for this font, from the interval-validation loop instead, where it can be
+# None -- e.g. a font with sparse enough coverage of a requested range).
 print(f"static const EpdFontData {font_name} = {{")
 print(f"    {font_name}Bitmaps,")
 print(f"    {font_name}Glyphs,")
 print(f"    {font_name}Intervals,")
 print(f"    {len(intervals)},")
-print(f"    {norm_ceil(face.size.height)},")
-print(f"    {norm_ceil(face.size.ascender)},")
-print(f"    {norm_floor(face.size.descender)},")
+print(f"    {norm_ceil(font_stack[0].size.height)},")
+print(f"    {norm_ceil(font_stack[0].size.ascender)},")
+print(f"    {norm_floor(font_stack[0].size.descender)},")
 print(f"    {'true' if is2Bit else 'false'},")
 if compress:
     print(f"    {font_name}Groups,")

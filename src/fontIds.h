@@ -19,6 +19,10 @@
 #define AMIRI_14_FONT_ID (-1568509587)
 #define AMIRI_16_FONT_ID (-1607178071)
 #define AMIRI_18_FONT_ID (-945142616)
+#define UTHMANICHAFS_12_FONT_ID (-1318835084)
+#define UTHMANICHAFS_14_FONT_ID (-2118639308)
+#define UTHMANICHAFS_16_FONT_ID (2022302334)
+#define UTHMANICHAFS_18_FONT_ID (2081040684)
 
 // Font ID 0 is reserved as the "not found" sentinel.
 static_assert(NOTOSERIF_12_FONT_ID != 0, "Font ID collision with sentinel");
@@ -39,3 +43,7 @@ static_assert(AMIRI_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(AMIRI_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(AMIRI_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(AMIRI_18_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(UTHMANICHAFS_12_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(UTHMANICHAFS_14_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(UTHMANICHAFS_16_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(UTHMANICHAFS_18_FONT_ID != 0, "Font ID collision with sentinel");

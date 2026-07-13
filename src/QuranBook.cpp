@@ -21,11 +21,11 @@ std::string quranCachePath() {
 }
 
 // Give the Quran its reading face: a per-book sidecar selecting the built-in
-// Amiri family (revival of the 1924 Cairo mushaf typeface -- renders full
-// harakat with our static pipeline; Neirizi is also in the drawer's Font Name
-// picker). Written only when no sidecar exists yet, so any choice the user
-// later makes in the reader drawer sticks across re-extractions and firmware
-// updates.
+// KFGQPC Uthmanic Hafs family (the Madinah Mushaf's own typeface -- renders
+// full harakat with our static pipeline; Amiri/Neirizi are also in the
+// drawer's Font Name picker). Written only when no sidecar exists yet, so any
+// choice the user later makes in the reader drawer sticks across
+// re-extractions and firmware updates.
 void writeDefaultSidecarIfMissing() {
   const std::string cacheDir = quranCachePath();
   const std::string sidecar = cacheDir + BookReaderSettings::FILE_NAME;
@@ -41,14 +41,14 @@ void writeDefaultSidecarIfMissing() {
   buf[4] = CrossPointSettings::BOOK_NO_OVERRIDE;  // arabicFontSize: inherit
   buf[5] = CrossPointSettings::BOOK_NO_OVERRIDE;  // lineSpacing: inherit
   buf[6] = CrossPointSettings::JUSTIFIED;         // mushaf convention: justified lines
-  buf[7] = CrossPointSettings::AMIRI;             // built-in Arabic family: Amiri
+  buf[7] = CrossPointSettings::UTHMANICHAFS;      // built-in Arabic family: KFGQPC Uthmanic Hafs
   // Arabic family-source: force the built-in path (buf[8..39] Latin stays "").
   buf[8 + 32] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
 
   HalFile f;
   if (Storage.openFileForWrite("QURAN", sidecar, f)) {
     f.write(buf, sizeof(buf));
-    LOG_INF("QURAN", "Default Quran font sidecar written (Amiri)");
+    LOG_INF("QURAN", "Default Quran font sidecar written (Uthmanic Hafs)");
   }
 }
 

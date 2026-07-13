@@ -119,7 +119,7 @@ class CrossPointSettings {
   // ArabicFontSystem. Reuses FONT_SIZE (Small/Medium/Large/X-Large) for arabicFontSize.
   // Noto Sans Arabic / Amiri / Scheherazade New / Cairo (formerly indices 0/2/3/4)
   // were trimmed from flash; out-of-range saved values clamp to Noto Naskh.
-  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, AMIRI = 1, ARABIC_FONT_FAMILY_COUNT };
+  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, AMIRI = 1, UTHMANICHAFS = 2, ARABIC_FONT_FAMILY_COUNT };
   static constexpr uint8_t BUILTIN_ARABIC_FONT_COUNT = ARABIC_FONT_FAMILY_COUNT;
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {
