@@ -631,24 +631,27 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     // Record the codepoints this call will ACTUALLY draw -- not just the raw input
     // shaped as plain text. The marker branches below never draw their literal
-    // syntax (brackets, PUA sentinels): an ayah marker draws only digit glyphs (the
-    // rosette outline itself is always code-drawn, never a font glyph -- see
-    // parseAyahMarker's comment above), a surah medallion draws only digit glyphs,
-    // a cartouche draws its inner text glyphs. Recording the wrong codepoints here
-    // means the real render pass's marker glyphs never land in the prewarmed page
-    // slot and always fall through to FontDecompressor's slow per-glyph hot-group
-    // fallback -- confirmed on a real device: 432 of 514 glyph draws missing the
-    // cache on a single page, ~13s spent re-decompressing groups from scratch for
-    // glyphs that were "prewarmed" under the wrong codepoints entirely. Must stay
-    // in exact sync with the render branches below (same reasoning as
-    // getArabicTextWidth's marker branches vs. render).
+    // syntax (brackets, PUA sentinels): an ayah marker draws nothing from THIS font
+    // at all (its digits come from arabicDigitFallbackFontId_, a different font --
+    // see the ayah branch below -- so there's nothing of resolvedArabicFontId's to
+    // prewarm here; a handful of un-prewarmed digit glyphs per page is cheap after
+    // the FontDecompressor offset-table fix, not worth a second per-page scan
+    // accumulator), a surah medallion draws only digit glyphs, a cartouche draws
+    // its inner text glyphs. Recording the wrong codepoints here means the real
+    // render pass's marker glyphs never land in the prewarmed page slot and always
+    // fall through to FontDecompressor's slow per-glyph hot-group fallback --
+    // confirmed on a real device: 432 of 514 glyph draws missing the cache on a
+    // single page, ~13s spent re-decompressing groups from scratch for glyphs that
+    // were "prewarmed" under the wrong codepoints entirely. Must stay in exact sync
+    // with the render branches below (same reasoning as getArabicTextWidth's
+    // marker branches vs. render).
     std::string shaped;
     shaped.reserve(64);
     uint32_t digits[3];
     int digitCount = 0;
     std::string cartoucheInner;
     if (parseAyahMarker(text, digits, digitCount)) {
-      for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
+      // Nothing to record -- see comment above.
     } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
     } else if (parseCartoucheMarker(text, cartoucheInner)) {
@@ -681,6 +684,14 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     uint32_t digits[3];
     int digitCount = 0;
     if (parseAyahMarker(text, digits, digitCount)) {
+      // Digit glyphs come from arabicDigitFallbackFontId_ (a known-complete built-in
+      // font), NOT the active reading font -- some reading fonts (Amiri, the Quran's
+      // own default) lack Arabic-Indic digit glyphs entirely, which rendered as an
+      // empty numberless circle. Falls back to the active font only in the
+      // pre-ArabicFontSystem::begin() window when that id isn't registered yet.
+      const auto digitFontIt = fontMap.find(arabicDigitFallbackFontId_);
+      const EpdFontFamily& digitFont = digitFontIt != fontMap.end() ? digitFontIt->second : font;
+
       const int d = ayahRosetteDiameter(*this, resolvedArabicFontId);
       const int top = yPos - d;
       constexpr int kLineWidth = 2;
@@ -693,15 +704,15 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
       // ever changes.
       int digitsW = 0;
       for (int i = 0; i < digitCount; i++) {
-        const EpdGlyph* g = font.getGlyph(digits[i], style);
+        const EpdGlyph* g = digitFont.getGlyph(digits[i], style);
         if (g) digitsW += fp4::toPixel(g->advanceX) / 2;
       }
       int dx = x + std::max(0, d - digitsW) / 2;
       const int digitY = top + d * 3 / 4;
       for (int i = 0; i < digitCount; i++) {
-        const EpdGlyph* g = font.getGlyph(digits[i], style);
+        const EpdGlyph* g = digitFont.getGlyph(digits[i], style);
         if (!g) continue;
-        renderCharScaled(*this, renderMode, font, digits[i], dx, digitY, black, style);
+        renderCharScaled(*this, renderMode, digitFont, digits[i], dx, digitY, black, style);
         dx += fp4::toPixel(g->advanceX) / 2;
       }
       return;

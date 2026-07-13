@@ -41,6 +41,10 @@ void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
   renderer.setArabicFontIdForFontId(UI_10_FONT_ID, NOTOSANSARABIC_10_FONT_ID, /*matchLatinBaseline=*/true);
   renderer.setArabicFontIdForFontId(UI_12_FONT_ID, NOTOSANSARABIC_12_FONT_ID, /*matchLatinBaseline=*/true);
   renderer.setArabicFontId(readingFontId);
+  // Ayah-marker digits always come from this built-in font, never readingFontId --
+  // see setArabicDigitFallbackFontId's comment for why (some reading fonts, like
+  // the Quran's own default Amiri, simply don't have Arabic-Indic digit glyphs).
+  renderer.setArabicDigitFallbackFontId(NOTOSANSARABIC_12_FONT_ID);
 }
 }  // namespace
 

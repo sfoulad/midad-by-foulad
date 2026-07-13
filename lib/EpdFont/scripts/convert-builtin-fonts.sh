@@ -53,6 +53,15 @@ python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
   --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
 
+# All three built-in Arabic fonts below have OpenType GPOS MarkBasePos/MarkMarkPos
+# tables (confirmed via fontTools) -- they anchor tashkeel to their base letter
+# through GPOS, which this repo's FreeType-based single-glyph rasterizer never
+# runs. Without --reposition-marks each mark glyph rasterizes at its own raw,
+# GPOS-relative origin instead of a sensible fixed position, which on real
+# hardware showed up as tashkeel intermittently missing/misplaced (some raw
+# offsets happened to land somewhere visible, most didn't). Keep this flag on
+# every Arabic font conversion below, not just the ones that visibly needed it.
+
 # Dedicated built-in Arabic font (ArabicFontSystem's zero-setup default), bundled at
 # the three sizes actually used for Arabic-eligible UI text (book titles, authors,
 # filenames, chapter titles) -- SMALL_FONT_ID=8pt, UI_10_FONT_ID=10pt,
@@ -66,18 +75,26 @@ ARABIC_UI_FONT_SIZES=(8 10 12)
 for size in ${ARABIC_UI_FONT_SIZES[@]}; do
   python fontconvert.py notosansarabic_${size}_regular ${size} \
     ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
-    --2bit --compress --script arabic > ../builtinFonts/notosansarabic_${size}_regular.h
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notosansarabic_${size}_regular.h
   echo "Generated ../builtinFonts/notosansarabic_${size}_regular.h"
 done
 
-# Built-in Arabic READING font (ArabicFontSystem's default reading family) at the
+# Built-in Arabic READING fonts (ArabicFontSystem's default reading families) at the
 # four reading sizes matching NOTOSERIF sizes -- see kBuiltinArabicReadingFontIds.
 ARABIC_READING_FONT_SIZES=(12 14 16 18)
 for size in ${ARABIC_READING_FONT_SIZES[@]}; do
   python fontconvert.py notonaskharabic_${size}_regular ${size} \
     ../builtinFonts/source/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf \
-    --2bit --compress --script arabic > ../builtinFonts/notonaskharabic_${size}_regular.h
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_${size}_regular.h
   echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
+done
+# Amiri: the Quran's own default reading face (see QuranBook::ensureExtracted /
+# ArabicFontSystem's kBuiltinArabicReadingFontIds).
+for size in ${ARABIC_READING_FONT_SIZES[@]}; do
+  python fontconvert.py amiri_${size}_regular ${size} \
+    ../builtinFonts/source/Amiri/Amiri-Regular.ttf \
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/amiri_${size}_regular.h
+  echo "Generated ../builtinFonts/amiri_${size}_regular.h"
 done
 
 echo ""

@@ -58,6 +58,12 @@ class GfxRenderer {
   // the caller requested instead of always falling back to arabicFontId_'s single
   // fixed size. See setArabicFontIdForFontId()/resolveArabicFontId().
   std::map<int, int> arabicFontIdByFontId_;
+  // Font to source Arabic-Indic digit glyphs (U+0660-0669) from for the code-drawn
+  // ayah-end marker in drawArabicText/getArabicTextWidth, INSTEAD of whatever the
+  // active reading font is. 0 = none set (falls back to the active font). See
+  // setArabicDigitFallbackFontId() for why this needs to be independent of
+  // arabicFontId_.
+  int arabicDigitFallbackFontId_ = 0;
   // fontIds (keys of arabicFontIdByFontId_) whose Arabic text should sit on the
   // REQUESTED Latin font's baseline (baseline = y + Latin ascender) instead of the
   // Arabic font's own, much taller, nominal ascender. The Noto Arabic fonts reserve
@@ -152,6 +158,16 @@ class GfxRenderer {
   // render from this font for callers with no per-fontId mapping, since none of the
   // built-in Latin fonts carry Arabic glyphs.
   void setArabicFontId(int fontId) { arabicFontId_ = fontId; }
+  // Font to source Arabic-Indic digit glyphs from for the ayah-end marker, always,
+  // regardless of which font is active for reading. Reading fonts are free to omit
+  // decorative/rare glyphs -- Amiri, the Quran's own default reading face, lacks
+  // Arabic-Indic digits entirely (real-device evidence: the marker rendered as an
+  // empty numberless circle) -- but the marker must look the same on every single
+  // page no matter which reading font a book requests, so its digits deliberately
+  // don't come from arabicFontId_/resolveArabicFontId() at all. Callers should pass
+  // a font guaranteed to always be registered (e.g. a built-in UI-tier Arabic font
+  // set once at boot), not something that depends on user configuration.
+  void setArabicDigitFallbackFontId(int fontId) { arabicDigitFallbackFontId_ = fontId; }
   // Registers an Arabic font to use specifically when the caller requests `fontId`
   // (e.g. SMALL_FONT_ID -> the 8pt Arabic font), so Arabic text matches the size and
   // baseline of whatever Latin font the caller asked for instead of always rendering
