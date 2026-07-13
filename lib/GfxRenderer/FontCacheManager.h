@@ -58,6 +58,16 @@ class FontCacheManager {
   uint32_t getArabicScanFontMissing() const { return arabicScanFontMissing_; }
   int getArabicScanLastResolvedFontId() const { return arabicScanLastResolvedFontId_; }
 
+  // Diagnostics only: raw peek at the accumulator recordArabicText() writes to, taken
+  // by the caller immediately after the scan-pass render call returns and BEFORE
+  // endScanAndPrewarm() reads/clears it. entries=71 font_missing=0 (proving
+  // recordArabicText() must have run) alongside scan_bytes=0 (what endScanAndPrewarm
+  // saw moments later) is a contradiction under a single-threaded read of this code --
+  // this closes that gap by showing the true accumulator state at the earliest
+  // possible point, before anything else has a chance to touch it.
+  size_t peekScanArabicTextSize() const { return scanArabicText_.size(); }
+  int peekScanArabicFontId() const { return scanArabicFontId_; }
+
   // RAII scope for two-pass prewarm pattern
   class PrewarmScope {
    public:

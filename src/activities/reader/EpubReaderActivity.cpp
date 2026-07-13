@@ -1479,7 +1479,8 @@ constexpr unsigned long SLOW_PAGE_TURN_MS = 150;
 // never showed up in simulator testing -- this is the only way to see which phase a
 // real multi-second turn is actually spending time in.
 void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBwRender, unsigned long tDisplay,
-                     unsigned long tEnd, int spineIndex, const std::string& title, FontCacheManager* fcm) {
+                     unsigned long tEnd, int spineIndex, const std::string& title, FontCacheManager* fcm,
+                     size_t preEndScanArabicBytes, int preEndScanArabicFontId) {
   const unsigned long total = tEnd - t0;
   if (total < SLOW_PAGE_TURN_MS) return;
   // Cache hits/misses/decompress time: PrewarmScope resets these at the top of every
@@ -1539,6 +1540,16 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
              (unsigned long)fcm->getArabicScanEntries(), (unsigned long)fcm->getArabicScanFontMissing(),
              fcm->getArabicScanLastResolvedFontId());
     strncat(statsPart, pathPart, sizeof(statsPart) - strlen(statsPart) - 1);
+    // Diagnostics only: pre_bytes/pre_font are the SAME accumulator scan_bytes/scan_font
+    // read above, but peeked immediately after the scan-pass render() call, before
+    // endScanAndPrewarm() runs. If pre_bytes>0 while scan_bytes=0, something between the
+    // peek and endScanAndPrewarm() clobbers scanArabicText_. If pre_bytes=0 too, the
+    // accumulator was already empty at the earliest possible point, despite entries>0 --
+    // meaning recordArabicText() itself isn't the one being called those `entries` times.
+    char prePart[64];
+    snprintf(prePart, sizeof(prePart), " pre_bytes=%lu pre_font=%d", (unsigned long)preEndScanArabicBytes,
+             preEndScanArabicFontId);
+    strncat(statsPart, prePart, sizeof(statsPart) - strlen(statsPart) - 1);
   }
   char buf[512];
   snprintf(buf, sizeof(buf),
@@ -1559,6 +1570,11 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);  // scan pass
+  // Diagnostics only: captured at the earliest possible point after the scan pass
+  // returns, before endScanAndPrewarm() reads/clears the same accumulator a few lines
+  // down -- see FontCacheManager::peekScanArabicTextSize().
+  const size_t preEndScanArabicBytes = fcm->peekScanArabicTextSize();
+  const int preEndScanArabicFontId = fcm->peekScanArabicFontId();
   scope.endScanAndPrewarm();
   const auto tPrewarm = millis();
 
@@ -1663,7 +1679,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm);
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
+                      preEndScanArabicBytes, preEndScanArabicFontId);
     }
   } else {
     // Fallback path for a controller without strip support. grayscale rendering
@@ -1706,14 +1723,16 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_lsb=%lums gray_msb=%lums gray_display=%lums bw_restore=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm);
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
+                      preEndScanArabicBytes, preEndScanArabicFontId);
     } else {
       // No text AA and no images: BW frame already displayed above, no grayscale
       // to render, so no save/restore.
       const auto tEnd = millis();
       LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm);
+      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
+                      preEndScanArabicBytes, preEndScanArabicFontId);
     }
   }
 }
