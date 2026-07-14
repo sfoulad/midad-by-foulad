@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 #include "CrossPointSettings.h"
@@ -99,9 +100,23 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
 // through a plain popup -- the picker's live glyph preview is worth keeping for Arabic
 // specifically, where the built-in styles look meaningfully different from each other.
 inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* registry) {
-  // Built-in font labels (StrId), in CrossPointSettings::ARABIC_FONT_FAMILY order --
-  // mirrors ArabicFontSelectionActivity.cpp's own kBuiltinArabicFontNames.
-  std::vector<StrId> enumValues = {StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI, StrId::STR_UTHMANI_HAFS};
+  // Selectable built-in font labels (StrId) and their stored ARABIC_FONT_FAMILY value,
+  // in display order -- mirrors ArabicFontSelectionActivity.cpp's own
+  // kSelectableArabicFonts. Amiri (value 1) was removed to save flash space and is no
+  // longer offered; its enum value stays reserved (see CrossPointSettings::
+  // ARABIC_FONT_FAMILY) so a stale setting/sidecar still holding it resolves through
+  // ArabicFontSystem's Naskh alias instead of colliding with another entry here.
+  // Display index is therefore NOT the same as the stored value -- valueGetter/
+  // valueSetter below translate between the two explicitly.
+  static constexpr std::pair<StrId, uint8_t> kSelectableFonts[] = {
+      {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
+      {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
+  };
+  static constexpr int kSelectableCount = static_cast<int>(sizeof(kSelectableFonts) / sizeof(kSelectableFonts[0]));
+
+  std::vector<StrId> enumValues;
+  enumValues.reserve(kSelectableCount);
+  for (const auto& [strId, familyValue] : kSelectableFonts) enumValues.push_back(strId);
   std::vector<std::string> enumStringValues;
 
   if (registry) {
@@ -140,20 +155,23 @@ inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* regist
     if (SETTINGS.sdArabicFontFamilyName[0] != '\0') {
       for (int i = 0; i < static_cast<int>(sdFamilyNames.size()); i++) {
         if (sdFamilyNames[i] == SETTINGS.sdArabicFontFamilyName) {
-          return static_cast<uint8_t>(CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT + i);
+          return static_cast<uint8_t>(kSelectableCount + i);
         }
       }
       // SD font name not found in registry — fall through to built-in
     }
-    return SETTINGS.arabicFontFamily < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT ? SETTINGS.arabicFontFamily : 0;
+    for (int i = 0; i < kSelectableCount; i++) {
+      if (kSelectableFonts[i].second == SETTINGS.arabicFontFamily) return static_cast<uint8_t>(i);
+    }
+    return 0;  // stale/legacy value (e.g. removed Amiri=1) or out of range
   };
 
   s.valueSetter = [sdFamilyNames](uint8_t v) {
-    if (v < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT) {
-      SETTINGS.arabicFontFamily = v;
+    if (v < kSelectableCount) {
+      SETTINGS.arabicFontFamily = kSelectableFonts[v].second;
       SETTINGS.sdArabicFontFamilyName[0] = '\0';
     } else {
-      int sdIdx = v - CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT;
+      int sdIdx = v - kSelectableCount;
       if (sdIdx < static_cast<int>(sdFamilyNames.size())) {
         strncpy(SETTINGS.sdArabicFontFamilyName, sdFamilyNames[sdIdx].c_str(),
                 sizeof(SETTINGS.sdArabicFontFamilyName) - 1);

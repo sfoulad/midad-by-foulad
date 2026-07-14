@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 #include "ArabicFontSystem.h"
 #include "CrossPointSettings.h"
@@ -17,12 +18,19 @@
 namespace {
 constexpr const char* ELLIPSIS_UTF8 = "\xe2\x80\xa6";
 
-// StrIds for the built-in Arabic fonts, in CrossPointSettings::ARABIC_FONT_FAMILY order.
-constexpr StrId kBuiltinArabicFontNames[CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT] = {
-    StrId::STR_NOTO_NASKH_ARABIC,
-    StrId::STR_AMIRI,
-    StrId::STR_UTHMANI_HAFS,
+// Selectable built-in Arabic fonts: (label, ARABIC_FONT_FAMILY value) pairs. Amiri's
+// font data was removed to save flash space, so it's no longer offered here -- but its
+// enum value (1) stays reserved (see CrossPointSettings::ARABIC_FONT_FAMILY) so a stale
+// setting/sidecar still holding it resolves through ArabicFontSystem's Naskh alias
+// instead of colliding with another entry here. Index into this array is NOT the same
+// as the stored ARABIC_FONT_FAMILY value (deliberately non-contiguous), so every use
+// below carries the family value explicitly rather than assuming index == value.
+constexpr std::pair<StrId, uint8_t> kSelectableArabicFonts[] = {
+    {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
+    {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
 };
+constexpr int kSelectableArabicFontCount =
+    static_cast<int>(sizeof(kSelectableArabicFonts) / sizeof(kSelectableArabicFonts[0]));
 
 int findCurrentArabicFontIndex(const SdCardFontRegistry* registry, const char* sdArabicFontFamilyName,
                                uint8_t arabicFontFamily) {
@@ -30,11 +38,14 @@ int findCurrentArabicFontIndex(const SdCardFontRegistry* registry, const char* s
     const auto& families = registry->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
       if (families[i].name == sdArabicFontFamilyName) {
-        return CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT + i;
+        return kSelectableArabicFontCount + i;
       }
     }
   }
-  return arabicFontFamily < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT ? arabicFontFamily : 0;
+  for (int i = 0; i < kSelectableArabicFontCount; i++) {
+    if (kSelectableArabicFonts[i].second == arabicFontFamily) return i;
+  }
+  return 0;
 }
 }  // namespace
 
@@ -57,17 +68,16 @@ void ArabicFontSelectionActivity::onEnter() {
   originalSdArabicFontFamilyName_[sizeof(originalSdArabicFontFamilyName_) - 1] = '\0';
 
   fonts_.clear();
-  fonts_.reserve(CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
+  fonts_.reserve(kSelectableArabicFontCount + (registry_ ? registry_->getFamilyCount() : 0));
 
-  for (uint8_t i = 0; i < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT; i++) {
-    fonts_.push_back({I18N.get(kBuiltinArabicFontNames[i]), true, i});
+  for (const auto& [strId, familyValue] : kSelectableArabicFonts) {
+    fonts_.push_back({I18N.get(strId), true, familyValue});
   }
 
   if (registry_) {
     const auto& families = registry_->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
-      fonts_.push_back(
-          {families[i].name, false, static_cast<uint8_t>(CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT + i)});
+      fonts_.push_back({families[i].name, false, static_cast<uint8_t>(kSelectableArabicFontCount + i)});
     }
   }
 
@@ -100,7 +110,7 @@ void ArabicFontSelectionActivity::loop() {
         SETTINGS.arabicFontFamily = font.settingIndex;
         SETTINGS.sdArabicFontFamilyName[0] = '\0';
       } else if (registry_) {
-        const int sdIdx = font.settingIndex - CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT;
+        const int sdIdx = font.settingIndex - kSelectableArabicFontCount;
         const auto& families = registry_->getFamilies();
         if (sdIdx < static_cast<int>(families.size())) {
           strncpy(SETTINGS.sdArabicFontFamilyName, families[sdIdx].name.c_str(),
@@ -141,11 +151,11 @@ void ArabicFontSelectionActivity::loop() {
 
 void ArabicFontSelectionActivity::handleSelection() {
   const auto& font = fonts_[selectedIndex_];
-  if (font.settingIndex < CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT) {
+  if (font.isBuiltin) {
     SETTINGS.arabicFontFamily = font.settingIndex;
     SETTINGS.sdArabicFontFamilyName[0] = '\0';
   } else if (registry_) {
-    const int sdIdx = font.settingIndex - CrossPointSettings::BUILTIN_ARABIC_FONT_COUNT;
+    const int sdIdx = font.settingIndex - kSelectableArabicFontCount;
     const auto& families = registry_->getFamilies();
     if (sdIdx < static_cast<int>(families.size())) {
       strncpy(SETTINGS.sdArabicFontFamilyName, families[sdIdx].name.c_str(),

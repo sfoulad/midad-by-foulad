@@ -313,7 +313,14 @@ def build_content_opf(surah_names: list[str]) -> str:
 def build_toc_ncx(surah_names: list[str]) -> str:
     nav_points = []
     for n, name in enumerate(surah_names, start=1):
-        label = f"{arabic_digits(str(n))} - {name}"
+        # surah_names carries the source's own "سورة <name>" title verbatim (see main()
+        # below), but every single one of the 114 entries starts with that same word --
+        # zero information, just clutter in the "Select Chapter" list and (before the
+        # digit prefix here was stripped in the reader's status bar too) a truncation
+        # trap for RTL text. Show the bare name directly, e.g. "44 - الدخان" not
+        # "44 - سورة الدخان".
+        bare_name = name[len("سورة "):] if name.startswith("سورة ") else name
+        label = f"{arabic_digits(str(n))} - {bare_name}"
         nav_points.append(
             f'    <navPoint id="num_{n}" playOrder="{n}" class="chapter">\n'
             f"      <navLabel>\n"

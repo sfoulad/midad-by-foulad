@@ -117,24 +117,11 @@ EpdFontFamily notonaskharabic16FontFamily(&notonaskharabic16RegularFont);
 EpdFont notonaskharabic18RegularFont(&notonaskharabic_18_regular);
 EpdFontFamily notonaskharabic18FontFamily(&notonaskharabic18RegularFont);
 
-// Amiri (OFL): revival of the Amiria Press typeface from the classic 1924
-// Cairo mushaf. Selectable as an Arabic Font option; no longer the Quran's own
-// default (see UthmanicHafs below and QuranBook.h). Same four reading sizes as
-// Naskh.
-EpdFont amiri12RegularFont(&amiri_12_regular);
-EpdFontFamily amiri12FontFamily(&amiri12RegularFont);
-EpdFont amiri14RegularFont(&amiri_14_regular);
-EpdFontFamily amiri14FontFamily(&amiri14RegularFont);
-EpdFont amiri16RegularFont(&amiri_16_regular);
-EpdFontFamily amiri16FontFamily(&amiri16RegularFont);
-EpdFont amiri18RegularFont(&amiri_18_regular);
-EpdFontFamily amiri18FontFamily(&amiri18RegularFont);
-
 // KFGQPC Uthmanic Hafs (King Fahd Complex; use/copy/distribute permitted,
 // modification not permitted -- see conversion note in
 // lib/EpdFont/builtinFonts/source/UthmanicHafs/): the Madinah Mushaf's own
 // typeface, Hafs 'an 'Asim riwayah -- the built-in Quranic reading family (see
-// QuranBook.h). Same four reading sizes as Naskh/Amiri.
+// QuranBook.h). Same four reading sizes as Naskh.
 EpdFont uthmanichafs12RegularFont(&uthmanichafs_12_regular);
 EpdFontFamily uthmanichafs12FontFamily(&uthmanichafs12RegularFont);
 EpdFont uthmanichafs14RegularFont(&uthmanichafs_14_regular);
@@ -406,10 +393,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTONASKHARABIC_14_FONT_ID, notonaskharabic14FontFamily);
   renderer.insertFont(NOTONASKHARABIC_16_FONT_ID, notonaskharabic16FontFamily);
   renderer.insertFont(NOTONASKHARABIC_18_FONT_ID, notonaskharabic18FontFamily);
-  renderer.insertFont(AMIRI_12_FONT_ID, amiri12FontFamily);
-  renderer.insertFont(AMIRI_14_FONT_ID, amiri14FontFamily);
-  renderer.insertFont(AMIRI_16_FONT_ID, amiri16FontFamily);
-  renderer.insertFont(AMIRI_18_FONT_ID, amiri18FontFamily);
   renderer.insertFont(UTHMANICHAFS_12_FONT_ID, uthmanichafs12FontFamily);
   renderer.insertFont(UTHMANICHAFS_14_FONT_ID, uthmanichafs14FontFamily);
   renderer.insertFont(UTHMANICHAFS_16_FONT_ID, uthmanichafs16FontFamily);

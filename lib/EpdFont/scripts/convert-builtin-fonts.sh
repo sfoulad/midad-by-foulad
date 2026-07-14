@@ -88,15 +88,6 @@ for size in ${ARABIC_READING_FONT_SIZES[@]}; do
     --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_${size}_regular.h
   echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
 done
-# Amiri: the Quran's own default reading face (see QuranBook::ensureExtracted /
-# ArabicFontSystem's kBuiltinArabicReadingFontIds).
-for size in ${ARABIC_READING_FONT_SIZES[@]}; do
-  python fontconvert.py amiri_${size}_regular ${size} \
-    ../builtinFonts/source/Amiri/Amiri-Regular.ttf \
-    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/amiri_${size}_regular.h
-  echo "Generated ../builtinFonts/amiri_${size}_regular.h"
-done
-
 # KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface, the Quran's default
 # reading font (see QuranBook::ensureExtracted / kBuiltinArabicReadingFontIds).
 # --shape-fallback: this font only exposes Arabic Presentation Forms via GSUB

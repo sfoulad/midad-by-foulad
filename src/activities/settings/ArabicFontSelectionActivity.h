@@ -32,7 +32,7 @@ class ArabicFontSelectionActivity final : public Activity {
   struct FontEntry {
     std::string name;
     bool isBuiltin;
-    uint8_t settingIndex;  // ARABIC_FONT_FAMILY index (builtin) or BUILTIN_ARABIC_FONT_COUNT + sdIdx
+    uint8_t settingIndex;  // ARABIC_FONT_FAMILY value (builtin) or kSelectableArabicFontCount + sdIdx
   };
 
   const SdCardFontRegistry* registry_;

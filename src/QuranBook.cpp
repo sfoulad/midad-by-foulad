@@ -22,10 +22,10 @@ std::string quranCachePath() {
 
 // Give the Quran its reading face: a per-book sidecar selecting the built-in
 // KFGQPC Uthmanic Hafs family (the Madinah Mushaf's own typeface -- renders
-// full harakat with our static pipeline; Amiri/Neirizi are also in the
-// drawer's Font Name picker). Written only when no sidecar exists yet, so any
-// choice the user later makes in the reader drawer sticks across
-// re-extractions and firmware updates.
+// full harakat with our static pipeline; Noto Naskh Arabic is the other
+// option in the drawer's Font Name picker). Written only when no sidecar
+// exists yet, so any choice the user later makes in the reader drawer sticks
+// across re-extractions and firmware updates.
 void writeDefaultSidecarIfMissing() {
   const std::string cacheDir = quranCachePath();
   const std::string sidecar = cacheDir + BookReaderSettings::FILE_NAME;

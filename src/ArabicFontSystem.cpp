@@ -14,8 +14,15 @@ constexpr int
     kBuiltinArabicReadingFontIds[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT][CrossPointSettings::FONT_SIZE_COUNT] = {
         {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
          NOTONASKHARABIC_18_FONT_ID},
-        // Amiri: revival of the Amiria Press (1924 Cairo mushaf) typeface.
-        {AMIRI_12_FONT_ID, AMIRI_14_FONT_ID, AMIRI_16_FONT_ID, AMIRI_18_FONT_ID},
+        // Amiri font data was removed to save flash space (no longer selectable in the
+        // UI). This row aliases NotoNaskhArabic's font IDs rather than being deleted so
+        // ARABIC_FONT_FAMILY's numeric values stay stable -- an existing on-device
+        // setting or Quran per-book sidecar byte still holding the old AMIRI=1 value
+        // resolves to a real, correct font instead of clamping to NOTONASKHARABIC via
+        // resolveBuiltinReadingFontId's out-of-range guard (which would also work, but
+        // would silently change what a previously-saved "1" means).
+        {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
+         NOTONASKHARABIC_18_FONT_ID},
         // KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface -- the Quran's
         // default reading face (per-book sidecar written at extraction; see
         // QuranBook::ensureExtracted).
@@ -43,8 +50,8 @@ void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
   renderer.setArabicFontIdForFontId(UI_12_FONT_ID, NOTOSANSARABIC_12_FONT_ID, /*matchLatinBaseline=*/true);
   renderer.setArabicFontId(readingFontId);
   // Ayah-marker digits always come from this built-in font, never readingFontId --
-  // see setArabicDigitFallbackFontId's comment for why (some reading fonts, like
-  // the Quran's own default Amiri, simply don't have Arabic-Indic digit glyphs).
+  // see setArabicDigitFallbackFontId's comment for why (some reading fonts simply
+  // don't have Arabic-Indic digit glyphs).
   renderer.setArabicDigitFallbackFontId(NOTOSANSARABIC_12_FONT_ID);
   // Bismillah always comes from the dedicated QuranCommon font -- see
   // setBismillahFontId's comment for why (UthmanicHafs itself has no glyph for the

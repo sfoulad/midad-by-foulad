@@ -194,13 +194,13 @@ class GfxRenderer {
   void setArabicFontId(int fontId) { arabicFontId_ = fontId; }
   // Font to source Arabic-Indic digit glyphs from for the ayah-end marker, always,
   // regardless of which font is active for reading. Reading fonts are free to omit
-  // decorative/rare glyphs -- Amiri, the Quran's own default reading face, lacks
-  // Arabic-Indic digits entirely (real-device evidence: the marker rendered as an
-  // empty numberless circle) -- but the marker must look the same on every single
-  // page no matter which reading font a book requests, so its digits deliberately
-  // don't come from arabicFontId_/resolveArabicFontId() at all. Callers should pass
-  // a font guaranteed to always be registered (e.g. a built-in UI-tier Arabic font
-  // set once at boot), not something that depends on user configuration.
+  // decorative/rare glyphs -- a previous built-in reading face lacked Arabic-Indic
+  // digits entirely (real-device evidence: the marker rendered as an empty numberless
+  // circle) -- but the marker must look the same on every single page no matter which
+  // reading font a book requests, so its digits deliberately don't come from
+  // arabicFontId_/resolveArabicFontId() at all. Callers should pass a font guaranteed
+  // to always be registered (e.g. a built-in UI-tier Arabic font set once at boot),
+  // not something that depends on user configuration.
   void setArabicDigitFallbackFontId(int fontId) { arabicDigitFallbackFontId_ = fontId; }
   // Font to source the Bismillah ligature glyph (U+FDFD) from. Same "independent of
   // arabicFontId_/whatever reading font is active" reasoning as

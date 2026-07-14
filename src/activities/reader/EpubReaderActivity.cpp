@@ -1778,6 +1778,27 @@ std::string stripLeadingArabicIndicIndex(const std::string& title) {
   }
   return title.substr(i + 3);
 }
+
+// Every Quran chapter title starts with the literal word "سورة " ("Surah "), which
+// carries zero information (all 114 are surahs) but adds ~9 bytes / 4 glyphs to
+// every single title. drawStatusBar()'s truncatedText() shortens from the LOGICAL
+// end of the string, which for this RTL text means it strips the actual surah name
+// (which comes after "سورة ") and keeps "سورة" itself for any title too wide for the
+// available space -- e.g. "سورة الدخان"/"سورة محمد"/"سورة الفتح" showing as just
+// "سورة" in the footer, real-device report. Rather than teach truncation about RTL
+// (which title to keep depends on the string's own semantics, not something generic
+// truncation logic can know), strip this literal, known prefix before it's ever a
+// truncation candidate -- shorter titles are also simply less likely to need
+// truncating at all. Byte-match, same convention as the digit-prefix strip above;
+// a no-op for any non-Quran book's title, which won't start with this exact phrase.
+std::string stripLeadingSurahWord(const std::string& title) {
+  constexpr char kSurahWord[] = "\xd8\xb3\xd9\x88\xd8\xb1\xd8\xa9 ";  // "سورة " (9 bytes)
+  constexpr size_t kSurahWordLen = sizeof(kSurahWord) - 1;
+  if (title.size() >= kSurahWordLen && title.compare(0, kSurahWordLen, kSurahWord) == 0) {
+    return title.substr(kSurahWordLen);
+  }
+  return title;
+}
 }  // namespace
 
 void EpubReaderActivity::renderStatusBar() const {
@@ -1808,7 +1829,7 @@ void EpubReaderActivity::renderStatusBar() const {
     const int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
     if (tocIndex != -1) {
       const auto tocItem = epub->getTocItem(tocIndex);
-      title = stripLeadingArabicIndicIndex(tocItem.title);
+      title = stripLeadingSurahWord(stripLeadingArabicIndicIndex(tocItem.title));
     }
 
   } else if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {

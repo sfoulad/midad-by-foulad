@@ -967,15 +967,13 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
 
   // Ayah markers prefer the font's own END OF AYAH ornament glyph (U+06DD): a
   // properly designed Quranic font's rosette looks much better than any code-drawn
-  // substitute, and after regenerating Amiri's compiled font data (fixing the
-  // GPOS mark-repositioning bug -- see parseAyahMarker's history above), Amiri's
-  // own U+06DD glyph renders correctly again (confirmed: valid, non-empty glyph
-  // dimensions in the regenerated font data). A user comparison photo confirmed
-  // this glyph-based rosette IS the "correct"/expected look, not the plain
-  // circle outline this code drew as a stopgap while U+06DD appeared broken.
-  // Falls back to a code-drawn circle outline only if the glyph is genuinely
-  // absent, so the marker still isn't silently invisible for some other font.
-  // Width must match getArabicTextWidth's marker branch exactly (layout vs render).
+  // substitute. Fixing a GPOS mark-repositioning bug in a previous built-in reading
+  // face's compiled font data (see parseAyahMarker's history above) confirmed this
+  // glyph-based rosette IS the "correct"/expected look, not the plain circle outline
+  // this code drew as a stopgap while U+06DD appeared broken. Falls back to a
+  // code-drawn circle outline only if the glyph is genuinely absent, so the marker
+  // still isn't silently invisible for some other font. Width must match
+  // getArabicTextWidth's marker branch exactly (layout vs render).
   {
     uint32_t digits[3];
     int digitCount = 0;

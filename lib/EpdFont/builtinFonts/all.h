@@ -20,10 +20,6 @@
 #include <builtinFonts/notosansarabic_8_regular.h>
 #include <builtinFonts/notosansarabic_10_regular.h>
 #include <builtinFonts/notosansarabic_12_regular.h>
-#include <builtinFonts/amiri_12_regular.h>
-#include <builtinFonts/amiri_14_regular.h>
-#include <builtinFonts/amiri_16_regular.h>
-#include <builtinFonts/amiri_18_regular.h>
 #include <builtinFonts/notonaskharabic_12_regular.h>
 #include <builtinFonts/notonaskharabic_14_regular.h>
 #include <builtinFonts/notonaskharabic_16_regular.h>

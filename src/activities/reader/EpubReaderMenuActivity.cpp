@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include "ArabicFontSystem.h"
 #include "CrossPointSettings.h"
@@ -22,9 +23,26 @@ constexpr StrId kSpacingLabels[CrossPointSettings::LINE_COMPRESSION_COUNT] = {St
                                                                               StrId::STR_WIDE};
 constexpr StrId kAlignLabels[CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT] = {
     StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT, StrId::STR_BOOK_S_STYLE};
-// In CrossPointSettings::ARABIC_FONT_FAMILY order.
-constexpr StrId kArabicBuiltinLabels[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT] = {
-    StrId::STR_NOTO_NASKH_ARABIC, StrId::STR_AMIRI};
+// Selectable built-in Arabic families for the per-book override picker: (label,
+// ARABIC_FONT_FAMILY value) pairs, in display order. Amiri's font data was removed to
+// save flash space, so it's no longer offered; its enum value (1) stays reserved (see
+// CrossPointSettings::ARABIC_FONT_FAMILY) so an existing per-book sidecar still holding
+// it resolves through ArabicFontSystem's Naskh alias. Display index is therefore NOT
+// the same as the stored family value -- every use below translates explicitly via
+// kSelectableArabicFonts / displayIndexForArabicFamily.
+constexpr std::pair<StrId, uint8_t> kSelectableArabicFonts[] = {
+    {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
+    {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
+};
+constexpr int kSelectableArabicFontCount =
+    static_cast<int>(sizeof(kSelectableArabicFonts) / sizeof(kSelectableArabicFonts[0]));
+
+int displayIndexForArabicFamily(const uint8_t family) {
+  for (int i = 0; i < kSelectableArabicFontCount; i++) {
+    if (kSelectableArabicFonts[i].second == family) return i;
+  }
+  return 0;  // stale/legacy value (e.g. removed Amiri=1) or out of range
+}
 
 std::vector<std::string> sdFamilyNames(const SdCardFontRegistry& registry) {
   std::vector<std::string> names;
@@ -82,9 +100,9 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainI
   }
   items.push_back({MenuAction::FONT_SIZE, StrId::STR_FONT_SIZE_GENERIC});
   if (isArabicBook || !sdFamilies.empty()) {
-    // Arabic books always get the row (three built-in Quran-capable families:
-    // Naskh, Amiri, Neirizi); Latin books only when SD families exist, since
-    // Noto Serif is the single built-in serif.
+    // Arabic books always get the row (two built-in families: Naskh, UthmanicHafs);
+    // Latin books only when SD families exist, since Noto Serif is the single
+    // built-in serif.
     items.push_back({MenuAction::FONT_NAME, StrId::STR_FONT_NAME});
   }
   items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
@@ -143,14 +161,13 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
         const char* book = SETTINGS.bookSdArabicFontFamilyName;
         const char* global = SETTINGS.sdArabicFontFamilyName;
         if (book[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
-          return I18N.get(kArabicBuiltinLabels[std::min<uint8_t>(SETTINGS.effArabicFontFamily(),
-                                                                 CrossPointSettings::ARABIC_FONT_FAMILY_COUNT - 1)]);
+          return I18N.get(kSelectableArabicFonts[displayIndexForArabicFamily(SETTINGS.effArabicFontFamily())].first);
         }
         if (book[0] != '\0') return book;
-        return globalLabel(global[0] != '\0'
-                               ? global
-                               : I18N.get(kArabicBuiltinLabels[std::min<uint8_t>(
-                                     SETTINGS.arabicFontFamily, CrossPointSettings::ARABIC_FONT_FAMILY_COUNT - 1)]));
+        return globalLabel(
+            global[0] != '\0'
+                ? global
+                : I18N.get(kSelectableArabicFonts[displayIndexForArabicFamily(SETTINGS.arabicFontFamily)].first));
       }
       const char* book = SETTINGS.bookSdFontFamilyName;
       const char* global = SETTINGS.sdFontFamilyName;
@@ -214,41 +231,40 @@ void EpubReaderMenuActivity::openSettingEditor(const MenuAction action) {
       break;
     case MenuAction::FONT_NAME: {
       if (isArabicBook) {
-        // Option 0 = Global, 1..N = built-in families (Naskh/Amiri/Neirizi),
-        // N+1.. = SD families. Built-in picks set BOTH the forced-builtin
-        // marker and the per-book family index.
-        constexpr int builtinCount = CrossPointSettings::ARABIC_FONT_FAMILY_COUNT;
+        // Option 0 = Global, 1..N = selectable built-in families (Naskh/UthmanicHafs),
+        // N+1.. = SD families. Built-in picks set BOTH the forced-builtin marker and
+        // the per-book family value.
         const char* global = SETTINGS.sdArabicFontFamilyName;
         std::vector<std::string> options;
-        options.reserve(sdFamilies.size() + 1 + builtinCount);
-        options.push_back(globalLabel(global[0] != '\0'
-                                          ? global
-                                          : I18N.get(kArabicBuiltinLabels[std::min<uint8_t>(
-                                                SETTINGS.arabicFontFamily, builtinCount - 1)])));
-        for (int i = 0; i < builtinCount; i++) options.push_back(I18N.get(kArabicBuiltinLabels[i]));
+        options.reserve(sdFamilies.size() + 1 + kSelectableArabicFontCount);
+        options.push_back(globalLabel(
+            global[0] != '\0'
+                ? global
+                : I18N.get(kSelectableArabicFonts[displayIndexForArabicFamily(SETTINGS.arabicFontFamily)].first)));
+        for (const auto& [strId, familyValue] : kSelectableArabicFonts) options.push_back(I18N.get(strId));
         options.insert(options.end(), sdFamilies.begin(), sdFamilies.end());
 
         int current = 0;
         if (SETTINGS.bookSdArabicFontFamilyName[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
-          current = 1 + std::min<uint8_t>(SETTINGS.effArabicFontFamily(), builtinCount - 1);
+          current = 1 + displayIndexForArabicFamily(SETTINGS.effArabicFontFamily());
         } else if (SETTINGS.bookSdArabicFontFamilyName[0] != '\0') {
           for (size_t i = 0; i < sdFamilies.size(); i++) {
             if (sdFamilies[i] == SETTINGS.bookSdArabicFontFamilyName) {
-              current = static_cast<int>(1 + builtinCount + i);
+              current = static_cast<int>(1 + kSelectableArabicFontCount + i);
               break;
             }
           }
         }
 
         optionPopup.show(StrId::STR_FONT_NAME, options, current, [this](const int idx) {
-          constexpr int builtins = CrossPointSettings::ARABIC_FONT_FAMILY_COUNT;
           char newName[32] = "";
           uint8_t newFamily = CrossPointSettings::BOOK_NO_OVERRIDE;
-          if (idx >= 1 && idx <= builtins) {
+          if (idx >= 1 && idx <= kSelectableArabicFontCount) {
             newName[0] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
-            newFamily = static_cast<uint8_t>(idx - 1);
-          } else if (idx > builtins && idx - 1 - builtins < static_cast<int>(sdFamilies.size())) {
-            setBookFamily(newName, sizeof(newName), sdFamilies[idx - 1 - builtins].c_str());
+            newFamily = kSelectableArabicFonts[idx - 1].second;
+          } else if (idx > kSelectableArabicFontCount &&
+                     idx - 1 - kSelectableArabicFontCount < static_cast<int>(sdFamilies.size())) {
+            setBookFamily(newName, sizeof(newName), sdFamilies[idx - 1 - kSelectableArabicFontCount].c_str());
           }
           if (strncmp(SETTINGS.bookSdArabicFontFamilyName, newName, sizeof(SETTINGS.bookSdArabicFontFamilyName)) != 0 ||
               SETTINGS.bookArabicFontFamily != newFamily) {

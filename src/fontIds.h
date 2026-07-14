@@ -15,10 +15,6 @@
 #define NOTONASKHARABIC_14_FONT_ID (740465944)
 #define NOTONASKHARABIC_16_FONT_ID (1628362510)
 #define NOTONASKHARABIC_18_FONT_ID (-1652951488)
-#define AMIRI_12_FONT_ID (711244288)
-#define AMIRI_14_FONT_ID (-2144781015)
-#define AMIRI_16_FONT_ID (1980717741)
-#define AMIRI_18_FONT_ID (1280439868)
 #define UTHMANICHAFS_12_FONT_ID (318950392)
 #define UTHMANICHAFS_14_FONT_ID (469431593)
 #define UTHMANICHAFS_16_FONT_ID (147312493)
@@ -41,10 +37,6 @@ static_assert(NOTONASKHARABIC_12_FONT_ID != 0, "Font ID collision with sentinel"
 static_assert(NOTONASKHARABIC_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTONASKHARABIC_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(NOTONASKHARABIC_18_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_12_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_14_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_16_FONT_ID != 0, "Font ID collision with sentinel");
-static_assert(AMIRI_18_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UTHMANICHAFS_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UTHMANICHAFS_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UTHMANICHAFS_16_FONT_ID != 0, "Font ID collision with sentinel");
