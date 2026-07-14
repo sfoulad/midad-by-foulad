@@ -36,7 +36,9 @@ class CssParser {
   // v8: text-align start/end now compile to the logical CssTextAlign::Start/End values instead of
   // being statically folded to Left/Right at parse time -- caches built under v7 hold the wrong
   // (physical) values for those declarations.
-  static constexpr uint8_t CSS_CACHE_VERSION = 8;
+  // v9: rules with no supported properties are no longer stored (upstream #2604), so cached rule
+  // sets built under v8 contain entries the parser would no longer produce.
+  static constexpr uint8_t CSS_CACHE_VERSION = 9;
 
   explicit CssParser(std::string cachePath) : cachePath(std::move(cachePath)) {}
   ~CssParser() = default;
