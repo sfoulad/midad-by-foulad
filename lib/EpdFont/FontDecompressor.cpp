@@ -263,11 +263,13 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     hotGroupIndex = UINT16_MAX;
     if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
+      stats.bitmapAllocFailures++;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
 
     if (!decompressGroup(fontData, groupIndex, hotGroup, group.uncompressedSize)) {
+      stats.bitmapAllocFailures++;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -282,6 +284,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   // Compact just the requested glyph from byte-aligned data into scratch buffer
   if (!ensureCapacity(hotGlyphBuf, hotGlyphBufCapacity, glyph->dataLength)) {
     LOG_ERR("FDC", "Failed to allocate %u bytes for glyph scratch", (unsigned)glyph->dataLength);
+    stats.bitmapAllocFailures++;
     stats.getBitmapTimeUs += micros() - tStart;
     return nullptr;
   }

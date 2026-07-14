@@ -1488,7 +1488,16 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
                      unsigned long tEnd, int spineIndex, const std::string& title, FontCacheManager* fcm,
                      size_t preEndScanArabicBytes, int preEndScanArabicFontId) {
   const unsigned long total = tEnd - t0;
-  if (total < SLOW_PAGE_TURN_MS) return;
+  // A failed malloc() inside FontDecompressor::getBitmap() (real-device memory
+  // pressure only -- never reproduced against the simulator's effectively-unlimited
+  // heap) returns near-instantly, not slowly: the glyph is silently dropped and the
+  // render moves on. Such a turn can finish well under SLOW_PAGE_TURN_MS even though
+  // it left visibly blank text on the page, so bitmapAllocFailures must force logging
+  // independent of the timing gate below, or exactly the pages that need investigating
+  // leave zero trace in this log.
+  const uint32_t bitmapAllocFailures =
+      (fcm && fcm->getDecompressor()) ? fcm->getDecompressor()->getStats().bitmapAllocFailures : 0;
+  if (total < SLOW_PAGE_TURN_MS && bitmapAllocFailures == 0) return;
   // Cache hits/misses/decompress time: PrewarmScope resets these at the top of every
   // page render, so this reflects just this one page. hits+misses were still ~500 vs
   // ~90 hits on the Quran even after fixing the marker scan/render mismatch, while a
@@ -1507,16 +1516,18 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
   // font id: sd=SD-card font tracked by separate stats getBitmap() never touches,
   // none=font id not found anywhere, compressed=the path FontDecompressor::Stats
   // above actually measures).
-  char statsPart[340] = "";
+  char statsPart[400] = "";
   if (fcm) {
     FontDecompressor* decompressor = fcm->getDecompressor();
     if (decompressor) {
       const auto& s = decompressor->getStats();
       snprintf(statsPart, sizeof(statsPart),
-               " hits=%lu misses=%lu decomp=%lums calls=%lu prewarm_glyphs=%lu prewarm_bytes=%lu prewarm_groups=%u",
+               " hits=%lu misses=%lu decomp=%lums calls=%lu prewarm_glyphs=%lu prewarm_bytes=%lu prewarm_groups=%u "
+               "bitmap_fail=%lu",
                (unsigned long)s.cacheHits, (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs,
                (unsigned long)s.getBitmapCalls, (unsigned long)(s.pageGlyphsBytes / 12),
-               (unsigned long)s.pageBufferBytes, (unsigned)s.uniqueGroupsAccessed);
+               (unsigned long)s.pageBufferBytes, (unsigned)s.uniqueGroupsAccessed,
+               (unsigned long)s.bitmapAllocFailures);
     }
     const char* pathStr = "?";
     switch (fcm->getLastArabicPrewarmPath()) {

@@ -64,6 +64,17 @@ class FontDecompressor {
     uint32_t peakTempBytes = 0;    // largest temp buffer in prewarm
     uint32_t getBitmapTimeUs = 0;  // cumulative getBitmap time (micros)
     uint32_t getBitmapCalls = 0;   // number of getBitmap calls
+    // Real-device-only failure mode: a malloc() failure here (page slot buffer,
+    // hot-group buffer, or glyph scratch buffer -- all under real memory pressure,
+    // never reproduced against the simulator's effectively-unlimited heap) makes
+    // getBitmap() return nullptr, which every caller (renderCharImpl and friends)
+    // silently treats as "skip this glyph" -- the page keeps rendering, just with
+    // that glyph invisible, no error surfaced anywhere the reader would see. A
+    // failed malloc returns near-instantly, so this can happen on a page turn that
+    // *isn't* slow -- unlike hits/misses/decompressTimeMs, this must be checked
+    // independent of the SLOW_PAGE_TURN_MS gate that guards the rest of the
+    // per-turn perf log line, or a fast-but-glyph-dropping turn leaves zero trace.
+    uint32_t bitmapAllocFailures = 0;
   };
   void logStats(const char* label = "FDC");
   void resetStats();
