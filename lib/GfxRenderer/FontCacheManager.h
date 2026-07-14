@@ -29,6 +29,20 @@ class FontCacheManager {
   // Arabic font. Without this every Arabic glyph draw went through the
   // FontDecompressor hot-group fallback (repeated group decompression), which
   // made vocalized pages (the Quran) noticeably slow to turn.
+  //
+  // Keyed per fontId (not one shared buffer): a single Quran page legitimately
+  // mixes several distinct Arabic fonts -- the reading font for ayah body text,
+  // plus the surah banner's own dedicated calligraphy and caption-label fonts.
+  // An earlier single-accumulator version appended every font's shaped text
+  // into one buffer and prewarmed only the FIRST font recorded (typically the
+  // banner, since it's drawn before the body) -- so the body text's glyphs,
+  // absent from that tiny banner font, were silently skipped by prewarm and
+  // every one of them fell through to the slow per-glyph decompression path on
+  // the real render pass (real-device logs: 7-9s per page turn, 229 misses vs
+  // 64 hits, pages left blank where the render never caught up). Recording
+  // each font's text under its own key and prewarming every key at
+  // endScanAndPrewarm() fixes this without reintroducing the "single global
+  // font" assumption that broke as soon as a page could use more than one.
   void recordArabicText(const char* shapedUtf8, int fontId);
 
   // The FontDecompressor pointer, needed by GfxRenderer::getGlyphBitmap()
@@ -40,10 +54,18 @@ class FontCacheManager {
   // meaning either the scan pass still isn't capturing the page's Arabic text, or
   // prewarmCache() is resolving the Arabic font id to something other than the
   // compressed-font path FontDecompressor::Stats tracks. These say which.
+  //
+  // Now that a page can prewarm multiple distinct Arabic fonts (see
+  // recordArabicText()'s comment), these single-value fields describe the
+  // PRIMARY font -- whichever accumulated the most text this page (almost
+  // always the reading font, since body text dwarfs a banner/label font's
+  // handful of glyphs) -- not literally "the only font". getLastArabicPrewarmFontCount()
+  // says how many distinct fonts were actually prewarmed.
   enum class LastPrewarmPath : uint8_t { NotAttempted, NoFontFound, SdCardFont, Compressed };
   LastPrewarmPath getLastArabicPrewarmPath() const { return lastArabicPrewarmPath_; }
   int getLastArabicPrewarmFontId() const { return lastArabicPrewarmFontId_; }
   size_t getLastArabicScanTextBytes() const { return lastArabicScanTextBytes_; }
+  size_t getLastArabicPrewarmFontCount() const { return lastArabicPrewarmFontCount_; }
 
   // Diagnostics only, called from GfxRenderer::drawArabicText() at every call made
   // while isScanning() is true -- BEFORE that function's own early return if the
@@ -58,15 +80,18 @@ class FontCacheManager {
   uint32_t getArabicScanFontMissing() const { return arabicScanFontMissing_; }
   int getArabicScanLastResolvedFontId() const { return arabicScanLastResolvedFontId_; }
 
-  // Diagnostics only: raw peek at the accumulator recordArabicText() writes to, taken
-  // by the caller immediately after the scan-pass render call returns and BEFORE
-  // endScanAndPrewarm() reads/clears it. entries=71 font_missing=0 (proving
+  // Diagnostics only: raw peek at the accumulator(s) recordArabicText() writes to,
+  // taken by the caller immediately after the scan-pass render call returns and
+  // BEFORE endScanAndPrewarm() reads/clears them. entries=71 font_missing=0 (proving
   // recordArabicText() must have run) alongside scan_bytes=0 (what endScanAndPrewarm
   // saw moments later) is a contradiction under a single-threaded read of this code --
   // this closes that gap by showing the true accumulator state at the earliest
-  // possible point, before anything else has a chance to touch it.
-  size_t peekScanArabicTextSize() const { return scanArabicText_.size(); }
-  int peekScanArabicFontId() const { return scanArabicFontId_; }
+  // possible point, before anything else has a chance to touch it. Reports totals
+  // across every font's buffer (size) and the id of whichever buffer is currently
+  // largest (font) -- same "primary font" convention as the post-prewarm getters
+  // above, now that a page can have more than one.
+  size_t peekScanArabicTextSize() const;
+  int peekScanArabicFontId() const;
 
   // RAII scope for two-pass prewarm pattern
   class PrewarmScope {
@@ -95,12 +120,14 @@ class FontCacheManager {
   std::string scanText_;
   uint32_t scanStyleCounts_[4] = {};
   int scanFontId_ = -1;
-  std::string scanArabicText_;
-  int scanArabicFontId_ = -1;
+  // One accumulator per Arabic font id seen this page -- see recordArabicText()'s
+  // comment for why a single shared buffer/font-id pair isn't enough.
+  std::map<int, std::string> scanArabicTextByFont_;
 
   LastPrewarmPath lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
   int lastArabicPrewarmFontId_ = -1;
   size_t lastArabicScanTextBytes_ = 0;
+  size_t lastArabicPrewarmFontCount_ = 0;
 
   uint32_t arabicScanEntries_ = 0;
   uint32_t arabicScanFontMissing_ = 0;

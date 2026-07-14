@@ -19,7 +19,21 @@ class FontDecompressor {
   // stack array sized for the old, much smaller cap.
   static constexpr uint16_t MAX_PAGE_GLYPHS = 4096;
   static constexpr uint16_t MAX_PAGE_GROUPS = 512;
-  static constexpr uint8_t MAX_PAGE_SLOTS = 4;  // One per font style (R/B/I/BI)
+  // Originally 4 (one per font style: R/B/I/BI) on the assumption a page only ever
+  // prewarms a single font's styles. A Quran surah-header page breaks that
+  // assumption: FontCacheManager::recordArabicText() now keys its scan buffer per
+  // Arabic font id (not one shared buffer -- see its own comment), and such a page
+  // legitimately records 5 distinct fonts in one scan: the reading font (ayah body
+  // text), the surah banner's calligraphy font, its caption-label font, the
+  // ayah-marker digit-fallback font, and the Bismillah ligature's dedicated font.
+  // Each currently only needs 1 slot (Arabic reading text is always REGULAR style),
+  // so 4 slots meant the 5th font's prewarm call was silently rejected
+  // ("All 4 page buffer slots full") and every glyph in that font fell back to the
+  // slow per-glyph decompression path for the rest of that page's render. Raised
+  // with a little headroom above the current worst case (5); each slot is just a
+  // few pointers (see PageSlot below) until actually populated, so this costs
+  // nothing until a page really uses that many fonts.
+  static constexpr uint8_t MAX_PAGE_SLOTS = 8;
 
   FontDecompressor() = default;
   ~FontDecompressor();

@@ -1540,11 +1540,16 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
     // if entries>0 and font_missing==entries, that early return is exactly why
     // nothing ever gets recorded. If entries==0, drawArabicText() isn't even being
     // reached during scan, and the bug is further upstream (TextBlock/drawText).
-    char pathPart[140];
-    snprintf(pathPart, sizeof(pathPart), " scan_bytes=%lu scan_font=%d path=%s entries=%lu font_missing=%lu last_font=%d",
+    // prewarm_fonts: how many DISTINCT Arabic fonts got their own prewarm call this
+    // page (a Quran surah-header page legitimately has 3: the reading font for ayah
+    // body text, plus the banner's calligraphy and label fonts) -- confirms every
+    // font recorded during the scan actually got prewarmed, not just one.
+    char pathPart[170];
+    snprintf(pathPart, sizeof(pathPart),
+             " scan_bytes=%lu scan_font=%d path=%s entries=%lu font_missing=%lu last_font=%d prewarm_fonts=%lu",
              (unsigned long)fcm->getLastArabicScanTextBytes(), fcm->getLastArabicPrewarmFontId(), pathStr,
              (unsigned long)fcm->getArabicScanEntries(), (unsigned long)fcm->getArabicScanFontMissing(),
-             fcm->getArabicScanLastResolvedFontId());
+             fcm->getArabicScanLastResolvedFontId(), (unsigned long)fcm->getLastArabicPrewarmFontCount());
     strncat(statsPart, pathPart, sizeof(statsPart) - strlen(statsPart) - 1);
     // Diagnostics only: pre_bytes/pre_font are the SAME accumulator scan_bytes/scan_font
     // read above, but peeked immediately after the scan-pass render() call, before

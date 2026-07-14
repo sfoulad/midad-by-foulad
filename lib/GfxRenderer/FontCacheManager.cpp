@@ -75,8 +75,39 @@ void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::S
 }
 
 void FontCacheManager::recordArabicText(const char* shapedUtf8, int fontId) {
-  scanArabicText_ += shapedUtf8;
-  if (scanArabicFontId_ < 0) scanArabicFontId_ = fontId;
+  scanArabicTextByFont_[fontId] += shapedUtf8;
+}
+
+namespace {
+// Shared by peekScanArabicTextSize()/peekScanArabicFontId() and endScanAndPrewarm():
+// total bytes across every font's buffer, plus the id of whichever buffer is
+// currently largest (the "primary" font for single-value diagnostics fields).
+void summarizeArabicScan(const std::map<int, std::string>& byFont, size_t& totalBytes, int& primaryFontId) {
+  totalBytes = 0;
+  primaryFontId = -1;
+  size_t primaryBytes = 0;
+  for (const auto& [fontId, text] : byFont) {
+    totalBytes += text.size();
+    if (text.size() > primaryBytes) {
+      primaryBytes = text.size();
+      primaryFontId = fontId;
+    }
+  }
+}
+}  // namespace
+
+size_t FontCacheManager::peekScanArabicTextSize() const {
+  size_t totalBytes;
+  int primaryFontId;
+  summarizeArabicScan(scanArabicTextByFont_, totalBytes, primaryFontId);
+  return totalBytes;
+}
+
+int FontCacheManager::peekScanArabicFontId() const {
+  size_t totalBytes;
+  int primaryFontId;
+  summarizeArabicScan(scanArabicTextByFont_, totalBytes, primaryFontId);
+  return primaryFontId;
 }
 
 void FontCacheManager::noteArabicScanEntry(bool fontFound, int resolvedFontId) {
@@ -93,9 +124,7 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   manager_->resetStats();
   manager_->scanText_.clear();
   manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
-  manager_->scanArabicText_.clear();
-  manager_->scanArabicText_.reserve(2048);
-  manager_->scanArabicFontId_ = -1;
+  manager_->scanArabicTextByFont_.clear();
   memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
   manager_->scanFontId_ = -1;
   manager_->arabicScanEntries_ = 0;
@@ -107,17 +136,17 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
   // NOT scanText_.empty() alone: a page that's entirely Arabic (the Quran; any
   // fully-Arabic book with no incidental Latin digits/punctuation on the page) never
-  // calls recordText(), so scanText_ stays empty even though scanArabicText_ is full.
-  // The old check returned here before EVER reaching the Arabic prewarmCache() call
-  // below -- meaning prewarm silently never ran at all for such a page, every single
-  // glyph fell through to the slow per-glyph hot-group fallback for the entire
+  // calls recordText(), so scanText_ stays empty even though scanArabicTextByFont_ is
+  // full. The old check returned here before EVER reaching the Arabic prewarmCache()
+  // call below -- meaning prewarm silently never ran at all for such a page, every
+  // single glyph fell through to the slow per-glyph hot-group fallback for the entire
   // render, and every earlier fix to WHAT got recorded (or how fast a miss was
   // handled) was moot because prewarmCache() was never being invoked in the first
   // place. Real-device evidence: a mixed-script Arabic novel (incidental Latin
   // content keeps scanText_ non-empty) hit ~90%; the Quran (deliberately zero Latin
   // anywhere, including Arabic-Indic page/ayah numbers) hit ~15%, every page, no
   // matter which other fix landed.
-  if (manager_->scanText_.empty() && manager_->scanArabicText_.empty()) return;
+  if (manager_->scanText_.empty() && manager_->scanArabicTextByFont_.empty()) return;
 
   // Build style bitmask from all styles that appeared during the scan
   uint8_t styleMask = 0;
@@ -129,40 +158,54 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   if (!manager_->scanText_.empty()) {
     manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
   }
-  // NOT `scanArabicFontId_ >= 0`: SD-card font ids are FNV-1a hashes cast to `int`
-  // (SdCardFontManager::computeFontId), which are legitimately negative about half
-  // the time. That stray sign check meant every SD-card Arabic font whose hash came
-  // out negative silently skipped this branch on every single page -- scanArabicText_
-  // was full (see peekScanArabicTextSize() diagnostics: pre_bytes>0 every page) but
-  // this guard rejected it before prewarmCache() was ever called, so the Quran (whose
-  // configured Arabic font hashed to a negative id) always fell through to the slow
-  // per-glyph decompression path. scanArabicText_ non-empty already proves
-  // recordArabicText() ran at least once, which is all this needs to know -- same
-  // check the Latin branch above already uses without a sign gate on scanFontId_.
-  if (!manager_->scanArabicText_.empty()) {
-    manager_->lastArabicScanTextBytes_ = manager_->scanArabicText_.size();
-    manager_->lastArabicPrewarmFontId_ = manager_->scanArabicFontId_;
-    if (manager_->sdCardFonts_.count(manager_->scanArabicFontId_) > 0) {
+  if (!manager_->scanArabicTextByFont_.empty()) {
+    size_t totalBytes;
+    int primaryFontId;
+    summarizeArabicScan(manager_->scanArabicTextByFont_, totalBytes, primaryFontId);
+    manager_->lastArabicScanTextBytes_ = totalBytes;
+    manager_->lastArabicPrewarmFontId_ = primaryFontId;
+    manager_->lastArabicPrewarmFontCount_ = manager_->scanArabicTextByFont_.size();
+    // NOT `primaryFontId >= 0`: SD-card font ids are FNV-1a hashes cast to `int`
+    // (SdCardFontManager::computeFontId), which are legitimately negative about half
+    // the time. That stray sign check meant every SD-card Arabic font whose hash came
+    // out negative silently skipped this branch on every single page -- the
+    // accumulator was full (see peekScanArabicTextSize() diagnostics: pre_bytes>0
+    // every page) but this guard rejected it before prewarmCache() was ever called,
+    // so the Quran (whose configured Arabic font hashed to a negative id) always fell
+    // through to the slow per-glyph decompression path. A non-empty accumulator
+    // already proves recordArabicText() ran at least once, which is all this needs to
+    // know -- same check the Latin branch above already uses without a sign gate on
+    // scanFontId_.
+    if (manager_->sdCardFonts_.count(primaryFontId) > 0) {
       manager_->lastArabicPrewarmPath_ = LastPrewarmPath::SdCardFont;
-    } else if (manager_->fontMap_.count(manager_->scanArabicFontId_) > 0) {
+    } else if (manager_->fontMap_.count(primaryFontId) > 0) {
       manager_->lastArabicPrewarmPath_ = LastPrewarmPath::Compressed;
     } else {
       manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NoFontFound;
     }
-    // Arabic reading text is always REGULAR style.
-    manager_->prewarmCache(manager_->scanArabicFontId_, manager_->scanArabicText_.c_str(), 0x01);
+    // Prewarm EVERY font that appeared during the scan, not just one -- a single
+    // Quran page legitimately mixes several Arabic fonts (the reading font for ayah
+    // body text, plus the surah banner's own dedicated calligraphy/label fonts).
+    // Dumping every font's shaped text into one shared buffer and prewarming only
+    // that buffer's (first- or largest-recorded) font meant glyphs belonging to the
+    // OTHER fonts were silently "missing" from that one prewarm call and never got
+    // cached -- see recordArabicText()'s comment for the real-device symptom this
+    // caused (7-9s page turns, pages left blank mid-render). Arabic reading text is
+    // always REGULAR style.
+    for (const auto& [fontId, text] : manager_->scanArabicTextByFont_) {
+      manager_->prewarmCache(fontId, text.c_str(), 0x01);
+    }
   } else {
     manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
     manager_->lastArabicScanTextBytes_ = 0;
     manager_->lastArabicPrewarmFontId_ = -1;
+    manager_->lastArabicPrewarmFontCount_ = 0;
   }
 
   // Free scan string memory
   manager_->scanText_.clear();
   manager_->scanText_.shrink_to_fit();
-  manager_->scanArabicText_.clear();
-  manager_->scanArabicText_.shrink_to_fit();
-  manager_->scanArabicFontId_ = -1;
+  manager_->scanArabicTextByFont_.clear();
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
