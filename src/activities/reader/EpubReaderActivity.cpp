@@ -1523,11 +1523,11 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
       const auto& s = decompressor->getStats();
       snprintf(statsPart, sizeof(statsPart),
                " hits=%lu misses=%lu decomp=%lums calls=%lu prewarm_glyphs=%lu prewarm_bytes=%lu prewarm_groups=%u "
-               "bitmap_fail=%lu",
+               "bitmap_fail=%lu fail_bytes=%lu",
                (unsigned long)s.cacheHits, (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs,
                (unsigned long)s.getBitmapCalls, (unsigned long)(s.pageGlyphsBytes / 12),
                (unsigned long)s.pageBufferBytes, (unsigned)s.uniqueGroupsAccessed,
-               (unsigned long)s.bitmapAllocFailures);
+               (unsigned long)s.bitmapAllocFailures, (unsigned long)s.firstFailedAllocBytes);
     }
     const char* pathStr = "?";
     switch (fcm->getLastArabicPrewarmPath()) {

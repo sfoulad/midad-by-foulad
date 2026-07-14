@@ -264,6 +264,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
       stats.bitmapAllocFailures++;
+      if (stats.firstFailedAllocBytes == 0) stats.firstFailedAllocBytes = group.uncompressedSize;
       stats.getBitmapTimeUs += micros() - tStart;
       return nullptr;
     }
@@ -285,6 +286,7 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
   if (!ensureCapacity(hotGlyphBuf, hotGlyphBufCapacity, glyph->dataLength)) {
     LOG_ERR("FDC", "Failed to allocate %u bytes for glyph scratch", (unsigned)glyph->dataLength);
     stats.bitmapAllocFailures++;
+    if (stats.firstFailedAllocBytes == 0) stats.firstFailedAllocBytes = glyph->dataLength;
     stats.getBitmapTimeUs += micros() - tStart;
     return nullptr;
   }
@@ -463,6 +465,9 @@ int FontDecompressor::prewarmCache(const EpdFontData* fontData, const char* utf8
   slot.glyphs = static_cast<PageGlyphEntry*>(malloc(glyphCount * sizeof(PageGlyphEntry)));
   if ((totalBytes > 0 && !slot.buffer) || !slot.glyphs) {
     LOG_ERR("FDC", "Failed to allocate page buffer (%u bytes, %u glyphs)", totalBytes, glyphCount);
+    if (stats.firstFailedAllocBytes == 0) {
+      stats.firstFailedAllocBytes = (totalBytes > 0 && !slot.buffer) ? totalBytes : glyphCount * sizeof(PageGlyphEntry);
+    }
     free(slot.buffer);
     free(slot.glyphs);
     slot = {};

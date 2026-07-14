@@ -75,6 +75,12 @@ class FontDecompressor {
     // independent of the SLOW_PAGE_TURN_MS gate that guards the rest of the
     // per-turn perf log line, or a fast-but-glyph-dropping turn leaves zero trace.
     uint32_t bitmapAllocFailures = 0;
+    // Size of the FIRST failed malloc() this page (0 if none). Real free heap staying
+    // stable (~75-80KB) while bitmapAllocFailures tracks misses almost 1:1 points at
+    // fragmentation -- no single block big enough -- rather than genuine exhaustion,
+    // but that's an inference; this makes it a fact by recording exactly how large a
+    // block the allocator refused, for direct comparison against reported free heap.
+    uint32_t firstFailedAllocBytes = 0;
   };
   void logStats(const char* label = "FDC");
   void resetStats();

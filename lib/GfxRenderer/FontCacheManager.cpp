@@ -4,7 +4,10 @@
 #include <Logging.h>
 #include <SdCardFont.h>
 
+#include <algorithm>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
                                    const std::map<int, SdCardFont*>& sdCardFonts)
@@ -192,8 +195,28 @@ void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
     // cached -- see recordArabicText()'s comment for the real-device symptom this
     // caused (7-9s page turns, pages left blank mid-render). Arabic reading text is
     // always REGULAR style.
+    //
+    // Largest-text-first, not map (font id) order: prewarming now does up to 5x the
+    // malloc/free churn per page it used to (one call per font instead of one call
+    // total), which real-device logs showed fragmenting the heap badly enough that
+    // by the time a LATER font's turn came up, its own page-buffer malloc -- and
+    // then its hot-group fallback for nearly every glyph -- failed outright
+    // (bitmap_fail almost exactly equal to misses, every turn, heap otherwise
+    // stable around 75-80KB: the signature of "no contiguous block big enough",
+    // not "actually out of memory"). The reading font's text dwarfs the banner/
+    // label/digit fonts' combined total (thousands of bytes vs a few hundred), so
+    // give it first crack at the least-fragmented heap this page's cycle will see;
+    // if the small decorative fonts lose that race instead, a missed banner glyph
+    // or ayah digit is far less noticeable than a paragraph of blank body text.
+    std::vector<std::pair<int, const std::string*>> byFontDescending;
+    byFontDescending.reserve(manager_->scanArabicTextByFont_.size());
     for (const auto& [fontId, text] : manager_->scanArabicTextByFont_) {
-      manager_->prewarmCache(fontId, text.c_str(), 0x01);
+      byFontDescending.emplace_back(fontId, &text);
+    }
+    std::sort(byFontDescending.begin(), byFontDescending.end(),
+              [](const auto& a, const auto& b) { return a.second->size() > b.second->size(); });
+    for (const auto& [fontId, text] : byFontDescending) {
+      manager_->prewarmCache(fontId, text->c_str(), 0x01);
     }
   } else {
     manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
