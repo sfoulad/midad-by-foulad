@@ -26,7 +26,9 @@ parser.add_argument("--force-autohint", dest="force_autohint", action="store_tru
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
 parser.add_argument("--shape-fallback", dest="shape_fallback", action="store_true", help="Synthesize Arabic presentation-form glyphs missing from cmap by shaping the base letters through the font's own OpenType GSUB rules (HarfBuzz). Needed for Quranic fonts (Neirizi, KFGQPC) that only expose contextual forms via GSUB.")
 parser.add_argument("--reposition-marks", dest="reposition_marks", action="store_true", help="Move combining marks (harakat) to fixed above/below-baseline heights. For fonts that anchor marks at the baseline and rely on OpenType GPOS mark attachment, which the firmware renderer doesn't run.")
-parser.add_argument("--script", dest="script", choices=["latin", "arabic"], default="latin", help="Base code point interval set to export. 'latin' (default) is the existing Latin/Cyrillic/etc. set used by all bundled reading fonts. 'arabic' swaps in a minimal set (basic Latin punctuation/digits + Arabic blocks) sized for a dedicated Arabic-only font, not the full multi-script coverage.")
+parser.add_argument("--contrast-gamma", dest="contrast_gamma", type=float, default=1.0, help="Gamma-correct each glyph's raw anti-aliased coverage before quantizing: v' = min(255, round(255 * (v/255)**gamma)). gamma<1.0 boosts mid-gray coverage toward black -- for fonts whose fine strokes anti-alias into mostly-gray pixels at small e-ink sizes, which then read as faded once quantized to --2bit's 4 levels. 1.0 (default) is a no-op. Only affects ink darkness, never glyph metrics (advance/bearing), so it can't perturb layout or kashida-point math.")
+parser.add_argument("--script", dest="script", choices=["latin", "arabic", "none"], default="latin", help="Base code point interval set to export. 'latin' (default) is the existing Latin/Cyrillic/etc. set used by all bundled reading fonts. 'arabic' swaps in a minimal set (basic Latin punctuation/digits + Arabic blocks) sized for a dedicated Arabic-only font, not the full multi-script coverage. 'none' starts from an empty base set, relying entirely on --additional-intervals -- for narrow single-purpose fonts (e.g. a font bundling just one specific ligature glyph) where even 'arabic''s minimal set would pull in unwanted incidental cmap entries.")
+parser.add_argument("--glyph-map", dest="glyph_map", help="Path to a TSV file mapping arbitrary trigger strings to target codepoints, for fonts that only expose glyphs via GSUB contextual substitution triggered by a specific input string (no direct cmap entry, and no Unicode presentation-form decomposition for --shape-fallback to key off). Each line: '<hex-codepoint>\\t<trigger-string>\\t<shaped-glyph-index>' -- the trigger is shaped once via HarfBuzz against the FIRST fontstack face, and the glyph at the given index in the shaped output is baked as that codepoint's glyph (must also appear in --additional-intervals to actually be exported). Same load_glyph() override mechanism as --pnum/--shape-fallback.")
 args = parser.parse_args()
 
 import freetype
@@ -163,6 +165,8 @@ if args.script == "arabic":
         (0xFD3E, 0xFD3F),  # Ornate parentheses -- Quran ayah-number markers, e.g. "﴿١٢٣﴾"
         (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
     ]
+elif args.script == "none":
+    intervals = []
 
 add_ints = []
 if args.additional_intervals:
@@ -300,15 +304,63 @@ if args.shape_fallback:
         _buf.add_str(_pre + _base + _post)
         _buf.guess_segment_properties()
         hb.shape(_hb_font, _buf)
-        _base_start, _base_end = len(_pre), len(_pre) + len(_base)
-        _zwj_gid = _hb_font.get_nominal_glyph(0x200D) or -1
-        _gids = [g.codepoint for g in _buf.glyph_infos
-                 if _base_start <= g.cluster < _base_end and g.codepoint not in (0, _zwj_gid)]
+        # ZWJ padding glyphs must be filtered by rendered width, not by cluster index
+        # or by matching HarfBuzz's cmap-nominal glyph for U+200D: the Arabic shaper
+        # merges the joiner's cluster into the base letter's cluster (so cluster-range
+        # filtering can't tell them apart), and GSUB can substitute the joiner into a
+        # different glyph than its nominal one (observed on KFGQPC Uthmanic Hafs: the
+        # padding glyph came out as glyph "space", not the joiner's own nominal glyph
+        # -- silently breaking the cluster/codepoint filter and skipping synthesis for
+        # nearly every initial/medial letter form, so entire letters vanished mid-word).
+        # A padding joiner is always zero-width; the real letterform never is.
+        _gids = [g.codepoint for g, p in zip(_buf.glyph_infos, _buf.glyph_positions)
+                 if g.codepoint != 0 and (p.x_advance != 0 or p.y_advance != 0)]
         if len(_gids) != 1:
             continue  # only single-glyph results are unambiguous (ligatures collapse to one)
         pnum_glyph_overrides[(0, _cp)] = _gids[0]
         _fallback_count += 1
     print(f"shape-fallback: synthesized {_fallback_count} presentation-form glyphs via GSUB", file=sys.stderr)
+
+# --- Explicit trigger-string glyph mapping via OpenType shaping (--glyph-map) ---
+# For fonts whose glyphs are reachable only by shaping a specific (often
+# non-Unicode, ASCII trigger) string through GSUB -- e.g. KFGQPC's
+# surah-name-v4.ttf, which has no cmap entries at all and resolves a calligraphic
+# surah name only by shaping "surah018surah-icon" through the font's own rules.
+# Unlike --shape-fallback (which derives its trigger from Unicode decomposition
+# data), the caller supplies the exact trigger string and which glyph in the
+# shaped output to keep, since there's no general rule to derive either from the
+# target codepoint alone.
+if args.glyph_map:
+    import uharfbuzz as hb
+
+    _hb_blob_gm = hb.Blob.from_file_path(args.fontstack[0])
+    _hb_font_gm = hb.Font(hb.Face(_hb_blob_gm))
+    _glyph_map_count = 0
+    with open(args.glyph_map, encoding="utf-8") as _f:
+        for _lineno, _line in enumerate(_f, 1):
+            _line = _line.rstrip("\n")
+            if not _line or _line.startswith("#"):
+                continue
+            _parts = _line.split("\t")
+            if len(_parts) != 3:
+                print(f"glyph-map: {args.glyph_map}:{_lineno}: expected 3 tab-separated fields, got {len(_parts)}",
+                      file=sys.stderr)
+                sys.exit(1)
+            _cp_gm = int(_parts[0], 16)
+            _trigger_gm = _parts[1]
+            _shaped_index = int(_parts[2])
+            _buf_gm = hb.Buffer()
+            _buf_gm.add_str(_trigger_gm)
+            _buf_gm.guess_segment_properties()
+            hb.shape(_hb_font_gm, _buf_gm)
+            _gids_gm = [g.codepoint for g in _buf_gm.glyph_infos]
+            if _shaped_index >= len(_gids_gm):
+                print(f"glyph-map: {args.glyph_map}:{_lineno}: trigger {_trigger_gm!r} shaped to only "
+                      f"{len(_gids_gm)} glyph(s), index {_shaped_index} out of range", file=sys.stderr)
+                sys.exit(1)
+            pnum_glyph_overrides[(0, _cp_gm)] = _gids_gm[_shaped_index]
+            _glyph_map_count += 1
+    print(f"glyph-map: mapped {_glyph_map_count} codepoints via {args.glyph_map}", file=sys.stderr)
 
 def load_glyph(code_point):
     face_index = 0
@@ -375,6 +427,14 @@ for i_start, i_end in intervals:
         pixels4g = []
         px = 0
         for i, v in enumerate(bitmap.buffer):
+            if args.contrast_gamma != 1.0:
+                # Boost raw AA coverage before any downsampling: --2bit only keeps
+                # 4 levels, so a font whose strokes rasterize as mostly mid-gray
+                # coverage (thin calligraphic hairlines at small e-ink sizes) reads
+                # as faded once quantized. Applied to the coverage byte only --
+                # never touches bitmap_left/top or linearHoriAdvance below, so this
+                # can't perturb glyph metrics, advance widths, or kashida-point math.
+                v = min(255, round(255 * (v / 255.0) ** args.contrast_gamma))
             y = i / bitmap.width
             x = i % bitmap.width
             if x % 2 == 0:
@@ -460,18 +520,37 @@ for i_start, i_end in intervals:
         # the tallest letters, below-marks just under the baseline. Targets
         # are em-relative (Noto Naskh carries fatha at ~0.89 em, kasra just
         # below baseline).
+        #
+        # A single fixed "above" height isn't enough for fully-vocalized Quranic
+        # text: shadda commonly stacks with a vowel mark on the SAME letter (e.g.
+        # "الرَّحْمَٰنِ" -- confirmed via corpus scan: shadda+fatha alone occurs
+        # 1300+ times just in the first 20 of 114 surahs), and both marks would
+        # land at the identical position and collide. Since this height is baked
+        # per-CODEPOINT at conversion time (not computed from the actual runtime
+        # sequence), the fix is a small ordered set of tiers keyed to each mark's
+        # canonical stacking role (shadda always innermost, vowels stack outward
+        # from it, Quranic small-high annotation marks/maddah outermost) rather
+        # than a single shared height -- using Unicode's own canonical combining
+        # class (unicodedata.combining()) to classify each mark programmatically.
         glyph_top = face.glyph.bitmap_top
         glyph_left = face.glyph.bitmap_left
         if args.reposition_marks and unicodedata.category(chr(code_point)) == 'Mn':
             em_px = size * 150 / 72.0
             below_marks = {0x0650, 0x064D, 0x0655, 0x0656, 0x065C}  # kasra, kasratan, hamza/subscript below
+            ccc = unicodedata.combining(chr(code_point))
             if code_point in below_marks:
                 glyph_top = -max(1, round(em_px * 0.05))
-            else:
+            elif code_point == 0x0651:  # shadda: innermost above-mark
+                glyph_top = round(em_px * 0.75)
+            elif ccc in (27, 28, 30, 31, 34, 35):  # tanwin/fatha/damma/sukun/dagger-alef
                 glyph_top = round(em_px * 0.9)
-            # Center the mark roughly over the preceding (RTL: base) glyph
-            # instead of trusting the anchor-relative bearing.
-            glyph_left = -max(0, (bitmap.width + 2))
+            else:  # outer: maddah, hamza-above, Quranic small-high annotation marks
+                glyph_top = round(em_px * 1.05)
+            # Horizontal centering is done at RUNTIME (GfxRenderer::drawArabicText,
+            # via combiningMark::centerOver against the mark's actual base letter) --
+            # it depends on the base letter's width, which varies letter to letter and
+            # can't be baked per-mark-codepoint here. Keep the font's natural
+            # bitmap_left (small, near zero) as centerOver's own markLeft term.
 
         # Build output data
         packed = bytes(pixels)

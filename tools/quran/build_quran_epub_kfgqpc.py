@@ -18,17 +18,20 @@ Transformations applied per surah:
      bismillah-table -- correct per tradition) and folds it into ayah 1's own
      text for Surah 1 (Al-Fatiha, where it IS the first ayah). Every other
      surah has a separate bismillah-table with no vocalization; we detect its
-     presence and prepend our own hardcoded fully-vocalized string instead
-     (same string build_quran_epub.py already uses), rather than trying to
-     reproduce the source's own U+FDFD ligature-glyph rendering (UthmanicHafs
-     lacks that glyph -- see main.cpp's font registration comment).
-  4. Surah headers: the source's calligraphic ligature-glyph banner
-     (surah-name-v4.ttf, triggered by literal ASCII text through a font GSUB
-     ligature substitution our renderer doesn't run) is not reproduced --
-     instead this emits our existing code-drawn medallion+cartouche two-line
-     header (U+E000-E004 sentinels), identical in shape to
-     build_quran_epub.py's, just sourced from <title> (plain surah name) and
-     the chapter filename (surah number) instead of an <h1>.
+     presence and prepend the real ligature glyph, U+FDFD, wrapped in our
+     U+E005/U+E006 marker convention -- GfxRenderer::drawArabicText's Bismillah
+     branch renders it from a tiny dedicated font (QuranCommon) bundled just
+     for this glyph, since UthmanicHafs itself lacks it (see main.cpp's font
+     registration comment).
+  4. Surah headers: a single-row banner styled after the Madinah Mushaf's own
+     surah-heading design -- rule lines above/below, ayah-count label (right),
+     the surah's calligraphic name (center, baked from the source's own
+     surah-name-v4.ttf via fontconvert.py --glyph-map since that font has no
+     cmap entries at all), revelation-order label (left). Wrapped in
+     U+E007-E009 sentinels -- see surah_banner_marker() and
+     GfxRenderer::parseSurahBannerMarker. Ayah count is counted directly from
+     each chapter's ayah-number spans; revelation order comes from the
+     REVELATION_ORDER table below (the source has no such data).
   5. Metadata, cover, and the mimetype/container.xml/stylesheet.css
      boilerplate are otherwise the same as build_quran_epub.py's output --
      none of that depends on the source text at all.
@@ -64,7 +67,67 @@ ARABIC_INDIC = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
 # GfxRenderer::parseAyahMarker recognizes this exact byte sequence.
 AYAH_MARKER = "﴿{}﴾"
 
-BASMALA_VOCALIZED = "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ"
+BASMALA_VOCALIZED = "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ"  # kept as a documented fallback; unused below
+
+# Logical order: U+E005, the real Bismillah ligature (U+FDFD), U+E006. Same
+# build-tool-controlled PUA-sentinel convention as AYAH_MARKER above --
+# GfxRenderer::parseBismillahMarker recognizes this exact byte sequence. A
+# space on each side for the same reason AYAH_MARKER needs one (see below):
+# the marker must be its own isolated token, or GfxRenderer's exact-match
+# parse never fires and the whole thing falls through to the plain-text path,
+# where U+FDFD has no glyph in any general-purpose reading font and silently
+# vanishes.
+BISMILLAH_MARKER = " ﷽ "
+
+# Standard chronological (nuzul) revelation order, index = revelation order
+# (1-based), value = Mushaf surah number -- the widely-published Al-Azhar
+# committee chronology (matches Wikipedia's "Chronological order of the
+# Quran" and corpus.quran.com). Al-Alaq (96) is universally agreed as the
+# first revelation; Al-Ma'idah (5) as the last. Verified programmatically to
+# contain each of 1..114 exactly once before use.
+REVELATION_ORDER = [
+    96, 68, 73, 74, 1, 111, 81, 87, 92, 89,
+    93, 94, 103, 100, 108, 102, 107, 109, 105, 113,
+    114, 112, 53, 80, 97, 91, 85, 95, 106, 101,
+    75, 104, 77, 50, 90, 86, 54, 38, 7, 72,
+    36, 25, 35, 19, 20, 56, 26, 27, 28, 17,
+    10, 11, 12, 15, 6, 37, 31, 34, 39, 40,
+    41, 42, 43, 44, 45, 46, 51, 88, 18, 16,
+    71, 14, 21, 23, 32, 52, 67, 69, 70, 78,
+    79, 82, 84, 30, 29, 83, 2, 8, 3, 33,
+    60, 4, 99, 57, 47, 13, 55, 76, 65, 98,
+    59, 110, 24, 22, 63, 58, 49, 66, 64, 61,
+    62, 48, 9, 5,
+]
+assert len(REVELATION_ORDER) == SURAH_COUNT and set(REVELATION_ORDER) == set(range(1, SURAH_COUNT + 1))
+REVELATION_ORDER_FOR_SURAH = {surah: order for order, surah in enumerate(REVELATION_ORDER, start=1)}
+
+# Must match GfxRenderer.cpp's SURAH_BANNER_NAME_BASE_CP -- surah n's calligraphic
+# name glyph (baked via fontconvert.py --glyph-map, see
+# gen_surah_banner_glyphmap.py) lives at this codepoint plus (n - 1).
+SURAH_BANNER_NAME_BASE_CP = 0xE010
+
+
+def surah_banner_marker(surah: int, ayah_count: int, revelation_order: int) -> str:
+    """GfxRenderer::parseSurahBannerMarker's wire format: U+E007, the surah's
+    name-glyph codepoint (literal char), the ayah-count label, U+E009, the
+    revelation-order label, U+E008. See that function's comment for why the
+    labels are plain composed Arabic text rather than re-derived in C++.
+    The space inside each label uses CARTOUCHE_SPACE_CP (U+E004), not a real
+    space character -- ChapterHtmlSlimParser tokenizes on whitespace bytes
+    before the marker ever reaches GfxRenderer, so a literal space here would
+    fragment the marker across multiple draw calls and parseSurahBannerMarker
+    would never see it whole (confirmed via simulator: labels rendered as
+    plain text with no calligraphy or rule lines -- exactly what plain-text
+    fallback rendering of the fragments looks like). Same fix the cartouche
+    marker already needed for surah names containing spaces.
+    """
+    name_glyph = chr(SURAH_BANNER_NAME_BASE_CP + (surah - 1))
+    label_space = ""
+    right_label = "آياتها" + label_space + arabic_digits(str(ayah_count))
+    left_label = "ترتيبها" + label_space + arabic_digits(str(revelation_order))
+    return "" + name_glyph + right_label + "" + left_label + ""
+
 
 # WORD JOINER / ZERO WIDTH SPACE: formatting characters the source EPUB relies
 # on for KOReader/CREngine's own line-breaking around ayah numbers. Our
@@ -95,7 +158,16 @@ def extract_surah_text(div: ET.Element) -> str:
     for child in div:
         if local_tag(child) == "span" and child.get("class") == "ayah-number":
             digits = (child.text or "").strip()
-            parts.append(AYAH_MARKER.format(digits))
+            # A space on each side: GfxRenderer::parseAyahMarker only recognizes the
+            # marker when it's the ENTIRE text of a draw call, and the reading
+            # engine's word-breaking splits purely on whitespace bytes -- without
+            # this, the marker fuses onto whichever word sits next to it in the
+            # source (which has no space here, unlike build_quran_epub.py's source),
+            # parseAyahMarker's exact-match never fires, and the whole marker falls
+            # through to the plain-text path, where U+FD3E/FD3F have no font glyph
+            # and silently vanish -- leaving just a bare digit with no ayah rosette
+            # (confirmed via simulator: every marker logged matched=0).
+            parts.append(" " + AYAH_MARKER.format(digits) + " ")
         elif child.text:
             parts.append(child.text)
         if child.tail:
@@ -106,19 +178,25 @@ def extract_surah_text(div: ET.Element) -> str:
     return text
 
 
-def build_surah_html(surah: int, name: str, ayah_text: str) -> str:
-    # Header: identical shape to build_quran_epub.py's replace_header() output --
-    # surah number as a code-drawn medallion line, surah name as a code-drawn
-    # cartouche line. See its comment for the full rationale (image banners
-    # rejected for e-ink moire; PUA sentinels the build tool fully controls so
-    # they can never collide with real book text).
-    surah_marker = "" + arabic_digits(str(surah)) + ""
-    cartouche_name = name.replace(" ", "")
-    header = (
-        f'<p class="block_2" dir="rtl" id="toc_id_{surah}" style="text-align: right">{surah_marker}</p>'
-        f'<h1 class="block_2" dir="rtl">{cartouche_name}</h1>'
-    )
-    body = f'<p class="block_" dir="rtl"> </p><p class="block_" dir="rtl">{ayah_text}</p><p class="block_1" dir="rtl"> </p>'
+def build_surah_html(surah: int, name: str, ayah_text: str, ayah_count: int, bismillah: str = "") -> str:
+    # Header: a single row styled after the Madinah Mushaf's own surah-heading
+    # banner -- rule lines above/below, ayah-count label (right), the surah's
+    # calligraphic name (center, baked from surah-name-v4.ttf), revelation-order
+    # label (left). Replaces the old code-drawn medallion+cartouche pair. <h1>
+    # (not <p>) so ChapterHtmlSlimParser's HEADER_TAGS branch lets .block_2's own
+    # CSS text-align win over the reader's paragraph-alignment setting -- same
+    # reasoning as ParsedText's Bismillah-line override, just via the existing
+    # header exemption instead of a new special case.
+    revelation_order = REVELATION_ORDER_FOR_SURAH[surah]
+    banner = surah_banner_marker(surah, ayah_count, revelation_order)
+    header = f'<h1 class="block_2" dir="rtl" id="toc_id_{surah}">{banner}</h1>'
+    # The Bismillah gets its OWN centered paragraph (.block_ is text-align:center
+    # by default), matching the source's own separate <table class="bismillah-table">
+    # -- NOT concatenated into the ayah_text paragraph below, where it would flow
+    # inline as the first "word" of the first ayah's line instead of standing alone
+    # above it, the way every printed Mushaf sets it.
+    bismillah_line = f'<p class="block_" dir="rtl">{bismillah}</p>' if bismillah else '<p class="block_" dir="rtl"> </p>'
+    body = f'{bismillah_line}<p class="block_" dir="rtl">{ayah_text}</p><p class="block_1" dir="rtl"> </p>'
     return (
         "<?xml version='1.0' encoding='utf-8'?>\n"
         '<html xmlns="http://www.w3.org/1999/xhtml" lang="ar" xml:lang="ar">\n'
@@ -287,10 +365,12 @@ def main() -> int:
             print(f"no surah-text div in chapter-{n}.xhtml", file=sys.stderr)
             return 1
         ayah_text = extract_surah_text(div)
-        if "bismillah-table" in raw:
-            ayah_text = BASMALA_VOCALIZED + ayah_text
+        ayah_count = len(div.findall('.//x:span[@class="ayah-number"]', NS))
+        bismillah = BISMILLAH_MARKER if "bismillah-table" in raw else ""
 
-        (WORK / "text" / f"surah-{n:03d}.html").write_text(build_surah_html(n, name, ayah_text), encoding="utf-8")
+        (WORK / "text" / f"surah-{n:03d}.html").write_text(
+            build_surah_html(n, name, ayah_text, ayah_count, bismillah), encoding="utf-8"
+        )
 
     (WORK / "stylesheet.css").write_text(STYLESHEET_CSS, encoding="utf-8")
     (WORK / "titlepage.xhtml").write_text(TITLEPAGE_XHTML, encoding="utf-8")

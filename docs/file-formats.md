@@ -90,11 +90,26 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 35
+### Version 37
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 37 adds an optional `kashidaExtraPx[wordCount]` array to TextBlock's
+arena (kashida/tatweel justification for Arabic body text): the extra width,
+already floored to a whole tatweel-glyph multiple, that a word should absorb
+via kashida when rendered. Omitted from the arena entirely when no word on
+the line got a kashida share (non-Arabic paragraphs, or lines whose spare
+space went entirely to inter-word gaps) -- zero per-word RAM cost when
+inactive, same convention as the `focusSuffixX`/`focusBoundary` pair. Changes
+the arena's byte layout and size, so v36 cached blocks can't be read as v37.
+
+Version 36 changed how ayah-number marker words
+(`"\xEF\xB4\xBF<digits>\xEF\xB4\xBE"`) lay out: their cached x-position is now
+based on the U+06DD rosette glyph's advance instead of their per-glyph text
+width, matching how the renderer actually draws them (as a medallion) --
+cached x-positions from v35 no longer match.
 
 Version 35 (this fork) is upstream's v29 format -- flat TextBlock word storage
 and the incremental-build INCOMPLETE/PARTIAL version sentinels -- plus this

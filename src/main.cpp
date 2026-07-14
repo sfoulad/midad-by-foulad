@@ -144,6 +144,28 @@ EpdFontFamily uthmanichafs16FontFamily(&uthmanichafs16RegularFont);
 EpdFont uthmanichafs18RegularFont(&uthmanichafs_18_regular);
 EpdFontFamily uthmanichafs18FontFamily(&uthmanichafs18RegularFont);
 
+// Quran Common (same King Fahd Complex-adjacent provenance as UthmanicHafs above --
+// see lib/EpdFont/builtinFonts/source/QuranCommon/): a tiny 1-glyph dedicated font
+// carrying the real Bismillah ligature (U+FDFD), which UthmanicHafs itself lacks.
+// Routed to via GfxRenderer::setBismillahFontId, not the general Arabic font map --
+// see the Bismillah marker branch in GfxRenderer.cpp. Single fixed 18pt size, not
+// one per reading tier: the glyph is a whole vocalized phrase baked into one wide
+// glyph (241px at 18pt), and EpdGlyph::width is a uint8_t (255px cap) -- any size
+// above ~18pt pushes the glyph past that ceiling. 18pt is the largest safe size, so
+// it's used for every Arabic Font Size setting.
+EpdFont quranCommon18RegularFont(&quran_common_18_regular);
+EpdFontFamily quranCommon18FontFamily(&quranCommon18RegularFont);
+
+// Surah banner (same King Fahd Complex-adjacent provenance -- see
+// lib/EpdFont/builtinFonts/source/SurahNameV4/): 114 calligraphic surah-name
+// glyphs baked from surah-name-v4.ttf via fontconvert.py's --glyph-map (this font
+// has no cmap entries at all -- see the NOTICE.md there and
+// tools/quran/gen_surah_banner_glyphmap.py). Routed to via
+// GfxRenderer::parseSurahBannerMarker, not the general Arabic font map. Single
+// fixed 24pt size, not one per reading tier -- this is a once-per-surah chrome
+// element, not line-by-line reading text.
+EpdFont surahBanner24RegularFont(&surah_banner_24_regular);
+EpdFontFamily surahBanner24FontFamily(&surahBanner24RegularFont);
 
 // measurement of power button press duration calibration value
 unsigned long t1 = 0;
@@ -392,6 +414,8 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UTHMANICHAFS_14_FONT_ID, uthmanichafs14FontFamily);
   renderer.insertFont(UTHMANICHAFS_16_FONT_ID, uthmanichafs16FontFamily);
   renderer.insertFont(UTHMANICHAFS_18_FONT_ID, uthmanichafs18FontFamily);
+  renderer.insertFont(QURANCOMMON_18_FONT_ID, quranCommon18FontFamily);
+  renderer.insertFont(SURAHBANNER_24_FONT_ID, surahBanner24FontFamily);
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

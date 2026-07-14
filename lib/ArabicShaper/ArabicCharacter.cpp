@@ -2,7 +2,23 @@
 
 namespace ArabicShaper {
 
-bool isArabicDiacritic(uint32_t cp) { return (cp >= 0x064B && cp <= 0x065F) || cp == 0x0670; }
+bool isArabicDiacritic(uint32_t cp) {
+  // U+064B-065F/U+0670: standard tashkeel (fatha, damma, kasra, sukun, superscript alef, ...).
+  // The remaining ranges are Quranic-specific combining marks (Unicode "Quranic Annotation
+  // Signs" + the small high marks used for Uthmani-orthography sukun/waqf guidance) --
+  // all zero-width, non-joining by Unicode's Joining_Type=Transparent, same as tashkeel.
+  // Confirmed needed on a real device: KFGQPC Uthmanic Hafs Quran text uses U+06E1 (small
+  // high dotless head of khah, a sukun variant) between letters that must otherwise join
+  // normally (e.g. "ٱلۡمُفۡلِحُونَ") -- treating it as an unrecognized base letter instead
+  // of a transparent mark broke the join and inserted a large gap where the two letters
+  // should have connected.
+  return (cp >= 0x064B && cp <= 0x065F) || cp == 0x0670 ||
+         (cp >= 0x0610 && cp <= 0x061A) ||  // Quranic marks (sallallahou alayhe wassallam, etc.)
+         (cp >= 0x06D6 && cp <= 0x06DC) ||  // Quranic annotation signs (small high ligatures)
+         (cp >= 0x06DF && cp <= 0x06E4) ||  // small high marks (rounded zero, madda, ...)
+         (cp >= 0x06E7 && cp <= 0x06E8) ||  // small high yeh / noon
+         (cp >= 0x06EA && cp <= 0x06ED);    // empty centre marks, small low meem
+}
 
 // Extended-Arabic letters (Persian, Ottoman Turkish, Kurdish) that participate in
 // shaping. Kept as an explicit list because the 0x066x-0x06Fx range is mostly
@@ -45,6 +61,12 @@ JoiningType getJoiningType(uint32_t cp) {
     case 0x0631:  // Ra
     case 0x0632:  // Zain
     case 0x0648:  // Waw
+    case 0x0671:  // Alef Wasla (Quranic Uthmani orthography -- elidable/connecting hamza,
+                  // e.g. the definite article "ٱلْ" written with Wasla instead of plain Alef).
+                  // Outside isArabicBaseChar's 0x0621-0x064A range, so it fell through to
+                  // NON_JOINING (like bare Hamza) without this case -- confirmed on a real
+                  // device: "بِٱلۡغَيۡبِ" rendered with Beh disconnected from Alef Wasla,
+                  // a visible gap where the two letters should have joined.
     case 0x0698:  // Jeh (Persian -- Reh-shaped)
     case 0x06C0:  // Heh with Yeh Above (Persian)
     case 0x06D5:  // Ae (Ottoman/Kurdish -- "non-joining to the following letter")

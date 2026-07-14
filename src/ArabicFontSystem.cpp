@@ -46,6 +46,24 @@ void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
   // see setArabicDigitFallbackFontId's comment for why (some reading fonts, like
   // the Quran's own default Amiri, simply don't have Arabic-Indic digit glyphs).
   renderer.setArabicDigitFallbackFontId(NOTOSANSARABIC_12_FONT_ID);
+  // Bismillah always comes from the dedicated QuranCommon font -- see
+  // setBismillahFontId's comment for why (UthmanicHafs itself has no glyph for the
+  // real ligature, U+FDFD). Single fixed 18pt size regardless of Arabic Font Size:
+  // the glyph is a whole vocalized phrase baked into one wide glyph, close to the
+  // uint8_t width-field cap already at 18pt, so it can't scale per reading tier --
+  // see the QuranCommon conversion comment in convert-builtin-fonts.sh.
+  renderer.setBismillahFontId(QURANCOMMON_18_FONT_ID);
+  // Surah banner always comes from the dedicated SurahBannerV4 font -- see
+  // setSurahBannerFontId's comment for why (surah-name-v4.ttf has no cmap entries
+  // at all, so no reading font could ever substitute). Single fixed 24pt size
+  // regardless of Arabic Font Size, same reasoning as the Bismillah: this is a
+  // once-per-surah chrome element, not line-by-line reading text.
+  renderer.setSurahBannerFontId(SURAHBANNER_24_FONT_ID);
+  // Surah banner's caption labels (ayah count, revelation order) come from the
+  // smallest built-in Arabic font, not the active reading font -- see
+  // setSurahBannerLabelFontId's comment for why (rasterized at its own small
+  // size, not the reading font scaled down at draw time).
+  renderer.setSurahBannerLabelFontId(NOTOSANSARABIC_8_FONT_ID);
 }
 }  // namespace
 

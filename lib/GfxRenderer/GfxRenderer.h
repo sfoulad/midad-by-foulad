@@ -11,6 +11,17 @@ namespace BidiUtils {
 enum class BidiBaseDir : signed char { AUTO = -1, LTR = 0, RTL = 1 };
 }  // namespace BidiUtils
 
+namespace ArabicTextMarkers {
+// True if `text` is exactly the Bismillah marker sequence drawn by
+// GfxRenderer::drawArabicText's dedicated Bismillah branch. Exposed so
+// ParsedText::extractLine can force center alignment on the Bismillah's own
+// paragraph regardless of the reader's paragraph-alignment setting -- every
+// printed Mushaf centers it, and CSS text-align alone can't win that fight
+// since BlockStyle::fromCssStyle lets the user's setting override the book's
+// CSS unless "Book's Style" is explicitly selected (see its comment).
+bool isBismillah(const char* text);
+}  // namespace ArabicTextMarkers
+
 class FontCacheManager;
 class SdCardFont;
 
@@ -64,6 +75,29 @@ class GfxRenderer {
   // setArabicDigitFallbackFontId() for why this needs to be independent of
   // arabicFontId_.
   int arabicDigitFallbackFontId_ = 0;
+  // Font to source the real Bismillah ligature glyph (U+FDFD) from, for the
+  // Bismillah marker in drawArabicText/getArabicTextWidth -- UthmanicHafs itself
+  // lacks this glyph (see QuranCommon's font-registration comment in main.cpp).
+  // 0 = none set (marker falls through to the plain-text path, which has no
+  // glyph for U+FDFD and silently renders nothing -- matches the "missing glyph"
+  // behavior used everywhere else in this file rather than special-casing it).
+  int bismillahFontId_ = 0;
+  // Font to source the calligraphic surah-name glyphs from, for the surah-banner
+  // marker in drawArabicText/getArabicTextWidth -- surah-name-v4.ttf has no cmap
+  // entries at all (see SurahNameV4's NOTICE.md), so no reading font could ever
+  // supply these regardless of which one is active. 0 = none set (marker falls
+  // through to the plain-text path, same missing-glyph behavior as bismillahFontId_).
+  int surahBannerFontId_ = 0;
+  // Font to source the surah banner's two small caption labels (ayah count,
+  // revelation order) from, deliberately smaller/independent of both the
+  // active reading font and surahBannerFontId_ -- a genuinely small font
+  // rasterized at its own size, not the reading font runtime-scaled down (that
+  // was tried first: renderCharScaled's half-scale rounding accumulates enough
+  // error across a whole shaped, letter-joining word to visibly overlap
+  // strokes -- fine for the isolated 1-3 digit runs it was designed for
+  // elsewhere in this file, not for a multi-letter word). 0 = none set (falls
+  // back to the resolved reading font, same as before this existed).
+  int surahBannerLabelFontId_ = 0;
   // fontIds (keys of arabicFontIdByFontId_) whose Arabic text should sit on the
   // REQUESTED Latin font's baseline (baseline = y + Latin ascender) instead of the
   // Arabic font's own, much taller, nominal ascender. The Noto Arabic fonts reserve
@@ -168,6 +202,17 @@ class GfxRenderer {
   // a font guaranteed to always be registered (e.g. a built-in UI-tier Arabic font
   // set once at boot), not something that depends on user configuration.
   void setArabicDigitFallbackFontId(int fontId) { arabicDigitFallbackFontId_ = fontId; }
+  // Font to source the Bismillah ligature glyph (U+FDFD) from. Same "independent of
+  // arabicFontId_/whatever reading font is active" reasoning as
+  // setArabicDigitFallbackFontId() above -- the Bismillah must render as the real
+  // ligature glyph regardless of which font the current book/Quran is using to read.
+  void setBismillahFontId(int fontId) { bismillahFontId_ = fontId; }
+  // Font to source the calligraphic surah-name glyphs from. Same "independent of
+  // arabicFontId_" reasoning as setBismillahFontId() above.
+  void setSurahBannerFontId(int fontId) { surahBannerFontId_ = fontId; }
+  // Font to source the surah banner's small caption labels from. Same
+  // "independent of arabicFontId_" reasoning as setBismillahFontId() above.
+  void setSurahBannerLabelFontId(int fontId) { surahBannerLabelFontId_ = fontId; }
   // Registers an Arabic font to use specifically when the caller requests `fontId`
   // (e.g. SMALL_FONT_ID -> the 8pt Arabic font), so Arabic text matches the size and
   // baseline of whatever Latin font the caller asked for instead of always rendering
@@ -277,9 +322,13 @@ class GfxRenderer {
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
                         EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                         BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+  /// kashidaExtraPx: extra width (already floored to a whole tatweel-glyph multiple by
+  /// the caller) to insert via kashida when this call ends up on the Arabic path --
+  /// see ParsedText::computeJustifyPlan. Ignored on the non-Arabic path; Latin
+  /// justification keeps using inter-word gap stretching exclusively.
   void drawText(int fontId, int x, int y, const char* text, bool black = true,
                 EpdFontFamily::Style style = EpdFontFamily::REGULAR,
-                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+                BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO, int kashidaExtraPx = 0) const;
   /// Draws a single line within the box [x, x+width): left-aligned as normal, but
   /// right-aligned when the text is Arabic (ScriptDetector::containsArabic), matching
   /// the natural reading direction instead of always anchoring at the box's left edge.
@@ -293,10 +342,17 @@ class GfxRenderer {
   /// from a dedicated Arabic font (ArabicFontSystem), not the fontId passed in, since none
   /// of the built-in fonts carry Arabic glyphs. drawText/getTextWidth dispatch here
   /// automatically via ScriptDetector::containsArabic() -- not normally called directly.
-  int getArabicTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  int getArabicTextWidth(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR,
+                         int kashidaExtraPx = 0) const;
   void drawArabicText(int fontId, int x, int y, const char* text, bool black = true,
-                      EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+                      EpdFontFamily::Style style = EpdFontFamily::REGULAR, int kashidaExtraPx = 0) const;
   int getSpaceWidth(int fontId, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  /// The active Arabic font's own U+0640 TATWEEL glyph width in pixels, or 0 if it has
+  /// none. Layout-time query for kashida justification (ParsedText::computeJustifyPlan).
+  int getKashidaGlyphWidth(int fontId, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  /// Does this single word contain a legal kashida (tatweel) insertion point in the
+  /// active Arabic font? See ArabicShaper::hasKashidaPoint.
+  bool wordHasKashidaPoint(int fontId, const char* word, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// Returns the total inter-word advance: fp4::toPixel(spaceAdvance + kern(leftCp,' ') + kern(' ',rightCp)).
   /// Using a single snap avoids the +/-1 px rounding error that arises when space advance and kern are
   /// snapped separately and then added as integers.

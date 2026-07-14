@@ -30,7 +30,10 @@ namespace {
 // the U+06DD rosette advance instead of their per-glyph text width (the
 // renderer draws them as a medallion) -- cached x-positions from v35 no
 // longer match.
-constexpr uint8_t SECTION_FILE_VERSION = 36;
+// v37: TextBlock's arena gained an optional kashidaExtraPx[wordCount] array
+// (kashida justification for Arabic body text) -- changes the arena's byte
+// layout and size, so v36 cached blocks can't be read as v37 ones.
+constexpr uint8_t SECTION_FILE_VERSION = 37;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

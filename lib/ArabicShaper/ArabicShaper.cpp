@@ -1,5 +1,7 @@
 #include "ArabicShaper.h"
 
+#include <algorithm>
+
 // Inline UTF-8 decode to avoid header dependency
 static uint32_t decodeUtf8(const unsigned char** ptr) {
   if (**ptr == 0) return 0;
@@ -104,7 +106,11 @@ static uint32_t bidiMirror(uint32_t cp) {
   }
 }
 
-std::vector<uint32_t> shapeText(const char* text) {
+// Steps 1, 1.5, 2: decode UTF-8, resolve the "الله" (Allah) ligature, resolve
+// Lam-Alef ligatures. Returns logical-order codepoints, pre-contextual-shaping.
+// Split out of shapeText() so hasKashidaPoint()/shapeTextWithKashida() can reuse
+// it without re-running (or duplicating) the rest of the pipeline.
+static std::vector<uint32_t> resolveLigatures(const char* text, const std::function<bool(uint32_t)>& hasGlyph) {
   if (!text || !*text) return {};
 
   // Step 1: Decode UTF-8 to codepoints
@@ -164,7 +170,7 @@ std::vector<uint32_t> shapeText(const char* text) {
           while (afterHeh < codepoints.size() && isArabicDiacritic(codepoints[afterHeh])) afterHeh++;
           const bool nextExists = afterHeh < codepoints.size() && isArabicBaseChar(codepoints[afterHeh]);
 
-          if (!prevConnects && !nextExists) {
+          if (!prevConnects && !nextExists && (!hasGlyph || hasGlyph(0xFDF2))) {
             afterAllah.push_back(0xFDF2);
             i = afterHeh;
             continue;
@@ -197,7 +203,7 @@ std::vector<uint32_t> shapeText(const char* text) {
           break;
         }
         uint32_t lig = getLamAlefLigature(codepoints[alefIdx], prevJoins);
-        if (lig != 0) {
+        if (lig != 0 && (!hasGlyph || hasGlyph(lig))) {
           afterLigatures.push_back(lig);
           // Copy diacritics between Lam and Alef
           for (size_t d = i + 1; d < alefIdx; d++) {
@@ -211,7 +217,15 @@ std::vector<uint32_t> shapeText(const char* text) {
     afterLigatures.push_back(codepoints[i]);
   }
 
-  // Step 3: Apply contextual forms
+  return afterLigatures;
+}
+
+// Step 3: apply contextual forms (isolated/initial/medial/final) to a logical-order
+// codepoint sequence (the output of resolveLigatures(), or that output with kashida
+// tatweel codepoints spliced in -- U+0640 is DUAL_JOINING and has no dedicated
+// contextual-form row, so it passes through unchanged in every position, which is
+// exactly the correct visual behavior for a straight joining stroke).
+static std::vector<uint32_t> applyContextualForms(const std::vector<uint32_t>& afterLigatures) {
   std::vector<uint32_t> shaped;
   shaped.reserve(afterLigatures.size());
 
@@ -260,7 +274,11 @@ std::vector<uint32_t> shapeText(const char* text) {
     shaped.push_back(getContextualForm(c, prevJoins, nextJoins));
   }
 
-  // Step 4: Simplified BiDi reordering for visual order
+  return shaped;
+}
+
+// Step 4: Simplified BiDi reordering for visual order.
+static std::vector<uint32_t> reorderVisual(const std::vector<uint32_t>& shaped) {
   // Classify each codepoint as RTL, LTR, or NEUTRAL
   enum class BidiDir : uint8_t { LTR, RTL, NEUTRAL };
   const size_t len = shaped.size();
@@ -395,6 +413,91 @@ std::vector<uint32_t> shapeText(const char* text) {
   }
 
   return visual;
+}
+
+std::vector<uint32_t> shapeText(const char* text, const std::function<bool(uint32_t)>& hasGlyph) {
+  std::vector<uint32_t> logical = resolveLigatures(text, hasGlyph);
+  if (logical.empty()) return {};
+  return reorderVisual(applyContextualForms(logical));
+}
+
+// Find every legal kashida (tatweel) insertion point in a logical-order codepoint
+// sequence -- points[i] == true means a kashida run may be inserted immediately
+// before index i. A point exists between two adjacent base letters (skipping any
+// TRANSPARENT diacritics between them, which is what keeps an inserted run on the
+// correct side of a trailing harakat mark -- the point is always keyed to the
+// position right before the NEXT base letter, never between a letter and its own
+// mark) when the earlier letter's joining type extends forward (DUAL_JOINING) and
+// the later letter's joining type accepts a connection from before
+// (DUAL_JOINING or RIGHT_JOINING). Ligature codepoints (e.g. U+FDF2 "Allah", the
+// Lam-Alef presentation forms) fall out of this correctly without special-casing:
+// getJoiningType() classifies U+FDF2 as isolated-only (NON_JOINING) and the
+// Lam-Alef forms as RIGHT_JOINING, so a word that collapsed into one of those
+// ligatures during resolveLigatures() automatically loses the internal points it
+// no longer has, since there's no longer a separate codepoint there to attach one.
+static std::vector<bool> computeKashidaPoints(const std::vector<uint32_t>& logical) {
+  std::vector<bool> points(logical.size(), false);
+  int lastBaseIdx = -1;
+  for (size_t i = 0; i < logical.size(); i++) {
+    JoiningType jt = getJoiningType(logical[i]);
+    if (jt == JoiningType::TRANSPARENT) continue;  // diacritic: doesn't break the adjacency search
+
+    if (lastBaseIdx >= 0) {
+      JoiningType prevType = getJoiningType(logical[static_cast<size_t>(lastBaseIdx)]);
+      if (joinsToLeft(prevType) && joinsToRight(jt)) {
+        points[i] = true;
+      }
+    }
+    lastBaseIdx = static_cast<int>(i);
+  }
+  return points;
+}
+
+bool hasKashidaPoint(const char* text, const std::function<bool(uint32_t)>& hasGlyph) {
+  std::vector<uint32_t> logical = resolveLigatures(text, hasGlyph);
+  if (logical.empty()) return false;
+  for (bool p : computeKashidaPoints(logical)) {
+    if (p) return true;
+  }
+  return false;
+}
+
+std::vector<uint32_t> shapeTextWithKashida(const char* text, int extraWidthPx, int tatweelAdvancePx,
+                                            const std::function<bool(uint32_t)>& hasGlyph) {
+  if (extraWidthPx <= 0 || tatweelAdvancePx <= 0 || (hasGlyph && !hasGlyph(0x0640))) {
+    return shapeText(text, hasGlyph);
+  }
+
+  std::vector<uint32_t> logical = resolveLigatures(text, hasGlyph);
+  if (logical.empty()) return {};
+
+  const std::vector<bool> points = computeKashidaPoints(logical);
+  const int numPoints = static_cast<int>(std::count(points.begin(), points.end(), true));
+  const int totalTatweels = extraWidthPx / tatweelAdvancePx;
+  if (numPoints == 0 || totalTatweels <= 0) {
+    return reorderVisual(applyContextualForms(logical));
+  }
+
+  // Distribute whole tatweel glyphs evenly across every valid point; any remainder
+  // (extraWidthPx not an exact multiple of numPoints * tatweelAdvancePx) goes to the
+  // earliest points, one extra glyph each -- same "remainder to the front" rounding
+  // convention as ParsedText's inter-word justify-extra distribution.
+  const int perPoint = totalTatweels / numPoints;
+  const int remainder = totalTatweels % numPoints;
+
+  std::vector<uint32_t> augmented;
+  augmented.reserve(logical.size() + static_cast<size_t>(totalTatweels));
+  int pointsSeen = 0;
+  for (size_t i = 0; i < logical.size(); i++) {
+    if (points[i]) {
+      const int count = perPoint + (pointsSeen < remainder ? 1 : 0);
+      for (int t = 0; t < count; t++) augmented.push_back(0x0640);
+      pointsSeen++;
+    }
+    augmented.push_back(logical[i]);
+  }
+
+  return reorderVisual(applyContextualForms(augmented));
 }
 
 }  // namespace ArabicShaper

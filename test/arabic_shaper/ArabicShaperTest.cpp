@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "ArabicShaper.h"
 
 // shapeText returns VISUAL order (reversed for RTL runs), so expectations list
@@ -61,4 +63,91 @@ TEST(ArabicShaper, OttomanNgMedial) {
   EXPECT_EQ(out[2], 0xFE91u);  // Beh initial
   EXPECT_EQ(out[1], 0xFBD6u);  // Ng medial
   EXPECT_EQ(out[0], 0xFE90u);  // Beh final
+}
+
+// --- Kashida (tatweel) justification ---
+
+// "كتب" (Kaf-Teh-Beh): every letter is DUAL_JOINING, so both internal junctions
+// (Kaf->Teh, Teh->Beh) are legal kashida points.
+TEST(ArabicShaper, KashidaPointBetweenDualJoiningLetters) {
+  EXPECT_TRUE(ArabicShaper::hasKashidaPoint("كتب"));
+}
+
+// "ودر" (Waw-Dal-Ra): all three are RIGHT_JOINING-only -- none of them extend a
+// connection forward into the next letter, so no kashida point exists anywhere.
+TEST(ArabicShaper, NoKashidaPointForRightJoiningChain) {
+  EXPECT_FALSE(ArabicShaper::hasKashidaPoint("ودر"));
+}
+
+TEST(ArabicShaper, NoKashidaPointForSingleLetterWord) { EXPECT_FALSE(ArabicShaper::hasKashidaPoint("ب")); }
+
+TEST(ArabicShaper, HasKashidaPointFalseForEmptyString) {
+  EXPECT_FALSE(ArabicShaper::hasKashidaPoint(""));
+  EXPECT_FALSE(ArabicShaper::hasKashidaPoint(nullptr));
+}
+
+// "كَتَب" (Kaf+Fatha+Teh+Fatha+Beh): a kashida run must be spliced in AFTER each
+// letter's trailing harakat, never between the letter and its own mark -- or the
+// mark visually detaches from its base letter (the bug this fixed on a real
+// device: KFGQPC Uthmanic Hafs word joins broke this way before the fix).
+TEST(ArabicShaper, KashidaSkipsTransparentDiacritics) {
+  constexpr int tatweelAdvancePx = 10;
+  const auto plain = shape("كَتَب");
+  const auto withKashida = ArabicShaper::shapeTextWithKashida("كَتَب", 2 * tatweelAdvancePx, tatweelAdvancePx);
+
+  const auto tatweelCount = std::count(withKashida.begin(), withKashida.end(), 0x0640u);
+  EXPECT_EQ(tatweelCount, 2);
+  EXPECT_EQ(withKashida.size(), plain.size() + 2);
+
+  // Every diacritic (U+064B-065F, U+0670) must be immediately followed, in visual
+  // (left-to-right draw) order, by a real letter -- never by an inserted tatweel run.
+  for (size_t i = 0; i + 1 < withKashida.size(); i++) {
+    const uint32_t cp = withKashida[i];
+    const bool isDiacritic = (cp >= 0x064B && cp <= 0x065F) || cp == 0x0670;
+    if (isDiacritic) {
+      EXPECT_NE(withKashida[i + 1], 0x0640u) << "diacritic at index " << i << " followed by tatweel";
+    }
+  }
+}
+
+// "كتبت" has 3 legal points (Kaf-Teh, Teh-Beh, Beh-Teh); 5 whole tatweel glyphs
+// distributed across them should differ by at most one glyph per point.
+TEST(ArabicShaper, KashidaDistributesEvenlyAcrossMultiplePoints) {
+  constexpr int tatweelAdvancePx = 10;
+  const auto out = ArabicShaper::shapeTextWithKashida("كتبت", 5 * tatweelAdvancePx, tatweelAdvancePx);
+
+  std::vector<int> runLengths;
+  int current = 0;
+  for (const uint32_t cp : out) {
+    if (cp == 0x0640u) {
+      current++;
+    } else if (current > 0) {
+      runLengths.push_back(current);
+      current = 0;
+    }
+  }
+  if (current > 0) runLengths.push_back(current);
+
+  ASSERT_EQ(runLengths.size(), 3u);
+  const int total = runLengths[0] + runLengths[1] + runLengths[2];
+  const int minLen = *std::min_element(runLengths.begin(), runLengths.end());
+  const int maxLen = *std::max_element(runLengths.begin(), runLengths.end());
+  EXPECT_EQ(total, 5);
+  EXPECT_LE(maxLen - minLen, 1);
+}
+
+// A budget smaller than one tatweel glyph can't buy even a single insertion --
+// output must be identical to plain shapeText().
+TEST(ArabicShaper, KashidaDegradesGracefullyBelowOneGlyphWidth) {
+  const auto plain = shape("كتب");
+  const auto withKashida = ArabicShaper::shapeTextWithKashida("كتب", 5, 10);
+  EXPECT_EQ(withKashida, plain);
+}
+
+// A font reporting no U+0640 glyph must produce plain (unstretched) output.
+TEST(ArabicShaper, KashidaRespectsMissingGlyphCallback) {
+  const auto hasGlyph = [](uint32_t cp) { return cp != 0x0640u; };
+  const auto plain = ArabicShaper::shapeText("كتب", hasGlyph);
+  const auto withKashida = ArabicShaper::shapeTextWithKashida("كتب", 20, 10, hasGlyph);
+  EXPECT_EQ(withKashida, plain);
 }

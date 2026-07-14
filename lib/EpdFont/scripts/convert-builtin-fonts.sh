@@ -97,6 +97,65 @@ for size in ${ARABIC_READING_FONT_SIZES[@]}; do
   echo "Generated ../builtinFonts/amiri_${size}_regular.h"
 done
 
+# KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface, the Quran's default
+# reading font (see QuranBook::ensureExtracted / kBuiltinArabicReadingFontIds).
+# --shape-fallback: this font only exposes Arabic Presentation Forms via GSUB
+# (no cmap entries), which our renderer doesn't run -- see fontconvert.py's
+# --shape-fallback help text for the full rationale.
+# --contrast-gamma 0.3: this font's fine calligraphic strokes anti-alias into
+# mostly-gray coverage at reading sizes (confirmed: only ~45% of a representative
+# glyph's ink pixels are near-black before this), which then quantizes to light
+# gray under --2bit -- "faded" per user report against a real Mushaf photo. 0.3
+# chosen by rendering the actual post-quantization pixel grid at several gamma
+# values side by side: 0.45 was a visible improvement but still gray-heavy, 0.2
+# started flattening the calligraphic stroke shape into a solid blob, 0.3 gave a
+# solidly black stroke while keeping the letterform's shape intact. Not applied
+# to the other Arabic fonts above; they weren't reported as faded.
+for size in ${ARABIC_READING_FONT_SIZES[@]}; do
+  python fontconvert.py uthmanichafs_${size}_regular ${size} \
+    ../builtinFonts/source/UthmanicHafs/UthmanicHafs_V22.ttf \
+    --2bit --compress --script arabic --reposition-marks --shape-fallback \
+    --contrast-gamma 0.3 > ../builtinFonts/uthmanichafs_${size}_regular.h
+  echo "Generated ../builtinFonts/uthmanichafs_${size}_regular.h"
+done
+
+# QuranCommon: tiny 8-glyph font carrying only the real Bismillah ligature
+# (U+FDFD, ARABIC LIGATURE BISMILLAH AR-RAHMAN AR-RAHEEM) via a direct cmap
+# entry -- see GfxRenderer::setBismillahFontId. Single fixed 18pt size only,
+# not one-per-reading-tier: the glyph is a whole vocalized phrase baked into
+# one wide glyph (241px at 18pt), and EpdGlyph::width is a uint8_t (255px
+# cap) -- any size above ~18pt pushes the glyph past that ceiling, which
+# silently drops the font's only glyph and crashes fontconvert.py's
+# compression-stats printout on a divide-by-zero. 18pt is the largest size
+# that stays safely under the cap, so every reading tier uses this one font.
+# --script none: this font has a handful of incidental ASCII cmap entries
+# (used for an unrelated GSUB trigger in the source project) that --script
+# none excludes, keeping only the Bismillah codepoint via
+# --additional-intervals.
+python fontconvert.py quran_common_18_regular 18 \
+  ../builtinFonts/source/QuranCommon/quran-common.ttf \
+  --2bit --compress --script none --additional-intervals 0xFDFD,0xFDFD \
+  > ../builtinFonts/quran_common_18_regular.h
+echo "Generated ../builtinFonts/quran_common_18_regular.h"
+
+# Surah banner: 114 calligraphic surah-name glyphs + 1 shared ornament glyph baked
+# from surah-name-v4.ttf, which has no cmap entries at all -- see
+# source/SurahNameV4/NOTICE.md and gen_surah_banner_glyphmap.py for why this needs
+# --glyph-map (HarfBuzz-shape a per-surah ASCII trigger string, bake the resulting
+# glyphs under dedicated PUA codepoints) instead of a normal cmap-driven export.
+# Single fixed 24pt size, not one per reading tier: this is a once-per-surah
+# chrome element, not line-by-line reading text, and even 114 glyphs' worth of
+# calligraphy stays well under EpdGlyph's uint8_t width/height cap at this size
+# (confirmed max 69x36px at 18pt during design, with headroom to spare at 24pt).
+surah_banner_glyphmap_tsv="$(mktemp)"
+python ../../../tools/quran/gen_surah_banner_glyphmap.py > "$surah_banner_glyphmap_tsv"
+python fontconvert.py surah_banner_24_regular 24 \
+  ../builtinFonts/source/SurahNameV4/surah-name-v4.ttf \
+  --2bit --compress --script none --additional-intervals 0xE010,0xE082 \
+  --glyph-map "$surah_banner_glyphmap_tsv" > ../builtinFonts/surah_banner_24_regular.h
+rm -f "$surah_banner_glyphmap_tsv"
+echo "Generated ../builtinFonts/surah_banner_24_regular.h"
+
 echo ""
 echo "Running compression verification..."
 python verify_compression.py ../builtinFonts/

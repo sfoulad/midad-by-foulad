@@ -3,6 +3,7 @@
 #include <BidiUtils.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <ScriptDetector.h>
 #include <Utf8.h>
 
 #include <algorithm>
@@ -185,6 +186,59 @@ int computeJustifyExtra(const int spareSpace, const size_t gapCount) {
   // that line, leaving it right-aligned (RTL) / left-aligned (LTR) — the mismatched
   // alignment bug. Match the un-capped behavior of the old code.
   return spareSpace / static_cast<int>(gapCount);
+}
+
+// A justified line's spare width, split between kashida (stretching Arabic words
+// from within, at their own legal letter-joining points) and inter-word gaps.
+struct JustifyPlan {
+  int gapExtra = 0;                             // per-gap stretch, same contract as computeJustifyExtra's return
+  std::vector<uint16_t> kashidaExtraPerWord;    // sized to lineWordsInOrder; 0 = word gets no kashida
+};
+
+// Real Mushaf-style Arabic typesetting stretches almost entirely via kashida and
+// leaves inter-word gaps close to natural width -- the opposite of this reader's
+// original Latin-oriented justification, which only ever widens gaps. So kashida-
+// eligible words absorb the line's spare space FIRST; gap stretching (the existing
+// computeJustifyExtra) is now only a fallback, used when the active font has no
+// U+0640 glyph, when a line has no kashida-eligible word, or for the small leftover
+// remainder after eligible words take whole tatweel-glyph multiples (kashida can
+// only add whole glyphs, so a few pixels of any line's spare space almost always
+// remain -- routing those few pixels to the gaps keeps every line still exactly
+// filling the page width end to end).
+JustifyPlan computeJustifyPlan(const GfxRenderer& renderer, const int fontId, const int spareSpace,
+                               const size_t gapCount, const std::vector<std::string>& lineWordsInOrder,
+                               const std::vector<EpdFontFamily::Style>& lineStylesInOrder) {
+  JustifyPlan plan;
+  plan.kashidaExtraPerWord.assign(lineWordsInOrder.size(), 0);
+  if (spareSpace <= 0) return plan;
+
+  const int tatweelPx = renderer.getKashidaGlyphWidth(fontId);
+  if (tatweelPx <= 0) {
+    plan.gapExtra = computeJustifyExtra(spareSpace, gapCount);
+    return plan;
+  }
+
+  std::vector<size_t> eligible;
+  for (size_t i = 0; i < lineWordsInOrder.size(); i++) {
+    if (ScriptDetector::containsArabic(lineWordsInOrder[i].c_str()) &&
+        renderer.wordHasKashidaPoint(fontId, lineWordsInOrder[i].c_str(), lineStylesInOrder[i])) {
+      eligible.push_back(i);
+    }
+  }
+  if (eligible.empty()) {
+    plan.gapExtra = computeJustifyExtra(spareSpace, gapCount);
+    return plan;
+  }
+
+  const int perWordPx = spareSpace / static_cast<int>(eligible.size());
+  int leftover = spareSpace - perWordPx * static_cast<int>(eligible.size());
+  for (const size_t idx : eligible) {
+    const int wordKashidaPx = (perWordPx / tatweelPx) * tatweelPx;  // whole tatweel glyphs only
+    plan.kashidaExtraPerWord[idx] = static_cast<uint16_t>(wordKashidaPx);
+    leftover += perWordPx - wordKashidaPx;
+  }
+  plan.gapExtra = computeJustifyExtra(leftover, gapCount);
+  return plan;
 }
 
 // Removes every soft hyphen in-place so rendered glyphs match measured widths.
@@ -895,16 +949,39 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
   // For RTL, implicit/default Left alignment becomes Right alignment.
   // Explicit text-align:left must remain left for CSS correctness.
+  // The Bismillah's own line is force-centered regardless of blockStyle.alignment:
+  // BlockStyle::fromCssStyle lets the reader's paragraph-alignment SETTING override
+  // the book's CSS unless "Book's Style" is selected, and this app's default setting
+  // is Justify -- which degenerates to flush-right for a single-word, no-gap line
+  // like this one, silently defeating the book's own text-align:center. Every printed
+  // Mushaf centers the Bismillah; that's authorial intent this app's alignment
+  // preference shouldn't be able to override, the same way it can't move the
+  // code-drawn surah medallion/cartouche off their fixed positions.
+  const bool isBismillahLine = lineWordCount == 1 && ArabicTextMarkers::isBismillah(lineWords[0].c_str());
   const CssTextAlign effectiveAlignment =
-      (blockStyle.isRtl && !blockStyle.textAlignDefined && blockStyle.alignment == CssTextAlign::Left)
+      isBismillahLine ? CssTextAlign::Center
+      : (blockStyle.isRtl && !blockStyle.textAlignDefined && blockStyle.alignment == CssTextAlign::Left)
           ? CssTextAlign::Right
           : blockStyle.alignment;
 
-  // For justified text, compute per-gap extra to distribute remaining space evenly
+  // For justified text, compute per-gap extra (and, for Arabic words, a kashida
+  // share) to distribute remaining space evenly. This plan is only ever actually
+  // used below when !willReorder -- the reordered branch computes its own plan
+  // from the post-BiDi word order instead -- but it's computed unconditionally
+  // here, matching the pre-existing (slightly wasteful) justifyExtra pattern this
+  // replaces, to keep both branches' plans coming from the exact same function.
   const int spareSpace = effectivePageWidth - lineWordWidthSum - totalNaturalGaps;
-  const int justifyExtra = (effectiveAlignment == CssTextAlign::Justify && !isLastLine)
-                               ? computeJustifyExtra(spareSpace, actualGapCount)
-                               : 0;
+  // Always call computeJustifyPlan (never substitute a default-constructed JustifyPlan{}):
+  // its kashidaExtraPerWord must come back sized to lineWords.size() and zero-filled even
+  // when this line isn't justified, since the position loops below index it unconditionally
+  // by wordIdx -- an empty vector there is an out-of-bounds read, not a harmless no-op.
+  // Passing 0 in place of spareSpace when the line isn't eligible reaches the same "all
+  // zero, correctly sized" result via computeJustifyPlan's own spareSpace <= 0 early-out.
+  const JustifyPlan justifyPlan =
+      computeJustifyPlan(renderer, fontId, (effectiveAlignment == CssTextAlign::Justify && !isLastLine) ? spareSpace : 0,
+                         actualGapCount, lineWords, lineWordStyles);
+  const int justifyExtra = justifyPlan.gapExtra;
+  std::vector<uint16_t> kashidaExtraPxFinal = justifyPlan.kashidaExtraPerWord;
 
   // BiDi processing: reorder words with UAX#9 in full-line context.
   visualOrderScratch.clear();
@@ -983,12 +1060,22 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
 
     const int reorderedSpare = effectivePageWidth - reorderedWordWidthSum - reorderedNaturalGaps;
-    const int reorderedJustifyExtra = (effectiveAlignment == CssTextAlign::Justify && !isLastLine)
-                                          ? computeJustifyExtra(reorderedSpare, reorderedGapCount)
-                                          : 0;
+    // See the non-reordered branch's comment above: computeJustifyPlan must always be
+    // called (never JustifyPlan{}) so kashidaExtraPerWord comes back correctly sized.
+    const JustifyPlan reorderedPlan = computeJustifyPlan(
+        renderer, fontId, (effectiveAlignment == CssTextAlign::Justify && !isLastLine) ? reorderedSpare : 0,
+        reorderedGapCount, reorderedWordsScratch, reorderedStylesScratch);
+    const int reorderedJustifyExtra = reorderedPlan.gapExtra;
+    // The starting xpos below is derived from contentWidth, which must account for
+    // every source of stretch on the line -- gaps AND kashida -- or the line's first
+    // word starts at the wrong offset and the line stops short of (or overflows past)
+    // the margin the justification was supposed to reach exactly.
+    int reorderedKashidaTotal = 0;
+    for (const uint16_t v : reorderedPlan.kashidaExtraPerWord) reorderedKashidaTotal += v;
 
     const int justifyContribution = (effectiveAlignment == CssTextAlign::Justify && !isLastLine)
-                                        ? reorderedJustifyExtra * static_cast<int>(reorderedGapCount)
+                                        ? reorderedJustifyExtra * static_cast<int>(reorderedGapCount) +
+                                              reorderedKashidaTotal
                                         : 0;
     const int contentWidth = reorderedWordWidthSum + reorderedNaturalGaps + justifyContribution;
 
@@ -1010,7 +1097,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
     for (size_t wordIdx = 0; wordIdx < reorderedWidthsScratch.size(); wordIdx++) {
       lineXPos.push_back(static_cast<int16_t>(xpos));
-      xpos += reorderedWidthsScratch[wordIdx];
+      xpos += reorderedWidthsScratch[wordIdx] + reorderedPlan.kashidaExtraPerWord[wordIdx];
 
       const bool nextIsContinuation =
           wordIdx + 1 < reorderedWidthsScratch.size() && reorderedContinuesScratch[wordIdx + 1];
@@ -1039,6 +1126,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       }
     }
 
+    kashidaExtraPxFinal = std::move(reorderedPlan.kashidaExtraPerWord);
     lineWords.swap(reorderedWordsScratch);
     lineWordStyles.swap(reorderedStylesScratch);
   } else {
@@ -1055,7 +1143,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       // For Right and Justify, start from right edge (xpos = effectivePageWidth)
 
       for (size_t wordIdx = 0; wordIdx < lineWordCount; wordIdx++) {
-        xpos -= wordWidths[lastBreakAt + wordIdx];
+        xpos -= wordWidths[lastBreakAt + wordIdx] + kashidaExtraPxFinal[wordIdx];
         lineXPos.push_back(static_cast<int16_t>(xpos));
 
         const bool nextIsContinuation = wordIdx + 1 < lineWordCount && continuesVec[lastBreakAt + wordIdx + 1];
@@ -1099,7 +1187,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
         const bool nextIsContinuation = wordIdx + 1 < lineWordCount && continuesVec[lastBreakAt + wordIdx + 1];
         if (nextIsContinuation) {
-          int advance = wordWidths[lastBreakAt + wordIdx];
+          int advance = wordWidths[lastBreakAt + wordIdx] + kashidaExtraPxFinal[wordIdx];
           advance += renderer.getKerning(fontId, lastCodepoint(lineWords[wordIdx]),
                                          firstCodepoint(lineWords[wordIdx + 1]), lineWordStyles[wordIdx]);
           // wordIdx > 0 mirrors the gap accounting above (which skips index 0): a leading
@@ -1123,7 +1211,7 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
           if (wordIdx + 1 < lineWordCount && effectiveAlignment == CssTextAlign::Justify && !isLastLine) {
             gap += justifyExtra;
           }
-          xpos += wordWidths[lastBreakAt + wordIdx] + gap;
+          xpos += wordWidths[lastBreakAt + wordIdx] + kashidaExtraPxFinal[wordIdx] + gap;
         }
       }
     }
@@ -1145,9 +1233,17 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   }
 
   if (!lineHasFocusSplit) {
+    // Only pass the kashida array when some word on the line actually got a nonzero
+    // share -- an all-zero vector would still flag kashidaPresent=true in TextBlock
+    // and pay arena RAM for it on every line, including the vast majority that are
+    // never justified via kashida at all (non-Arabic paragraphs, lines whose spare
+    // space went entirely to gaps).
+    const bool hasAnyKashida = std::any_of(kashidaExtraPxFinal.begin(), kashidaExtraPxFinal.end(),
+                                           [](const uint16_t v) { return v != 0; });
     // TextBlock flattens the vectors into its arena; they stay owned here and die at return.
     auto block = std::make_shared<TextBlock>(lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{},
-                                             std::vector<uint16_t>{}, blockStyle);
+                                             std::vector<uint16_t>{}, blockStyle,
+                                             hasAnyKashida ? kashidaExtraPxFinal : std::vector<uint16_t>{});
     if (!block->valid()) {
       LOG_ERR("PTX", "Dropping line: TextBlock arena allocation failed");
       return;
@@ -1164,11 +1260,19 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   std::vector<EpdFontFamily::Style> outStyles;
   std::vector<uint8_t> outBoundaries;
   std::vector<uint16_t> outSuffixX;
+  // A focus-suffix token's own kashida share (if computeJustifyPlan happened to mark
+  // it eligible before this merge pass ran) is simply dropped here rather than carried
+  // into the merged entry -- the suffix's text got absorbed into the preceding word's
+  // string, so there's no single insertion point left to attribute it to. This can
+  // under-justify a line by a few pixels in the rare case kashida and focus-split
+  // reading highlight overlap on the same Arabic line; never double-counts or crashes.
+  std::vector<uint16_t> outKashidaExtraPx;
   outWords.reserve(lineWordCount);
   outXPos.reserve(lineWordCount);
   outStyles.reserve(lineWordCount);
   outBoundaries.reserve(lineWordCount);
   outSuffixX.reserve(lineWordCount);
+  outKashidaExtraPx.reserve(lineWordCount);
 
   for (size_t i = 0; i < lineWordCount; i++) {
     if (isFocusSuffixAt(i) && !outWords.empty()) {
@@ -1194,10 +1298,14 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
       outStyles.push_back(storedStyle);
       outBoundaries.push_back(boundary);
       outSuffixX.push_back(suffixX);
+      outKashidaExtraPx.push_back(kashidaExtraPxFinal[i]);
     }
   }
 
-  auto block = std::make_shared<TextBlock>(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle);
+  const bool hasAnyKashida = std::any_of(outKashidaExtraPx.begin(), outKashidaExtraPx.end(),
+                                         [](const uint16_t v) { return v != 0; });
+  auto block = std::make_shared<TextBlock>(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle,
+                                           hasAnyKashida ? outKashidaExtraPx : std::vector<uint16_t>{});
   if (!block->valid()) {
     LOG_ERR("PTX", "Dropping line: TextBlock arena allocation failed");
     return;

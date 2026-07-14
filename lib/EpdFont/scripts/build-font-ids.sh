@@ -38,3 +38,5 @@ done
 for size in 12 14 16 18; do
   echo "#define UTHMANICHAFS_${size}_FONT_ID ($(id_for ./uthmanichafs_${size}_regular.h))"
 done
+echo "#define QURANCOMMON_18_FONT_ID ($(id_for ./quran_common_18_regular.h))"
+echo "#define SURAHBANNER_24_FONT_ID ($(id_for ./surah_banner_24_regular.h))"

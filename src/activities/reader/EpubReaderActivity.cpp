@@ -1743,6 +1743,27 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   }
 }
 
+namespace {
+// build_quran_epub_kfgqpc.py's build_toc_ncx() bakes an "<Arabic-Indic digits> - "
+// index prefix into each surah's TOC navLabel (e.g. "18 - سورة الكهف") -- useful
+// context in the "Select Chapter" list, but redundant clutter in the reader's own
+// chapter-title status bar (the page's own surah banner already shows the name).
+// Byte-level check rather than full UTF-8 decoding since Arabic-Indic digits
+// (U+0660-0669) are a fixed 2-byte UTF-8 sequence (0xD9 0xA0-0xA9); a no-op for any
+// other book's TOC titles, which won't start with this exact byte pattern.
+std::string stripLeadingArabicIndicIndex(const std::string& title) {
+  size_t i = 0;
+  while (i + 1 < title.size() && static_cast<uint8_t>(title[i]) == 0xD9 &&
+         static_cast<uint8_t>(title[i + 1]) >= 0xA0 && static_cast<uint8_t>(title[i + 1]) <= 0xA9) {
+    i += 2;
+  }
+  if (i == 0 || i + 3 > title.size() || title[i] != ' ' || title[i + 1] != '-' || title[i + 2] != ' ') {
+    return title;
+  }
+  return title.substr(i + 3);
+}
+}  // namespace
+
 void EpubReaderActivity::renderStatusBar() const {
   // Calculate progress in book. Use the estimated total while a giant spine is still building so
   // "page X of Y" and the progress bar don't read off the small build watermark.
@@ -1771,7 +1792,7 @@ void EpubReaderActivity::renderStatusBar() const {
     const int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
     if (tocIndex != -1) {
       const auto tocItem = epub->getTocItem(tocIndex);
-      title = tocItem.title;
+      title = stripLeadingArabicIndicIndex(tocItem.title);
     }
 
   } else if (SETTINGS.statusBarTitle == CrossPointSettings::STATUS_BAR_TITLE::BOOK_TITLE) {

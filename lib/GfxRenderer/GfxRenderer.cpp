@@ -214,6 +214,98 @@ static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMod
   }
 }
 
+// Render a glyph at an arbitrary rational up-scale (scaleNum/scaleDen, e.g.
+// 3/2 for 1.5x) via nearest-neighbor sampling -- inverse of renderCharScaled
+// above (which only ever halves, for SUP/SUB). Used specifically for the
+// Bismillah ligature glyph, whose baked size is capped by EpdGlyph::width/
+// height being uint8_t (255px): quran-common.ttf's single whole-phrase glyph
+// is already 241px wide at the largest safely-generatable size (18pt, see
+// quran_common's conversion comment in convert-builtin-fonts.sh), leaving no
+// room to bake it any bigger, so this scales the existing bitmap up at draw
+// time instead. Acceptable for a single, once-per-surah glyph, unlike
+// per-character body text where blocky upscaling would look worse than just
+// using a bigger font.
+static void renderCharUpscaled(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
+                               const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
+                               const bool pixelState, const EpdFontFamily::Style style, const int scaleNum,
+                               const int scaleDen) {
+  const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
+  if (!glyph) return;
+
+  const EpdFontData* fontData = fontFamily.getData(style);
+  const uint8_t* bitmap = renderer.getGlyphBitmap(fontData, glyph);
+  if (!bitmap) return;
+
+  const int srcW = glyph->width;
+  const int srcH = glyph->height;
+  const int dstW = (srcW * scaleNum + scaleDen - 1) / scaleDen;
+  const int dstH = (srcH * scaleNum + scaleDen - 1) / scaleDen;
+  const int baseX = cursorX + (glyph->left * scaleNum) / scaleDen;
+  const int baseY = cursorY - (glyph->top * scaleNum) / scaleDen;
+  const bool state = (fontData->is2Bit && renderMode != GfxRenderer::BW) ? false : pixelState;
+
+  if (fontData->is2Bit) {
+    // Bilinear-interpolate the raw 4-level coverage (0=white..3=black) instead
+    // of nearest-neighbor block-replicating it -- nearest-neighbor reproduces
+    // the source's staircase edges at 1.5x scale instead of smoothing them,
+    // which read as visibly blocky/low-quality next to a real Mushaf's
+    // natively-antialiased calligraphy. Interpolating first, then applying the
+    // exact same per-renderMode threshold renderCharImpl uses, moves each
+    // destination pixel's effective edge position to sub-source-pixel
+    // precision -- the same principle as supersampled antialiasing.
+    auto sampleRaw = [&](int sx, int sy) -> int {
+      sx = std::min(sx, srcW - 1);
+      sy = std::min(sy, srcH - 1);
+      const int pos = sy * srcW + sx;
+      const uint8_t byte = bitmap[pos >> 2];
+      const uint8_t bitIndex = (3 - (pos & 3)) * 2;
+      return (byte >> bitIndex) & 0x3;
+    };
+    for (int dstY = 0; dstY < dstH; dstY++) {
+      const int srcYFixed = dstY * scaleDen;  // srcY = srcYFixed / scaleNum
+      const int srcY0 = srcYFixed / scaleNum;
+      const int fracY = srcYFixed % scaleNum;
+      for (int dstX = 0; dstX < dstW; dstX++) {
+        const int srcXFixed = dstX * scaleDen;
+        const int srcX0 = srcXFixed / scaleNum;
+        const int fracX = srcXFixed % scaleNum;
+        const int v00 = sampleRaw(srcX0, srcY0);
+        const int v10 = sampleRaw(srcX0 + 1, srcY0);
+        const int v01 = sampleRaw(srcX0, srcY0 + 1);
+        const int v11 = sampleRaw(srcX0 + 1, srcY0 + 1);
+        const int top = v00 * (scaleNum - fracX) + v10 * fracX;
+        const int bot = v01 * (scaleNum - fracX) + v11 * fracX;
+        const int raw = (top * (scaleNum - fracY) + bot * fracY + (scaleNum * scaleNum) / 2) / (scaleNum * scaleNum);
+        const uint8_t bmpVal = 3 - static_cast<uint8_t>(raw);
+        bool draw;
+        if (renderMode == GfxRenderer::BW) {
+          draw = bmpVal < 3;
+        } else if (renderMode == GfxRenderer::GRAYSCALE_MSB) {
+          draw = bmpVal == 1 || bmpVal == 2;
+        } else {
+          draw = bmpVal == 1;  // GRAYSCALE_LSB
+        }
+        if (draw) renderer.drawPixel(baseX + dstX, baseY + dstY, state);
+      }
+    }
+  } else {
+    // 1-bit source has no graduated coverage to interpolate -- plain
+    // nearest-neighbor sampling.
+    for (int dstY = 0; dstY < dstH; dstY++) {
+      const int srcY = dstY * scaleDen / scaleNum;
+      if (srcY >= srcH) continue;
+      for (int dstX = 0; dstX < dstW; dstX++) {
+        const int srcX = dstX * scaleDen / scaleNum;
+        if (srcX >= srcW) continue;
+        const int pos = srcY * srcW + srcX;
+        const uint8_t byte = bitmap[pos >> 3];
+        const uint8_t bitIndex = 7 - (pos & 7);
+        if ((byte >> bitIndex) & 1) renderer.drawPixel(baseX + dstX, baseY + dstY, state);
+      }
+    }
+  }
+}
+
 template <TextRotation rotation = TextRotation::None>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
@@ -521,9 +613,113 @@ CartoucheGeometry cartoucheGeometryFor(const int ascender, const int innerTextWi
 // looking it up as a font glyph.
 constexpr uint32_t CARTOUCHE_SPACE_CP = 0xE004;
 int cartoucheSpaceWidth(const int ascender) { return ascender / 3; }
+
+// Bismillah draw scale -- see renderCharUpscaled's comment for why this exists
+// (the baked glyph is already at the format's uint8_t size cap). 3/2 = 1.5x,
+// tuned visually against a real Mushaf reference photo's Bismillah-to-ayah-text
+// size ratio; a flat 2x was tried first and looked oversized. Shared by the
+// measure and render branches below -- must agree exactly, like every other
+// marker's shared geometry in this file.
+constexpr int BISMILLAH_SCALE_NUM = 3;
+constexpr int BISMILLAH_SCALE_DEN = 2;
+
+// Bismillah marker: the real ligature glyph U+FDFD wrapped in U+E005/U+E006 Private
+// Use Area sentinels (see tools/quran/build_quran_epub_kfgqpc.py) -- same
+// build-tool-controlled convention as the medallion/cartouche markers above. Renders
+// as a single glyph sourced from bismillahFontId_ (a tiny dedicated font -- see
+// QuranCommon's registration comment in main.cpp), since UthmanicHafs itself has no
+// glyph for U+FDFD.
+bool parseBismillahMarker(const char* text) {
+  // U+E005 = EE 80 85, U+FDFD = EF B7 BD, U+E006 = EE 80 86.
+  const auto* p = reinterpret_cast<const uint8_t*>(text);
+  if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x85) return false;
+  p += 3;
+  if (p[0] != 0xEF || p[1] != 0xB7 || p[2] != 0xBD) return false;
+  p += 3;
+  if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x86) return false;
+  return p[3] == '\0';
+}
+
+// The shared ornament glyph baked alongside the 114 per-surah name glyphs (see
+// tools/quran/gen_surah_banner_glyphmap.py) -- one codepoint per surah starting at
+// this base, then one final codepoint for the ornament shared by all of them.
+constexpr uint32_t SURAH_BANNER_NAME_BASE_CP = 0xE010;
+constexpr uint32_t SURAH_BANNER_ORNAMENT_CP = 0xE010 + 114;  // 0xE082
+
+// Surah-banner marker: replaces the old medallion+cartouche pair with a single
+// header row styled after the Madinah Mushaf's own surah-heading banner -- rule
+// lines above/below, ayah-count label on the right, revelation-order label on the
+// left, the surah's calligraphic name centered between them (see
+// tools/quran/build_quran_epub_kfgqpc.py). Wire format, all build-tool-controlled
+// PUA sentinels so it can never collide with real book text:
+//   U+E007 <name-glyph codepoint, literal 3-byte UTF-8> <right label text>
+//   U+E009 <left label text> U+E008
+// The two label strings are plain Arabic text composed by the build script
+// (e.g. "آياتها ١٨"), not re-derived here, so this code never needs to know how
+// to spell "ayahs"/"revelation order" in Arabic -- same reasoning as the
+// cartouche marker passing the surah NAME through verbatim instead of hardcoding
+// it. Unlike the fixed-digit markers above, the label payloads are
+// arbitrary-length, so this returns UTF-8 slices rather than parsed digits.
+bool parseSurahBannerMarker(const char* text, uint32_t& nameGlyphCp, std::string& rightLabel,
+                            std::string& leftLabel) {
+  // U+E007 = EE 80 87, U+E009 = EE 80 89, U+E008 = EE 80 88.
+  const auto* p = reinterpret_cast<const uint8_t*>(text);
+  if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x87) return false;
+  p += 3;
+  if ((p[0] & 0xF0) != 0xE0) return false;  // name glyph cp is always a 3-byte UTF-8 sequence
+  const uint32_t cp = (static_cast<uint32_t>(p[0] & 0x0F) << 12) | (static_cast<uint32_t>(p[1] & 0x3F) << 6) |
+                      static_cast<uint32_t>(p[2] & 0x3F);
+  if (cp < SURAH_BANNER_NAME_BASE_CP || cp >= SURAH_BANNER_NAME_BASE_CP + 114) return false;
+  nameGlyphCp = cp;
+  p += 3;
+
+  const char* rightStart = reinterpret_cast<const char*>(p);
+  const char* sep = strstr(rightStart, "\xEE\x80\x89");  // U+E009
+  if (!sep) return false;
+  rightLabel.assign(rightStart, static_cast<size_t>(sep - rightStart));
+
+  const char* leftStart = sep + 3;
+  const size_t leftLen = strlen(leftStart);
+  if (leftLen < 3) return false;
+  const auto* tail = reinterpret_cast<const uint8_t*>(leftStart + leftLen - 3);
+  if (tail[0] != 0xEE || tail[1] != 0x80 || tail[2] != 0x88) return false;  // U+E008
+  leftLabel.assign(leftStart, leftLen - 3);
+  return true;
+}
+
+// The row spans the full screen width minus the hardware-safe margin -- a
+// full-bleed header like the Mushaf's own, not a content-sized box (unlike the
+// medallion/cartouche/Bismillah markers above, which size to their own tight
+// content). This is the ONLY thing that must match between the measure and
+// render branches below (per this file's own "must match" convention) --
+// vertical layout (row height, label stacking) is render-only, since
+// getArabicTextWidth never needs it.
+int surahBannerWidth(const int screenWidth) {
+  return screenWidth - GfxRenderer::VIEWABLE_MARGIN_LEFT - GfxRenderer::VIEWABLE_MARGIN_RIGHT;
+}
+
+// Splits a label ("<word>" + CARTOUCHE_SPACE_CP + "<digits>", see
+// parseSurahBannerMarker's comment) into its word and digit parts so they can
+// be drawn on two stacked lines -- word above, digits centered below it --
+// instead of inline, matching the Mushaf's own header layout.
+void splitSurahBannerLabel(const std::string& label, std::string& word, std::string& digits) {
+  const char* sep = strstr(label.c_str(), "\xEE\x80\x84");  // U+E004 = CARTOUCHE_SPACE_CP
+  if (!sep) {
+    word = label;
+    digits.clear();
+    return;
+  }
+  word.assign(label.c_str(), static_cast<size_t>(sep - label.c_str()));
+  digits.assign(sep + 3);
+}
 }  // namespace
 
-int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
+namespace ArabicTextMarkers {
+bool isBismillah(const char* text) { return parseBismillahMarker(text); }
+}  // namespace ArabicTextMarkers
+
+int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style,
+                                    const int kashidaExtraPx) const {
   if (text == nullptr || *text == '\0') return 0;
 
   const auto fontIt = fontMap.find(resolveArabicFontId(fontId));
@@ -568,7 +764,8 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     if (parseCartoucheMarker(text, inner)) {
       const int ascender = getFontAscenderSize(resolveArabicFontId(fontId));
       int innerWidth = 0;
-      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str())) {
+      for (const uint32_t cp : ArabicShaper::shapeText(
+               inner.c_str(), [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; })) {
         if (cp == CARTOUCHE_SPACE_CP) {
           innerWidth += cartoucheSpaceWidth(ascender);
           continue;
@@ -580,8 +777,45 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     }
   }
 
+  // The surah banner lays out at the combined width of both labels plus the
+  // calligraphy pair (sourced from surahBannerFontId_, NOT the resolved Arabic
+  // font above) -- must match drawArabicText's surah-banner branch exactly.
+  {
+    uint32_t nameGlyphCp = 0;
+    std::string rightLabel, leftLabel;
+    if (parseSurahBannerMarker(text, nameGlyphCp, rightLabel, leftLabel)) {
+      const auto bannerFontIt = fontMap.find(surahBannerFontId_);
+      if (bannerFontIt == fontMap.end()) return 0;
+      if (!bannerFontIt->second.getGlyph(nameGlyphCp, style) ||
+          !bannerFontIt->second.getGlyph(SURAH_BANNER_ORNAMENT_CP, style)) {
+        return 0;
+      }
+      return surahBannerWidth(getScreenWidth());
+    }
+  }
+
+  // The Bismillah marker lays out at BISMILLAH_SCALE_NUM/DEN times its
+  // dedicated font's own glyph advance -- drawn via renderCharUpscaled (see its
+  // comment for why: the baked glyph is already at the uint8_t width cap, so
+  // it's scaled up at draw time instead of baked bigger) -- must match
+  // drawArabicText's Bismillah branch exactly. Sourced from bismillahFontId_,
+  // NOT the resolved Arabic font above (UthmanicHafs lacks U+FDFD entirely).
+  if (parseBismillahMarker(text)) {
+    const auto bismillahFontIt = fontMap.find(bismillahFontId_);
+    if (bismillahFontIt == fontMap.end()) return 0;
+    const EpdGlyph* glyph = bismillahFontIt->second.getGlyph(0xFDFD, style);
+    return glyph ? fp4::toPixel(glyph->advanceX) * BISMILLAH_SCALE_NUM / BISMILLAH_SCALE_DEN : 0;
+  }
+
+  const auto hasGlyphFn = [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; };
+  int tatweelPx = 0;
+  if (kashidaExtraPx > 0) {
+    if (const EpdGlyph* tatweel = font.getGlyph(0x0640, style)) tatweelPx = fp4::toPixel(tatweel->advanceX);
+  }
+  const auto cps = tatweelPx > 0 ? ArabicShaper::shapeTextWithKashida(text, kashidaExtraPx, tatweelPx, hasGlyphFn)
+                                  : ArabicShaper::shapeText(text, hasGlyphFn);
   int width = 0;
-  for (const uint32_t cp : ArabicShaper::shapeText(text)) {
+  for (const uint32_t cp : cps) {
     const EpdGlyph* glyph = font.getGlyph(cp, style);
     if (glyph) {
       width += fp4::toPixel(glyph->advanceX);
@@ -611,7 +845,7 @@ void GfxRenderer::drawTextInWidth(const int fontId, const int x, const int y, co
 }
 
 void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, const char* text, const bool black,
-                                 const EpdFontFamily::Style style) const {
+                                 const EpdFontFamily::Style style, const int kashidaExtraPx) const {
   if (text == nullptr || *text == '\0') return;
 
   const int resolvedArabicFontId = resolveArabicFontId(fontId);
@@ -649,6 +883,47 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     // glyphs that were "prewarmed" under the wrong codepoints entirely. Must stay
     // in exact sync with the render branches below (same reasoning as
     // getArabicTextWidth's marker branches vs. render).
+    // Bismillah draws a single glyph from bismillahFontId_, a DIFFERENT font than
+    // resolvedArabicFontId -- must be recorded against its own font id, or the
+    // real render pass's glyph never lands in the prewarmed slot for that font
+    // (same class of bug already fixed once this session for the other markers).
+    if (parseBismillahMarker(text)) {
+      std::string bismillahShaped;
+      appendUtf8(bismillahShaped, 0xFDFD);
+      fontCacheManager_->recordArabicText(bismillahShaped.c_str(), bismillahFontId_);
+      return;
+    }
+
+    // Surah banner draws two label runs from resolvedArabicFontId AND a name+
+    // ornament glyph pair from surahBannerFontId_, a DIFFERENT font -- same
+    // multi-font recording need as Bismillah above, just split across both fonts
+    // instead of one.
+    {
+      uint32_t bannerNameCp = 0;
+      std::string rightLabel, leftLabel;
+      if (parseSurahBannerMarker(text, bannerNameCp, rightLabel, leftLabel)) {
+        std::string bannerGlyphs;
+        appendUtf8(bannerGlyphs, bannerNameCp);
+        appendUtf8(bannerGlyphs, SURAH_BANNER_ORNAMENT_CP);
+        fontCacheManager_->recordArabicText(bannerGlyphs.c_str(), surahBannerFontId_);
+
+        // Both labels (word + digits) come from surahBannerLabelFontId_, a
+        // DIFFERENT font than resolvedArabicFontId (see its own comment) --
+        // must record against it, same reasoning as bannerGlyphs above.
+        const auto labelFontIt = fontMap.find(surahBannerLabelFontId_);
+        const EpdFontFamily& labelFont = labelFontIt != fontMap.end() ? labelFontIt->second : font;
+        std::string labelShaped;
+        for (const std::string* label : {&rightLabel, &leftLabel}) {
+          for (const uint32_t cp : ArabicShaper::shapeText(
+                   label->c_str(), [&](uint32_t c) { return labelFont.getGlyph(c, style) != nullptr; })) {
+            if (cp != CARTOUCHE_SPACE_CP) appendUtf8(labelShaped, cp);
+          }
+        }
+        fontCacheManager_->recordArabicText(labelShaped.c_str(), surahBannerLabelFontId_);
+        return;
+      }
+    }
+
     std::string shaped;
     shaped.reserve(64);
     uint32_t digits[3];
@@ -657,17 +932,27 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     if (parseAyahMarker(text, digits, digitCount)) {
       if (font.getGlyph(0x06DD, style) != nullptr) {
         appendUtf8(shaped, 0x06DD);
-        for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
+        // Digits always come from arabicDigitFallbackFontId_ now, even when the
+        // rosette glyph itself comes from the reading font -- see the render
+        // branch's comment for why. Record them against that font, not
+        // resolvedArabicFontId, same "must stay in sync" rule as everywhere else
+        // in this scan.
+        std::string digitsShaped;
+        for (int i = 0; i < digitCount; i++) appendUtf8(digitsShaped, digits[i]);
+        fontCacheManager_->recordArabicText(digitsShaped.c_str(), arabicDigitFallbackFontId_);
       }
       // else: digits come from arabicDigitFallbackFontId_, nothing to record here.
     } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
     } else if (parseCartoucheMarker(text, cartoucheInner)) {
-      for (const uint32_t cp : ArabicShaper::shapeText(cartoucheInner.c_str())) {
+      for (const uint32_t cp : ArabicShaper::shapeText(
+               cartoucheInner.c_str(), [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; })) {
         if (cp != CARTOUCHE_SPACE_CP) appendUtf8(shaped, cp);
       }
     } else {
-      for (const uint32_t cp : ArabicShaper::shapeText(text)) appendUtf8(shaped, cp);
+      for (const uint32_t cp :
+           ArabicShaper::shapeText(text, [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; }))
+        appendUtf8(shaped, cp);
     }
     fontCacheManager_->recordArabicText(shaped.c_str(), resolvedArabicFontId);
     return;
@@ -697,18 +982,29 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     if (parseAyahMarker(text, digits, digitCount)) {
       if (const EpdGlyph* rosette = font.getGlyph(0x06DD, style)) {
         renderCharImpl<TextRotation::None>(*this, renderMode, font, 0x06DD, x, yPos, black, style);
+        // Digits always come from arabicDigitFallbackFontId_ (a known-complete,
+        // properly-sized built-in font), never the reading font -- some reading
+        // fonts' own Arabic-Indic digit glyphs are tiny by design (e.g.
+        // UthmanicHafs's are only ~4-7px at 18pt, next to a ~26px letter), so
+        // drawing them here -- already at half scale via renderCharScaled below --
+        // produced a barely-visible number even though the rosette itself was
+        // correctly sized. Mirrors the fallback branch below, which already got
+        // this right for fonts lacking U+06DD.
+        const auto digitFontIt = fontMap.find(arabicDigitFallbackFontId_);
+        const EpdFontFamily& digitFont = digitFontIt != fontMap.end() ? digitFontIt->second : font;
         int digitsW = 0;
         const int rosetteCenter = rosette->top - rosette->height / 2;  // ink centre above baseline
         for (int i = 0; i < digitCount; i++) {
-          const EpdGlyph* d = font.getGlyph(digits[i], style);
+          const EpdGlyph* d = digitFont.getGlyph(digits[i], style);
           if (d) digitsW += fp4::toPixel(d->advanceX) / 2;
         }
         int dx = x + rosette->left + (std::max(0, rosette->width - digitsW)) / 2;
         for (int i = 0; i < digitCount; i++) {
-          const EpdGlyph* d = font.getGlyph(digits[i], style);
+          const EpdGlyph* d = digitFont.getGlyph(digits[i], style);
           if (!d) continue;
           const int digitCenter = (d->top - d->height / 2) / 2;
-          renderCharScaled(*this, renderMode, font, digits[i], dx, yPos - rosetteCenter + digitCenter, black, style);
+          renderCharScaled(*this, renderMode, digitFont, digits[i], dx, yPos - rosetteCenter + digitCenter, black,
+                            style);
           dx += fp4::toPixel(d->advanceX) / 2;
         }
         return;
@@ -788,8 +1084,9 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     std::string inner;
     if (parseCartoucheMarker(text, inner)) {
       const int ascender = getFontAscenderSize(resolvedArabicFontId);
+      const auto hasGlyph = [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; };
       int innerWidth = 0;
-      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str())) {
+      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str(), hasGlyph)) {
         if (cp == CARTOUCHE_SPACE_CP) {
           innerWidth += cartoucheSpaceWidth(ascender);
           continue;
@@ -810,7 +1107,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
       drawLine(x, midY, x + g.tip, top, kLineWidth, true);
 
       int cursorX = x + (g.width - innerWidth) / 2;
-      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str())) {
+      for (const uint32_t cp : ArabicShaper::shapeText(inner.c_str(), hasGlyph)) {
         if (cp == CARTOUCHE_SPACE_CP) {
           cursorX += cartoucheSpaceWidth(ascender);
           continue;
@@ -824,24 +1121,189 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     }
   }
 
-  int cursorX = x;
-  for (const uint32_t cp : ArabicShaper::shapeText(text)) {
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
-    if (!glyph) continue;
-    renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, cursorX, yPos, black, style);
-    cursorX += fp4::toPixel(glyph->advanceX);
+  // Surah banner: rule lines above/below a row containing the ayah-count label
+  // (right, word over its digits), the calligraphic surah name + shared
+  // ornament glyph (center, sourced from surahBannerFontId_), and the
+  // revelation-order label (left, word over its digits) -- see the reference
+  // Mushaf photo this layout is benchmarked against. Width must match
+  // getArabicTextWidth's surah-banner branch exactly (layout vs render);
+  // vertical layout below is render-only.
+  {
+    uint32_t nameGlyphCp = 0;
+    std::string rightLabel, leftLabel;
+    if (parseSurahBannerMarker(text, nameGlyphCp, rightLabel, leftLabel)) {
+      const auto bannerFontIt = fontMap.find(surahBannerFontId_);
+      if (bannerFontIt == fontMap.end()) return;
+      const EpdFontFamily& bannerFont = bannerFontIt->second;
+      const EpdGlyph* nameGlyph = bannerFont.getGlyph(nameGlyphCp, style);
+      const EpdGlyph* ornamentGlyph = bannerFont.getGlyph(SURAH_BANNER_ORNAMENT_CP, style);
+      if (!nameGlyph || !ornamentGlyph) return;
+      const auto labelFontIt = fontMap.find(surahBannerLabelFontId_);
+      const EpdFontFamily& labelFont = labelFontIt != fontMap.end() ? labelFontIt->second : font;
+      const auto hasLabelGlyph = [&](uint32_t c) { return labelFont.getGlyph(c, style) != nullptr; };
+      const int width = surahBannerWidth(getScreenWidth());
+
+      // Row height: symmetric padding above/below the calligraphy's own ink
+      // bounding box -- glyph->top is ascent above baseline, glyph->height
+      // minus that is descent below it. The labels are drawn from a genuinely
+      // small dedicated font (surahBannerLabelFontId_, see its own comment),
+      // sized to comfortably fit inside this calligraphy-only height.
+      const int calligraphyAscent = std::max(nameGlyph->top, ornamentGlyph->top);
+      const int calligraphyDescent =
+          std::max({nameGlyph->height - nameGlyph->top, ornamentGlyph->height - ornamentGlyph->top, 0});
+      const int labelAscender = getFontAscenderSize(surahBannerLabelFontId_);
+      const int pad = calligraphyAscent / 4;
+      const int top = yPos - calligraphyAscent - pad;
+      const int bottom = yPos + calligraphyDescent + pad;
+      constexpr int kLineWidth = 1;
+      drawLine(x, top, x + width, top, kLineWidth, true);
+      drawLine(x, bottom, x + width, bottom, kLineWidth, true);
+
+      // Label word's top aligns with the calligraphy's own top; digit's
+      // bottom aligns with the calligraphy's own bottom (digits are assumed
+      // to have ~zero descent, true for every built-in Arabic-Indic digit set).
+      const int wordY = (yPos - calligraphyAscent) + labelAscender;
+      const int digitY = yPos + calligraphyDescent;
+      // Inset from the rule lines' own full-bleed edges so the labels don't sit
+      // flush against the physical screen edge -- rough approximation of the
+      // reading column's own margin (not directly available here; the real
+      // value is a user-configurable Activity-level setting).
+      const int labelInset = labelAscender;
+
+      auto drawStackedLabel = [&](const std::string& label, bool flushRight) {
+        std::string word, digits;
+        splitSurahBannerLabel(label, word, digits);
+        int wordWidth = 0;
+        for (const uint32_t cp : ArabicShaper::shapeText(word.c_str(), hasLabelGlyph)) {
+          const EpdGlyph* glyph = labelFont.getGlyph(cp, style);
+          if (glyph) wordWidth += fp4::toPixel(glyph->advanceX);
+        }
+        const int wordX = flushRight ? x + width - labelInset - wordWidth : x + labelInset;
+        int cursorX = wordX;
+        for (const uint32_t cp : ArabicShaper::shapeText(word.c_str(), hasLabelGlyph)) {
+          const EpdGlyph* glyph = labelFont.getGlyph(cp, style);
+          if (!glyph) continue;
+          renderCharImpl<TextRotation::None>(*this, renderMode, labelFont, cp, cursorX, wordY, black, style);
+          cursorX += fp4::toPixel(glyph->advanceX);
+        }
+        if (digits.empty()) return;
+        int digitWidth = 0;
+        for (const uint32_t cp : ArabicShaper::shapeText(digits.c_str(), hasLabelGlyph)) {
+          const EpdGlyph* glyph = labelFont.getGlyph(cp, style);
+          if (glyph) digitWidth += fp4::toPixel(glyph->advanceX);
+        }
+        cursorX = wordX + (wordWidth - digitWidth) / 2;
+        for (const uint32_t cp : ArabicShaper::shapeText(digits.c_str(), hasLabelGlyph)) {
+          const EpdGlyph* glyph = labelFont.getGlyph(cp, style);
+          if (!glyph) continue;
+          renderCharImpl<TextRotation::None>(*this, renderMode, labelFont, cp, cursorX, digitY, black, style);
+          cursorX += fp4::toPixel(glyph->advanceX);
+        }
+      };
+      drawStackedLabel(rightLabel, /*flushRight=*/true);
+      drawStackedLabel(leftLabel, /*flushRight=*/false);
+
+      // Calligraphy pair: name glyph then the shared ornament, centered in the
+      // full row width, sharing the same baseline (yPos) as the labels.
+      const int calligraphyWidth = fp4::toPixel(nameGlyph->advanceX) + fp4::toPixel(ornamentGlyph->advanceX);
+      int cursorX = x + (width - calligraphyWidth) / 2;
+      renderCharImpl<TextRotation::None>(*this, renderMode, bannerFont, nameGlyphCp, cursorX, yPos, black, style);
+      cursorX += fp4::toPixel(nameGlyph->advanceX);
+      renderCharImpl<TextRotation::None>(*this, renderMode, bannerFont, SURAH_BANNER_ORNAMENT_CP, cursorX, yPos, black,
+                                        style);
+      return;
+    }
+  }
+
+  // Bismillah: a single glyph (the real U+FDFD ligature) sourced from
+  // bismillahFontId_, NOT the resolved Arabic font above -- UthmanicHafs itself
+  // has no glyph for U+FDFD. Drawn at BISMILLAH_SCALE_NUM/DEN via
+  // renderCharUpscaled (see its comment) since the baked glyph is already at
+  // the format's size cap. Width must match getArabicTextWidth's Bismillah
+  // branch exactly (layout vs render).
+  if (parseBismillahMarker(text)) {
+    const auto bismillahFontIt = fontMap.find(bismillahFontId_);
+    if (bismillahFontIt == fontMap.end()) return;
+    if (bismillahFontIt->second.getGlyph(0xFDFD, style) == nullptr) return;
+    renderCharUpscaled(*this, renderMode, bismillahFontIt->second, 0xFDFD, x, yPos, black, style, BISMILLAH_SCALE_NUM,
+                       BISMILLAH_SCALE_DEN);
+    return;
+  }
+
+  {
+    const auto hasGlyphFn = [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; };
+    int tatweelPx = 0;
+    if (kashidaExtraPx > 0) {
+      if (const EpdGlyph* tatweel = font.getGlyph(0x0640, style)) tatweelPx = fp4::toPixel(tatweel->advanceX);
+    }
+    const auto cps = tatweelPx > 0 ? ArabicShaper::shapeTextWithKashida(text, kashidaExtraPx, tatweelPx, hasGlyphFn)
+                                    : ArabicShaper::shapeText(text, hasGlyphFn);
+    int cursorX = x;
+    // Tracks the most recently drawn NON-mark glyph, as a fallback anchor for a
+    // diacritic whose forward lookahead (below) finds no base -- e.g. a mark that
+    // ends up as the very last codepoint in this call's visual order, with no
+    // following glyph at all (can happen at a word/line boundary depending on how
+    // upstream tokenization split the text). Mirrors the Latin/Hebrew combining-mark
+    // path elsewhere in this file, which always centers backward over the last-drawn
+    // base for exactly this reason.
+    int lastBaseCursorX = cursorX;
+    int lastBaseLeft = 0;
+    int lastBaseWidth = 0;
+    bool haveLastBase = false;
+    for (size_t i = 0; i < cps.size(); i++) {
+      const uint32_t cp = cps[i];
+      const EpdGlyph* glyph = font.getGlyph(cp, style);
+      if (!glyph) continue;
+
+      // Diacritics carry zero advance and only a small natural bitmap_left -- true
+      // horizontal centering depends on the base letter's width, which varies letter
+      // to letter and can't be baked per-mark at font-conversion time. RTL visual
+      // reordering places each mark's base letter immediately AFTER it in draw order
+      // (skipping over any other marks stacked on the same base), the mirror image of
+      // the Latin/Hebrew combining-mark path elsewhere in this file (which centers
+      // over the PREVIOUS glyph, since there the base is drawn first). Without this
+      // lookahead, marks render at the joining gap before the next letter instead of
+      // over their own base -- tashkeel trailing after the word instead of on it.
+      const bool isMark = ArabicShaper::isArabicDiacritic(cp);
+      int drawX = cursorX;
+      if (isMark) {
+        size_t baseIdx = i + 1;
+        while (baseIdx < cps.size() && ArabicShaper::isArabicDiacritic(cps[baseIdx])) baseIdx++;
+        if (baseIdx < cps.size()) {
+          if (const EpdGlyph* baseGlyph = font.getGlyph(cps[baseIdx], style)) {
+            drawX = combiningMark::centerOver(cursorX, baseGlyph->left, baseGlyph->width, glyph->left, glyph->width);
+          }
+        } else if (haveLastBase) {
+          // No base found ahead (this mark is the last glyph in the call) -- fall
+          // back to centering over the last-drawn base instead of the default,
+          // uncentered cursorX.
+          drawX =
+              combiningMark::centerOver(lastBaseCursorX, lastBaseLeft, lastBaseWidth, glyph->left, glyph->width);
+        }
+      }
+
+      renderCharImpl<TextRotation::None>(*this, renderMode, font, cp, drawX, yPos, black, style);
+      if (!isMark) {
+        lastBaseCursorX = cursorX;
+        lastBaseLeft = glyph->left;
+        lastBaseWidth = glyph->width;
+        haveLastBase = true;
+      }
+      cursorX += fp4::toPixel(glyph->advanceX);
+    }
   }
 }
 
 void GfxRenderer::drawText(const int fontId, const int x, const int y, const char* text, const bool black,
-                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
+                           const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir,
+                           const int kashidaExtraPx) const {
   // cannot draw a NULL / empty string
   if (text == nullptr || *text == '\0') {
     return;
   }
 
   if (ScriptDetector::containsArabic(text)) {
-    drawArabicText(fontId, x, y, text, black, style);
+    drawArabicText(fontId, x, y, text, black, style, kashidaExtraPx);
     return;
   }
 
@@ -2101,6 +2563,26 @@ int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style styl
 
   const EpdGlyph* spaceGlyph = fontIt->second.getGlyph(' ', style);
   return spaceGlyph ? fp4::toPixel(spaceGlyph->advanceX) : 0;  // snap 12.4 fixed-point to nearest pixel
+}
+
+// Layout-time query for kashida justification (see ParsedText::computeJustifyPlan):
+// the fixed per-glyph width of the active Arabic font's own U+0640 TATWEEL glyph, or
+// 0 if the font has none -- callers use 0 as "this font can't do kashida, fall back
+// to inter-word gap stretching entirely."
+int GfxRenderer::getKashidaGlyphWidth(const int fontId, const EpdFontFamily::Style style) const {
+  const auto fontIt = fontMap.find(resolveArabicFontId(fontId));
+  if (fontIt == fontMap.end()) return 0;
+  const EpdGlyph* tatweel = fontIt->second.getGlyph(0x0640, style);
+  return tatweel ? fp4::toPixel(tatweel->advanceX) : 0;
+}
+
+// Layout-time query: does this single word contain a legal kashida insertion point
+// in the active Arabic font? See ArabicShaper::hasKashidaPoint for the exact rule.
+bool GfxRenderer::wordHasKashidaPoint(const int fontId, const char* word, const EpdFontFamily::Style style) const {
+  const auto fontIt = fontMap.find(resolveArabicFontId(fontId));
+  if (fontIt == fontMap.end()) return false;
+  const auto& font = fontIt->second;
+  return ArabicShaper::hasKashidaPoint(word, [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; });
 }
 
 int GfxRenderer::getSpaceAdvance(const int fontId, const uint32_t leftCp, const uint32_t rightCp,

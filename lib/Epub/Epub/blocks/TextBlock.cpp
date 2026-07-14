@@ -10,11 +10,15 @@
 #include <algorithm>
 #include <cstring>
 
-size_t TextBlock::arenaSize(const uint16_t wordCount, const bool hasFocus, const uint16_t textBytes) {
+size_t TextBlock::arenaSize(const uint16_t wordCount, const bool hasFocus, const bool hasKashida,
+                            const uint16_t textBytes) {
   // Layout documented in TextBlock.h: 16-bit arrays first, then 8-bit arrays, then text.
   size_t size = static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(int16_t) + sizeof(uint8_t));
   if (hasFocus) {
     size += static_cast<size_t>(wordCount) * (sizeof(uint16_t) + sizeof(uint8_t));
+  }
+  if (hasKashida) {
+    size += static_cast<size_t>(wordCount) * sizeof(uint16_t);
   }
   return size + textBytes;
 }
@@ -29,6 +33,10 @@ void TextBlock::bindArenaPointers() {
     focusSuffixXArr = reinterpret_cast<const uint16_t*>(base + off);
     off += wc * 2;
   }
+  if (kashidaPresent) {
+    kashidaExtraPxArr = reinterpret_cast<const uint16_t*>(base + off);
+    off += wc * 2;
+  }
   stylesArr = base + off;
   off += wc;
   if (focusPresent) {
@@ -40,23 +48,29 @@ void TextBlock::bindArenaPointers() {
 
 TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<int16_t>& wordXpos,
                      const std::vector<EpdFontFamily::Style>& wordStyles, const std::vector<uint8_t>& focusBoundary,
-                     const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle)
+                     const std::vector<uint16_t>& focusSuffixX, const BlockStyle& blockStyle,
+                     const std::vector<uint16_t>& kashidaExtraPx)
     : blockStyle(blockStyle) {
-  // Focus annotations are optional: empty vectors mean no word in this block has a split.
-  // When present, they must be sized in lockstep with words[].
+  // Focus and kashida annotations are both optional: empty vectors mean no word in
+  // this block has one. When present, they must be sized in lockstep with words[].
   const bool hasFocus = !focusBoundary.empty();
+  const bool hasKashida = !kashidaExtraPx.empty();
   if (words.size() != wordXpos.size() || words.size() != wordStyles.size() || words.size() > 10000 ||
-      (hasFocus && (words.size() != focusBoundary.size() || words.size() != focusSuffixX.size()))) {
-    LOG_ERR("TXB", "Construction failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u)",
+      (hasFocus && (words.size() != focusBoundary.size() || words.size() != focusSuffixX.size())) ||
+      (hasKashida && words.size() != kashidaExtraPx.size())) {
+    LOG_ERR("TXB",
+            "Construction failed: size mismatch (words=%u, xpos=%u, styles=%u, boundary=%u, suffixX=%u, "
+            "kashida=%u)",
             static_cast<uint32_t>(words.size()), static_cast<uint32_t>(wordXpos.size()),
             static_cast<uint32_t>(wordStyles.size()), static_cast<uint32_t>(focusBoundary.size()),
-            static_cast<uint32_t>(focusSuffixX.size()));
+            static_cast<uint32_t>(focusSuffixX.size()), static_cast<uint32_t>(kashidaExtraPx.size()));
     isValid = false;
     return;
   }
 
   numWords = static_cast<uint16_t>(words.size());
   focusPresent = hasFocus;
+  kashidaPresent = hasKashida;
   if (numWords == 0) {
     return;  // valid empty block, no arena
   }
@@ -69,18 +83,20 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
     LOG_ERR("TXB", "Construction failed: text size %u exceeds arena limit", static_cast<uint32_t>(totalText));
     numWords = 0;
     focusPresent = false;
+    kashidaPresent = false;
     isValid = false;
     return;
   }
   textBytes = static_cast<uint16_t>(totalText);
 
-  const size_t size = arenaSize(numWords, focusPresent, textBytes);
+  const size_t size = arenaSize(numWords, focusPresent, kashidaPresent, textBytes);
   arena = makeUniqueNoThrow<uint8_t[]>(size);
   if (!arena) {
     LOG_ERR("TXB", "OOM: arena %u bytes", static_cast<uint32_t>(size));
     numWords = 0;
     textBytes = 0;
     focusPresent = false;
+    kashidaPresent = false;
     isValid = false;
     return;
   }
@@ -106,6 +122,12 @@ TextBlock::TextBlock(const std::vector<std::string>& words, const std::vector<in
     for (uint16_t i = 0; i < numWords; i++) {
       suffixX[i] = focusSuffixX[i];
       boundary[i] = focusBoundary[i];
+    }
+  }
+  if (kashidaPresent) {
+    auto* kashida = const_cast<uint16_t*>(kashidaExtraPxArr);
+    for (uint16_t i = 0; i < numWords; i++) {
+      kashida[i] = kashidaExtraPx[i];
     }
   }
 }
@@ -207,11 +229,15 @@ void TextBlock::render(const GfxRenderer& renderer, const int fontId, const int 
           std::min<size_t>({static_cast<size_t>(boundary), static_cast<size_t>(wordTextLen(i)), sizeof(boldBuf) - 1});
       memcpy(boldBuf, word, boldLen);
       boldBuf[boldLen] = '\0';
+      // Kashida applies once per word: the bold prefix and regular suffix are two
+      // separate drawText calls from the same word entry, so only the suffix (the
+      // second, trailing call) carries kashidaExtraPx -- giving it to both would
+      // double the extra width actually rendered vs. what layout accounted for.
       renderer.drawText(fontId, wordX, wordY, boldBuf, true, boldStyle, baseDir);
       const int suffixX = wordX + focusSuffixXArr[i];
-      renderer.drawText(fontId, suffixX, wordY, word + boldLen, true, currentStyle, baseDir);
+      renderer.drawText(fontId, suffixX, wordY, word + boldLen, true, currentStyle, baseDir, kashidaExtraPx(i));
     } else {
-      renderer.drawText(fontId, wordX, wordY, word, true, currentStyle, baseDir);
+      renderer.drawText(fontId, wordX, wordY, word, true, currentStyle, baseDir, kashidaExtraPx(i));
     }
 
     if (scanning) {
@@ -271,9 +297,10 @@ bool TextBlock::serialize(HalFile& file) const {
   // per-word arrays and the text blob.
   serialization::writePod(file, numWords);
   serialization::writePod(file, static_cast<uint8_t>(focusPresent ? 1 : 0));
+  serialization::writePod(file, static_cast<uint8_t>(kashidaPresent ? 1 : 0));
   serialization::writePod(file, textBytes);
   if (numWords > 0) {
-    const size_t size = arenaSize(numWords, focusPresent, textBytes);
+    const size_t size = arenaSize(numWords, focusPresent, kashidaPresent, textBytes);
     if (file.write(arena.get(), size) != size) {
       LOG_ERR("TXB", "Serialization failed: arena write (%u bytes)", static_cast<uint32_t>(size));
       return false;
@@ -302,9 +329,11 @@ bool TextBlock::serialize(HalFile& file) const {
 std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   uint16_t wc;
   uint8_t hasFocus;
+  uint8_t hasKashida;
   uint16_t textBytes;
   serialization::readPod(file, wc);
   serialization::readPod(file, hasFocus);
+  serialization::readPod(file, hasKashida);
   serialization::readPod(file, textBytes);
 
   // Sanity checks: cap the arena allocation and reject impossible geometry
@@ -326,9 +355,10 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   block->numWords = wc;
   block->textBytes = textBytes;
   block->focusPresent = hasFocus != 0;
+  block->kashidaPresent = hasKashida != 0;
 
   if (wc > 0) {
-    const size_t size = arenaSize(wc, block->focusPresent, textBytes);
+    const size_t size = arenaSize(wc, block->focusPresent, block->kashidaPresent, textBytes);
     block->arena = makeUniqueNoThrow<uint8_t[]>(size);
     if (!block->arena) {
       LOG_ERR("TXB", "OOM: arena %u bytes", static_cast<uint32_t>(size));
