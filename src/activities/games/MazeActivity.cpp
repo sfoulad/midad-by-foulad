@@ -496,7 +496,12 @@ void MazeActivity::render(RenderLock&&) {
           return descs[i];
         });
 
-    auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_GENERATE), "", "");
+    // Size list is 2-way NavNext/NavPrevious (see buttonNavigator_.onNext/
+    // onPrevious above), which the front Left/Right buttons drive as an
+    // alternate path to the side Up/Down buttons -- label them "Up"/"Down"
+    // to match what they actually do here, same convention GamesMenuActivity
+    // uses for its own list.
+    auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_GENERATE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
     return;
@@ -584,8 +589,10 @@ void MazeActivity::render(RenderLock&&) {
     auto labels = mappedInput.mapLabels(tr(STR_STOP), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else {
-    // PLAYING
-    auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_SOLVE), "", "");
+    // PLAYING -- Left/Right move the player horizontally (Up/Down move
+    // vertically via the side buttons, which never get hint-bar labels in
+    // this app -- same convention as Snake/Tetris/Sudoku).
+    auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_SOLVE), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
 

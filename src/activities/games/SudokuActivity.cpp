@@ -256,7 +256,10 @@ void SudokuActivity::render(RenderLock&&) {
   }
 
   if (state == PLAYING) {
-    const auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_CONFIRM), "", "");
+    // Left/Right move the cursor horizontally (Up/Down move it vertically via
+    // the side buttons, which never get hint-bar labels in this app -- same
+    // convention as Snake/Tetris/Maze).
+    const auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_CONFIRM), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
     GUI.drawButtonHints(renderer, labels.btn1, tr(STR_HOLD_TO_SOLVE), labels.btn3, labels.btn4);
   } else {
     const auto labels = mappedInput.mapLabels(tr(STR_EXIT), tr(STR_NEW_GAME), "", "");
