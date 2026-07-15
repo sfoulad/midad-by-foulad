@@ -16,6 +16,7 @@
 #include "CrossPointSettings.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
+#include "activities/games/GamesMenuActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
@@ -24,6 +25,11 @@
 #include "util/GridNav.h"
 
 namespace {
+// Sentinel "path" for the synthetic Games tile (see SETTINGS.gamesEnabled) --
+// never a real SD file, so it's always skipped by every coverBmpPath-driven
+// EPUB/XTC load path below (empty cover, no matching extension). Tapping it
+// is special-cased in loop() to open GamesMenuActivity instead of the reader.
+constexpr const char* GAMES_PSEUDO_PATH = "/Games";
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
@@ -140,6 +146,21 @@ void RecentBooksActivity::loadRecentBooks() {
   recentBooks.insert(recentBooks.end(), std::make_move_iterator(discovered.begin()),
                      std::make_move_iterator(discovered.end()));
 
+  // Pinned Games: synthetic tile (GAMES_PSEUDO_PATH is never a real SD file)
+  // shown right after Quran when enabled in Settings -> System -- opens
+  // GamesMenuActivity instead of the reader (see loop()'s special-case).
+  // Inserted at the front BEFORE the Quran block below, so Quran's own
+  // unconditional front-insert naturally pushes Games to the second slot.
+  if (SETTINGS.gamesEnabled) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == GAMES_PSEUDO_PATH; }),
+                      recentBooks.end());
+    RecentBook games;
+    games.path = GAMES_PSEUDO_PATH;
+    games.title = tr(STR_GAMES);
+    recentBooks.insert(recentBooks.begin(), std::move(games));
+  }
+
   // Pinned Quran: when enabled in Settings -> System (and extracted), it is
   // always the FIRST book -- drop whatever entry the scan/recents produced for
   // it and re-insert at the front with its canonical Arabic title.
@@ -194,6 +215,7 @@ void RecentBooksActivity::loop() {
   // cf. FileBrowserActivity BACK long-press).
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
       recentBooks[selectorIndex].path != QuranBook::PATH &&
+      recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -203,6 +225,11 @@ void RecentBooksActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!recentBooks.empty() && selectorIndex < static_cast<int>(recentBooks.size())) {
       LOG_DBG("RBA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
+      if (recentBooks[selectorIndex].path == GAMES_PSEUDO_PATH) {
+        startActivityForResult(std::make_unique<GamesMenuActivity>(renderer, mappedInput),
+                               [](const ActivityResult&) {});
+        return;
+      }
       onSelectBook(recentBooks[selectorIndex].path);
       return;
     }

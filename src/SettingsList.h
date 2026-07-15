@@ -295,6 +295,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // firmware-embedded EPUB to SD when this turns on (QuranBook::ensureExtracted).
         SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled",
                             StrId::STR_CAT_SYSTEM),
+        // Games toggle: pins a "Games" tile in My Books (see GAMES_PSEUDO_PATH in
+        // RecentBooksActivity.cpp) that opens a Snake/Tetris picker. No extraction
+        // step needed -- unlike Quran, nothing but the toggle itself is required.
+        SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled",
+                            StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles, "showHiddenFiles",
                             StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_REMOVE_READ_FROM_RECENTS, &CrossPointSettings::removeReadBooksFromRecents,

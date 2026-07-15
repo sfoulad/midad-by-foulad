@@ -291,6 +291,12 @@ class CrossPointSettings {
   // to SD and pinned as the first book in My Books (see QuranBook.h).
   uint8_t quranEnabled = 0;
 
+  // Settings -> System -> Games: pins a synthetic "Games" tile in My Books
+  // (see GAMES_PSEUDO_PATH in RecentBooksActivity.cpp) that opens a picker for
+  // the built-in Snake/Tetris activities. No SD extraction needed (unlike
+  // Quran) -- the games are compiled into the firmware directly.
+  uint8_t gamesEnabled = 0;
+
   // --- Per-book reading overrides (RAM ONLY -- never serialized) ---
   // Applied by EpubReaderActivity from the book's own settings file (see
   // BookReaderSettings) on open and cleared on exit, so every consumer of the
