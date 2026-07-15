@@ -1,20 +1,83 @@
-# Foulad eInk
+<h1 align="center">Foulad eInk</h1>
+<p align="center"><b>An e-reader built around Arabic.</b></p>
+<p align="center">
+  Foulad eInk is a free, open-source firmware for Xteink e-ink readers — a fork of
+  <a href="https://github.com/crosspoint-reader/crosspoint-reader">CrossPoint Reader</a>, rebuilt so Arabic, and the
+  languages that share its script, read the way they're supposed to. It updates itself over the air, straight from
+  this repository.
+</p>
+<p align="center">
+  <i>Runs on Xteink <a href="https://www.xteink.com/products/xteink-x4">X4</a> and
+  <a href="https://www.xteink.com/products/xteink-x3">X3</a>.</i>
+</p>
 
-**An Arabic-first e-reader firmware.** Foulad eInk is a personal fork of [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader), the open-source e-reader firmware for ESP32-C3-based Xteink devices, rebuilt around one goal: making Arabic reading on pocket e-ink hardware feel native — full Arabic UI, proper letter shaping in book text, a bundled Naskh reading font, and a direct line to a self-hosted [Foulad eBooks](https://github.com/sfoulad/foulad-ebooks) [OPDS](https://opds.io/) library. It updates itself over the air from this repository's own GitHub releases.
+<br>
 
-**Runs on:** ESP32C3-based Xteink [X4](https://www.xteink.com/products/xteink-x4) and [X3](https://www.xteink.com/products/xteink-x3).
+<p align="center">
+  <img src="./docs/images/home.png" width="380" alt="Foulad eInk home screen">
+</p>
+<h3 align="center">Everything, from one screen.</h3>
+<p align="center">
+  Pick up where you left off, browse your library, and check your reading stats — a home screen designed to get out
+  of your way.
+</p>
 
-![Reading an Arabic EPUB on Foulad eInk (Xteink X4)](./docs/images/reading-arabic.jpg)
+<br>
 
-## Arabic, first-class
+<p align="center">
+  <img src="./docs/images/reading.png" width="380" alt="Reading the Quran on Foulad eInk">
+</p>
+<h3 align="center">Reads Arabic like it was made for it.</h3>
+<p align="center">
+  Correct letter shaping, right-to-left layout, and a bundled Quran in full Uthmani script with proper ayah markers.
+  The same engine reads Persian, Ottoman Turkish, and Kurdish text correctly too.
+</p>
 
-Most e-reader firmware treats Arabic as an afterthought; here it's the point.
+<br>
 
-- **Full Arabic UI** — switch the device language to Arabic and every screen, menu, and setting is translated.
-- **True RTL mirroring** — the home screen, settings rows, lists, and hint bars all flip layout in Arabic, and even the **physical page-turn buttons swap direction** so "forward" is always where your thumb expects it.
-- **Correct Arabic text rendering everywhere** — contextual letter shaping (isolated/initial/medial/final forms, lam-alef and Allah ligatures) plus bidirectional text handling for numbers and mixed Arabic/Latin lines, in book body text, titles, chapter lists, and filenames alike.
-- **Bundled Naskh reading font** — Noto Naskh Arabic ships in the firmware at all reading sizes (with word spacing tuned per size so large text never runs together), and Noto Sans Arabic covers UI text. No SD-card font setup needed to start reading Arabic.
-- **Arabic-aware layout** — right-aligned Arabic titles, dynamic row heights so tall Arabic glyphs never clip, and Arabic-Indic digit support.
+<p align="center">
+  <img src="./docs/images/stats.png" width="380" alt="Reading statistics on Foulad eInk">
+</p>
+<h3 align="center">See your reading, at a glance.</h3>
+<p align="center">
+  Daily streaks, a monthly heatmap, and per-book progress — set a daily goal and watch it add up.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="./docs/images/games.png" width="380" alt="Sudoku on Foulad eInk">
+</p>
+<h3 align="center">Take a break.</h3>
+<p align="center">
+  Snake, Tetris, Sudoku, and Maze — built right into the device, no download required.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="./docs/images/devices.png" width="700" alt="Foulad eInk running on Xteink X4 and X3">
+</p>
+<h3 align="center">One firmware, both devices.</h3>
+<p align="center">
+  Foulad eInk runs natively on the Xteink X4 and X3, adapting to each device's screen and buttons automatically.
+</p>
+
+<br>
+
+---
+
+## Highlights
+
+- **A fully Arabic interface** — mirrored, translated, and with page-turn buttons that swap direction automatically so "forward" is always where your thumb expects it.
+- **Reads Arabic, Persian, Ottoman Turkish, and Kurdish correctly** — proper contextual letter shaping and right-to-left text, in full book text, titles, and filenames alike.
+- **A bundled Quran** — Uthmani script, ayah and surah markers, and justified lines that stretch the way a real mushaf does.
+- **Foulad eBooks** — connect to a self-hosted library and browse it as a cover grid, right from the home screen.
+- **Reading stats** — streaks, a monthly heatmap, and per-book progress.
+- **Four built-in games** — Snake, Tetris, Sudoku, and Maze.
+- **Everything else CrossPoint Reader does** — EPUB/XTC/TXT support, custom fonts, Wi-Fi file transfer, OPDS library browsing, and more. See [What can it do?](#what-can-it-do) below for the full list.
+
+---
 
 ## What can it do?
 
@@ -23,6 +86,8 @@ Everything CrossPoint Reader can do, reshaped around this fork's additions:
 - **Foulad home screen**: a hero card for the book you're reading (cover, progress bar, time read and estimated time left), a "My Books" row of recent covers, and a bottom icon menu with physical-button hints.
 
 - **Reading statistics**: total and per-day reading time, a monthly heatmap of your reading activity, per-book time tracking, and a configurable daily reading goal.
+
+- **Built-in games**: Snake, Tetris, Sudoku, and Maze, pinned as their own tile in your library — no setup, nothing to install.
 
 - **Foulad eBooks**: a dedicated home-screen entry that opens a self-hosted OPDS catalog directly — cover-grid browsing, search, pagination, and one-tap downloads that keep the catalog's cover art. No manual server setup beyond a one-time username/password prompt on first use.
 
@@ -48,7 +113,7 @@ Everything CrossPoint Reader can do, reshaped around this fork's additions:
   - OPDS browser with saved servers (up to 8), search, pagination, and direct download
   - OTA update checks and installs from this repo's GitHub releases — the updater restarts the device into a clean-memory state before downloading, so updates install reliably even after long reading sessions
 
-- **Lean firmware**: trimmed to the two languages it's actually for (English and Arabic) and a curated font set (Noto Serif for Latin reading, Noto Naskh Arabic for Arabic) — the whole image is ~4.2 MB, which keeps OTA updates fast.
+- **Lean firmware**: trimmed to the two languages it's actually for (English and Arabic) and a curated font set (Noto Serif for Latin reading, Noto Naskh Arabic for Arabic) — the whole image is a few MB, which keeps OTA updates fast.
 
 - **Customization**: sleep screen modes, front/side button remapping, status bar controls, power-button behavior, refresh cadence, sunlight fading fix, and more.
 
