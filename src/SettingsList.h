@@ -286,20 +286,25 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
                             "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS),
 
+        // --- Apps ---
+        // Quran toggle: SettingsActivity::toggleCurrentSetting() extracts the
+        // firmware-embedded EPUB to SD when this turns on (QuranBook::ensureExtracted).
+        SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled",
+                            StrId::STR_CAT_APPS),
+        // Games toggle: pins a "Games" tile in My Books (see GAMES_PSEUDO_PATH in
+        // RecentBooksActivity.cpp) that opens a Snake/Tetris picker. No extraction
+        // step needed -- unlike Quran, nothing but the toggle itself is required.
+        SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled",
+                            StrId::STR_CAT_APPS),
+        // KOReader Sync itself is a device-only ACTION appended in
+        // SettingsActivity::rebuildSettingsLists() (web-only, uses
+        // KOReaderCredentialStore) -- see the comment further below.
+
         // --- System ---
         SettingInfo::Value(
             StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
             {CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1},
             "sleepTimeoutMinutes", StrId::STR_CAT_SYSTEM),
-        // Quran toggle: SettingsActivity::toggleCurrentSetting() extracts the
-        // firmware-embedded EPUB to SD when this turns on (QuranBook::ensureExtracted).
-        SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled",
-                            StrId::STR_CAT_SYSTEM),
-        // Games toggle: pins a "Games" tile in My Books (see GAMES_PSEUDO_PATH in
-        // RecentBooksActivity.cpp) that opens a Snake/Tetris picker. No extraction
-        // step needed -- unlike Quran, nothing but the toggle itself is required.
-        SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled",
-                            StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles, "showHiddenFiles",
                             StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_REMOVE_READ_FROM_RECENTS, &CrossPointSettings::removeReadBooksFromRecents,

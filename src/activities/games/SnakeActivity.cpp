@@ -116,26 +116,53 @@ void SnakeActivity::loop() {
     return;
   }
 
-  // Direction input - prevent reversal
-  if (mappedInput.wasPressed(MappedInputManager::Button::Up) && dirY == 0) {
-    nextDirX = 0;
-    nextDirY = -1;
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Down) && dirY == 0) {
-    nextDirX = 0;
-    nextDirY = 1;
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Left) && dirX == 0) {
-    nextDirX = -1;
-    nextDirY = 0;
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Right) && dirX == 0) {
-    nextDirX = 1;
-    nextDirY = 0;
+  if (state == PAUSED) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      // Resume: re-baseline the step timer so the real time spent paused
+      // doesn't register as one giant elapsed step (which would otherwise
+      // make the snake jump forward multiple cells the instant play resumes).
+      state = PLAYING;
+      lastStepMs = millis();
+      requestUpdate();
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      finish();
+    }
+    return;
   }
 
+  // Direction input - prevent reversal. Routed through ButtonNavigator's
+  // logical Up/Down/Left/Right (same idiom as the My Books grid) instead of
+  // raw MappedInputManager checks, so remapped/orientation-swapped buttons
+  // still turn the snake correctly.
+  buttonNavigator_.onRelease({MappedInputManager::Button::Up}, [this] {
+    if (dirY == 0) {
+      nextDirX = 0;
+      nextDirY = -1;
+    }
+  });
+  buttonNavigator_.onRelease({MappedInputManager::Button::Down}, [this] {
+    if (dirY == 0) {
+      nextDirX = 0;
+      nextDirY = 1;
+    }
+  });
+  buttonNavigator_.onRelease({MappedInputManager::Button::Left}, [this] {
+    if (dirX == 0) {
+      nextDirX = -1;
+      nextDirY = 0;
+    }
+  });
+  buttonNavigator_.onRelease({MappedInputManager::Button::Right}, [this] {
+    if (dirX == 0) {
+      nextDirX = 1;
+      nextDirY = 0;
+    }
+  });
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
+    state = PAUSED;
+    requestUpdate();
     return;
   }
 
@@ -153,6 +180,10 @@ void SnakeActivity::render(RenderLock&&) {
   switch (state) {
     case PLAYING:
       renderPlaying();
+      break;
+    case PAUSED:
+      renderPlaying();
+      renderPaused();
       break;
     case GAME_OVER:
       renderGameOver();
@@ -225,7 +256,27 @@ void SnakeActivity::renderPlaying() const {
   snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Length: %d", score, (int)snake.size());
   renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, scoreY, scoreBuf, true, EpdFontFamily::BOLD);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+  const auto labels = mappedInput.mapLabels(tr(STR_PAUSE), "", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
+void SnakeActivity::renderPaused() const {
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+
+  // Dim the frozen game board behind a centered panel so it's clear play is
+  // suspended, not lost.
+  const int panelW = pageWidth * 3 / 4;
+  const int panelH = 120;
+  const int panelX = (pageWidth - panelW) / 2;
+  const int panelY = (pageHeight - panelH) / 2;
+  renderer.fillRect(panelX, panelY, panelW, panelH, false);
+  renderer.drawRect(panelX, panelY, panelW, panelH);
+  renderer.drawRect(panelX + 2, panelY + 2, panelW - 4, panelH - 4);
+
+  renderer.drawCenteredText(UI_12_FONT_ID, panelY + 20, tr(STR_PAUSED), true, EpdFontFamily::BOLD);
+
+  const auto labels = mappedInput.mapLabels(tr(STR_QUIT), tr(STR_RESUME), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 

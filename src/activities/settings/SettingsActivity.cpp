@@ -36,12 +36,14 @@
 #include "fontIds.h"
 
 const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
-                                                              StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
+                                                              StrId::STR_CAT_CONTROLS, StrId::STR_CAT_APPS,
+                                                              StrId::STR_CAT_SYSTEM};
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
   readerSettings.clear();
   controlsSettings.clear();
+  appsSettings.clear();
   systemSettings.clear();
 
   // Pick up any fonts uploaded/deleted over the web server since the last
@@ -60,6 +62,8 @@ void SettingsActivity::rebuildSettingsLists() {
         continue;
       }
       controlsSettings.push_back(setting);
+    } else if (setting.category == StrId::STR_CAT_APPS) {
+      appsSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_SYSTEM) {
       systemSettings.push_back(setting);
     }
@@ -68,8 +72,8 @@ void SettingsActivity::rebuildSettingsLists() {
   // Append device-only ACTION items
   controlsSettings.insert(controlsSettings.begin(),
                           SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
+  appsSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
@@ -112,6 +116,9 @@ void SettingsActivity::rebuildSettingsLists() {
       currentSettings = &controlsSettings;
       break;
     case 3:
+      currentSettings = &appsSettings;
+      break;
+    case 4:
       currentSettings = &systemSettings;
       break;
   }
@@ -206,6 +213,9 @@ void SettingsActivity::loop() {
         currentSettings = &controlsSettings;
         break;
       case 3:
+        currentSettings = &appsSettings;
+        break;
+      case 4:
         currentSettings = &systemSettings;
         break;
     }

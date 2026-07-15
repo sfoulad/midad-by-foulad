@@ -182,27 +182,65 @@ void TetrisActivity::loop() {
     return;
   }
 
-  // Input
-  if (mappedInput.wasPressed(MappedInputManager::Button::Left)) {
+  if (state == PAUSED) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      // Resume: re-baseline the drop timer so the real time spent paused
+      // doesn't count as elapsed drop time (which would otherwise slam the
+      // piece down through the board the instant play resumes).
+      state = PLAYING;
+      lastDropMs = millis();
+      requestUpdate();
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      finish();
+    }
+    return;
+  }
+
+  // Movement/soft-drop repeat while held; rotate and hard-drop stay
+  // single-press. Routed through ButtonNavigator's logical Left/Right/Down
+  // (same idiom as the My Books grid) instead of raw MappedInputManager
+  // checks, so remapped/orientation-swapped buttons still move the piece
+  // correctly.
+  buttonNavigator_.onRelease({MappedInputManager::Button::Left}, [this] {
     if (canPlace(currentPiece, currentRotation, pieceX - 1, pieceY)) {
       pieceX--;
       requestUpdate();
     }
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Right)) {
+  });
+  buttonNavigator_.onContinuous({MappedInputManager::Button::Left}, [this] {
+    if (canPlace(currentPiece, currentRotation, pieceX - 1, pieceY)) {
+      pieceX--;
+      requestUpdate();
+    }
+  });
+  buttonNavigator_.onRelease({MappedInputManager::Button::Right}, [this] {
     if (canPlace(currentPiece, currentRotation, pieceX + 1, pieceY)) {
       pieceX++;
       requestUpdate();
     }
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
+  });
+  buttonNavigator_.onContinuous({MappedInputManager::Button::Right}, [this] {
+    if (canPlace(currentPiece, currentRotation, pieceX + 1, pieceY)) {
+      pieceX++;
+      requestUpdate();
+    }
+  });
+  buttonNavigator_.onRelease({MappedInputManager::Button::Down}, [this] {
     // Soft drop
     if (canPlace(currentPiece, currentRotation, pieceX, pieceY + 1)) {
       pieceY++;
       score += 1;
       requestUpdate();
     }
-  }
+  });
+  buttonNavigator_.onContinuous({MappedInputManager::Button::Down}, [this] {
+    if (canPlace(currentPiece, currentRotation, pieceX, pieceY + 1)) {
+      pieceY++;
+      score += 1;
+      requestUpdate();
+    }
+  });
   if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
     // Rotate
     int newRot = (currentRotation + 1) % 4;
@@ -231,7 +269,8 @@ void TetrisActivity::loop() {
     return;
   }
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-    finish();
+    state = PAUSED;
+    requestUpdate();
     return;
   }
 
@@ -259,6 +298,10 @@ void TetrisActivity::render(RenderLock&&) {
   switch (state) {
     case PLAYING:
       renderPlaying();
+      break;
+    case PAUSED:
+      renderPlaying();
+      renderPaused();
       break;
     case GAME_OVER:
       renderGameOver();
@@ -373,6 +416,29 @@ void TetrisActivity::renderPlaying() const {
       renderer.drawRect(sx + 1, sy + 1, cellSize - 2, cellSize - 2, false);
     }
   }
+
+  const auto labels = mappedInput.mapLabels(tr(STR_PAUSE), "", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
+void TetrisActivity::renderPaused() const {
+  const auto pageWidth = renderer.getScreenWidth();
+  const auto pageHeight = renderer.getScreenHeight();
+
+  // Dim the frozen board behind a centered panel so it's clear play is
+  // suspended, not lost.
+  const int panelW = pageWidth * 3 / 4;
+  const int panelH = 120;
+  const int panelX = (pageWidth - panelW) / 2;
+  const int panelY = (pageHeight - panelH) / 2;
+  renderer.fillRect(panelX, panelY, panelW, panelH, false);
+  renderer.drawRect(panelX, panelY, panelW, panelH);
+  renderer.drawRect(panelX + 2, panelY + 2, panelW - 4, panelH - 4);
+
+  renderer.drawCenteredText(UI_12_FONT_ID, panelY + 20, tr(STR_PAUSED), true, EpdFontFamily::BOLD);
+
+  const auto labels = mappedInput.mapLabels(tr(STR_QUIT), tr(STR_RESUME), "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
 void TetrisActivity::renderGameOver() const {

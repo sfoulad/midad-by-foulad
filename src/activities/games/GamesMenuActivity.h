@@ -1,6 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
+#include "util/ButtonNavigator.h"
 
 // Small picker shown when the user taps the "Games" tile in My Books (see
 // GAMES_PSEUDO_PATH in RecentBooksActivity.cpp) -- lets them choose between
@@ -17,6 +18,7 @@ class GamesMenuActivity final : public Activity {
  private:
   enum Game { SNAKE = 0, TETRIS = 1, GAME_COUNT };
 
+  ButtonNavigator buttonNavigator_;
   int selectedIndex_ = 0;
 
   void launchSelected();

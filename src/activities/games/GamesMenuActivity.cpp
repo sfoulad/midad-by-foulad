@@ -19,14 +19,19 @@ void GamesMenuActivity::loop() {
     finish();
     return;
   }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Up)) {
-    selectedIndex_ = (selectedIndex_ + GAME_COUNT - 1) % GAME_COUNT;
+
+  // Logical NavNext/NavPrevious (not raw Up/Down) -- resolves to whichever
+  // physical buttons are correct for this device/orientation, same as every
+  // other list in the app (see ButtonNavigator::getNextButtons/getPreviousButtons).
+  buttonNavigator_.onNextRelease([this] {
+    selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, GAME_COUNT);
     requestUpdate();
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Down)) {
-    selectedIndex_ = (selectedIndex_ + 1) % GAME_COUNT;
+  });
+  buttonNavigator_.onPreviousRelease([this] {
+    selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, GAME_COUNT);
     requestUpdate();
-  }
+  });
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     launchSelected();
   }

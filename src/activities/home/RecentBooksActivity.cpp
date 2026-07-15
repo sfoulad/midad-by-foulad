@@ -53,6 +53,34 @@ std::string filenameStem(const std::string& path) {
   const size_t end = (dot == std::string::npos || dot < start) ? path.size() : dot;
   return path.substr(start, end - start);
 }
+
+// Hand-drawn game-controller pictogram for the Games tile's "cover" -- there's
+// no real cover image (GAMES_PSEUDO_PATH isn't a book), and the generic
+// BookIcon placeholder used for every other missing-cover case would make it
+// look like a broken/unopened book rather than a deliberate feature tile.
+// Drawn with plain rects to match this app's black-on-white line-art icon
+// style (see BookIcon, GUI icons) without needing a new bitmap asset.
+void drawGamesControllerIcon(GfxRenderer& renderer, int cx, int cy, int size) {
+  const int bodyW = size;
+  const int bodyH = size * 3 / 5;
+  const int left = cx - bodyW / 2;
+  const int top = cy - bodyH / 2;
+  renderer.drawRect(left, top, bodyW, bodyH, 2, true);
+
+  // D-pad: a small plus made of two crossing bars, on the left third.
+  const int padCx = left + bodyW / 4;
+  const int padCy = cy;
+  const int padArm = bodyH / 3;
+  const int padThick = std::max(2, bodyH / 6);
+  renderer.fillRect(padCx - padArm / 2, padCy - padThick / 2, padArm, padThick, true);
+  renderer.fillRect(padCx - padThick / 2, padCy - padArm / 2, padThick, padArm, true);
+
+  // Two face buttons, on the right third.
+  const int btnSize = std::max(3, bodyH / 4);
+  const int btnCx = left + bodyW * 3 / 4;
+  renderer.fillRect(btnCx - btnSize - 2, padCy - btnSize / 2, btnSize, btnSize, true);
+  renderer.fillRect(btnCx + 2, padCy - btnSize / 2, btnSize, btnSize, true);
+}
 }  // namespace
 
 void RecentBooksActivity::loadRecentBooks() {
@@ -548,7 +576,10 @@ void RecentBooksActivity::render(RenderLock&&) {
         }
       }
       renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
-      if (!drawn) {
+      if (!drawn && book.path == GAMES_PSEUDO_PATH) {
+        drawGamesControllerIcon(renderer, cellX + geometry.coverWidth / 2, cellY + geometry.coverHeight / 2,
+                                std::min(geometry.coverWidth, geometry.coverHeight) * 3 / 5);
+      } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
                           32);
       }

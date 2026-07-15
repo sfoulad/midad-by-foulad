@@ -1,13 +1,16 @@
 #pragma once
 
 // Ported from yattsu/biscuit (github.com/yattsu/biscuit), MIT License,
-// Copyright (c) 2025 Dave Allie. Only esp_random() -> random() was changed
-// (portability: esp_random.h isn't available on the native/host simulator
-// build), everything else is unmodified.
+// Copyright (c) 2025 Dave Allie. Directional input now goes through
+// ButtonNavigator (logical Up/Down/Left/Right, same idiom as the My Books
+// grid) instead of raw MappedInputManager checks, esp_random() -> random()
+// for simulator portability, and a PAUSED state was added (Back pauses
+// instead of exiting; everything else is unmodified.
 
 #include <cstdint>
 
 #include "activities/Activity.h"
+#include "util/ButtonNavigator.h"
 
 class TetrisActivity final : public Activity {
  public:
@@ -18,13 +21,17 @@ class TetrisActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool preventAutoSleep() override { return true; }
-  bool skipLoopDelay() override { return true; }
+  // Only block auto-sleep/power-saving while actually playing -- a paused
+  // game shouldn't keep the device awake indefinitely.
+  bool preventAutoSleep() override { return state == PLAYING; }
+  bool skipLoopDelay() override { return state == PLAYING; }
 
  private:
-  enum State { PLAYING, GAME_OVER };
+  enum State { PLAYING, PAUSED, GAME_OVER };
 
   State state = PLAYING;
+
+  ButtonNavigator buttonNavigator_;
 
   // Board
   static constexpr int BOARD_W = 10;
@@ -74,6 +81,7 @@ class TetrisActivity final : public Activity {
   static bool getPieceBit(uint16_t shape, int row, int col);
 
   void renderPlaying() const;
+  void renderPaused() const;
   void renderGameOver() const;
   void drawCell(int screenX, int screenY, bool filled) const;
 
