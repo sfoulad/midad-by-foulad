@@ -134,26 +134,29 @@ void SnakeActivity::loop() {
   // Direction input - prevent reversal. Routed through ButtonNavigator's
   // logical Up/Down/Left/Right (same idiom as the My Books grid) instead of
   // raw MappedInputManager checks, so remapped/orientation-swapped buttons
-  // still turn the snake correctly.
-  buttonNavigator_.onRelease({MappedInputManager::Button::Up}, [this] {
+  // still turn the snake correctly. Fires on PRESS rather than release: a
+  // release-gated turn only registers once the button comes back up, which
+  // reads as input lag on real hardware -- a turn should land the instant
+  // the button goes down.
+  buttonNavigator_.onPress({MappedInputManager::Button::Up}, [this] {
     if (dirY == 0) {
       nextDirX = 0;
       nextDirY = -1;
     }
   });
-  buttonNavigator_.onRelease({MappedInputManager::Button::Down}, [this] {
+  buttonNavigator_.onPress({MappedInputManager::Button::Down}, [this] {
     if (dirY == 0) {
       nextDirX = 0;
       nextDirY = 1;
     }
   });
-  buttonNavigator_.onRelease({MappedInputManager::Button::Left}, [this] {
+  buttonNavigator_.onPress({MappedInputManager::Button::Left}, [this] {
     if (dirX == 0) {
       nextDirX = -1;
       nextDirY = 0;
     }
   });
-  buttonNavigator_.onRelease({MappedInputManager::Button::Right}, [this] {
+  buttonNavigator_.onPress({MappedInputManager::Button::Right}, [this] {
     if (dirX == 0) {
       nextDirX = 1;
       nextDirY = 0;

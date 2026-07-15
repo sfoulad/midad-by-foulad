@@ -54,32 +54,58 @@ std::string filenameStem(const std::string& path) {
   return path.substr(start, end - start);
 }
 
-// Hand-drawn game-controller pictogram for the Games tile's "cover" -- there's
-// no real cover image (GAMES_PSEUDO_PATH isn't a book), and the generic
-// BookIcon placeholder used for every other missing-cover case would make it
-// look like a broken/unopened book rather than a deliberate feature tile.
-// Drawn with plain rects to match this app's black-on-white line-art icon
-// style (see BookIcon, GUI icons) without needing a new bitmap asset.
-void drawGamesControllerIcon(GfxRenderer& renderer, int cx, int cy, int size) {
-  const int bodyW = size;
-  const int bodyH = size * 3 / 5;
-  const int left = cx - bodyW / 2;
-  const int top = cy - bodyH / 2;
-  renderer.drawRect(left, top, bodyW, bodyH, 2, true);
+// Hand-drawn pictogram for the Games tile's "cover" -- there's no real cover
+// image (GAMES_PSEUDO_PATH isn't a book), and the generic BookIcon
+// placeholder used for every other missing-cover case would make it look
+// like a broken/unopened book rather than a deliberate feature tile. Reads
+// as "puzzle games" as a set (a coiled maze/snake trailing into a small
+// numbered grid) rather than any one specific game, since four different
+// games now live behind this one tile. Drawn with plain rect/line
+// primitives to match this app's black-on-white line-art icon style (see
+// BookIcon, GUI icons) without needing a new bitmap asset.
+void drawGamesPuzzleIcon(GfxRenderer& renderer, int cx, int cy, int size) {
+  const int left = cx - size / 2;
+  const int top = cy - size / 2;
 
-  // D-pad: a small plus made of two crossing bars, on the left third.
-  const int padCx = left + bodyW / 4;
-  const int padCy = cy;
-  const int padArm = bodyH / 3;
-  const int padThick = std::max(2, bodyH / 6);
-  renderer.fillRect(padCx - padArm / 2, padCy - padThick / 2, padArm, padThick, true);
-  renderer.fillRect(padCx - padThick / 2, padCy - padArm / 2, padThick, padArm, true);
+  // Coil: concentric square rings, upper-left of the box (Snake/Maze motif).
+  // Sized to leave a real gap before the grid below, so the trail between
+  // them has somewhere to be drawn.
+  const int coilSize = size / 2;
+  const int ringThickness = std::max(2, coilSize / 10);
+  const int ringGap = std::max(2, coilSize / 10);
+  int rl = left, rt = top, rw = coilSize, rh = coilSize;
+  for (int ring = 0; ring < 3 && rw > ringThickness * 2 && rh > ringThickness * 2; ring++) {
+    renderer.drawRect(rl, rt, rw, rh, ringThickness, true);
+    rl += ringThickness + ringGap;
+    rt += ringThickness + ringGap;
+    rw -= 2 * (ringThickness + ringGap);
+    rh -= 2 * (ringThickness + ringGap);
+  }
 
-  // Two face buttons, on the right third.
-  const int btnSize = std::max(3, bodyH / 4);
-  const int btnCx = left + bodyW * 3 / 4;
-  renderer.fillRect(btnCx - btnSize - 2, padCy - btnSize / 2, btnSize, btnSize, true);
-  renderer.fillRect(btnCx + 2, padCy - btnSize / 2, btnSize, btnSize, true);
+  // Grid: 2x2 cells, lower-right of the box (Sudoku motif), two filled to
+  // suggest placed digits.
+  const int gridSize = size * 3 / 10;
+  const int gridLeft = left + size - gridSize;
+  const int gridTop = top + size - gridSize;
+  const int cell = gridSize / 2;
+  renderer.drawRect(gridLeft, gridTop, gridSize, gridSize, 2, true);
+  renderer.drawLine(gridLeft + cell, gridTop, gridLeft + cell, gridTop + gridSize, true);
+  renderer.drawLine(gridLeft, gridTop + cell, gridLeft + gridSize, gridTop + cell, true);
+  const int pad = std::max(2, cell / 5);
+  renderer.fillRect(gridLeft + pad, gridTop + pad, cell - 2 * pad, cell - 2 * pad, true);
+  renderer.fillRect(gridLeft + cell + pad, gridTop + cell + pad, cell - 2 * pad, cell - 2 * pad, true);
+
+  // Dotted trail bouncing from the coil's outer edge down to the grid's
+  // corner, filling the gap left between them above.
+  const int dotSize = std::max(3, size / 20);
+  const int trailStartX = left + coilSize + ringGap;
+  const int trailStartY = top + coilSize / 2;
+  constexpr int dots = 5;
+  for (int i = 1; i < dots; i++) {
+    int px = trailStartX + (gridLeft - trailStartX) * i / dots;
+    int py = trailStartY + (gridTop - trailStartY) * i / dots;
+    renderer.fillRect(px, py, dotSize, dotSize, true);
+  }
 }
 }  // namespace
 
@@ -577,7 +603,7 @@ void RecentBooksActivity::render(RenderLock&&) {
       }
       renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
       if (!drawn && book.path == GAMES_PSEUDO_PATH) {
-        drawGamesControllerIcon(renderer, cellX + geometry.coverWidth / 2, cellY + geometry.coverHeight / 2,
+        drawGamesPuzzleIcon(renderer, cellX + geometry.coverWidth / 2, cellY + geometry.coverHeight / 2,
                                 std::min(geometry.coverWidth, geometry.coverHeight) * 3 / 5);
       } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,

@@ -4,7 +4,9 @@
 #include <I18n.h>
 
 #include "MappedInputManager.h"
+#include "MazeActivity.h"
 #include "SnakeActivity.h"
+#include "SudokuActivity.h"
 #include "TetrisActivity.h"
 #include "components/UITheme.h"
 
@@ -40,10 +42,20 @@ void GamesMenuActivity::loop() {
 void GamesMenuActivity::launchSelected() {
   // No-op result handler: startActivityForResult() already triggers a
   // requestUpdate() once the game finishes, so we just need to be re-shown.
-  if (selectedIndex_ == SNAKE) {
-    startActivityForResult(std::make_unique<SnakeActivity>(renderer, mappedInput), [](const ActivityResult&) {});
-  } else {
-    startActivityForResult(std::make_unique<TetrisActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+  switch (selectedIndex_) {
+    case SNAKE:
+      startActivityForResult(std::make_unique<SnakeActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      break;
+    case TETRIS:
+      startActivityForResult(std::make_unique<TetrisActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      break;
+    case SUDOKU:
+      startActivityForResult(std::make_unique<SudokuActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      break;
+    case MAZE:
+    default:
+      startActivityForResult(std::make_unique<MazeActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      break;
   }
 }
 
@@ -59,9 +71,18 @@ void GamesMenuActivity::render(RenderLock&&) {
   const int listTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int listHeight = pageHeight - listTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
-  GUI.drawList(
-      renderer, Rect{0, listTop, pageWidth, listHeight}, GAME_COUNT, selectedIndex_,
-      [](int index) { return index == SNAKE ? tr(STR_SNAKE) : tr(STR_TETRIS); });
+  GUI.drawList(renderer, Rect{0, listTop, pageWidth, listHeight}, GAME_COUNT, selectedIndex_, [](int index) {
+    switch (index) {
+      case SNAKE:
+        return tr(STR_SNAKE);
+      case TETRIS:
+        return tr(STR_TETRIS);
+      case SUDOKU:
+        return tr(STR_SUDOKU);
+      default:
+        return tr(STR_MAZE);
+    }
+  });
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
