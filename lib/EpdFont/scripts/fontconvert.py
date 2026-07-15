@@ -1021,6 +1021,9 @@ if compress:
         (0x0180, 0x024F),   # Latin Extended-B
         (0x0300, 0x036F),   # Combining Diacritical Marks
         (0x0400, 0x04FF),   # Cyrillic
+        (0x0600, 0x06FF),   # Arabic
+        (0x0750, 0x077F),   # Arabic Supplement
+        (0x08A0, 0x08FF),   # Arabic Extended-A
         (0x1EA0, 0x1EF9),   # Vietnamese Extended
         (0x2000, 0x206F),   # General Punctuation
         (0x2070, 0x209F),   # Superscripts & Subscripts
@@ -1028,13 +1031,28 @@ if compress:
         (0x2190, 0x21FF),   # Arrows
         (0x2200, 0x22FF),   # Math Operators
         (0xFB00, 0xFB06),   # Alphabetic Presentation Forms (ligatures)
+        (0xFB50, 0xFDFF),   # Arabic Presentation Forms-A
+        (0xFE70, 0xFEFF),   # Arabic Presentation Forms-B
         (0xFFFD, 0xFFFD),   # Replacement Character
     ]
 
-    # 64 KB cap: large enough to hold any single built-in script group with
-    # headroom, small enough to be a comfortable transient malloc on the
-    # ESP32-C3.
-    GROUP_MAX_UNCOMPRESSED_BYTES = 65536
+    # 12 KB cap (was 64 KB): a fully-vocalized Arabic font has no script-range split
+    # above (Arabic script simply wasn't in SCRIPT_GROUP_RANGES before this fix), so
+    # every Arabic glyph fell into one "unknown script" bucket capped only by this
+    # constant -- UthmanicHafs 18pt ended up with a single 414-glyph, 47924-byte
+    # group. Real-device logs (bitmap_fail == misses almost 1:1, firstFailedAllocBytes
+    # == 47924, reported free heap 75-90KB) showed prewarmCache()'s per-group temp
+    # buffer (and getBitmap()'s hot-group fallback, same size) regularly failing to
+    # allocate that ~48KB in one contiguous block despite the reported free heap
+    # being nominally larger -- fragmentation, not exhaustion, per FontDecompressor's
+    # own firstFailedAllocBytes-vs-heap comparison. Silent failure mode: every
+    # caller treats a failed getBitmap() as "skip this glyph" with no visible error,
+    # so the page just renders with entire lines of body text missing (only markers
+    # drawn through other fonts, like the ayah-number glyph, survive). 12 KB keeps
+    # each group's transient malloc comfortably inside even a moderately fragmented
+    # ~75 KB heap; the added Arabic script ranges above additionally keep related
+    # contextual/positional forms grouped together rather than split arbitrarily.
+    GROUP_MAX_UNCOMPRESSED_BYTES = 12288
 
     def get_script_group(code_point):
         for i, (start, end) in enumerate(SCRIPT_GROUP_RANGES):
