@@ -195,6 +195,17 @@ void SnakeActivity::render(RenderLock&&) {
 
 void SnakeActivity::renderPlaying() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
+  int screenW = renderer.getScreenWidth();
+
+  // Header (score/length live here, in the reserved top band, so the bottom
+  // button-hints bar never overlaps or covers them).
+  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, metrics.topPadding, "SNAKE", true,
+                     EpdFontFamily::BOLD);
+  char scoreBuf[48];
+  snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Length: %d", score, (int)snake.size());
+  int scoreW = renderer.getTextWidth(UI_10_FONT_ID, scoreBuf, EpdFontFamily::BOLD);
+  renderer.drawText(UI_10_FONT_ID, screenW - metrics.contentSidePadding - scoreW, metrics.topPadding, scoreBuf,
+                     true, EpdFontFamily::BOLD);
 
   // Double-line border
   renderer.drawRect(offsetX - 1, offsetY - 1, gridW * CELL_SIZE + 2, gridH * CELL_SIZE + 2);
@@ -249,12 +260,6 @@ void SnakeActivity::renderPlaying() const {
     // Stem on top
     renderer.fillRect(cx, cy - r - 2, 2, 3, true);
   }
-
-  // Score (drawn below the grid)
-  int scoreY = offsetY + gridH * CELL_SIZE + 10;
-  char scoreBuf[48];
-  snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Length: %d", score, (int)snake.size());
-  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, scoreY, scoreBuf, true, EpdFontFamily::BOLD);
 
   const auto labels = mappedInput.mapLabels(tr(STR_PAUSE), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
