@@ -114,10 +114,26 @@ void MazeActivity::generateMaze() {
 
 // ---- Layout ----
 
+// Y position of the separator line drawn below the "Moves / Time" info bar in
+// render() -- shared by calculateLayout() so the grid's top edge is always
+// computed from the header's REAL height instead of a guessed constant. The
+// old hardcoded "+40" offset assumed a header+info-bar height that happened to
+// fit the simulator's default (X4) metrics but was too short on X3 (wider
+// portrait screen, same header/font metrics computed differently) -- the grid
+// area then started above where the info text was actually drawn, so the top
+// rows of the maze rendered underneath "Moves: N  Time: Ns" instead of below
+// it. Must match render()'s own infoY/sepY math exactly.
+int MazeActivity::infoBarBottom() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int infoY = metrics.topPadding + metrics.headerHeight + 6;
+  return infoY + renderer.getTextHeight(SMALL_FONT_ID) + 4;
+}
+
 void MazeActivity::calculateLayout() {
   const auto& metrics = UITheme::getInstance().getMetrics();
+  const int contentTop = infoBarBottom() + metrics.verticalSpacing;
   int availW = renderer.getScreenWidth() - 20;
-  int availH = renderer.getScreenHeight() - metrics.topPadding - 40 - metrics.buttonHintsHeight - 10;
+  int availH = renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - 10;
 
   cellSize = std::min(availW / mazeW, availH / mazeH);
   if (cellSize < 4) cellSize = 4;
@@ -126,7 +142,7 @@ void MazeActivity::calculateLayout() {
   int gridW = cellSize * mazeW;
   int gridH = cellSize * mazeH;
   offsetX = (renderer.getScreenWidth() - gridW) / 2;
-  offsetY = metrics.topPadding + 40 + (availH - gridH) / 2;
+  offsetY = contentTop + (availH - gridH) / 2;
 }
 
 // ---- BFS solver ----
@@ -517,8 +533,9 @@ void MazeActivity::render(RenderLock&&) {
   int infoY = metrics.topPadding + metrics.headerHeight + 6;
   renderer.drawCenteredText(SMALL_FONT_ID, infoY, infoBuf, true);
 
-  // Separator line below info bar
-  int sepY = infoY + renderer.getTextHeight(SMALL_FONT_ID) + 4;
+  // Separator line below info bar -- must match infoBarBottom()'s own math
+  // exactly (calculateLayout() uses it to size the grid area below this line).
+  int sepY = infoBarBottom();
   renderer.drawLine(0, sepY, pageWidth, sepY, true);
 
   // Draw maze grid

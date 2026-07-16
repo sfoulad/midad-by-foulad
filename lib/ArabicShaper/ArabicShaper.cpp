@@ -45,14 +45,17 @@ static const ArabicFormEntry* findFormEntry(uint32_t cp) {
   return nullptr;
 }
 
-uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins) {
+uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins,
+                           const std::function<bool(uint32_t)>& hasGlyph) {
   const ArabicFormEntry* entry = findFormEntry(cp);
   if (!entry) return cp;
 
-  if (prevJoins && nextJoins && entry->medial != 0) return entry->medial;
-  if (prevJoins && entry->final_ != 0) return entry->final_;
-  if (nextJoins && entry->initial != 0) return entry->initial;
-  if (entry->isolated != 0) return entry->isolated;
+  const auto avail = [&](uint32_t formCp) { return formCp != 0 && (!hasGlyph || hasGlyph(formCp)); };
+
+  if (prevJoins && nextJoins && avail(entry->medial)) return entry->medial;
+  if (prevJoins && avail(entry->final_)) return entry->final_;
+  if (nextJoins && avail(entry->initial)) return entry->initial;
+  if (avail(entry->isolated)) return entry->isolated;
   return cp;
 }
 
@@ -225,7 +228,8 @@ static std::vector<uint32_t> resolveLigatures(const char* text, const std::funct
 // tatweel codepoints spliced in -- U+0640 is DUAL_JOINING and has no dedicated
 // contextual-form row, so it passes through unchanged in every position, which is
 // exactly the correct visual behavior for a straight joining stroke).
-static std::vector<uint32_t> applyContextualForms(const std::vector<uint32_t>& afterLigatures) {
+static std::vector<uint32_t> applyContextualForms(const std::vector<uint32_t>& afterLigatures,
+                                                   const std::function<bool(uint32_t)>& hasGlyph) {
   std::vector<uint32_t> shaped;
   shaped.reserve(afterLigatures.size());
 
@@ -271,7 +275,7 @@ static std::vector<uint32_t> applyContextualForms(const std::vector<uint32_t>& a
       break;
     }
 
-    shaped.push_back(getContextualForm(c, prevJoins, nextJoins));
+    shaped.push_back(getContextualForm(c, prevJoins, nextJoins, hasGlyph));
   }
 
   return shaped;
@@ -418,7 +422,7 @@ static std::vector<uint32_t> reorderVisual(const std::vector<uint32_t>& shaped) 
 std::vector<uint32_t> shapeText(const char* text, const std::function<bool(uint32_t)>& hasGlyph) {
   std::vector<uint32_t> logical = resolveLigatures(text, hasGlyph);
   if (logical.empty()) return {};
-  return reorderVisual(applyContextualForms(logical));
+  return reorderVisual(applyContextualForms(logical, hasGlyph));
 }
 
 // Find every legal kashida (tatweel) insertion point in a logical-order codepoint
@@ -475,7 +479,7 @@ std::vector<uint32_t> shapeTextWithKashida(const char* text, int extraWidthPx, i
   const int numPoints = static_cast<int>(std::count(points.begin(), points.end(), true));
   const int totalTatweels = extraWidthPx / tatweelAdvancePx;
   if (numPoints == 0 || totalTatweels <= 0) {
-    return reorderVisual(applyContextualForms(logical));
+    return reorderVisual(applyContextualForms(logical, hasGlyph));
   }
 
   // Distribute whole tatweel glyphs evenly across every valid point; any remainder
@@ -497,7 +501,7 @@ std::vector<uint32_t> shapeTextWithKashida(const char* text, int extraWidthPx, i
     augmented.push_back(logical[i]);
   }
 
-  return reorderVisual(applyContextualForms(augmented));
+  return reorderVisual(applyContextualForms(augmented, hasGlyph));
 }
 
 }  // namespace ArabicShaper

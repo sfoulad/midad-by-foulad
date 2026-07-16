@@ -65,6 +65,33 @@ TEST(ArabicShaper, OttomanNgMedial) {
   EXPECT_EQ(out[0], 0xFE90u);  // Beh final
 }
 
+// Some fonts (e.g. Tajawal) never define presentation-form glyphs at the legacy
+// ISOLATED codepoint (0xFEE5 for Noon here) -- by Unicode convention it's
+// identical to the plain base letter, and font authors expect GSUB to pick it.
+// hasGlyph rejecting that one codepoint must fall back to the bare base
+// codepoint (0x0646), not silently drop the letter -- a real bug found on
+// Tajawal where whole words vanished/garbled because the old code never
+// checked glyph availability before emitting a hardcoded presentation form.
+TEST(ArabicShaper, MissingIsolatedFormFallsBackToBaseCodepoint) {
+  const auto hasGlyph = [](uint32_t cp) { return cp != 0xFEE5u; };
+  const auto out = ArabicShaper::shapeText("ن", hasGlyph);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0], 0x0646u);  // base Noon, not the missing isolated form
+}
+
+// Same fallback, but for a letter whose chosen FINAL form is unavailable and
+// whose ISOLATED fallback (the next tier in the cascade) is unavailable too --
+// exactly Tajawal's real situation, which defines final/initial/medial forms
+// but never isolated ones. Must fall all the way to the base codepoint rather
+// than getting stuck skipping tiers indefinitely or dropping the glyph.
+TEST(ArabicShaper, MissingFinalAndIsolatedFormsFallBackToBaseCodepoint) {
+  const auto hasGlyph = [](uint32_t cp) { return cp != 0xFE84u && cp != 0xFE83u; };
+  const auto out = ArabicShaper::shapeText("بأ", hasGlyph);  // Beh + Alef Hamza Above
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(out[1], 0xFE91u);  // Beh initial (unaffected)
+  EXPECT_EQ(out[0], 0x0623u);  // base Alef Hamza Above, not the missing final/isolated forms
+}
+
 // --- Kashida (tatweel) justification ---
 
 // "كتب" (Kaf-Teh-Beh): every letter is DUAL_JOINING, so both internal junctions

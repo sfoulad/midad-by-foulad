@@ -28,7 +28,18 @@ std::vector<uint32_t> shapeText(const char* text, const std::function<bool(uint3
 // Get the contextual form for a base Arabic codepoint.
 // prevJoins: whether the previous character can join to this one
 // nextJoins: whether the next character can join from this one
-uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins);
+// hasGlyph: optional query for whether the active font actually has the chosen
+// form's glyph. Some fonts (e.g. Tajawal) define presentation-form glyphs only at
+// the codepoints they actually need -- notably no ISOLATED form at all, since by
+// Unicode convention it's identical to the plain base letter, and they rely on
+// GSUB to substitute the right shape. We don't run GSUB, so hardcoding a
+// presentation-form codepoint that font doesn't have silently drops the glyph
+// (confirmed on Tajawal: 45 of 46 isolated forms missing, dropping/garbling whole
+// words). When hasGlyph rejects the tier that would otherwise be chosen, this
+// falls through to the next tier and ultimately to the bare base codepoint `cp`,
+// which every Arabic font in this codebase does have.
+uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins,
+                            const std::function<bool(uint32_t)>& hasGlyph = nullptr);
 
 // Check for Lam-Alef ligature. Returns ligature codepoint or 0 if not a ligature pair.
 // prevJoins: whether the character before Lam can join

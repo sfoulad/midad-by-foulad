@@ -417,7 +417,11 @@ void TetrisActivity::renderPlaying() const {
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_PAUSE), "", "", "");
+  // Back pauses (labeled "Pause" rather than "Exit" -- matches Maze/Snake's
+  // pause-not-quit convention). Left/Right move the piece horizontally (Up/Down
+  // rotate/soft-drop via the side buttons, which never get hint-bar labels in
+  // this app -- same convention as Snake/Sudoku/Maze). Confirm hard-drops.
+  const auto labels = mappedInput.mapLabels(tr(STR_PAUSE), tr(STR_DROP), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
