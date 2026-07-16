@@ -314,8 +314,10 @@ void ActivityManager::requestUpdateAndWait() {
   bool isRenderTask = (currTaskHandler == renderTaskHandle);
   bool alreadyWaiting = (waitingTaskHandle != nullptr);
   bool holdingRenderLock = (mutexHolder == currTaskHandler);
+  bool registeredAsWaiter = false;
   if (!alreadyWaiting && !isRenderTask && !holdingRenderLock) {
     waitingTaskHandle = currTaskHandler;
+    registeredAsWaiter = true;
   }
   taskEXIT_CRITICAL(&activityManagerSpinlock);
 
@@ -328,8 +330,47 @@ void ActivityManager::requestUpdateAndWait() {
   // Cannot call while holding RenderLock or it will cause a deadlock
   assert(!holdingRenderLock && "Cannot call requestUpdateAndWait() while holding RenderLock");
 
+  if (!registeredAsWaiter) {
+    // One of the guard conditions above tripped. In a debug build the assert already
+    // caught it; in a release build (asserts compiled out) we must not fall through to
+    // blocking below -- the render task only ever notifies whichever single handle is
+    // recorded in waitingTaskHandle, and we were NOT recorded, so that block would wait
+    // forever for a notification that will never arrive. Fall back to a fire-and-forget
+    // update instead of deadlocking the caller -- almost always the single foreground
+    // task that also processes button input, so a deadlock here reads as the whole
+    // device being frozen with no recovery short of a battery pull.
+    LOG_ERR("ACT", "requestUpdateAndWait: not registered as waiter (alreadyWaiting=%d isRenderTask=%d "
+                   "holdingRenderLock=%d), falling back to requestUpdate()",
+            alreadyWaiting, isRenderTask, holdingRenderLock);
+    requestUpdate(/*immediate=*/true);
+    return;
+  }
+
   xTaskNotify(renderTaskHandle, 1, eIncrement);
-  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  // Bounded wait, not portMAX_DELAY: if the render task never comes back -- a hang or
+  // crash inside the current screen's Activity::render() -- the caller must not block
+  // forever, for the same reason as above (it's almost always the single foreground
+  // task, so blocking forever here means every button press stops doing anything, with
+  // no recovery short of a battery pull; user-reported as Snake "freezing completely" --
+  // Snake calls this on every single step, ~every 300ms for as long as a game runs, the
+  // most sustained caller of this primitive in the app and the most likely to expose a
+  // rare stall). On timeout, drop the wait and let the caller continue -- worst case one
+  // stale/missed frame, not a bricked UI.
+  // 5000 ticks, not pdMS_TO_TICKS(5000): the host simulator's FreeRTOS shim doesn't
+  // define TickType_t/pdMS_TO_TICKS, and on real hardware CONFIG_FREERTOS_HZ=1000
+  // (1 tick = 1ms) makes the literal equivalent anyway.
+  constexpr uint32_t kRenderWaitTimeoutTicks = 5000;
+  if (ulTaskNotifyTake(pdTRUE, kRenderWaitTimeoutTicks) == 0) {
+    LOG_ERR("ACT", "requestUpdateAndWait: timed out waiting for render task notification");
+    // Clear our own registration (if it's still ours -- a very late notification could
+    // have already done this) so a future call isn't permanently blocked by
+    // alreadyWaiting once the render task does eventually come back, if ever.
+    taskENTER_CRITICAL(&activityManagerSpinlock);
+    if (waitingTaskHandle == currTaskHandler) {
+      waitingTaskHandle = nullptr;
+    }
+    taskEXIT_CRITICAL(&activityManagerSpinlock);
+  }
 }
 
 // RenderLock

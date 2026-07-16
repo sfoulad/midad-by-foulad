@@ -232,16 +232,30 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
 
   // Recents band geometry: divider label centered between two rules, thumbs below.
   const int dividerLabelY = heroCoverY + kHeroHeight + kDividerHalfSeparation + 10;
-  // Arabic UI text (via NotoSansArabic) sits taller/deeper than the Latin UI_12
-  // metrics this block was originally tuned with, so the "Double-rule Recents
-  // divider" block below pushes its two rules an extra 5px apart (its own `sep`)
-  // for Arabic labels. thumbsY must apply that same +5, or the widened gap never
-  // reaches the thumbnail row and the divider label's descenders slice through
-  // the covers underneath it.
-  const bool arabicDividerLabel = ScriptDetector::containsArabic(tr(STR_RECENTS));
-  // 28px clears the divider's bottom rule (label center + half-separation) with a
-  // visible gap; 16 left the covers touching the rule.
-  const int thumbsY = dividerLabelY + kDividerHalfSeparation + 28 + (arabicDividerLabel ? 5 : 0);
+  // Arabic UI text draws through whatever font UI_12_FONT_ID's Arabic dispatch
+  // actually resolves to (Tajawal -- see ArabicFontSystem::applyArabicMappings),
+  // which sits taller/deeper than the Latin UI_12 (Ubuntu) metrics this block was
+  // originally tuned against. Resolve and measure the font that will REALLY draw
+  // the label -- not a hardcoded guess at which font that is -- so the divider
+  // rule gap and the thumbnail row start can never drift out of sync with what's
+  // actually on screen again, no matter which font ends up serving Arabic UI_12
+  // text in the future. dividerLabelH/dividerSep/dividerBottomRuleY are reused
+  // verbatim by the "Double-rule Recents divider" block below instead of being
+  // recomputed there, so the two can't drift apart a second time either.
+  const char* dividerLabelText = tr(STR_RECENTS);
+  const bool arabicDividerLabel = ScriptDetector::containsArabic(dividerLabelText);
+  const int latinUi12LineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int dividerLabelH = arabicDividerLabel
+                                ? renderer.getLineHeight(renderer.getResolvedArabicFontId(UI_12_FONT_ID))
+                                : latinUi12LineHeight;
+  const int dividerSep = kDividerHalfSeparation + (arabicDividerLabel ? 5 : 0);
+  const int dividerBottomRuleY = dividerLabelY + dividerLabelH / 2 + dividerSep;
+  // Gap tuned against the original Latin-only formula (dividerLabelY +
+  // kDividerHalfSeparation + 28, which never referenced label height at all --
+  // 28px clears the bottom rule with a visible gap, 16 left covers touching it)
+  // re-expressed as an offset from the bottom rule itself, so the exact same
+  // formula now stays correct for any label font/height, Latin or Arabic.
+  const int thumbsY = dividerBottomRuleY + (28 - latinUi12LineHeight / 2);
   const int shownRecents = std::min(static_cast<int>(recentBooks.size()) - 1, kThumbsCount);
   const int kThumbWidth = (rect.width - 2 * kMenuPadding - (kThumbsCount - 1) * kThumbGap) / kThumbsCount;
   const int thumbsTotalW = kThumbsCount * kThumbWidth + (kThumbsCount - 1) * kThumbGap;
@@ -310,19 +324,36 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   {
     const int heroBottom = heroCoverY + kHeroHeight - 4;
     const bool titleArabic = ScriptDetector::containsArabic(recentBooks[0].title.c_str());
-    const int titleLineHeight = titleArabic
-                                    ? renderer.getLineHeight(renderer.getResolvedArabicFontId(NOTOSERIF_18_FONT_ID))
-                                    : renderer.getLineHeight(NOTOSERIF_18_FONT_ID);
+    // NOTOSERIF_18_FONT_ID doubles as the real EPUB body-text font at XLarge
+    // Latin size (see CrossPointSettings::getReaderFontId), so mapping IT to
+    // Tajawal globally (in ArabicFontSystem::applyArabicMappings) would hijack
+    // actual book reading text away from the user's chosen Arabic reading font
+    // (e.g. UthmanicHafs for the Quran) whenever they read at that size. This
+    // hero title is UI chrome, not reading body text, so it forces Tajawal
+    // directly and locally instead -- same "Tajawal for all framework Arabic
+    // UI" rule as the author line below (already Tajawal via UI_10_FONT_ID's
+    // mapping) and the headers/lists/grid titles elsewhere.
+    const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : NOTOSERIF_18_FONT_ID;
+    const int titleLineHeight = renderer.getLineHeight(titleFontId);
     int textY = heroCoverY + 6;
-    const auto titleLines = renderer.wrappedText(NOTOSERIF_18_FONT_ID, recentBooks[0].title.c_str(), metaWidth,
-                                                 /*maxLines=*/2, EpdFontFamily::BOLD);
+    const auto titleLines =
+        renderer.wrappedText(titleFontId, recentBooks[0].title.c_str(), metaWidth, /*maxLines=*/2, EpdFontFamily::BOLD);
     for (const auto& line : titleLines) {
       if (rtl) {
-        const int w = renderer.getTextWidth(NOTOSERIF_18_FONT_ID, line.c_str(), EpdFontFamily::BOLD);
-        renderer.drawText(NOTOSERIF_18_FONT_ID, metaX + metaWidth - w, textY, line.c_str(), true, EpdFontFamily::BOLD);
+        const int w = renderer.getTextWidth(titleFontId, line.c_str(), EpdFontFamily::BOLD);
+        renderer.drawText(titleFontId, metaX + metaWidth - w, textY, line.c_str(), true, EpdFontFamily::BOLD);
       } else {
-        renderer.drawTextInWidth(NOTOSERIF_18_FONT_ID, metaX, textY, metaWidth, line.c_str(), true,
-                                 EpdFontFamily::BOLD);
+        renderer.drawTextInWidth(titleFontId, metaX, textY, metaWidth, line.c_str(), true, EpdFontFamily::BOLD);
+      }
+      if (titleArabic) {
+        // No bold Arabic face ships in the firmware; double-strike 1px apart
+        // reads as bold on the 1-bit panel, matching the Latin BOLD title.
+        if (rtl) {
+          const int w = renderer.getTextWidth(titleFontId, line.c_str(), EpdFontFamily::BOLD);
+          renderer.drawText(titleFontId, metaX + metaWidth - w + 1, textY, line.c_str(), true, EpdFontFamily::BOLD);
+        } else {
+          renderer.drawTextInWidth(titleFontId, metaX + 1, textY, metaWidth, line.c_str(), true, EpdFontFamily::BOLD);
+        }
       }
       textY += titleLineHeight + 2;
     }
@@ -392,25 +423,19 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   {
     const int x1 = rect.x + kMenuPadding;
     const int x2 = rect.x + rect.width - kMenuPadding;
-    const char* dividerLabel = tr(STR_RECENTS);
-    // Arabic UI text renders in NotoSansArabic, whose glyphs sit taller and
-    // descend deeper than the Latin UI_12 metrics this block was sized with --
-    // measured on-device as the lower rule slicing through كتبي's descenders.
-    // Use the Arabic line height for centering and push the rules apart a bit.
-    // (arabicDividerLabel/thumbsY's matching +5 are computed once, above.)
-    const int labelH = arabicDividerLabel ? renderer.getLineHeight(NOTOSANSARABIC_12_FONT_ID)
-                                          : renderer.getLineHeight(UI_12_FONT_ID);
-    const int sep = kDividerHalfSeparation + (arabicDividerLabel ? 5 : 0);
-    const int labelCenterY = dividerLabelY + labelH / 2;
-    renderer.drawLine(x1, labelCenterY - sep, x2, labelCenterY - sep, true);
-    renderer.drawLine(x1, labelCenterY + sep, x2, labelCenterY + sep, true);
-    const int labelW = renderer.getTextWidth(UI_12_FONT_ID, dividerLabel, EpdFontFamily::BOLD);
+    // dividerLabelH/dividerSep/dividerBottomRuleY computed once above (shared
+    // with thumbsY) so this block's rule lines and the thumbnail row start can
+    // never drift apart again.
+    const int labelCenterY = dividerLabelY + dividerLabelH / 2;
+    renderer.drawLine(x1, labelCenterY - dividerSep, x2, labelCenterY - dividerSep, true);
+    renderer.drawLine(x1, dividerBottomRuleY, x2, dividerBottomRuleY, true);
+    const int labelW = renderer.getTextWidth(UI_12_FONT_ID, dividerLabelText, EpdFontFamily::BOLD);
     const int labelX = (renderer.getScreenWidth() - labelW) / 2;
-    renderer.drawText(UI_12_FONT_ID, labelX, dividerLabelY, dividerLabel, true, EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, labelX, dividerLabelY, dividerLabelText, true, EpdFontFamily::BOLD);
     if (arabicDividerLabel) {
       // No bold Arabic face ships in the firmware; double-strike 1px apart
       // reads as bold on the 1-bit panel, matching the Latin BOLD label.
-      renderer.drawText(UI_12_FONT_ID, labelX + 1, dividerLabelY, dividerLabel, true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_12_FONT_ID, labelX + 1, dividerLabelY, dividerLabelText, true, EpdFontFamily::BOLD);
     }
   }
 
