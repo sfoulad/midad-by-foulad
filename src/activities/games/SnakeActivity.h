@@ -58,6 +58,11 @@ class SnakeActivity final : public Activity {
 
   // Score
   int score = 0;
+  // Set once, the moment a run ends (see step()'s collision branches) --
+  // GameHighScoresStore::reportSnakeScore() both persists the new record and
+  // tells us whether it was one, so renderGameOver() doesn't need to duplicate
+  // the comparison against a score that's already been saved.
+  bool isNewBest = false;
 
   void initGame();
   void step();

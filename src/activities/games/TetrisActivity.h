@@ -64,6 +64,10 @@ class TetrisActivity final : public Activity {
   int score = 0;
   int linesCleared = 0;
   int level = 1;
+  // Set once, the moment a run ends (see spawnPiece()'s GAME_OVER branch) --
+  // GameHighScoresStore::reportTetrisScore() both persists the new record and
+  // tells us whether it was one, same pattern as SnakeActivity.
+  bool isNewBest = false;
 
   // Timing
   unsigned long lastDropMs = 0;

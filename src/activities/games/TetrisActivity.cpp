@@ -6,14 +6,19 @@
 #include <algorithm>
 #include <cstring>
 
+#include "GameHighScoresStore.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-// 25% gray (light dither)
-static void fillDithered25(GfxRenderer& r, int x, int y, int w, int h) {
+// ~12% gray (very light dither) -- used only for the ghost/drop-preview
+// piece, which should read as a faint hint of where the piece will land, not
+// a filled-in shape competing with the actual board/piece for attention
+// (user report: the previous 25% fill looked too heavy/dark). Every other
+// row is left fully blank, and the active rows only light 1 pixel in 4.
+static void fillDitheredGhost(GfxRenderer& r, int x, int y, int w, int h) {
   for (int dy = 0; dy < h; dy += 2)
-    for (int dx = ((dy / 2) % 2); dx < w; dx += 2)
+    for (int dx = ((dy / 2) % 2); dx < w; dx += 4)
       r.drawPixel(x + dx, y + dy, true);
 }
 
@@ -58,20 +63,36 @@ void TetrisActivity::initGame() {
   score = 0;
   linesCleared = 0;
   level = 1;
+  isNewBest = false;
   state = PLAYING;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   int screenW = renderer.getScreenWidth();
   int screenH = renderer.getScreenHeight();
-  // Dynamic cell size — use 70% of width for board, maximize height usage
+  // Dynamic cell size — bounded by available height, and by the side panel's
+  // widest element (the 4-cell "NEXT" preview box, sized off this same
+  // cellSize) actually fitting in what's left of the width after the board.
+  // The old formula just reserved a flat 70% of screen width for the board
+  // (sized purely off BOARD_W) and never checked whether the remaining 30%
+  // still fit the NEXT box -- confirmed cut off on X3 (528px): that formula
+  // picked cellSize=36 (NEXT box needs 4*36+4=148px) with only ~138px left
+  // after the board, clipping it off the right edge. Solving cellSize
+  // directly against the full layout (board + panel gap + NEXT box + right
+  // margin <= screenW) keeps the whole panel on-screen at every width.
+  constexpr int kBoardOffsetX = 15;
+  constexpr int kPanelGap = 15;
+  constexpr int kNextBoxBorder = 4;
+  constexpr int kRightMargin = 10;
   int availH = screenH - metrics.topPadding - 25 - metrics.buttonHintsHeight;
-  cellSize = std::min(availH / BOARD_H, (screenW * 7 / 10) / BOARD_W);
+  int availW = screenW - kBoardOffsetX - kPanelGap - kNextBoxBorder - kRightMargin;
+  int widthConstrainedCell = availW / (BOARD_W + 4);  // board columns + NEXT box's 4 columns
+  cellSize = std::min(availH / BOARD_H, widthConstrainedCell);
   if (cellSize < 15) cellSize = 15;
   if (cellSize > 37) cellSize = 37;
   int boardPixelW = BOARD_W * cellSize;
   int boardPixelH = BOARD_H * cellSize;
   // Board on the left side, leaving room for side panel
-  boardOffsetX = 15;
+  boardOffsetX = kBoardOffsetX;
   boardOffsetY = metrics.topPadding + 25;
   (void)boardPixelW;
   (void)boardPixelH;
@@ -91,6 +112,7 @@ void TetrisActivity::spawnPiece() {
 
   if (!canPlace(currentPiece, currentRotation, pieceX, pieceY)) {
     state = GAME_OVER;
+    isNewBest = GAME_SCORES.reportTetrisScore(static_cast<uint32_t>(score));
   }
 }
 
@@ -367,7 +389,7 @@ void TetrisActivity::renderPlaying() const {
         if (by >= 0 && by < BOARD_H && bx >= 0 && bx < BOARD_W) {
           int sx = boardOffsetX + bx * cellSize;
           int sy = boardOffsetY + by * cellSize;
-          fillDithered25(renderer, sx, sy, cellSize, cellSize);
+          fillDitheredGhost(renderer, sx, sy, cellSize, cellSize);
           renderer.drawRect(sx, sy, cellSize, cellSize, true);
         }
       }
@@ -417,6 +439,14 @@ void TetrisActivity::renderPlaying() const {
     }
   }
 
+  // Best (all-time high score) -- placed after Next rather than interleaved
+  // with Score/Level/Lines so it can't shift their established positions.
+  panelY += cellSize * 4 + 4 + 12;
+  char bestBuf2[32];
+  snprintf(bestBuf2, sizeof(bestBuf2), "%u", GAME_SCORES.getTetrisHighScore());
+  renderer.drawText(SMALL_FONT_ID, panelX, panelY, "BEST");
+  renderer.drawText(UI_12_FONT_ID, panelX, panelY + 14, bestBuf2, true, EpdFontFamily::BOLD);
+
   // Back pauses (labeled "Pause" rather than "Exit" -- matches Maze/Snake's
   // pause-not-quit convention). Left/Right move the piece horizontally (Up/Down
   // rotate/soft-drop via the side buttons, which never get hint-bar labels in
@@ -455,6 +485,15 @@ void TetrisActivity::renderGameOver() const {
   char scoreBuf[48];
   snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Lines: %d", score, linesCleared);
   renderer.drawCenteredText(UI_10_FONT_ID, y, scoreBuf);
+  y += 22;
+
+  char bestBuf[32];
+  if (isNewBest) {
+    snprintf(bestBuf, sizeof(bestBuf), "New Best!");
+  } else {
+    snprintf(bestBuf, sizeof(bestBuf), "Best: %u", GAME_SCORES.getTetrisHighScore());
+  }
+  renderer.drawCenteredText(UI_10_FONT_ID, y, bestBuf);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

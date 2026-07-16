@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include "GameHighScoresStore.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -47,6 +48,7 @@ void SnakeActivity::initGame() {
   nextDirX = 1;
   nextDirY = 0;
   score = 0;
+  isNewBest = false;
   state = PLAYING;
   lastStepMs = millis();
 
@@ -81,14 +83,16 @@ void SnakeActivity::step() {
   // Wall collision
   if (newHead.x < 0 || newHead.x >= gridW || newHead.y < 0 || newHead.y >= gridH) {
     state = GAME_OVER;
-    requestUpdate();
+    isNewBest = GAME_SCORES.reportSnakeScore(static_cast<uint32_t>(score));
+    requestUpdateAndWait();
     return;
   }
 
   // Self collision
   if (isSnakeAt(newHead.x, newHead.y)) {
     state = GAME_OVER;
-    requestUpdate();
+    isNewBest = GAME_SCORES.reportSnakeScore(static_cast<uint32_t>(score));
+    requestUpdateAndWait();
     return;
   }
 
@@ -102,7 +106,20 @@ void SnakeActivity::step() {
     snake.pop_back();
   }
 
-  requestUpdate();
+  // requestUpdateAndWait() (not the deferred requestUpdate()) is load-bearing
+  // here, not just a style choice: rendering runs on a separate task woken by
+  // a notification that coalesces if it arrives faster than the task can
+  // service it (see ActivityManager::requestUpdate/renderTaskLoop). E-ink
+  // full/fast-refresh cycles can take longer than STEP_INTERVAL_MS, and
+  // loop()'s timer check is wall-clock-based with no catch-up throttle -- so
+  // without blocking here, the snake's logical position could advance two or
+  // more cells between two *physically shown* frames, which reads as the
+  // snake teleporting/jumping instead of sliding one cell at a time (user
+  // report). Blocking until this frame is actually on the panel makes the
+  // effective step rate track real display speed instead of racing ahead of
+  // it -- worst case the game paces itself to the panel's refresh time
+  // instead of the nominal 300ms, which is the correct trade-off.
+  requestUpdateAndWait();
 }
 
 void SnakeActivity::loop() {
@@ -204,8 +221,9 @@ void SnakeActivity::renderPlaying() const {
   // button-hints bar never overlaps or covers them).
   renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, metrics.topPadding, "SNAKE", true,
                      EpdFontFamily::BOLD);
-  char scoreBuf[48];
-  snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Length: %d", score, (int)snake.size());
+  char scoreBuf[64];
+  snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Length: %d  Best: %u", score, (int)snake.size(),
+           GAME_SCORES.getSnakeHighScore());
   int scoreW = renderer.getTextWidth(UI_10_FONT_ID, scoreBuf, EpdFontFamily::BOLD);
   renderer.drawText(UI_10_FONT_ID, screenW - metrics.contentSidePadding - scoreW, metrics.topPadding, scoreBuf,
                      true, EpdFontFamily::BOLD);
@@ -298,6 +316,15 @@ void SnakeActivity::renderGameOver() const {
   char scoreBuf[32];
   snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d", score);
   renderer.drawCenteredText(UI_10_FONT_ID, y, scoreBuf);
+  y += 22;
+
+  char bestBuf[32];
+  if (isNewBest) {
+    snprintf(bestBuf, sizeof(bestBuf), "New Best!");
+  } else {
+    snprintf(bestBuf, sizeof(bestBuf), "Best: %u", GAME_SCORES.getSnakeHighScore());
+  }
+  renderer.drawCenteredText(UI_10_FONT_ID, y, bestBuf);
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
