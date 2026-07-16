@@ -1,6 +1,7 @@
 #include "ActivityManager.h"
 
 #include <FontCacheManager.h>
+#include <HalGPIO.h>
 #include <HalPowerManager.h>
 
 #include <algorithm>
@@ -360,7 +361,31 @@ void ActivityManager::requestUpdateAndWait() {
   // define TickType_t/pdMS_TO_TICKS, and on real hardware CONFIG_FREERTOS_HZ=1000
   // (1 tick = 1ms) makes the literal equivalent anyway.
   constexpr uint32_t kRenderWaitTimeoutTicks = 5000;
-  if (ulTaskNotifyTake(pdTRUE, kRenderWaitTimeoutTicks) == 0) {
+  // Poll in short slices instead of one big blocking wait. FAST_REFRESH alone
+  // takes ~500ms on this hardware (see HalDisplay::begin's own comment) -- often
+  // already longer than a caller's own step interval -- and while this task sits
+  // blocked here, gpio.update() (button edge polling) never runs; it's only ever
+  // called once per outer main.cpp loop() iteration, which this whole wait is
+  // nested inside. A full button press+release entirely within that window was
+  // silently lost with no trace (confirmed on-device via a diagnostic log: zero
+  // presses registered across ~20s of continuous Snake play, every step blocked
+  // ~800ms -- "buttons do nothing but the game keeps moving" was exactly what
+  // that looks like from outside). Calling gpio.update() again here mid-wait is
+  // not a new pattern -- main.cpp's own comment already documents
+  // CrossPointWebServerActivity doing the same thing (polling input between
+  // handleClient() bursts) for the identical reason.
+  constexpr uint32_t kPollSliceTicks = 20;
+  uint32_t waitedTicks = 0;
+  bool notified = false;
+  while (waitedTicks < kRenderWaitTimeoutTicks) {
+    if (ulTaskNotifyTake(pdTRUE, kPollSliceTicks) != 0) {
+      notified = true;
+      break;
+    }
+    waitedTicks += kPollSliceTicks;
+    gpio.update();
+  }
+  if (!notified) {
     LOG_ERR("ACT", "requestUpdateAndWait: timed out waiting for render task notification");
     // Clear our own registration (if it's still ours -- a very late notification could
     // have already done this) so a future call isn't permanently blocked by
