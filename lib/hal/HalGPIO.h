@@ -46,11 +46,6 @@ class HalGPIO {
   bool lastUsbConnected = false;
   bool usbStateChanged = false;
 
-  // Sticky press/release edge latches, OR-accumulated across every update() call
-  // since the last beginFrame() -- see update()'s comment for why this exists.
-  uint8_t stickyPressedEvents = 0;
-  uint8_t stickyReleasedEvents = 0;
-
  public:
   enum class DeviceType : uint8_t { X4, X3 };
 
@@ -66,11 +61,6 @@ class HalGPIO {
 
   // Start button GPIO and setup SPI for screen and SD card
   void begin();
-
-  // Clears the sticky press/release edge latches. Call exactly once per real
-  // main-loop iteration, BEFORE that iteration's update() call(s) -- not once
-  // per update() call. See update()'s comment for the full rationale.
-  void beginFrame();
 
   // Button input methods
   void update();

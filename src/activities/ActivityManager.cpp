@@ -292,6 +292,17 @@ ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   return {};
 }
 
+uint8_t ActivityManager::sampleButtonLevel() const {
+  uint8_t level = 0;
+  if (mappedInput.isPressed(MappedInputManager::Button::Left)) level |= WAIT_BIT_LEFT;
+  if (mappedInput.isPressed(MappedInputManager::Button::Right)) level |= WAIT_BIT_RIGHT;
+  if (mappedInput.isPressed(MappedInputManager::Button::Up)) level |= WAIT_BIT_UP;
+  if (mappedInput.isPressed(MappedInputManager::Button::Down)) level |= WAIT_BIT_DOWN;
+  if (mappedInput.isPressed(MappedInputManager::Button::Back)) level |= WAIT_BIT_BACK;
+  if (mappedInput.isPressed(MappedInputManager::Button::Confirm)) level |= WAIT_BIT_CONFIRM;
+  return level;
+}
+
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {
     if (renderTaskHandle) {
@@ -377,6 +388,16 @@ void ActivityManager::requestUpdateAndWait() {
   constexpr uint32_t kPollSliceTicks = 20;
   uint32_t waitedTicks = 0;
   bool notified = false;
+  // Level-based (isPressed(), not wasPressed()) edge detection, entirely local to this
+  // function: InputManager::wasPressed()'s edge flags (freeink-sdk, not this repo) get
+  // reset on every single update() call and only repopulated on the specific call where a
+  // debounced transition lands, so repeatedly polling gpio.update() here without ALSO
+  // reading wasPressed() after each individual call would otherwise wipe out a press
+  // before the caller ever sees it -- exactly the bug this loop exists to avoid. isPressed()
+  // doesn't have that problem (it reflects current button state continuously), so comparing
+  // consecutive samples for a 0->1 transition gives a reliable, self-contained edge detector
+  // that survives however many polls happen before requestUpdateAndWait() returns.
+  uint8_t previousLevel = sampleButtonLevel();
   while (waitedTicks < kRenderWaitTimeoutTicks) {
     if (ulTaskNotifyTake(pdTRUE, kPollSliceTicks) != 0) {
       notified = true;
@@ -384,6 +405,9 @@ void ActivityManager::requestUpdateAndWait() {
     }
     waitedTicks += kPollSliceTicks;
     gpio.update();
+    const uint8_t currentLevel = sampleButtonLevel();
+    pressesDuringLastWait |= currentLevel & static_cast<uint8_t>(~previousLevel);
+    previousLevel = currentLevel;
   }
   if (!notified) {
     LOG_ERR("ACT", "requestUpdateAndWait: timed out waiting for render task notification");

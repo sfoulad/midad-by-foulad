@@ -41,6 +41,12 @@ class Activity {
   // Request an immediate render and block until it completes.
   virtual void requestUpdateAndWait();
 
+  // Returns (and clears) buttons newly pressed at any point during the most recent
+  // requestUpdateAndWait() call -- see ActivityManager::consumePressesDuringLastWait()'s own
+  // comment. For activities (e.g. games) that need to stay responsive across a blocking
+  // render wait; check in addition to normal wasPressed()/onPress() handling, not instead of.
+  uint8_t consumePressesDuringLastWait() { return activityManager.consumePressesDuringLastWait(); }
+
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
   // Class name for diagnostics only (e.g. SleepDiagLog, when preventAutoSleep() is

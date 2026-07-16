@@ -202,32 +202,8 @@ void HalGPIO::begin() {
   }
 }
 
-void HalGPIO::beginFrame() {
-  stickyPressedEvents = 0;
-  stickyReleasedEvents = 0;
-}
-
 void HalGPIO::update() {
   inputMgr.update();
-  // InputManager::update() (freeink-sdk, not this repo) zeroes its own pressedEvents/
-  // releasedEvents at the top of EVERY call and only repopulates them on the specific
-  // call where a debounced transition is detected -- so a caller that calls update()
-  // more than once per real "frame" without checking wasPressed() after EACH call
-  // silently erases presses that already happened (confirmed on-device: a caller
-  // blocked on a slow e-ink render polled update() in a loop to stay responsive, and
-  // each poll wiped out the previous poll's already-detected press before this
-  // activity's own loop() ever got to read it -- "buttons do nothing" with no serial
-  // cable in hand to see why). OR-accumulate every button's transient edge here into
-  // a sticky latch that survives until the next beginFrame() (once per real frame,
-  // not once per update() call) -- mirrors the desktop simulator's own HalGPIO, which
-  // already has exactly this beginFrame()/update() split for the identical reason
-  // (see its own comment: multiple update() calls per frame is an established,
-  // intentional pattern in this codebase, e.g. CrossPointWebServerActivity polling
-  // between handleClient() bursts).
-  for (uint8_t i = BTN_BACK; i <= BTN_POWER; i++) {
-    if (inputMgr.wasPressed(i)) stickyPressedEvents |= static_cast<uint8_t>(1 << i);
-    if (inputMgr.wasReleased(i)) stickyReleasedEvents |= static_cast<uint8_t>(1 << i);
-  }
   const bool connected = isUsbConnected();
   usbStateChanged = (connected != lastUsbConnected);
   lastUsbConnected = connected;
@@ -237,17 +213,13 @@ bool HalGPIO::wasUsbStateChanged() const { return usbStateChanged; }
 
 bool HalGPIO::isPressed(uint8_t buttonIndex) const { return inputMgr.isPressed(buttonIndex); }
 
-bool HalGPIO::wasPressed(uint8_t buttonIndex) const {
-  return stickyPressedEvents & static_cast<uint8_t>(1 << buttonIndex);
-}
+bool HalGPIO::wasPressed(uint8_t buttonIndex) const { return inputMgr.wasPressed(buttonIndex); }
 
-bool HalGPIO::wasAnyPressed() const { return stickyPressedEvents != 0; }
+bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed(); }
 
-bool HalGPIO::wasReleased(uint8_t buttonIndex) const {
-  return stickyReleasedEvents & static_cast<uint8_t>(1 << buttonIndex);
-}
+bool HalGPIO::wasReleased(uint8_t buttonIndex) const { return inputMgr.wasReleased(buttonIndex); }
 
-bool HalGPIO::wasAnyReleased() const { return stickyReleasedEvents != 0; }
+bool HalGPIO::wasAnyReleased() const { return inputMgr.wasAnyReleased(); }
 
 unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
 

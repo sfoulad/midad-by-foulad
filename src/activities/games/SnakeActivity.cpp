@@ -144,37 +144,52 @@ void SnakeActivity::step() {
 }
 
 void SnakeActivity::loop() {
-  if (mappedInput.wasAnyPressed()) {
+  // Buttons pressed at any point during the last blocking render wait (step()'s
+  // requestUpdateAndWait(), ~800ms on this hardware -- see its own comment) that a
+  // normal wasPressed() check here would otherwise never see: wasPressed()'s edge is
+  // only valid for the specific gpio.update() call that detected it, and this
+  // function's own checks run on a LATER call than the one buried inside that wait.
+  // Confirmed on-device via diagnostic log: presses vanished with no trace across
+  // whole play sessions. Treated as equivalent to a fresh wasPressed() below.
+  const uint8_t waitPresses = consumePressesDuringLastWait();
+
+  if (mappedInput.wasAnyPressed() || waitPresses != 0) {
     // Diagnostic: user reported buttons doing nothing in Snake while the snake
     // keeps auto-stepping (i.e. loop()/step() are clearly still running, so this
     // isn't the render-task hang fixed in requestUpdateAndWait()) -- unreproducible
     // off-device with no serial cable in hand. Log exactly what wasPressed() sees
     // on every real press so a report like that can still tell us whether input is
     // reaching this activity at all, and if so, why a turn/pause doesn't register.
-    char buf[144];
-    snprintf(buf, sizeof(buf), "%lu state=%d dir=(%d,%d) next=(%d,%d) U=%d D=%d L=%d R=%d Back=%d Confirm=%d",
+    char buf[176];
+    snprintf(buf, sizeof(buf),
+             "%lu state=%d dir=(%d,%d) next=(%d,%d) U=%d D=%d L=%d R=%d Back=%d Confirm=%d waitPresses=0x%02x",
              millis(), static_cast<int>(state), dirX, dirY, nextDirX, nextDirY,
              mappedInput.wasPressed(MappedInputManager::Button::Up),
              mappedInput.wasPressed(MappedInputManager::Button::Down),
              mappedInput.wasPressed(MappedInputManager::Button::Left),
              mappedInput.wasPressed(MappedInputManager::Button::Right),
              mappedInput.wasPressed(MappedInputManager::Button::Back),
-             mappedInput.wasPressed(MappedInputManager::Button::Confirm));
+             mappedInput.wasPressed(MappedInputManager::Button::Confirm), waitPresses);
     GameInputDiagLog::append(buf);
   }
 
+  const bool confirmPressed =
+      mappedInput.wasPressed(MappedInputManager::Button::Confirm) || (waitPresses & ActivityManager::WAIT_BIT_CONFIRM);
+  const bool backPressed =
+      mappedInput.wasPressed(MappedInputManager::Button::Back) || (waitPresses & ActivityManager::WAIT_BIT_BACK);
+
   if (state == GAME_OVER) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    if (confirmPressed) {
       initGame();
     }
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (backPressed) {
       finish();
     }
     return;
   }
 
   if (state == PAUSED) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    if (confirmPressed) {
       // Resume: re-baseline the step timer so the real time spent paused
       // doesn't register as one giant elapsed step (which would otherwise
       // make the snake jump forward multiple cells the instant play resumes).
@@ -182,7 +197,7 @@ void SnakeActivity::loop() {
       lastStepMs = millis();
       requestUpdate();
     }
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (backPressed) {
       finish();
     }
     return;
@@ -219,8 +234,21 @@ void SnakeActivity::loop() {
       nextDirY = 0;
     }
   });
+  if (waitPresses & ActivityManager::WAIT_BIT_UP && dirY == 0) {
+    nextDirX = 0;
+    nextDirY = -1;
+  } else if (waitPresses & ActivityManager::WAIT_BIT_DOWN && dirY == 0) {
+    nextDirX = 0;
+    nextDirY = 1;
+  } else if (waitPresses & ActivityManager::WAIT_BIT_LEFT && dirX == 0) {
+    nextDirX = -1;
+    nextDirY = 0;
+  } else if (waitPresses & ActivityManager::WAIT_BIT_RIGHT && dirX == 0) {
+    nextDirX = 1;
+    nextDirY = 0;
+  }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  if (backPressed) {
     state = PAUSED;
     requestUpdate();
     return;

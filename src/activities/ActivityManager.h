@@ -78,7 +78,42 @@ class ActivityManager {
   // This variable must only be set by the main loop, to avoid race conditions
   std::atomic<bool> requestedUpdate{false};
 
+  // Buttons that transitioned not-pressed -> pressed at any point during the most recent
+  // requestUpdateAndWait() call -- see that method's own comment for why this exists.
+  // Deliberately NOT surfaced through MappedInputManager::wasPressed()/wasAnyPressed(): those
+  // are read non-destructively in several places today (e.g. EpubReaderActivity's per-iteration
+  // "did anything happen" probe, SnakeActivity's own diagnostic logging) specifically so a later
+  // real handler in the same loop() call can still see the same press. Folding this into that
+  // same sticky state would make those non-destructive reads silently consume it before the
+  // caller who actually wants it -- reproducing this exact bug via the fix meant to catch it.
+  // This is a separate, opt-in, additive bitmask: nothing reads it unless it explicitly calls
+  // consumePressesDuringLastWait(), so it can't interfere with anything existing.
+  uint8_t pressesDuringLastWait = 0;
+  [[nodiscard]] uint8_t sampleButtonLevel() const;
+
  public:
+  static constexpr uint8_t WAIT_BIT_LEFT = 1 << 0;
+  static constexpr uint8_t WAIT_BIT_RIGHT = 1 << 1;
+  static constexpr uint8_t WAIT_BIT_UP = 1 << 2;
+  static constexpr uint8_t WAIT_BIT_DOWN = 1 << 3;
+  static constexpr uint8_t WAIT_BIT_BACK = 1 << 4;
+  static constexpr uint8_t WAIT_BIT_CONFIRM = 1 << 5;
+
+  // Returns (and clears) which of Left/Right/Up/Down/Back/Confirm were newly pressed at any
+  // point during the most recent requestUpdateAndWait() call. See that method's own comment:
+  // while blocked there, gpio.update()'s own internal edge state can be wiped by this
+  // function's repeated polling before the caller's normal wasPressed()/onPress() check ever
+  // runs (confirmed on-device: a press-and-release entirely inside a slow render wait vanished
+  // with no trace -- "buttons do nothing but the game keeps moving"). Callers that need to stay
+  // responsive across a blocking wait (e.g. Snake's per-step render wait) should check this in
+  // addition to their normal button handling.
+  uint8_t consumePressesDuringLastWait() {
+    const uint8_t result = pressesDuringLastWait;
+    pressesDuringLastWait = 0;
+    return result;
+  }
+
+
   explicit ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : renderer(renderer), mappedInput(mappedInput), renderingMutex(xSemaphoreCreateMutex()) {
     assert(renderingMutex != nullptr && "Failed to create rendering mutex");
