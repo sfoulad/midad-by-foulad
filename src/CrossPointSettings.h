@@ -126,7 +126,7 @@ class CrossPointSettings {
   // 3-family numbering keeps meaning what it always meant; ArabicFontSystem's
   // kBuiltinArabicReadingFontIds table now points that row at the already-loaded
   // NOTONASKHARABIC font ids instead of removed AMIRI_*_FONT_ID ones.
-  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, AMIRI = 1, UTHMANICHAFS = 2, ARABIC_FONT_FAMILY_COUNT };
+  enum ARABIC_FONT_FAMILY { NOTONASKHARABIC = 0, AMIRI = 1, UTHMANICHAFS = 2, TAJAWAL = 3, ARABIC_FONT_FAMILY_COUNT };
   static constexpr uint8_t BUILTIN_ARABIC_FONT_COUNT = ARABIC_FONT_FAMILY_COUNT;
   enum LINE_COMPRESSION { TIGHT = 0, NORMAL = 1, WIDE = 2, LINE_COMPRESSION_COUNT };
   enum PARAGRAPH_ALIGNMENT {

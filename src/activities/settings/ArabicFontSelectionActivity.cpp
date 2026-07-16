@@ -28,6 +28,7 @@ constexpr const char* ELLIPSIS_UTF8 = "\xe2\x80\xa6";
 constexpr std::pair<StrId, uint8_t> kSelectableArabicFonts[] = {
     {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
     {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
+    {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
 };
 constexpr int kSelectableArabicFontCount =
     static_cast<int>(sizeof(kSelectableArabicFonts) / sizeof(kSelectableArabicFonts[0]));

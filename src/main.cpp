@@ -131,6 +131,18 @@ EpdFontFamily uthmanichafs16FontFamily(&uthmanichafs16RegularFont);
 EpdFont uthmanichafs18RegularFont(&uthmanichafs_18_regular);
 EpdFontFamily uthmanichafs18FontFamily(&uthmanichafs18RegularFont);
 
+// Tajawal (Boutros International, OFL-licensed, from Google Fonts): a modern
+// geometric-sans reading option, alongside the two traditional book-printing
+// styles above. Same four reading sizes as Naskh/UthmanicHafs.
+EpdFont tajawal12RegularFont(&tajawal_12_regular);
+EpdFontFamily tajawal12FontFamily(&tajawal12RegularFont);
+EpdFont tajawal14RegularFont(&tajawal_14_regular);
+EpdFontFamily tajawal14FontFamily(&tajawal14RegularFont);
+EpdFont tajawal16RegularFont(&tajawal_16_regular);
+EpdFontFamily tajawal16FontFamily(&tajawal16RegularFont);
+EpdFont tajawal18RegularFont(&tajawal_18_regular);
+EpdFontFamily tajawal18FontFamily(&tajawal18RegularFont);
+
 // Quran Common (same King Fahd Complex-adjacent provenance as UthmanicHafs above --
 // see lib/EpdFont/builtinFonts/source/QuranCommon/): a tiny 1-glyph dedicated font
 // carrying the real Bismillah ligature (U+FDFD), which UthmanicHafs itself lacks.
@@ -397,6 +409,10 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UTHMANICHAFS_14_FONT_ID, uthmanichafs14FontFamily);
   renderer.insertFont(UTHMANICHAFS_16_FONT_ID, uthmanichafs16FontFamily);
   renderer.insertFont(UTHMANICHAFS_18_FONT_ID, uthmanichafs18FontFamily);
+  renderer.insertFont(TAJAWAL_12_FONT_ID, tajawal12FontFamily);
+  renderer.insertFont(TAJAWAL_14_FONT_ID, tajawal14FontFamily);
+  renderer.insertFont(TAJAWAL_16_FONT_ID, tajawal16FontFamily);
+  renderer.insertFont(TAJAWAL_18_FONT_ID, tajawal18FontFamily);
   renderer.insertFont(QURANCOMMON_18_FONT_ID, quranCommon18FontFamily);
   renderer.insertFont(SURAHBANNER_24_FONT_ID, surahBanner24FontFamily);
 

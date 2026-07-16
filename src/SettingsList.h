@@ -111,6 +111,7 @@ inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* regist
   static constexpr std::pair<StrId, uint8_t> kSelectableFonts[] = {
       {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
       {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
+      {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
   };
   static constexpr int kSelectableCount = static_cast<int>(sizeof(kSelectableFonts) / sizeof(kSelectableFonts[0]));
 

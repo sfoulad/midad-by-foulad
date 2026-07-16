@@ -88,6 +88,16 @@ for size in ${ARABIC_READING_FONT_SIZES[@]}; do
     --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_${size}_regular.h
   echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
 done
+# Tajawal (Boutros International, OFL-licensed, google/fonts ofl/tajawal): a modern
+# geometric-sans reading option alongside the two traditional book-printing styles
+# above. Has GPOS MarkBasePos/MarkMarkPos (confirmed via fontTools), same as the
+# other three Arabic fonts here -- --reposition-marks required.
+for size in ${ARABIC_READING_FONT_SIZES[@]}; do
+  python fontconvert.py tajawal_${size}_regular ${size} \
+    ../builtinFonts/source/Tajawal/Tajawal-Regular.ttf \
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_${size}_regular.h
+  echo "Generated ../builtinFonts/tajawal_${size}_regular.h"
+done
 # KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface, the Quran's default
 # reading font (see QuranBook::ensureExtracted / kBuiltinArabicReadingFontIds).
 # --shape-fallback: this font only exposes Arabic Presentation Forms via GSUB

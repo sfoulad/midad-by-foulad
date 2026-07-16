@@ -27,6 +27,9 @@ constexpr int
         // default reading face (per-book sidecar written at extraction; see
         // QuranBook::ensureExtracted).
         {UTHMANICHAFS_12_FONT_ID, UTHMANICHAFS_14_FONT_ID, UTHMANICHAFS_16_FONT_ID, UTHMANICHAFS_18_FONT_ID},
+        // Tajawal (Boutros International, OFL-licensed): a modern geometric-sans
+        // reading option, alongside the two traditional book-printing styles above.
+        {TAJAWAL_12_FONT_ID, TAJAWAL_14_FONT_ID, TAJAWAL_16_FONT_ID, TAJAWAL_18_FONT_ID},
 };
 
 // One mapping scheme for both the built-in and SD-override cases: the three

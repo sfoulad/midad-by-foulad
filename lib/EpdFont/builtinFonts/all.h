@@ -28,6 +28,10 @@
 #include <builtinFonts/uthmanichafs_14_regular.h>
 #include <builtinFonts/uthmanichafs_16_regular.h>
 #include <builtinFonts/uthmanichafs_18_regular.h>
+#include <builtinFonts/tajawal_12_regular.h>
+#include <builtinFonts/tajawal_14_regular.h>
+#include <builtinFonts/tajawal_16_regular.h>
+#include <builtinFonts/tajawal_18_regular.h>
 #include <builtinFonts/quran_common_18_regular.h>
 #include <builtinFonts/surah_banner_24_regular.h>
 #include <builtinFonts/ubuntu_10_bold.h>
