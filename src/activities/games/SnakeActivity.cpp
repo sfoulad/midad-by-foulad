@@ -7,6 +7,7 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/GameInputDiagLog.h"
 
 // 25% gray (light) — every other pixel in checkerboard on even rows only
 static void fillDithered25(GfxRenderer& r, int x, int y, int w, int h) {
@@ -73,6 +74,26 @@ bool SnakeActivity::isSnakeAt(int x, int y) const {
 }
 
 void SnakeActivity::step() {
+  // Diagnostic: measure how long each frame's blocking render wait actually
+  // takes, and log any that are abnormally slow. If the render task is
+  // intermittently stalling, requestUpdateAndWait()'s bounded timeout (see
+  // ActivityManager.cpp) lets the game keep going, but the ENTIRE stall
+  // happens deep inside this single loop() call -- gpio.update() only runs
+  // once per full main.cpp loop() iteration, at the top, never mid-iteration
+  // -- so a full button press+release inside that window can be silently
+  // missed. "Snake keeps moving but buttons do nothing" is exactly what that
+  // looks like from the outside; this pins down whether it's really happening.
+  const auto timedRequestUpdateAndWait = [this] {
+    const unsigned long waitStartMs = millis();
+    requestUpdateAndWait();
+    const unsigned long waitMs = millis() - waitStartMs;
+    if (waitMs > 500) {
+      char buf[80];
+      snprintf(buf, sizeof(buf), "%lu step render wait = %lu ms (slow/stalled)", millis(), waitMs);
+      GameInputDiagLog::append(buf);
+    }
+  };
+
   // Apply buffered direction
   dirX = nextDirX;
   dirY = nextDirY;
@@ -84,7 +105,7 @@ void SnakeActivity::step() {
   if (newHead.x < 0 || newHead.x >= gridW || newHead.y < 0 || newHead.y >= gridH) {
     state = GAME_OVER;
     isNewBest = GAME_SCORES.reportSnakeScore(static_cast<uint32_t>(score));
-    requestUpdateAndWait();
+    timedRequestUpdateAndWait();
     return;
   }
 
@@ -92,7 +113,7 @@ void SnakeActivity::step() {
   if (isSnakeAt(newHead.x, newHead.y)) {
     state = GAME_OVER;
     isNewBest = GAME_SCORES.reportSnakeScore(static_cast<uint32_t>(score));
-    requestUpdateAndWait();
+    timedRequestUpdateAndWait();
     return;
   }
 
@@ -119,10 +140,29 @@ void SnakeActivity::step() {
   // effective step rate track real display speed instead of racing ahead of
   // it -- worst case the game paces itself to the panel's refresh time
   // instead of the nominal 300ms, which is the correct trade-off.
-  requestUpdateAndWait();
+  timedRequestUpdateAndWait();
 }
 
 void SnakeActivity::loop() {
+  if (mappedInput.wasAnyPressed()) {
+    // Diagnostic: user reported buttons doing nothing in Snake while the snake
+    // keeps auto-stepping (i.e. loop()/step() are clearly still running, so this
+    // isn't the render-task hang fixed in requestUpdateAndWait()) -- unreproducible
+    // off-device with no serial cable in hand. Log exactly what wasPressed() sees
+    // on every real press so a report like that can still tell us whether input is
+    // reaching this activity at all, and if so, why a turn/pause doesn't register.
+    char buf[144];
+    snprintf(buf, sizeof(buf), "%lu state=%d dir=(%d,%d) next=(%d,%d) U=%d D=%d L=%d R=%d Back=%d Confirm=%d",
+             millis(), static_cast<int>(state), dirX, dirY, nextDirX, nextDirY,
+             mappedInput.wasPressed(MappedInputManager::Button::Up),
+             mappedInput.wasPressed(MappedInputManager::Button::Down),
+             mappedInput.wasPressed(MappedInputManager::Button::Left),
+             mappedInput.wasPressed(MappedInputManager::Button::Right),
+             mappedInput.wasPressed(MappedInputManager::Button::Back),
+             mappedInput.wasPressed(MappedInputManager::Button::Confirm));
+    GameInputDiagLog::append(buf);
+  }
+
   if (state == GAME_OVER) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       initGame();
