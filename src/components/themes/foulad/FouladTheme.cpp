@@ -232,9 +232,16 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
 
   // Recents band geometry: divider label centered between two rules, thumbs below.
   const int dividerLabelY = heroCoverY + kHeroHeight + kDividerHalfSeparation + 10;
+  // Arabic UI text (via NotoSansArabic) sits taller/deeper than the Latin UI_12
+  // metrics this block was originally tuned with, so the "Double-rule Recents
+  // divider" block below pushes its two rules an extra 5px apart (its own `sep`)
+  // for Arabic labels. thumbsY must apply that same +5, or the widened gap never
+  // reaches the thumbnail row and the divider label's descenders slice through
+  // the covers underneath it.
+  const bool arabicDividerLabel = ScriptDetector::containsArabic(tr(STR_RECENTS));
   // 28px clears the divider's bottom rule (label center + half-separation) with a
   // visible gap; 16 left the covers touching the rule.
-  const int thumbsY = dividerLabelY + kDividerHalfSeparation + 28;
+  const int thumbsY = dividerLabelY + kDividerHalfSeparation + 28 + (arabicDividerLabel ? 5 : 0);
   const int shownRecents = std::min(static_cast<int>(recentBooks.size()) - 1, kThumbsCount);
   const int kThumbWidth = (rect.width - 2 * kMenuPadding - (kThumbsCount - 1) * kThumbGap) / kThumbsCount;
   const int thumbsTotalW = kThumbsCount * kThumbWidth + (kThumbsCount - 1) * kThumbGap;
@@ -386,21 +393,21 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
     const int x1 = rect.x + kMenuPadding;
     const int x2 = rect.x + rect.width - kMenuPadding;
     const char* dividerLabel = tr(STR_RECENTS);
-    const bool arabicLabel = ScriptDetector::containsArabic(dividerLabel);
     // Arabic UI text renders in NotoSansArabic, whose glyphs sit taller and
     // descend deeper than the Latin UI_12 metrics this block was sized with --
     // measured on-device as the lower rule slicing through كتبي's descenders.
     // Use the Arabic line height for centering and push the rules apart a bit.
-    const int labelH =
-        arabicLabel ? renderer.getLineHeight(NOTOSANSARABIC_12_FONT_ID) : renderer.getLineHeight(UI_12_FONT_ID);
-    const int sep = kDividerHalfSeparation + (arabicLabel ? 5 : 0);
+    // (arabicDividerLabel/thumbsY's matching +5 are computed once, above.)
+    const int labelH = arabicDividerLabel ? renderer.getLineHeight(NOTOSANSARABIC_12_FONT_ID)
+                                          : renderer.getLineHeight(UI_12_FONT_ID);
+    const int sep = kDividerHalfSeparation + (arabicDividerLabel ? 5 : 0);
     const int labelCenterY = dividerLabelY + labelH / 2;
     renderer.drawLine(x1, labelCenterY - sep, x2, labelCenterY - sep, true);
     renderer.drawLine(x1, labelCenterY + sep, x2, labelCenterY + sep, true);
     const int labelW = renderer.getTextWidth(UI_12_FONT_ID, dividerLabel, EpdFontFamily::BOLD);
     const int labelX = (renderer.getScreenWidth() - labelW) / 2;
     renderer.drawText(UI_12_FONT_ID, labelX, dividerLabelY, dividerLabel, true, EpdFontFamily::BOLD);
-    if (arabicLabel) {
+    if (arabicDividerLabel) {
       // No bold Arabic face ships in the firmware; double-strike 1px apart
       // reads as bold on the 1-bit panel, matching the Latin BOLD label.
       renderer.drawText(UI_12_FONT_ID, labelX + 1, dividerLabelY, dividerLabel, true, EpdFontFamily::BOLD);

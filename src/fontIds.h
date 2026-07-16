@@ -19,6 +19,8 @@
 #define UTHMANICHAFS_14_FONT_ID (1641055886)
 #define UTHMANICHAFS_16_FONT_ID (-1160315395)
 #define UTHMANICHAFS_18_FONT_ID (-413562682)
+#define TAJAWAL_8_FONT_ID (-552090769)
+#define TAJAWAL_10_FONT_ID (63686576)
 #define TAJAWAL_12_FONT_ID (1572681632)
 #define TAJAWAL_14_FONT_ID (-1980536858)
 #define TAJAWAL_16_FONT_ID (-275170375)
@@ -45,6 +47,8 @@ static_assert(UTHMANICHAFS_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UTHMANICHAFS_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UTHMANICHAFS_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(UTHMANICHAFS_18_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(TAJAWAL_8_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(TAJAWAL_10_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(TAJAWAL_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(TAJAWAL_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(TAJAWAL_16_FONT_ID != 0, "Font ID collision with sentinel");

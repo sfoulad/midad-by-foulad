@@ -318,14 +318,27 @@ void RecentBooksActivity::loop() {
     requestUpdate();
   };
 
+  // Under RTL, index order stays the same (0..N still the same book order) but
+  // the grid renders mirrored (see render()'s col computation below) -- so
+  // increasing the index moves the visual selection LEFT, not right. Swap
+  // which physical button drives which index direction to match, same idiom
+  // MappedInputManager::mapButton() already uses for NavNext/NavPrevious.
+  const bool rtl = I18N.isRtl();
   buttonNavigator.onRelease({MappedInputManager::Button::Up}, moveUp);
   buttonNavigator.onRelease({MappedInputManager::Button::Down}, moveDown);
-  buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveLeft);
-  buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveRight);
   buttonNavigator.onContinuous({MappedInputManager::Button::Up}, moveUp);
   buttonNavigator.onContinuous({MappedInputManager::Button::Down}, moveDown);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveLeft);
-  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveRight);
+  if (rtl) {
+    buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveRight);
+    buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveLeft);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveRight);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveLeft);
+  } else {
+    buttonNavigator.onRelease({MappedInputManager::Button::Left}, moveLeft);
+    buttonNavigator.onRelease({MappedInputManager::Button::Right}, moveRight);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Left}, moveLeft);
+    buttonNavigator.onContinuous({MappedInputManager::Button::Right}, moveRight);
+  }
 }
 
 void RecentBooksActivity::promptRemoveBook(const std::string& path, const std::string& title) {
@@ -530,6 +543,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   // with white touches neither covers nor titles). Skips the per-keypress SD
   // reads + bitmap downscales of a full redraw.
   if (!recentBooks.empty() && renderedGridPageStart != NO_GRID_PAGE_LOADED && renderedSelectorIndex >= 0) {
+    const bool rtl = I18N.isRtl();
     const GridGeometry geometry = computeGridGeometry();
     const int gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
     if (gridPageStart == renderedGridPageStart && static_cast<int>(selectorIndex) != renderedSelectorIndex) {
@@ -540,7 +554,8 @@ void RecentBooksActivity::render(RenderLock&&) {
       const int gridStartX = std::max(0, (static_cast<int>(renderer.getScreenWidth()) - totalGridWidth) / 2);
       const auto ringRect = [&](const int bookIdx, const bool black) {
         const int i = bookIdx - gridPageStart;
-        const int cellX = gridStartX + (i % geometry.columns) * (geometry.coverWidth + GRID_GUTTER);
+        const int col = rtl ? geometry.columns - 1 - (i % geometry.columns) : i % geometry.columns;
+        const int cellX = gridStartX + col * (geometry.coverWidth + GRID_GUTTER);
         const int cellY = contentTop + (i / geometry.columns) * (geometry.coverHeight + titleHeight + GRID_GUTTER);
         renderer.drawRect(cellX - 4, cellY - 4, geometry.coverWidth + 8, geometry.coverHeight + 8, 4, black);
       };
@@ -570,6 +585,7 @@ void RecentBooksActivity::render(RenderLock&&) {
   if (recentBooks.empty()) {
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, tr(STR_NO_RECENT_BOOKS));
   } else {
+    const bool rtl = I18N.isRtl();
     const GridGeometry geometry = computeGridGeometry();
     const int titleHeight = getGridTitleHeight();
     gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
@@ -580,7 +596,11 @@ void RecentBooksActivity::render(RenderLock&&) {
     for (int i = 0; i < pageCount; i++) {
       const int bookIdx = gridPageStart + i;
       const auto& book = recentBooks[bookIdx];
-      const int col = i % geometry.columns;
+      // Columns mirror right-to-left under Arabic: index order stays the same
+      // (book 0 remains the most-recent book), but it renders in the
+      // rightmost column instead of the leftmost -- same idiom as
+      // FouladTheme::drawRecentBookCover's thumb-row `slot` mirroring.
+      const int col = rtl ? geometry.columns - 1 - (i % geometry.columns) : i % geometry.columns;
       const int row = i / geometry.columns;
       const int cellX = gridStartX + col * (geometry.coverWidth + GRID_GUTTER);
       const int cellY = contentTop + row * (geometry.coverHeight + titleHeight + GRID_GUTTER);

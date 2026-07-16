@@ -134,7 +134,13 @@ EpdFontFamily uthmanichafs18FontFamily(&uthmanichafs18RegularFont);
 
 // Tajawal (Boutros International, OFL-licensed, from Google Fonts): a modern
 // geometric-sans reading option, alongside the two traditional book-printing
-// styles above. Same four reading sizes as Naskh/UthmanicHafs.
+// styles above. Same four reading sizes as Naskh/UthmanicHafs, plus 8/10pt so
+// it can also serve as the Arabic UI-chrome font (see applyArabicMappings) --
+// 12pt is shared with the reading tier, so only 8/10 need their own objects.
+EpdFont tajawal8RegularFont(&tajawal_8_regular);
+EpdFontFamily tajawal8FontFamily(&tajawal8RegularFont);
+EpdFont tajawal10RegularFont(&tajawal_10_regular);
+EpdFontFamily tajawal10FontFamily(&tajawal10RegularFont);
 EpdFont tajawal12RegularFont(&tajawal_12_regular);
 EpdFontFamily tajawal12FontFamily(&tajawal12RegularFont);
 EpdFont tajawal14RegularFont(&tajawal_14_regular);
@@ -410,6 +416,8 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UTHMANICHAFS_14_FONT_ID, uthmanichafs14FontFamily);
   renderer.insertFont(UTHMANICHAFS_16_FONT_ID, uthmanichafs16FontFamily);
   renderer.insertFont(UTHMANICHAFS_18_FONT_ID, uthmanichafs18FontFamily);
+  renderer.insertFont(TAJAWAL_8_FONT_ID, tajawal8FontFamily);
+  renderer.insertFont(TAJAWAL_10_FONT_ID, tajawal10FontFamily);
   renderer.insertFont(TAJAWAL_12_FONT_ID, tajawal12FontFamily);
   renderer.insertFont(TAJAWAL_14_FONT_ID, tajawal14FontFamily);
   renderer.insertFont(TAJAWAL_16_FONT_ID, tajawal16FontFamily);

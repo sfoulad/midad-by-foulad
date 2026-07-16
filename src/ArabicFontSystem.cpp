@@ -34,9 +34,12 @@ constexpr int
 
 // One mapping scheme for both the built-in and SD-override cases: the three
 // Arabic-eligible UI tiers -- SMALL_FONT_ID (8pt), UI_10_FONT_ID (10pt),
-// UI_12_FONT_ID (12pt) -- always render in built-in Noto Sans Arabic at the
-// matching size, and EVERYTHING ELSE falls through to readingFontId as the
-// renderer's default. The previous scheme enumerated the four built-in Noto
+// UI_12_FONT_ID (12pt) -- always render in built-in Tajawal at the matching
+// size, and EVERYTHING ELSE falls through to readingFontId as the renderer's
+// default. Tajawal (not Noto Sans Arabic) so the whole interface -- headers,
+// button hints, list rows, grid titles -- reads in one consistent typeface,
+// per explicit user request to use Tajawal for all firmware Arabic UI, not
+// just reading text. The previous scheme enumerated the four built-in Noto
 // Serif reading ids explicitly with Sans-12 as the catch-all, which silently
 // pinned Arabic body text to 12pt UI type for anyone reading with an SD-card
 // Latin font -- Arabic Font Size appeared to do nothing (user report, and the
@@ -48,9 +51,9 @@ void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
   // hints, header) and align with adjacent Latin text -- essential for a fully-Arabic
   // interface. The reading default stays unmatched: EPUB rows are sized for the
   // full Arabic line height and book text carries diacritics needing that headroom.
-  renderer.setArabicFontIdForFontId(SMALL_FONT_ID, NOTOSANSARABIC_8_FONT_ID, /*matchLatinBaseline=*/true);
-  renderer.setArabicFontIdForFontId(UI_10_FONT_ID, NOTOSANSARABIC_10_FONT_ID, /*matchLatinBaseline=*/true);
-  renderer.setArabicFontIdForFontId(UI_12_FONT_ID, NOTOSANSARABIC_12_FONT_ID, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(SMALL_FONT_ID, TAJAWAL_8_FONT_ID, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(UI_10_FONT_ID, TAJAWAL_10_FONT_ID, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(UI_12_FONT_ID, TAJAWAL_12_FONT_ID, /*matchLatinBaseline=*/true);
   renderer.setArabicFontId(readingFontId);
   // Ayah-marker digits always come from this built-in font, never readingFontId --
   // see setArabicDigitFallbackFontId's comment for why (some reading fonts simply

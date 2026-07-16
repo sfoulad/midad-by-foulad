@@ -98,6 +98,19 @@ for size in ${ARABIC_READING_FONT_SIZES[@]}; do
     --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_${size}_regular.h
   echo "Generated ../builtinFonts/tajawal_${size}_regular.h"
 done
+# Tajawal also doubles as the Arabic UI-chrome font (headers, button hints, list
+# rows -- SMALL_FONT_ID=8pt, UI_10_FONT_ID=10pt, UI_12_FONT_ID=12pt), replacing
+# NotoSansArabic there so the whole interface reads in one consistent Arabic
+# typeface instead of mixing Tajawal (reading) with NotoSansArabic (chrome). Only
+# 8/10pt need generating here -- the reading loop above already produced
+# tajawal_12_regular.h with identical conversion flags, so UI_12_FONT_ID reuses
+# that file directly (see ArabicFontSystem.cpp's applyArabicMappings).
+for size in 8 10; do
+  python fontconvert.py tajawal_${size}_regular ${size} \
+    ../builtinFonts/source/Tajawal/Tajawal-Regular.ttf \
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_${size}_regular.h
+  echo "Generated ../builtinFonts/tajawal_${size}_regular.h"
+done
 # KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface, the Quran's default
 # reading font (see QuranBook::ensureExtracted / kBuiltinArabicReadingFontIds).
 # --shape-fallback: this font only exposes Arabic Presentation Forms via GSUB

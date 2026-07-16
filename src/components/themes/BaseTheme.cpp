@@ -387,16 +387,25 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   renderer.fillRect(rect.x + rect.width - maxBatteryWidth, rect.y + 5, maxBatteryWidth,
                     BaseMetrics::values.batteryHeight + 10, false);
 
+  const bool rtl = I18N.isRtl();
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
-  // Position icon at right edge, drawBatteryRight will place text to the left
-  const int batteryX = rect.x + rect.width - 12 - BaseMetrics::values.batteryWidth;
-  drawBatteryRight(renderer,
-                   Rect{batteryX, rect.y + 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
-                   showBatteryPercentage);
+  int padding;
+  if (rtl) {
+    drawBatteryLeft(renderer,
+                    Rect{rect.x + 12, rect.y + 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
+                    showBatteryPercentage);
+    padding = 12 + BaseMetrics::values.batteryWidth;
+  } else {
+    // Position icon at right edge, drawBatteryRight will place text to the left
+    const int batteryX = rect.x + rect.width - 12 - BaseMetrics::values.batteryWidth;
+    drawBatteryRight(renderer,
+                     Rect{batteryX, rect.y + 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
+                     showBatteryPercentage);
+    padding = rect.width - batteryX + BaseMetrics::values.batteryWidth;
+  }
 
   if (title) {
-    int padding = rect.width - batteryX + BaseMetrics::values.batteryWidth;
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title,
                                                  rect.width - padding * 2 - BaseMetrics::values.contentSidePadding * 2,
                                                  EpdFontFamily::BOLD);
@@ -407,28 +416,32 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     auto truncatedSubtitle = renderer.truncatedText(
         SMALL_FONT_ID, subtitle, rect.width - BaseMetrics::values.contentSidePadding * 2, EpdFontFamily::REGULAR);
     int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
-    renderer.drawText(SMALL_FONT_ID,
-                      rect.x + rect.width - BaseMetrics::values.contentSidePadding - truncatedSubtitleWidth, subtitleY,
-                      truncatedSubtitle.c_str(), true);
+    const int subtitleX = rtl ? rect.x + BaseMetrics::values.contentSidePadding
+                              : rect.x + rect.width - BaseMetrics::values.contentSidePadding - truncatedSubtitleWidth;
+    renderer.drawText(SMALL_FONT_ID, subtitleX, subtitleY, truncatedSubtitle.c_str(), true);
   }
 }
 
 void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
   constexpr int maxListValueWidth = 200;
 
-  int currentX = rect.x + BaseMetrics::values.contentSidePadding;
+  const bool rtl = I18N.isRtl();
   int rightSpace = BaseMetrics::values.contentSidePadding;
   if (rightLabel) {
     auto truncatedRightLabel =
         renderer.truncatedText(SMALL_FONT_ID, rightLabel, maxListValueWidth, EpdFontFamily::REGULAR);
     int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
-    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - BaseMetrics::values.contentSidePadding - rightLabelWidth,
-                      rect.y + 7, truncatedRightLabel.c_str());
+    const int rightLabelX = rtl ? rect.x + BaseMetrics::values.contentSidePadding
+                                : rect.x + rect.width - BaseMetrics::values.contentSidePadding - rightLabelWidth;
+    renderer.drawText(SMALL_FONT_ID, rightLabelX, rect.y + 7, truncatedRightLabel.c_str());
     rightSpace += rightLabelWidth + 10;
   }
 
   auto truncatedLabel = renderer.truncatedText(
       UI_12_FONT_ID, label, rect.width - BaseMetrics::values.contentSidePadding - rightSpace, EpdFontFamily::REGULAR);
+  const int labelWidth = renderer.getTextWidth(UI_12_FONT_ID, truncatedLabel.c_str());
+  const int currentX = rtl ? rect.x + rect.width - BaseMetrics::values.contentSidePadding - labelWidth
+                           : rect.x + BaseMetrics::values.contentSidePadding;
   renderer.drawText(UI_12_FONT_ID, currentX, rect.y, truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
 }
 

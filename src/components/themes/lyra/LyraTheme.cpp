@@ -112,13 +112,24 @@ void LyraTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t
 void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle) const {
   renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
+  // Full RTL mirroring under the Arabic UI: battery moves to the left edge,
+  // title right-anchors (matching every other RTL-aware draw* in this theme --
+  // see FouladTheme::drawRecentBookCover's own header/status-line mirroring),
+  // subtitle moves to the left to stay on the opposite side of the title.
+  const bool rtl = I18N.isRtl();
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
-  // Position icon at right edge, drawBatteryRight will place text to the left
-  const int batteryX = rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth;
-  drawBatteryRight(renderer,
-                   Rect{batteryX, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
-                   showBatteryPercentage);
+  if (rtl) {
+    drawBatteryLeft(
+        renderer, Rect{rect.x + 12, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
+        showBatteryPercentage);
+  } else {
+    // Position icon at right edge, drawBatteryRight will place text to the left
+    const int batteryX = rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth;
+    drawBatteryRight(renderer,
+                     Rect{batteryX, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
+                     showBatteryPercentage);
+  }
 
   int maxTitleWidth = title != nullptr ? renderer.getTextWidth(UI_12_FONT_ID, title, EpdFontFamily::BOLD) : 0;
   int maxSubtitleWidth =
@@ -144,35 +155,44 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
 
   if (title) {
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title, maxTitleWidth, EpdFontFamily::BOLD);
-    renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding,
-                      rect.y + LyraMetrics::values.batteryBarHeight + 3, truncatedTitle.c_str(), true,
-                      EpdFontFamily::BOLD);
+    const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, truncatedTitle.c_str(), EpdFontFamily::BOLD);
+    const int titleX = rtl ? rect.x + rect.width - LyraMetrics::values.contentSidePadding - titleWidth
+                          : rect.x + LyraMetrics::values.contentSidePadding;
+    renderer.drawText(UI_12_FONT_ID, titleX, rect.y + LyraMetrics::values.batteryBarHeight + 3,
+                      truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
     renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
   }
 
   if (subtitle) {
     auto truncatedSubtitle = renderer.truncatedText(SMALL_FONT_ID, subtitle, maxSubtitleWidth, EpdFontFamily::REGULAR);
     int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
-    renderer.drawText(SMALL_FONT_ID,
-                      rect.x + rect.width - LyraMetrics::values.contentSidePadding - truncatedSubtitleWidth,
-                      rect.y + 50, truncatedSubtitle.c_str(), true);
+    const int subtitleX = rtl ? rect.x + LyraMetrics::values.contentSidePadding
+                             : rect.x + rect.width - LyraMetrics::values.contentSidePadding - truncatedSubtitleWidth;
+    renderer.drawText(SMALL_FONT_ID, subtitleX, rect.y + 50, truncatedSubtitle.c_str(), true);
   }
 }
 
 void LyraTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
-  int currentX = rect.x + LyraMetrics::values.contentSidePadding;
+  // Under the Arabic UI, mirror sides: rightLabel (a value/count, e.g. "12
+  // books") moves to the left edge and label (the row's own title) right-
+  // anchors -- same swap-the-anchors pattern as LyraTheme::drawHeader.
+  const bool rtl = I18N.isRtl();
   int rightSpace = LyraMetrics::values.contentSidePadding;
   if (rightLabel) {
     auto truncatedRightLabel =
         renderer.truncatedText(SMALL_FONT_ID, rightLabel, maxListValueWidth, EpdFontFamily::REGULAR);
     int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
-    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - LyraMetrics::values.contentSidePadding - rightLabelWidth,
-                      rect.y + 7, truncatedRightLabel.c_str());
+    const int rightLabelX = rtl ? rect.x + LyraMetrics::values.contentSidePadding
+                                : rect.x + rect.width - LyraMetrics::values.contentSidePadding - rightLabelWidth;
+    renderer.drawText(SMALL_FONT_ID, rightLabelX, rect.y + 7, truncatedRightLabel.c_str());
     rightSpace += rightLabelWidth + hPaddingInSelection;
   }
 
   auto truncatedLabel = renderer.truncatedText(
       UI_10_FONT_ID, label, rect.width - LyraMetrics::values.contentSidePadding - rightSpace, EpdFontFamily::REGULAR);
+  const int labelWidth = renderer.getTextWidth(UI_10_FONT_ID, truncatedLabel.c_str());
+  const int currentX = rtl ? rect.x + rect.width - LyraMetrics::values.contentSidePadding - labelWidth
+                           : rect.x + LyraMetrics::values.contentSidePadding;
   renderer.drawText(UI_10_FONT_ID, currentX, rect.y + 6, truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
 
   renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
