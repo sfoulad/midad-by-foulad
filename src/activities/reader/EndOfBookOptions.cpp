@@ -68,11 +68,11 @@ EndOfBookOptions::Action EndOfBookOptions::handleMenuInput(const MappedInputMana
     return usePress ? input.wasPressed(button) : input.wasReleased(button);
   };
   const int itemCount = static_cast<int>(names.size()) + 1;  // + "Home" entry
-  if (triggered(MappedInputManager::Button::NavPrevious)) {
+  if (triggered(MappedInputManager::Button::ScrollPrevious)) {
     selector = ButtonNavigator::previousIndex(selector, itemCount);  // wraps to the bottom
     return Action::Redraw;
   }
-  if (triggered(MappedInputManager::Button::NavNext)) {
+  if (triggered(MappedInputManager::Button::ScrollNext)) {
     selector = ButtonNavigator::nextIndex(selector, itemCount);  // wraps to the top
     return Action::Redraw;
   }
@@ -110,6 +110,6 @@ void EndOfBookOptions::render(GfxRenderer& renderer, const MappedInputManager& i
                                                                : std::string(tr(STR_EOB_HOME));
                });
 
-  const auto labels = input.mapLabels(tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = input.mapLabels(tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }

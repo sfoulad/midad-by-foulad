@@ -25,11 +25,11 @@ void GamesMenuActivity::loop() {
   // Logical NavNext/NavPrevious (not raw Up/Down) -- resolves to whichever
   // physical buttons are correct for this device/orientation, same as every
   // other list in the app (see ButtonNavigator::getNextButtons/getPreviousButtons).
-  buttonNavigator_.onNextRelease([this] {
+  buttonNavigator_.onScrollNextRelease([this] {
     selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, GAME_COUNT);
     requestUpdate();
   });
-  buttonNavigator_.onPreviousRelease([this] {
+  buttonNavigator_.onScrollPreviousRelease([this] {
     selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, GAME_COUNT);
     requestUpdate();
   });
@@ -84,7 +84,7 @@ void GamesMenuActivity::render(RenderLock&&) {
     }
   });
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

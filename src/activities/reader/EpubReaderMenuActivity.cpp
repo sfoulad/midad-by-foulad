@@ -403,12 +403,12 @@ void EpubReaderMenuActivity::loop() {
   const int itemCount = activeItemCount();
 
   // Handle navigation
-  buttonNavigator.onNext([this, itemCount] {
+  buttonNavigator.onScrollNext([this, itemCount] {
     activeIndex() = ButtonNavigator::nextIndex(activeIndex(), itemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onPrevious([this, itemCount] {
+  buttonNavigator.onScrollPrevious([this, itemCount] {
     activeIndex() = ButtonNavigator::previousIndex(activeIndex(), itemCount);
     requestUpdate();
   });
@@ -514,7 +514,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   renderRows(nullptr);  // real draw pass
 
   // Footer / Hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

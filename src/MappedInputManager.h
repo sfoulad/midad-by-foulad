@@ -6,7 +6,27 @@ class GfxRenderer;
 
 class MappedInputManager {
  public:
-  enum class Button { Back, Confirm, Left, Right, Up, Down, Power, PageBack, PageForward, NavNext, NavPrevious };
+  enum class Button {
+    Back,
+    Confirm,
+    Left,
+    Right,
+    Up,
+    Down,
+    Power,
+    PageBack,
+    PageForward,
+    NavNext,
+    NavPrevious,
+    // Like NavNext/NavPrevious, but for a purely VERTICAL up/down list-scroll
+    // concept (front buttons doubling as list-scroll shortcuts alongside the
+    // side Up/Down buttons, hinted with literal "Up"/"Down" labels) rather
+    // than a generic left/right "next/previous item" -- see mapButton()'s
+    // ScrollNext/ScrollPrevious cases for why these must NOT apply NavNext/
+    // NavPrevious's RTL horizontal flip.
+    ScrollNext,
+    ScrollPrevious
+  };
 
   struct Labels {
     const char* btn1;
@@ -24,7 +44,14 @@ class MappedInputManager {
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
-  Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const;
+  // rtlSwap: true for a genuinely horizontal previous/next pair (e.g. STR_DIR_LEFT/
+  // STR_DIR_RIGHT) that should mirror sides under Arabic, matching NavNext/
+  // NavPrevious's own RTL flip. Pass false for a vertical up/down pair (e.g.
+  // STR_DIR_UP/STR_DIR_DOWN) paired with Button::ScrollNext/ScrollPrevious --
+  // down is always down regardless of script direction, so only the
+  // orientation-follow swap should apply, not the RTL one.
+  Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next,
+                   bool rtlSwap = true) const;
   // Returns the raw front button index that was pressed this frame (or -1 if none).
   int getPressedFrontButton() const;
 

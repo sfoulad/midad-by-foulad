@@ -40,22 +40,22 @@ void LanguageSelectActivity::loop() {
   const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
 
   // Handle navigation
-  buttonNavigator.onNextRelease([this] {
+  buttonNavigator.onScrollNextRelease([this] {
     selectedIndex = ButtonNavigator::nextIndex(static_cast<int>(selectedIndex), totalItems);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousRelease([this] {
+  buttonNavigator.onScrollPreviousRelease([this] {
     selectedIndex = ButtonNavigator::previousIndex(static_cast<int>(selectedIndex), totalItems);
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this, pageItems] {
+  buttonNavigator.onScrollNextContinuous([this, pageItems] {
     selectedIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectedIndex), totalItems, pageItems);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this, pageItems] {
+  buttonNavigator.onScrollPreviousContinuous([this, pageItems] {
     selectedIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectedIndex), totalItems, pageItems);
     requestUpdate();
   });
@@ -97,7 +97,7 @@ void LanguageSelectActivity::render(RenderLock&&) {
       true);
 
   // Button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

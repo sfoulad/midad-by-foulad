@@ -197,20 +197,20 @@ void OpdsBookBrowserActivity::loop() {
       // nothing to navigate
     } else if (!layout.isGridPage) {
       // Plain list navigation (category/navigation-only pages) — unchanged.
-      buttonNavigator.onNextRelease([this] {
+      buttonNavigator.onScrollNextRelease([this] {
         selectorIndex = ButtonNavigator::nextIndex(selectorIndex, entries.size());
         requestUpdate();
       });
-      buttonNavigator.onPreviousRelease([this] {
+      buttonNavigator.onScrollPreviousRelease([this] {
         selectorIndex = ButtonNavigator::previousIndex(selectorIndex, entries.size());
         requestUpdate();
       });
-      buttonNavigator.onNextContinuous([this] {
+      buttonNavigator.onScrollNextContinuous([this] {
         const int pageItems = getListPageItems(getListRowHeight());
         selectorIndex = ButtonNavigator::nextPageIndex(selectorIndex, entries.size(), pageItems);
         requestUpdate();
       });
-      buttonNavigator.onPreviousContinuous([this] {
+      buttonNavigator.onScrollPreviousContinuous([this] {
         const int pageItems = getListPageItems(getListRowHeight());
         selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, entries.size(), pageItems);
         requestUpdate();
@@ -399,14 +399,19 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   const char* confirmLabel = onBook ? tr(STR_DOWNLOAD) : tr(STR_OPEN);
   const char* leftLabel;
   const char* rightLabel;
-  if (layout.isGridPage && onBook) {
+  // Grid-page book cells use genuinely horizontal Left/Right (mirror under RTL,
+  // like any other horizontal grid); the plain-list and nav-strip cases below use
+  // a vertical Up/Down pair instead (down is still down regardless of script
+  // direction -- see mapLabels' rtlSwap parameter).
+  const bool rtlSwapLabels = layout.isGridPage && onBook;
+  if (rtlSwapLabels) {
     leftLabel = tr(STR_DIR_LEFT);
     rightLabel = tr(STR_DIR_RIGHT);
   } else {
     leftLabel = (!searchTemplate.empty() && selectorIndex == 0) ? tr(STR_SEARCH) : tr(STR_DIR_UP);
     rightLabel = tr(STR_DIR_DOWN);
   }
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, leftLabel, rightLabel);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, leftLabel, rightLabel, rtlSwapLabels);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   int gridPageStart = 0;

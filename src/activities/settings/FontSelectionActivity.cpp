@@ -106,22 +106,22 @@ void FontSelectionActivity::loop() {
   const int pageItems =
       UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, previewHeight + metrics_.verticalSpacing);
 
-  buttonNavigator_.onNextRelease([this, listSize] {
+  buttonNavigator_.onScrollNextRelease([this, listSize] {
     selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
     requestUpdate();
   });
 
-  buttonNavigator_.onPreviousRelease([this, listSize] {
+  buttonNavigator_.onScrollPreviousRelease([this, listSize] {
     selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, listSize);
     requestUpdate();
   });
 
-  buttonNavigator_.onNextContinuous([this, listSize, pageItems] {
+  buttonNavigator_.onScrollNextContinuous([this, listSize, pageItems] {
     selectedIndex_ = ButtonNavigator::nextPageIndex(selectedIndex_, listSize, pageItems);
     requestUpdate();
   });
 
-  buttonNavigator_.onPreviousContinuous([this, listSize, pageItems] {
+  buttonNavigator_.onScrollPreviousContinuous([this, listSize, pageItems] {
     selectedIndex_ = ButtonNavigator::previousPageIndex(selectedIndex_, listSize, pageItems);
     requestUpdate();
   });
@@ -217,7 +217,7 @@ void FontSelectionActivity::render(RenderLock&&) {
 
   const bool onPreviewed = selectedIndex_ == previewFontIndex_;
   const char* confirmLabel = onPreviewed ? tr(STR_SELECT) : tr(STR_PREVIEW);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

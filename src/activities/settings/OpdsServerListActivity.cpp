@@ -48,12 +48,12 @@ void OpdsServerListActivity::loop() {
 
   const int itemCount = getItemCount();
   if (itemCount > 0) {
-    buttonNavigator.onNext([this, itemCount] {
+    buttonNavigator.onScrollNext([this, itemCount] {
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount);
       requestUpdate();
     });
 
-    buttonNavigator.onPrevious([this, itemCount] {
+    buttonNavigator.onScrollPrevious([this, itemCount] {
       selectedIndex = ButtonNavigator::previousIndex(selectedIndex, itemCount);
       requestUpdate();
     });
@@ -126,7 +126,7 @@ void OpdsServerListActivity::render(RenderLock&&) {
         });
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

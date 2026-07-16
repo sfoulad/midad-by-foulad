@@ -358,11 +358,11 @@ void MazeActivity::loop() {
       finish();
       return;
     }
-    buttonNavigator_.onNext([this] {
+    buttonNavigator_.onScrollNext([this] {
       sizeIndex = ButtonNavigator::nextIndex(sizeIndex, 3);
       requestUpdate();
     });
-    buttonNavigator_.onPrevious([this] {
+    buttonNavigator_.onScrollPrevious([this] {
       sizeIndex = ButtonNavigator::previousIndex(sizeIndex, 3);
       requestUpdate();
     });
@@ -517,7 +517,7 @@ void MazeActivity::render(RenderLock&&) {
     // alternate path to the side Up/Down buttons -- label them "Up"/"Down"
     // to match what they actually do here, same convention GamesMenuActivity
     // uses for its own list.
-    auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_GENERATE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_GENERATE), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
     return;

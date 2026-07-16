@@ -29,6 +29,34 @@ void ButtonNavigator::onNextContinuous(const Callback& callback) { onContinuous(
 
 void ButtonNavigator::onPreviousContinuous(const Callback& callback) { onContinuous(getPreviousButtons(), callback); }
 
+void ButtonNavigator::onScrollNext(const Callback& callback) {
+  onScrollNextPress(callback);
+  onScrollNextContinuous(callback);
+}
+
+void ButtonNavigator::onScrollPrevious(const Callback& callback) {
+  onScrollPreviousPress(callback);
+  onScrollPreviousContinuous(callback);
+}
+
+void ButtonNavigator::onScrollNextPress(const Callback& callback) { onPress(getScrollNextButtons(), callback); }
+
+void ButtonNavigator::onScrollPreviousPress(const Callback& callback) { onPress(getScrollPreviousButtons(), callback); }
+
+void ButtonNavigator::onScrollNextRelease(const Callback& callback) { onRelease(getScrollNextButtons(), callback); }
+
+void ButtonNavigator::onScrollPreviousRelease(const Callback& callback) {
+  onRelease(getScrollPreviousButtons(), callback);
+}
+
+void ButtonNavigator::onScrollNextContinuous(const Callback& callback) {
+  onContinuous(getScrollNextButtons(), callback);
+}
+
+void ButtonNavigator::onScrollPreviousContinuous(const Callback& callback) {
+  onContinuous(getScrollPreviousButtons(), callback);
+}
+
 void ButtonNavigator::onPress(const Buttons& buttons, const Callback& callback) {
   const bool wasPressed = std::any_of(buttons.begin(), buttons.end(), [](const MappedInputManager::Button button) {
     return mappedInput != nullptr && mappedInput->wasPressed(button);

@@ -138,21 +138,21 @@ void StatsActivity::loop() {
     return;
   }
 
-  buttonNavigator.onNextRelease([this, selectableCount] {
+  buttonNavigator.onScrollNextRelease([this, selectableCount] {
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, selectableCount);
     requestUpdate();
   });
-  buttonNavigator.onPreviousRelease([this, selectableCount] {
+  buttonNavigator.onScrollPreviousRelease([this, selectableCount] {
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, selectableCount);
     requestUpdate();
   });
-  buttonNavigator.onNextContinuous([this, selectableCount] {
+  buttonNavigator.onScrollNextContinuous([this, selectableCount] {
     if (selectableCount <= 1) return;
     const int bookIndex = std::max(0, selectedIndex - 1);
     selectedIndex = ButtonNavigator::nextPageIndex(bookIndex, selectableCount - 1, BOOKS_PER_PAGE) + 1;
     requestUpdate();
   });
-  buttonNavigator.onPreviousContinuous([this, selectableCount] {
+  buttonNavigator.onScrollPreviousContinuous([this, selectableCount] {
     if (selectableCount <= 1) return;
     const int bookIndex = std::max(0, selectedIndex - 1);
     selectedIndex = ButtonNavigator::previousPageIndex(bookIndex, selectableCount - 1, BOOKS_PER_PAGE) + 1;
@@ -271,7 +271,7 @@ void StatsActivity::render(RenderLock&&) {
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

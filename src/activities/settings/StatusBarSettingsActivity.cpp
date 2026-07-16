@@ -139,22 +139,22 @@ void StatusBarSettingsActivity::loop() {
   }
 
   // Handle navigation
-  buttonNavigator.onNextRelease([this] {
+  buttonNavigator.onScrollNextRelease([this] {
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousRelease([this] {
+  buttonNavigator.onScrollPreviousRelease([this] {
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this] {
+  buttonNavigator.onScrollNextContinuous([this] {
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousContinuous([this] {
+  buttonNavigator.onScrollPreviousContinuous([this] {
     selectedIndex = ButtonNavigator::previousIndex(selectedIndex, visibleItemCount);
     requestUpdate();
   });
@@ -266,7 +266,7 @@ void StatusBarSettingsActivity::render(RenderLock&&) {
       true);
 
   // Draw button hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_TOGGLE), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   std::string title;

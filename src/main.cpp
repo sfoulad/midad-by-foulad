@@ -653,6 +653,15 @@ void loop() {
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
 
+  // Clear the sticky press/release edge latches once per real loop() iteration --
+  // NOT once per gpio.update() call, several of which can happen within a single
+  // iteration (e.g. ActivityManager::requestUpdateAndWait()'s render-wait poll, or
+  // CrossPointWebServerActivity's handleClient() polling loop). See HalGPIO::update()
+  // for why the edges must survive across those calls instead of being wiped by each
+  // one. The simulator's own outer loop (simulator_main.cpp) already calls this once
+  // before invoking loop(); this second call there is a harmless no-op (lib/hal,
+  // where this HalGPIO class lives, is excluded from the simulator build entirely).
+  gpio.beginFrame();
   gpio.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 

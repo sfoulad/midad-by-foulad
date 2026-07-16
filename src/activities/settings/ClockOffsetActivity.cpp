@@ -120,19 +120,19 @@ void ClockOffsetActivity::loop() {
     return;
   }
 
-  buttonNavigator.onNextRelease([this] {
+  buttonNavigator.onScrollNextRelease([this] {
     adjustActiveField(+1);
     requestUpdate();
   });
-  buttonNavigator.onPreviousRelease([this] {
+  buttonNavigator.onScrollPreviousRelease([this] {
     adjustActiveField(-1);
     requestUpdate();
   });
-  buttonNavigator.onNextContinuous([this] {
+  buttonNavigator.onScrollNextContinuous([this] {
     adjustActiveField(+1);
     requestUpdate();
   });
-  buttonNavigator.onPreviousContinuous([this] {
+  buttonNavigator.onScrollPreviousContinuous([this] {
     adjustActiveField(-1);
     requestUpdate();
   });
@@ -207,7 +207,7 @@ void ClockOffsetActivity::render(RenderLock&&) {
     }
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEXT_FIELD), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_NEXT_FIELD), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

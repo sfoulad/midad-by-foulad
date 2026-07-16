@@ -38,6 +38,20 @@ class ButtonNavigator final {
   void onPreviousContinuous(const Callback& callback);
   void onContinuous(const Buttons& buttons, const Callback& callback);
 
+  // Same Press/Release/Continuous family as onNext*/onPrevious*, but bound to
+  // Button::ScrollNext/ScrollPrevious instead of NavNext/NavPrevious -- for
+  // screens hinting a purely vertical up/down list-scroll pair (see
+  // MappedInputManager::mapButton's ScrollNext/ScrollPrevious cases for why
+  // that must skip NavNext/NavPrevious's RTL horizontal flip).
+  void onScrollNext(const Callback& callback);
+  void onScrollPrevious(const Callback& callback);
+  void onScrollNextPress(const Callback& callback);
+  void onScrollPreviousPress(const Callback& callback);
+  void onScrollNextRelease(const Callback& callback);
+  void onScrollPreviousRelease(const Callback& callback);
+  void onScrollNextContinuous(const Callback& callback);
+  void onScrollPreviousContinuous(const Callback& callback);
+
   [[nodiscard]] static int nextIndex(int currentIndex, int totalItems);
   [[nodiscard]] static int previousIndex(int currentIndex, int totalItems);
 
@@ -48,4 +62,6 @@ class ButtonNavigator final {
   // them to physical buttons and applies any orientation-based direction swap, so this stays settings-free.
   [[nodiscard]] static Buttons getNextButtons() { return {MappedInputManager::Button::NavNext}; }
   [[nodiscard]] static Buttons getPreviousButtons() { return {MappedInputManager::Button::NavPrevious}; }
+  [[nodiscard]] static Buttons getScrollNextButtons() { return {MappedInputManager::Button::ScrollNext}; }
+  [[nodiscard]] static Buttons getScrollPreviousButtons() { return {MappedInputManager::Button::ScrollPrevious}; }
 };

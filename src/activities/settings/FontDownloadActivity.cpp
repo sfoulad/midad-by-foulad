@@ -432,22 +432,22 @@ void FontDownloadActivity::loop() {
     const int listSize = listItemCount();
     const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
 
-    buttonNavigator_.onNextRelease([this, listSize] {
+    buttonNavigator_.onScrollNextRelease([this, listSize] {
       selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
       requestUpdate();
     });
 
-    buttonNavigator_.onPreviousRelease([this, listSize] {
+    buttonNavigator_.onScrollPreviousRelease([this, listSize] {
       selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, listSize);
       requestUpdate();
     });
 
-    buttonNavigator_.onNextContinuous([this, listSize, pageItems] {
+    buttonNavigator_.onScrollNextContinuous([this, listSize, pageItems] {
       selectedIndex_ = ButtonNavigator::nextPageIndex(selectedIndex_, listSize, pageItems);
       requestUpdate();
     });
 
-    buttonNavigator_.onPreviousContinuous([this, listSize, pageItems] {
+    buttonNavigator_.onScrollPreviousContinuous([this, listSize, pageItems] {
       selectedIndex_ = ButtonNavigator::previousPageIndex(selectedIndex_, listSize, pageItems);
       requestUpdate();
     });
@@ -587,7 +587,7 @@ void FontDownloadActivity::render(RenderLock&&) {
                                                 isSelectedFamilyDeletable()      ? tr(STR_DELETE)
                                                 : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
                                                                                  : tr(STR_DOWNLOAD),
-                                                tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+                                                tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     }
   } else if (state_ == DOWNLOADING) {

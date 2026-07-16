@@ -59,12 +59,12 @@ void OpdsSettingsActivity::loop() {
   }
 
   const int menuItems = getMenuItemCount();
-  buttonNavigator.onNext([this, menuItems] {
+  buttonNavigator.onScrollNext([this, menuItems] {
     selectedIndex = (selectedIndex + 1) % menuItems;
     requestUpdate();
   });
 
-  buttonNavigator.onPrevious([this, menuItems] {
+  buttonNavigator.onScrollPrevious([this, menuItems] {
     selectedIndex = (selectedIndex + menuItems - 1) % menuItems;
     requestUpdate();
   });
@@ -211,7 +211,7 @@ void OpdsSettingsActivity::render(RenderLock&&) {
       },
       true);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   if (showSaveError) {

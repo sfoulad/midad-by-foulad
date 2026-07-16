@@ -80,6 +80,26 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
       if (I18N.isRtl()) horizontal = horizontal == Button::Right ? Button::Left : Button::Right;
       return mapButton(vertical, fn) || mapButton(horizontal, fn);
     }
+    case Button::ScrollNext: {
+      // Same as NavNext (side Down + front Right, orientation-flipped) but deliberately
+      // WITHOUT the RTL horizontal flip: this is a purely vertical "scroll the list down"
+      // concept (front buttons doubling as shortcuts for the side Up/Down buttons, hinted
+      // with literal "Up"/"Down" labels), not a generic left/right "next item" -- down is
+      // still down regardless of Arabic's horizontal reading direction. Mirroring the front
+      // button here would just make the "Down" hint label lie about which physical button
+      // actually scrolls down.
+      const bool swapped = isNavDirectionSwapped();
+      const Button vertical = swapped ? Button::Up : Button::Down;
+      const Button horizontal = swapped ? Button::Left : Button::Right;
+      return mapButton(vertical, fn) || mapButton(horizontal, fn);
+    }
+    case Button::ScrollPrevious: {
+      // See ScrollNext -- same as NavPrevious, minus the RTL flip.
+      const bool swapped = isNavDirectionSwapped();
+      const Button vertical = swapped ? Button::Down : Button::Up;
+      const Button horizontal = swapped ? Button::Right : Button::Left;
+      return mapButton(vertical, fn) || mapButton(horizontal, fn);
+    }
   }
 
   return false;
@@ -98,13 +118,16 @@ bool MappedInputManager::wasAnyReleased() const { return gpio.wasAnyReleased(); 
 unsigned long MappedInputManager::getHeldTime() const { return gpio.getHeldTime(); }
 
 MappedInputManager::Labels MappedInputManager::mapLabels(const char* back, const char* confirm, const char* previous,
-                                                         const char* next) const {
+                                                         const char* next, const bool rtlSwap) const {
   // Swap previous/next labels to match the page turn direction swap in INVERTED and LANDSCAPE_CCW.
-  // RTL adds one more swap: NavNext/NavPrevious flip the horizontal buttons for Arabic
-  // (see their handlers above), so the front Left/Right hint labels must flip with them --
-  // otherwise the button that now navigates UP still wears the "Down" label (reported
-  // on-device as "أسفل going up").
-  const bool swapLabels = isNavDirectionSwapped() != I18N.isRtl();
+  // RTL adds one more swap for a genuinely horizontal previous/next pair: NavNext/NavPrevious
+  // flip the horizontal buttons for Arabic (see their handlers above), so the front Left/Right
+  // hint labels must flip with them -- otherwise the button that now navigates the RTL
+  // "forward" direction still wears the "wrong side" label (reported on-device as "أسفل
+  // going up" back when this was unconditionally applied to an Up/Down pair too). Callers
+  // pairing a vertical Up/Down label with Button::ScrollNext/ScrollPrevious pass
+  // rtlSwap=false, since down is still down regardless of script direction.
+  const bool swapLabels = isNavDirectionSwapped() != (rtlSwap && I18N.isRtl());
   const char* leftLabel = swapLabels ? next : previous;
   const char* rightLabel = swapLabels ? previous : next;
 
