@@ -351,7 +351,10 @@ void EpubReaderActivity::loop() {
                        MappedInputManager::Button::Up, MappedInputManager::Button::Down,
                        MappedInputManager::Button::PageBack, MappedInputManager::Button::PageForward,
                        MappedInputManager::Button::NavNext, MappedInputManager::Button::NavPrevious}) {
-    anyButtonEvent = anyButtonEvent || mappedInput.wasPressed(b) || mappedInput.wasReleased(b);
+    // isPressed too (not just edges): a HELD button must never wait behind a
+    // build chunk -- auto-repeat page turns and long-presses stay responsive.
+    anyButtonEvent = anyButtonEvent || mappedInput.wasPressed(b) || mappedInput.wasReleased(b) ||
+                     mappedInput.isPressed(b);
   }
   if (!anyButtonEvent) {
     // Drive any in-progress incremental section build forward, off the page-turn critical path,
@@ -369,11 +372,22 @@ void EpubReaderActivity::loop() {
       // mutation, so it flags this as always true.
       // cppcheck-suppress knownConditionTrueFalse
       if (section->isBuilding()) {
+        // Diagnostic: while this chunk runs, loop() is input-blind (see the
+        // BUILD_PAGES_PER_CHUNK comment in the header). Log any chunk long
+        // enough to swallow a quick tap so a "buttons went dead mid-book"
+        // report lines up against concrete blocked windows in the perf log.
+        const unsigned long bgChunkStart = millis();
         if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
           LOG_ERR("ERS", "Background section build failed");
           section.reset();
           requestUpdate();
-        } else if (section->isBuildComplete() && applyDeferredReposition()) {
+        } else if (const unsigned long bgChunkMs = millis() - bgChunkStart; bgChunkMs > 750) {
+          char buf[112];
+          snprintf(buf, sizeof(buf), "%lu bg_chunk=%lums spine=%d pages=%u heap=%u", millis(), bgChunkMs,
+                   currentSpineIndex, section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap());
+          ReaderPerfLog::append(buf);
+        }
+        if (section && section->isBuildComplete() && applyDeferredReposition()) {
           // The chapter re-paginated since the saved progress (settings changed): we now know the
           // real page count, so re-render at the remapped page. No-op for an unchanged resume.
           requestUpdate();
@@ -1049,6 +1063,22 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
   requestUpdate();
 }
 
+namespace {
+// Blocked-window diagnostic: while a blocking section build runs, loop() isn't
+// polling buttons, so a quick tap whose press AND release both land inside the
+// window is silently lost -- reads as "buttons dead mid-book" on device. Log any
+// window long enough to swallow a tap so such a report lines up against concrete
+// entries in the SD perf log (debug-gated + heap-guarded by RollingSdLog).
+void logSlowBlockingBuild(const char* tag, unsigned long startMs, int spineIndex, const Section* section) {
+  const unsigned long ms = millis() - startMs;
+  if (ms <= 750) return;
+  char buf[112];
+  snprintf(buf, sizeof(buf), "%lu %s=%lums spine=%d pages=%u heap=%u", millis(), tag, ms, spineIndex,
+           section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap());
+  ReaderPerfLog::append(buf);
+}
+}  // namespace
+
 // TODO: Failure handling
 void EpubReaderActivity::render(RenderLock&& lock) {
   if (!epub) {
@@ -1352,6 +1382,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       return;
     }
     // Extend until either the target page exists or the build completes.
+    const unsigned long extendStart = millis();
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
@@ -1360,9 +1391,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         return;
       }
     }
+    logSlowBlockingBuild("extend_build", extendStart, currentSpineIndex, section.get());
   }
   // For an in-progress incremental build, make sure the page we're about to show has been laid out.
   if (section->isBuilding()) {
+    const unsigned long turnBuildStart = millis();
     while (!section->isBuildComplete() && section->currentPage >= static_cast<int>(section->pageCount)) {
       if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
         LOG_ERR("ERS", "Failed during incremental section build");
@@ -1371,6 +1404,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         return;
       }
     }
+    logSlowBlockingBuild("turn_build", turnBuildStart, currentSpineIndex, section.get());
   }
 
   // The requested page is now as built as it will get. If it still lands past the end,

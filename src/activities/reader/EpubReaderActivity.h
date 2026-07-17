@@ -76,8 +76,14 @@ class EpubReaderActivity final : public Activity {
   // Pages laid out per incremental-build pump: on the render path (catching up to the page
   // being shown) and per loop() tick (background build of a large chapter). Kept small so a
   // background build chunk never noticeably delays input or a pending render.
-  static constexpr int BUILD_PAGES_PER_CHUNK = 8;
-  static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 2;
+  // Small chunks on purpose: while buildSomeMore() runs, loop() is blocked and
+  // polled buttons are input-blind -- a quick tap whose press AND release both
+  // land inside the window is lost entirely. Image-heavy pages decode their
+  // images during layout, stretching a chunk to seconds on-device, which reads
+  // as "buttons dead" mid-book. 2 (was 8) bounds the blocking-turn overshoot
+  // past the target page; 1 (was 2) halves the background tick's blind window.
+  static constexpr int BUILD_PAGES_PER_CHUNK = 2;
+  static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 1;
   // How many pages to keep laid out ahead of the reader for a still-building section. A page
   // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
   // -- a tiny buffer is enough. The background build stops once the watermark is this far
