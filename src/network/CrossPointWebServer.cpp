@@ -1978,28 +1978,29 @@ void CrossPointWebServer::handleFontConvertUploadData() {
   switch (upload.status) {
     case UPLOAD_FILE_START: {
       esp_task_wdt_reset();
-      String family = server->arg("family");
-      String language = server->arg("language");
+      // Deliberately DON'T read the 'family'/'language' form fields here. The
+      // ESP32 WebServer parses multipart parts strictly in order, so any field
+      // that appears AFTER the file part in the body is not yet available in
+      // server->arg() during this callback. Reading them here made the whole
+      // feature depend on the browser happening to send those fields before the
+      // file -- a fragile coupling that silently broke Convert Font for every
+      // font. They're validated later in handleFontConvert(), which runs after
+      // the full body is parsed and every field is guaranteed present.
       fontConvertUpload.file = HalFile();
-      fontConvertUpload.familyName.clear();
-      fontConvertUpload.language.clear();
       fontConvertUpload.filePath.clear();
+      fontConvertUpload.rejectReason.clear();
       fontConvertUpload.valid = false;
       fontConvertUpload.bytesWritten = 0;
       fontConvertUpload.bufferPos = 0;
 
-      if (!FontInstaller::isValidFamilyName(family.c_str())) {
-        LOG_ERR("WEB", "Convert font: invalid family name: %s", family.c_str());
-        break;
-      }
-      if (language != "arabic" && language != "english") {
-        LOG_ERR("WEB", "Convert font: invalid language: %s", language.c_str());
-        break;
-      }
-
+      // The filename comes from the file part's own headers, so it IS available
+      // here regardless of field order.
       String filename = upload.filename;
       if (!isValidFontConvertFilename(filename.c_str())) {
         LOG_ERR("WEB", "Convert font: invalid filename: %s", filename.c_str());
+        fontConvertUpload.rejectReason =
+            "The file must be a .ttf or .otf whose name uses only letters, digits, spaces, hyphens, or "
+            "underscores -- no dots, parentheses, or Arabic characters. Try renaming it to e.g. Amiri-Regular.ttf.";
         break;
       }
 
@@ -2011,14 +2012,12 @@ void CrossPointWebServer::handleFontConvertUploadData() {
 
       if (!Storage.openFileForWrite("WEB", path, fontConvertUpload.file)) {
         LOG_ERR("WEB", "Failed to open convert-font temp file for write: %s", path);
+        fontConvertUpload.rejectReason = "Couldn't write the upload to the SD card.";
         break;
       }
 
-      fontConvertUpload.familyName = family.c_str();
-      fontConvertUpload.language = language.c_str();
       fontConvertUpload.valid = true;
-      LOG_DBG("WEB", "Convert-font upload started: %s (family=%s, language=%s)", filename.c_str(),
-              fontConvertUpload.familyName.c_str(), fontConvertUpload.language.c_str());
+      LOG_DBG("WEB", "Convert-font upload started: %s", filename.c_str());
       break;
     }
 
@@ -2029,6 +2028,7 @@ void CrossPointWebServer::handleFontConvertUploadData() {
       if (fontConvertUpload.bytesWritten + upload.currentSize > FontConvertUploadState::MAX_SIZE) {
         LOG_ERR("WEB", "Convert-font upload exceeds size cap (%zu bytes)",
                 (size_t)FontConvertUploadState::MAX_SIZE);
+        fontConvertUpload.rejectReason = "Font file is too large (max 10 MB).";
         fontConvertUpload.valid = false;
         break;
       }
@@ -2088,18 +2088,39 @@ void CrossPointWebServer::handleFontConvertUploadData() {
 
 void CrossPointWebServer::handleFontConvert() {
   if (!fontConvertUpload.valid) {
-    server->send(400, "application/json", "{\"error\":\"Invalid font file, family name, or language\"}");
+    JsonDocument errDoc;
+    errDoc["error"] = fontConvertUpload.rejectReason.empty()
+                          ? "Invalid font file, family name, or language."
+                          : fontConvertUpload.rejectReason.c_str();
+    String json;
+    serializeJson(errDoc, json);
+    server->send(400, "application/json", json);
     return;
   }
 
-  // Copy out of fontConvertUpload before this handler's long relay wait --
-  // nothing else touches fontConvertUpload meanwhile (single-threaded
-  // WebServer), but copying keeps intent clear and survives if that ever
-  // changes.
+  // Read the metadata fields here rather than in the upload callback: by now the
+  // full multipart body is parsed, so server->arg() returns them regardless of
+  // whether the browser sent them before or after the file part (see
+  // handleFontConvertUploadData for why reading them during upload was fragile).
+  // tempPath is also copied out before the long relay wait.
   const std::string tempPath = fontConvertUpload.filePath;
-  const std::string family = fontConvertUpload.familyName;
-  const std::string language = fontConvertUpload.language;
+  const std::string family = server->arg("family").c_str();
+  const std::string language = server->arg("language").c_str();
   auto cleanupTemp = [&tempPath]() { Storage.remove(tempPath.c_str()); };
+
+  if (!FontInstaller::isValidFamilyName(family.c_str())) {
+    LOG_ERR("WEB", "Convert font: invalid family name: %s", family.c_str());
+    cleanupTemp();
+    server->send(400, "application/json",
+                 "{\"error\":\"Font name must use only letters, digits, hyphens, or underscores.\"}");
+    return;
+  }
+  if (language != "arabic" && language != "english") {
+    LOG_ERR("WEB", "Convert font: invalid language: %s", language.c_str());
+    cleanupTemp();
+    server->send(400, "application/json", "{\"error\":\"Language must be Arabic or English.\"}");
+    return;
+  }
 
   const wifi_mode_t wifiMode = WiFi.getMode();
   const bool isStaConnected = (wifiMode & WIFI_MODE_STA) && (WiFi.status() == WL_CONNECTED);

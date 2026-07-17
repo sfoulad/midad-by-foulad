@@ -137,10 +137,16 @@ class CrossPointWebServer {
   // See handleFontConvertUploadData()/handleFontConvert().
   struct FontConvertUploadState {
     HalFile file;
-    std::string familyName;
-    std::string language;  // "arabic" or "english"
+    // family/language are NOT stored here: they're read straight from
+    // server->arg() in handleFontConvert() after the full body is parsed, which
+    // is order-independent. Storing them meant reading during the upload
+    // callback, where fields after the file part aren't parsed yet.
     std::string filePath;
     bool valid = false;
+    // Specific reason valid==false, surfaced to the web UI so the user sees
+    // *which* field was rejected instead of one opaque combined message (the
+    // real reason was previously only in the serial log they can't see).
+    std::string rejectReason;
     size_t bytesWritten = 0;
     // Raw font files (esp. variable fonts) can run a few MB -- cap well below
     // available SD/heap headroom so a bad/huge upload fails cleanly instead of

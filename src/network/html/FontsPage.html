@@ -359,10 +359,15 @@
       status.style.display = 'block';
       status.textContent = 'Converting... this can take a couple of minutes. Keep this page open.';
 
+      // Order matters: the device reads the 'family'/'language' fields in the
+      // WebServer upload callback that fires WHILE the 'font' file part streams,
+      // so they must appear BEFORE the file in the multipart body or they read
+      // back empty (device rejects with "Invalid font file, family name, or
+      // language"). Matches the working /api/fonts/upload form above.
       const formData = new FormData();
-      formData.append('font', fileInput.files[0], fileInput.files[0].name);
       formData.append('family', family);
       formData.append('language', language);
+      formData.append('font', fileInput.files[0], fileInput.files[0].name);
 
       try {
         const res = await fetch('/api/fonts/convert', { method: 'POST', body: formData });
