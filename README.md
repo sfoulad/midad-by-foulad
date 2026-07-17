@@ -257,8 +257,12 @@ Prefer a different Arabic look? You can swap in your own font too:
 
    ```bash
    cd lib/EpdFont/scripts
-   python3 fontconvert_sdcard.py --intervals reading,arabic --name "PlexArabic" /path/to/IBMPlexSansArabic-Regular.ttf
+   python3 fontconvert_sdcard.py --intervals reading,arabic --reposition-marks --name "PlexArabic" /path/to/IBMPlexSansArabic-Regular.ttf
    ```
+
+   `--reposition-marks` is required for correct diacritics (harakat/tashkeel). Most Arabic fonts position
+   combining marks using an OpenType table (GPOS) that this converter doesn't read; without the flag, marks
+   commonly render overlapping each other or over the wrong letter.
 
 3. Copy the generated `.cpfont` files to your SD card under `/fonts/PlexArabic/` (or `/.fonts/PlexArabic/`).
 4. On the device: **Settings → Reader → Arabic Font** → select the family you just installed. Selecting the

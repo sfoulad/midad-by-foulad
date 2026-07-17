@@ -6,9 +6,11 @@
 #include <cstring>
 #include <string>
 
-// Shared read-modify-write implementation behind ReaderPerfLog and SleepDiagLog.
-// Read-modify-write since HalStorage has no append mode; bounded by maxLines so
-// the cost stays small even after a long session.
+#include "util/DebugLogging.h"
+
+// Shared read-modify-write implementation behind ReaderPerfLog, SleepDiagLog,
+// and GameInputDiagLog. Read-modify-write since HalStorage has no append mode;
+// bounded by maxLines so the cost stays small even after a long session.
 namespace RollingSdLog {
 
 // Skip the write (rather than crash) when free heap is too tight. Under
@@ -22,7 +24,7 @@ namespace RollingSdLog {
 constexpr uint32_t MIN_SAFE_HEAP_BYTES = 32768;
 
 inline void append(const char* path, const std::string& line, size_t maxLines) {
-  if (maxLines == 0 || ESP.getFreeHeap() < MIN_SAFE_HEAP_BYTES) return;
+  if (!DebugLogging::enabled() || maxLines == 0 || ESP.getFreeHeap() < MIN_SAFE_HEAP_BYTES) return;
 
   const String existing = Storage.readFile(path);
   const char* data = existing.c_str();

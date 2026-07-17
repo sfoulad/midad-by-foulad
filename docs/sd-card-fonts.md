@@ -96,6 +96,7 @@ To convert your own TrueType/OpenType fonts:
 | `latin-ext` | European languages (Latin + Extended-A/B + punctuation + ligatures) |
 | `greek` | Greek + Extended Greek |
 | `cyrillic` | Cyrillic + Supplement |
+| `arabic` | Arabic + Arabic Supplement + Presentation Forms (also covers Persian, Ottoman Turkish, Kurdish) |
 | `hebrew` | Hebrew + Alphabetic Presentation Forms |
 | `georgian` | Georgian + Georgian Supplement |
 | `armenian` | Armenian |
@@ -122,5 +123,19 @@ To list all presets with codepoint counts:
 ### Additional options
 
 `--force-autohint` — force FreeType's auto-hinter instead of the font's native hinting (useful when a font's built-in hints produce poor results at small sizes).
+
+`--reposition-marks` — **required for Arabic fonts.** Moves combining marks (harakat/tashkeel) to fixed
+above/below-baseline heights instead of using their raw font metrics. Most Arabic fonts position marks via an
+OpenType GPOS table that this converter doesn't read; without this flag, diacritics commonly render overlapping
+each other or over the wrong letter. Example:
+
+    python3 lib/EpdFont/scripts/fontconvert_sdcard.py \
+      MyArabicFont-Regular.ttf \
+      --intervals arabic \
+      --reposition-marks \
+      --sizes 12,14,16,18 \
+      --style regular \
+      --name MyArabicFont \
+      --output-dir ./MyArabicFont/
 
 Install custom fonts via the web interface or manual SD card copy.

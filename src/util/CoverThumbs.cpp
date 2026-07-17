@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <set>
 
+#include "util/DebugLogging.h"
+
 namespace {
 // Bounded in practice by the recents list (10 books) x the screens that
 // generate thumbs -- a handful of short strings, not a growth concern.
@@ -31,6 +33,9 @@ bool wasAttemptedThisBoot(const std::string& thumbPath) { return attemptedSet().
 void markAttempted(const std::string& thumbPath) { attemptedSet().insert(thumbPath); }
 
 void diagLog(const std::string& line) {
+  LOG_INF("COVER", "%s", line.c_str());
+  if (!DebugLogging::enabled()) return;
+
   std::string& buffer = diagBuffer();
   if (buffer.empty()) {
     buffer = "Cover diagnostic log -- CrossPoint version " CROSSPOINT_VERSION "\n";
@@ -51,7 +56,6 @@ void diagLog(const std::string& line) {
   if (Storage.openFileForWrite("COVER", DIAG_PATH, file)) {
     file.write(reinterpret_cast<const uint8_t*>(buffer.data()), buffer.size());
   }
-  LOG_INF("COVER", "%s", line.c_str());
 }
 
 }  // namespace CoverThumbs

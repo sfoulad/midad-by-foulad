@@ -22,6 +22,7 @@
 #include "components/icons/book.h"
 #include "fontIds.h"
 #include "util/CoverThumbs.h"
+#include "util/DebugLogging.h"
 #include "util/GridNav.h"
 
 namespace {
@@ -186,7 +187,7 @@ void RecentBooksActivity::loadRecentBooks() {
 
   report += "TOTAL recents=" + std::to_string(RECENT_BOOKS.getBooks().size()) +
             " new=" + std::to_string(discovered.size()) + " dirs=" + std::to_string(dirsScanned) + "\n";
-  {
+  if (DebugLogging::enabled()) {
     HalFile logFile;
     if (Storage.openFileForWrite("MYBOOKS", "/mybooks_scan_log.txt", logFile)) {
       logFile.write(reinterpret_cast<const uint8_t*>(report.data()), report.size());

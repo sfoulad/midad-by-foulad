@@ -25,6 +25,7 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
+#include "util/DebugLogging.h"
 #include "util/GridNav.h"
 #include "util/StringUtils.h"
 #include "util/UrlUtils.h"
@@ -51,6 +52,7 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
 // grab a diagnostic log via File Browser/File Transfer without needing a live serial
 // connection, the same way they already can for a crash.
 void saveOpdsDiagnosticLog(const std::string& context) {
+  if (!DebugLogging::enabled()) return;
   std::string info = "CrossPoint version: " CROSSPOINT_VERSION;
   info += "\n\nContext: " + context;
   info += "\n\nLast logs:\n" + getLastLogs();
@@ -77,6 +79,9 @@ std::string& browseLogBuffer() {
 }
 
 void browseLog(const std::string& line) {
+  LOG_INF("OPDS", "%s", line.c_str());
+  if (!DebugLogging::enabled()) return;
+
   std::string& buffer = browseLogBuffer();
   if (buffer.empty()) {
     buffer = "OPDS browse log -- CrossPoint version " CROSSPOINT_VERSION "\n";
@@ -93,7 +98,6 @@ void browseLog(const std::string& line) {
   if (Storage.openFileForWrite("OPDS", "/opds_browse_log.txt", file)) {
     file.write(reinterpret_cast<const uint8_t*>(buffer.data()), buffer.size());
   }
-  LOG_INF("OPDS", "%s", line.c_str());
 }
 }  // namespace
 

@@ -297,6 +297,17 @@ class CrossPointSettings {
   // Quran) -- the games are compiled into the firmware directly.
   uint8_t gamesEnabled = 0;
 
+  // Settings -> Apps -> Debug: gates whether ANY of the rolling SD diagnostic
+  // logs (sleep_diag_log.txt, reader_perf_log.txt, game_input_diag_log.txt,
+  // cover_diag_log.txt, mybooks_scan_log.txt, opds_error_log.txt,
+  // opds_browse_log.txt) actually get written -- see src/util/DebugLogging.h.
+  // Off by default so ordinary users never see log clutter on their SD card;
+  // a user asked to help diagnose an issue turns this on first. Does NOT gate
+  // crash_report.txt (HalSystem::checkPanic) -- that's a one-shot panic
+  // capture on an actual crash, not routine verbose logging, and must always
+  // work regardless of this setting.
+  uint8_t debugLoggingEnabled = 0;
+
   // --- Per-book reading overrides (RAM ONLY -- never serialized) ---
   // Applied by EpubReaderActivity from the book's own settings file (see
   // BookReaderSettings) on open and cleared on exit, so every consumer of the

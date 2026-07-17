@@ -30,6 +30,7 @@ import os
 import re
 import math
 import argparse
+import unicodedata
 from collections import namedtuple
 
 from cpfont_version import CPFONT_VERSION
@@ -528,7 +529,7 @@ def extract_ligatures_fonttools(font_path, codepoints):
 
 
 def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=False,
-                         fallback_fontfile=None):
+                         fallback_fontfile=None, reposition_marks=False):
     """Rasterize all glyphs for one font style. Returns StyleRasterData."""
     import freetype
 
@@ -658,12 +659,39 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
                 pixels2b.append(px)
 
             packed = bytes(pixels2b)
+
+            # --reposition-marks: GPOS-reliant fonts anchor combining marks at the
+            # baseline; without mark attachment (which this rasterizer doesn't run)
+            # they'd draw on top of the letter bodies or float away from their base
+            # letter entirely. Move them to fixed em-relative heights instead,
+            # tiered by Unicode's canonical combining class so a shadda and a vowel
+            # mark stacked on the same letter (very common in vocalized Arabic --
+            # e.g. "الرَّحْمَٰنِ") don't collide at one shared height. Ported verbatim
+            # from fontconvert.py's --reposition-marks (built-in fonts), which fixed
+            # the identical bug there. Horizontal centering happens at RUNTIME
+            # (GfxRenderer::drawArabicText), not here -- keep the font's own
+            # bitmap_left as that centering's markLeft term.
+            glyph_top = f.glyph.bitmap_top
+            glyph_left = f.glyph.bitmap_left
+            if reposition_marks and unicodedata.category(chr(code_point)) == 'Mn':
+                em_px = size * 150 / 72.0
+                below_marks = {0x0650, 0x064D, 0x0655, 0x0656, 0x065C}  # kasra, kasratan, hamza/subscript below
+                ccc = unicodedata.combining(chr(code_point))
+                if code_point in below_marks:
+                    glyph_top = -max(1, round(em_px * 0.05))
+                elif code_point == 0x0651:  # shadda: innermost above-mark
+                    glyph_top = round(em_px * 0.75)
+                elif ccc in (27, 28, 30, 31, 34, 35):  # tanwin/fatha/damma/sukun/dagger-alef
+                    glyph_top = round(em_px * 0.9)
+                else:  # outer: maddah, hamza-above, Quranic small-high annotation marks
+                    glyph_top = round(em_px * 1.05)
+
             glyph = GlyphProps(
                 width=bitmap.width,
                 height=bitmap.rows,
                 advance_x=fp4_from_ft16_16(f.glyph.linearHoriAdvance),
-                left=f.glyph.bitmap_left,
-                top=f.glyph.bitmap_top,
+                left=glyph_left,
+                top=glyph_top,
                 data_length=len(packed),
                 data_offset=total_bitmap_size,
                 code_point=code_point,
@@ -784,7 +812,7 @@ def style_sections_total_size(sections):
 # --- File writers ---
 
 def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
-                               force_autohint=False, fallback_style_fonts=None):
+                               force_autohint=False, fallback_style_fonts=None, reposition_marks=False):
     """Generate a multi-style v4 .cpfont file.
 
     style_fonts: dict of {style_id: fontfile_path} e.g. {0: "Regular.ttf", 2: "Italic.ttf"}
@@ -806,7 +834,8 @@ def generate_cpfont_multistyle(style_fonts, size, intervals, output_path,
         raster_data[style_id] = rasterize_font_style(
             fontfile, size, intervals, style_id=style_id,
             force_autohint=force_autohint,
-            fallback_fontfile=fallback_fontfile)
+            fallback_fontfile=fallback_fontfile,
+            reposition_marks=reposition_marks)
 
     # Pack binary sections for each style
     packed_sections = {}  # style_id -> tuple of section bytearrays
@@ -901,6 +930,14 @@ def main():
                         help="Font family name for output filenames (default: derived from font filename).")
     parser.add_argument("--force-autohint", dest="force_autohint", action="store_true",
                         help="Force FreeType auto-hinter instead of native font hinting.")
+    parser.add_argument("--reposition-marks", dest="reposition_marks", action="store_true",
+                        help="Move Arabic combining marks (harakat) to fixed above/below-baseline heights, "
+                             "tiered by Unicode combining class so stacked marks (e.g. shadda+fatha) don't "
+                             "collide. For fonts that anchor marks via OpenType GPOS mark attachment, which "
+                             "this rasterizer doesn't run. Strongly recommended for any Arabic/Ottoman-Turkish "
+                             "font converted with --intervals arabic -- without it, diacritics commonly render "
+                             "overlapping or over the wrong letter. Matches fontconvert.py's built-in-font flag "
+                             "of the same name.")
     parser.add_argument("-o", "--output", dest="output",
                         help="Output file path (for single-size mode).")
     parser.add_argument("--output-dir", dest="output_dir",
@@ -1024,7 +1061,8 @@ def main():
         total_size += generate_cpfont_multistyle(
             style_fonts, sz, intervals, output_path,
             force_autohint=args.force_autohint,
-            fallback_style_fonts=fallback_style_fonts)
+            fallback_style_fonts=fallback_style_fonts,
+            reposition_marks=args.reposition_marks)
     print(f"\nTotal: {len(sizes)} files, {total_size / 1024 / 1024:.2f} MB", file=sys.stderr)
 
 

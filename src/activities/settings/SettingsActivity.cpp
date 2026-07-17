@@ -73,6 +73,14 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsSettings.insert(controlsSettings.begin(),
                           SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   appsSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+  // Last item in Apps by design (user request): gates whether the rolling SD
+  // diagnostic logs get written at all -- see CrossPointSettings::debugLoggingEnabled
+  // and src/util/DebugLogging.h for the full list and rationale. Appended here
+  // directly (not in the static getSettingsList() table above) specifically so it
+  // always lands after KOReader Sync, which is itself appended the same way.
+  appsSettings.push_back(
+      SettingInfo::Toggle(StrId::STR_DEBUG_LOGGING, &CrossPointSettings::debugLoggingEnabled, "debugLoggingEnabled",
+                          StrId::STR_CAT_APPS));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
