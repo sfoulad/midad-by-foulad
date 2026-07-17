@@ -1005,7 +1005,57 @@ void SdCardFont::clearPersistentCache() {
     delete[] advanceTable_[i];
     advanceTable_[i] = nullptr;
     advanceTableSize_[i] = 0;
+    arabicAdvancesPrewarmed_[i] = false;
   }
+}
+
+void SdCardFont::prewarmArabicAdvances(uint8_t style) {
+  style &= (MAX_STYLES - 1);
+  if (!loaded_ || arabicAdvancesPrewarmed_[style]) return;
+  const PerStyle& s = styles_[style];
+  if (!s.present || (!s.fullIntervals && !s.bmpIntervals)) return;
+  // Set the gate before any early return below: a font with no Arabic coverage
+  // resolves to count==0 once and must not re-scan its intervals per word.
+  arabicAdvancesPrewarmed_[style] = true;
+
+  // Arabic-script blocks the shaper can emit: base letters + diacritics,
+  // supplement/extended letters, and the contextual presentation forms.
+  struct Range {
+    uint32_t first, last;
+  };
+  static constexpr Range kArabicRanges[] = {
+      {0x0600, 0x06FF}, {0x0750, 0x077F}, {0x08A0, 0x08FF}, {0xFB50, 0xFDFF}, {0xFE70, 0xFEFF}};
+
+  // Cap below ADVANCE_CACHE_LIMIT (768) so a font serving BOTH scripts keeps
+  // headroom for Latin advances. Heap-allocated: 600*4 bytes exceeds the
+  // 256-byte stack budget.
+  static constexpr uint32_t MAX_BULK = 600;
+  auto* cps = new (std::nothrow) uint32_t[MAX_BULK];
+  if (!cps) {
+    LOG_ERR("SDCF", "prewarmArabicAdvances: OOM (%u bytes)", MAX_BULK * 4);
+    return;
+  }
+
+  // Intervals are sorted ascending and kArabicRanges ascend, so cps comes out
+  // sorted+unique -- the order fetchAdvancesForCodepoints' merge expects.
+  uint32_t count = 0;
+  for (uint32_t i = 0; i < s.header.intervalCount && count < MAX_BULK; i++) {
+    const uint32_t first = s.intervalsAreBmp16 ? s.bmpIntervals[i].first : s.fullIntervals[i].first;
+    const uint32_t last = s.intervalsAreBmp16 ? s.bmpIntervals[i].last : s.fullIntervals[i].last;
+    for (const Range& r : kArabicRanges) {
+      const uint32_t lo = first > r.first ? first : r.first;
+      const uint32_t hi = last < r.last ? last : r.last;
+      for (uint32_t cp = lo; cp <= hi && count < MAX_BULK; cp++) {
+        cps[count++] = cp;
+      }
+    }
+  }
+
+  if (count > 0) {
+    const int missed = fetchAdvancesForCodepoints(cps, count, static_cast<uint8_t>(1u << style));
+    LOG_DBG("SDCF", "Bulk Arabic advance prewarm: %u codepoints, %d missed (style %u)", count, missed, style);
+  }
+  delete[] cps;
 }
 
 bool SdCardFont::advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16_t* outAdvance) const {

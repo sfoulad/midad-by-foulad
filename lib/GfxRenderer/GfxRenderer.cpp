@@ -814,6 +814,13 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
   const auto arSdIt = sdCardFonts_.find(resolveArabicFontId(fontId));
   SdCardFont* const sdFont = (arSdIt != sdCardFonts_.end()) ? arSdIt->second : nullptr;
   const uint8_t sdStyleIdx = sdFont ? resolveSdCardStyle(*sdFont, style) : 0;
+  if (sdFont) {
+    // One-shot per style: fill the advance table with the font's whole Arabic
+    // coverage in a single sequential SD pass, so a fresh font's first chapter
+    // re-layout doesn't refill it through dozens of tiny per-word batches
+    // (each its own .cpfont open). No-op after the first call.
+    sdFont->prewarmArabicAdvances(sdStyleIdx);
+  }
 
   const auto hasGlyphFn = [&](uint32_t c) {
     return sdFont ? sdFont->hasGlyph(c, sdStyleIdx) : (font.getGlyph(c, style) != nullptr);

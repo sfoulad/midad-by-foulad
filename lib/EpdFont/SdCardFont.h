@@ -55,6 +55,17 @@ class SdCardFont {
   // Returns the 12.4 fixed-point advance, or 0 if not found.
   uint16_t getAdvance(uint32_t codepoint, uint8_t style) const;
 
+  // One-shot bulk prewarm of layout advances for every Arabic-block codepoint
+  // this style provides (base letters/diacritics + the presentation forms the
+  // shaper emits), fetched in ONE mostly-sequential SD pass. Without it, a
+  // freshly-activated font (font/size change wipes nothing here, but a NEW
+  // SdCardFont starts with an empty advance table) refills the table through
+  // dozens of tiny per-word batches -- each its own .cpfont open -- during the
+  // first chapter re-layout. Idempotent per style; capped below the advance
+  // table limit so a font serving BOTH Latin and Arabic keeps headroom for
+  // Latin entries. `style` is a resolved style index, masked like getAdvance.
+  void prewarmArabicAdvances(uint8_t style);
+
   // Cheap glyph-existence test: a RAM-only interval lookup, no SD access.
   // Exactly equivalent to `getGlyph(codepoint, style) != nullptr` -- onGlyphMiss()
   // returns nullptr iff findGlobalGlyphIndex() < 0 -- but WITHOUT the per-call
@@ -238,6 +249,9 @@ class SdCardFont {
   static constexpr uint32_t ADVANCE_CACHE_LIMIT = 768;
   AdvanceEntry* advanceTable_[MAX_STYLES] = {};
   uint32_t advanceTableSize_[MAX_STYLES] = {};
+  // One-shot gate for prewarmArabicAdvances(); reset when the persistent
+  // advance table is wiped so a later re-fill goes bulk again.
+  bool arabicAdvancesPrewarmed_[MAX_STYLES] = {};
   bool advanceTableLookup(uint8_t styleIdx, uint32_t codepoint, uint16_t* outAdvance) const;
   // Merge sortedNew (sorted by codepoint, no overlap with existing) into the
   // advance table for styleIdx, preserving sort order; cap-truncates the tail.
