@@ -1516,7 +1516,7 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
   // font id: sd=SD-card font tracked by separate stats getBitmap() never touches,
   // none=font id not found anywhere, compressed=the path FontDecompressor::Stats
   // above actually measures).
-  char statsPart[400] = "";
+  char statsPart[512] = "";
   if (fcm) {
     FontDecompressor* decompressor = fcm->getDecompressor();
     if (decompressor) {
@@ -1562,6 +1562,22 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
              (unsigned long)fcm->getArabicScanEntries(), (unsigned long)fcm->getArabicScanFontMissing(),
              fcm->getArabicScanLastResolvedFontId(), (unsigned long)fcm->getLastArabicPrewarmFontCount());
     strncat(statsPart, pathPart, sizeof(statsPart) - strlen(statsPart) - 1);
+    // hits/misses/decomp/calls/prewarm_glyphs/etc. above are FontDecompressor's stats --
+    // meaningless on a path=sd turn, since that's the flash-font decompressor, not the
+    // SD card read that's actually on the critical path for a path=sd font. Append the
+    // SD font's own stats (SdCardFont::Stats, reset every page alongside everything else
+    // in PrewarmScope's ctor) so a slow SD-font turn shows sd_read_ms/seeks/glyphs/bytes
+    // instead of stale numbers from whatever flash font last ran.
+    if (pathStr[0] == 's') {  // "sd"
+      uint32_t sdPrewarmTotalMs = 0, sdReadTimeMs = 0, seekCount = 0, uniqueGlyphs = 0, bitmapBytes = 0;
+      fcm->getSdFontDiagStats(fcm->getLastArabicPrewarmFontId(), sdPrewarmTotalMs, sdReadTimeMs, seekCount,
+                              uniqueGlyphs, bitmapBytes);
+      char sdPart[128];
+      snprintf(sdPart, sizeof(sdPart), " sd_prewarm_ms=%lu sd_read_ms=%lu seeks=%lu sd_glyphs=%lu sd_bytes=%lu",
+               (unsigned long)sdPrewarmTotalMs, (unsigned long)sdReadTimeMs, (unsigned long)seekCount,
+               (unsigned long)uniqueGlyphs, (unsigned long)bitmapBytes);
+      strncat(statsPart, sdPart, sizeof(statsPart) - strlen(statsPart) - 1);
+    }
     // Diagnostics only: pre_bytes/pre_font are the SAME accumulator scan_bytes/scan_font
     // read above, but peeked immediately after the scan-pass render() call, before
     // endScanAndPrewarm() runs. If pre_bytes>0 while scan_bytes=0, something between the
@@ -1573,7 +1589,7 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
              preEndScanArabicFontId);
     strncat(statsPart, prePart, sizeof(statsPart) - strlen(statsPart) - 1);
   }
-  char buf[512];
+  char buf[640];
   snprintf(buf, sizeof(buf),
            "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u%s \"%s\"",
            millis(), spineIndex, tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - tDisplay, total,

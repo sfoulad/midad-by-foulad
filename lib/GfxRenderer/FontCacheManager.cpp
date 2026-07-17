@@ -119,6 +119,19 @@ void FontCacheManager::noteArabicScanEntry(bool fontFound, int resolvedFontId) {
   arabicScanLastResolvedFontId_ = resolvedFontId;
 }
 
+void FontCacheManager::getSdFontDiagStats(int fontId, uint32_t& prewarmTotalMs, uint32_t& sdReadTimeMs,
+                                          uint32_t& seekCount, uint32_t& uniqueGlyphs, uint32_t& bitmapBytes) const {
+  prewarmTotalMs = sdReadTimeMs = seekCount = uniqueGlyphs = bitmapBytes = 0;
+  auto it = sdCardFonts_.find(fontId);
+  if (it == sdCardFonts_.end()) return;
+  const auto& s = it->second->getStats();
+  prewarmTotalMs = s.prewarmTotalMs;
+  sdReadTimeMs = s.sdReadTimeMs;
+  seekCount = s.seekCount;
+  uniqueGlyphs = s.uniqueGlyphs;
+  bitmapBytes = s.bitmapBytes;
+}
+
 // --- PrewarmScope implementation ---
 
 FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manager_(&manager) {

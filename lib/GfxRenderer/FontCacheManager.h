@@ -93,6 +93,25 @@ class FontCacheManager {
   size_t peekScanArabicTextSize() const;
   int peekScanArabicFontId() const;
 
+  // Diagnostics only: raw SdCardFont::Stats for the given font id, filled via
+  // out-params instead of returning SdCardFont::Stats directly so this header
+  // doesn't need SdCardFont's full definition (it's forward-declared above).
+  // All-zero output means fontId isn't a currently-loaded SD-card font. Added
+  // because logSlowPageTurn()'s existing stats section reads
+  // getDecompressor()->getStats() unconditionally -- meaningless leftover
+  // numbers on a path=sd turn, since that's the FLASH font's stats, not the
+  // SD card read that's actually on the critical path.
+  //
+  // prewarmTotalMs is SdCardFont::prewarm()'s own outer timer (codepoint
+  // dedup/sort + Storage.openFileForRead() + the seek/read loop + any
+  // first-time kern/ligature table load); sdReadTimeMs only covers the
+  // seek/read loop, timed AFTER the file is already open. The gap between the
+  // two is exactly the part no other stat currently surfaces -- if it's large,
+  // the bottleneck is the SD filesystem open/first-touch, not glyph data
+  // volume.
+  void getSdFontDiagStats(int fontId, uint32_t& prewarmTotalMs, uint32_t& sdReadTimeMs, uint32_t& seekCount,
+                          uint32_t& uniqueGlyphs, uint32_t& bitmapBytes) const;
+
   // RAII scope for two-pass prewarm pattern
   class PrewarmScope {
    public:
