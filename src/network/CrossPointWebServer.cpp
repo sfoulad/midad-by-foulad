@@ -15,6 +15,8 @@
 
 #include "CrossPointSettings.h"
 #include "FontInstaller.h"
+#include "FouladEbooksConfig.h"
+#include "HttpDownloader.h"
 #include "OpdsServerStore.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
@@ -31,6 +33,11 @@ namespace {
 // Folders/files to hide from the web interface file browser
 // Note: Items starting with "." are automatically hidden
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
+// Scratch dir for a raw TTF/OTF mid-relay to foulad-ebooks (Convert Font) --
+// same ".crosspoint/" convention as OpdsCoverCache's cache dir. Cleaned up
+// (the one temp file, not the whole dir) after every relay attempt, success
+// or failure.
+constexpr char FONT_CONVERT_TMP_DIR[] = "/.crosspoint/font_convert_tmp";
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
@@ -79,6 +86,36 @@ bool isProtectedItemName(const String& name) {
     }
   }
   return false;
+}
+
+// Validates a raw font upload's filename for the Convert Font flow: rejects
+// path traversal/separators, requires a .ttf or .otf extension, and restricts
+// the basename to alphanumeric + hyphen + underscore + space (spaces are
+// common in font filenames, e.g. "Cairo Regular.ttf", unlike the stricter
+// .cpfont validator in FontInstaller which never needs to accept them).
+bool isValidFontConvertFilename(const char* name) {
+  if (name == nullptr || name[0] == '\0') return false;
+  if (strstr(name, "..") != nullptr) return false;
+  if (strchr(name, '/') != nullptr) return false;
+  if (strchr(name, '\\') != nullptr) return false;
+
+  const size_t nameLen = strlen(name);
+  const char* ext = nullptr;
+  if (nameLen > 4 && strcasecmp(name + nameLen - 4, ".ttf") == 0) {
+    ext = name + nameLen - 4;
+  } else if (nameLen > 4 && strcasecmp(name + nameLen - 4, ".otf") == 0) {
+    ext = name + nameLen - 4;
+  } else {
+    return false;
+  }
+
+  for (const char* p = name; p < ext; ++p) {
+    const char c = *p;
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != ' ') {
+      return false;
+    }
+  }
+  return true;
 }
 }  // namespace
 
@@ -167,6 +204,8 @@ void CrossPointWebServer::begin() {
   server->on("/api/fonts", HTTP_GET, [this] { handleFontList(); });
   server->on("/api/fonts/upload", HTTP_POST, [this] { handleFontUpload(); }, [this] { handleFontUploadData(); });
   server->on("/api/fonts/delete", HTTP_POST, [this] { handleFontDelete(); });
+  server->on(
+      "/api/fonts/convert", HTTP_POST, [this] { handleFontConvert(); }, [this] { handleFontConvertUploadData(); });
 
   // OPDS server endpoints
   server->on("/api/opds", HTTP_GET, [this] { handleGetOpdsServers(); });
@@ -1931,4 +1970,207 @@ void CrossPointWebServer::handleFontDelete() {
     server->send(500, "application/json", "{\"error\":\"Delete failed\"}");
     LOG_ERR("WEB", "Failed to delete font family: %s", familyName);
   }
+}
+
+void CrossPointWebServer::handleFontConvertUploadData() {
+  HTTPUpload& upload = server->upload();
+
+  switch (upload.status) {
+    case UPLOAD_FILE_START: {
+      esp_task_wdt_reset();
+      String family = server->arg("family");
+      String language = server->arg("language");
+      fontConvertUpload.file = HalFile();
+      fontConvertUpload.familyName.clear();
+      fontConvertUpload.language.clear();
+      fontConvertUpload.filePath.clear();
+      fontConvertUpload.valid = false;
+      fontConvertUpload.bytesWritten = 0;
+      fontConvertUpload.bufferPos = 0;
+
+      if (!FontInstaller::isValidFamilyName(family.c_str())) {
+        LOG_ERR("WEB", "Convert font: invalid family name: %s", family.c_str());
+        break;
+      }
+      if (language != "arabic" && language != "english") {
+        LOG_ERR("WEB", "Convert font: invalid language: %s", language.c_str());
+        break;
+      }
+
+      String filename = upload.filename;
+      if (!isValidFontConvertFilename(filename.c_str())) {
+        LOG_ERR("WEB", "Convert font: invalid filename: %s", filename.c_str());
+        break;
+      }
+
+      Storage.mkdir(FONT_CONVERT_TMP_DIR);
+
+      char path[160];
+      snprintf(path, sizeof(path), "%s/%s", FONT_CONVERT_TMP_DIR, filename.c_str());
+      fontConvertUpload.filePath = path;
+
+      if (!Storage.openFileForWrite("WEB", path, fontConvertUpload.file)) {
+        LOG_ERR("WEB", "Failed to open convert-font temp file for write: %s", path);
+        break;
+      }
+
+      fontConvertUpload.familyName = family.c_str();
+      fontConvertUpload.language = language.c_str();
+      fontConvertUpload.valid = true;
+      LOG_DBG("WEB", "Convert-font upload started: %s (family=%s, language=%s)", filename.c_str(),
+              fontConvertUpload.familyName.c_str(), fontConvertUpload.language.c_str());
+      break;
+    }
+
+    case UPLOAD_FILE_WRITE: {
+      if (!fontConvertUpload.valid) break;
+      esp_task_wdt_reset();
+
+      if (fontConvertUpload.bytesWritten + upload.currentSize > FontConvertUploadState::MAX_SIZE) {
+        LOG_ERR("WEB", "Convert-font upload exceeds size cap (%zu bytes)",
+                (size_t)FontConvertUploadState::MAX_SIZE);
+        fontConvertUpload.valid = false;
+        break;
+      }
+
+      size_t remaining = upload.currentSize;
+      const uint8_t* src = upload.buf;
+      while (remaining > 0) {
+        size_t space = FontConvertUploadState::BUFFER_SIZE - fontConvertUpload.bufferPos;
+        size_t chunk = (remaining < space) ? remaining : space;
+        memcpy(fontConvertUpload.buffer.data() + fontConvertUpload.bufferPos, src, chunk);
+        fontConvertUpload.bufferPos += chunk;
+        src += chunk;
+        remaining -= chunk;
+
+        if (fontConvertUpload.bufferPos >= FontConvertUploadState::BUFFER_SIZE) {
+          fontConvertUpload.file.write(fontConvertUpload.buffer.data(), fontConvertUpload.bufferPos);
+          fontConvertUpload.bytesWritten += fontConvertUpload.bufferPos;
+          fontConvertUpload.bufferPos = 0;
+          esp_task_wdt_reset();
+        }
+      }
+      break;
+    }
+
+    case UPLOAD_FILE_END: {
+      if (fontConvertUpload.valid && fontConvertUpload.bufferPos > 0) {
+        fontConvertUpload.file.write(fontConvertUpload.buffer.data(), fontConvertUpload.bufferPos);
+        fontConvertUpload.bytesWritten += fontConvertUpload.bufferPos;
+        fontConvertUpload.bufferPos = 0;
+      }
+      if (fontConvertUpload.file.isOpen()) {
+        fontConvertUpload.file.close();
+      }
+
+      if (!fontConvertUpload.valid && !fontConvertUpload.filePath.empty()) {
+        Storage.remove(fontConvertUpload.filePath.c_str());
+      }
+
+      LOG_DBG("WEB", "Convert-font upload end: valid=%d, %zu bytes", fontConvertUpload.valid,
+              fontConvertUpload.bytesWritten);
+      break;
+    }
+
+    case UPLOAD_FILE_ABORTED: {
+      if (fontConvertUpload.file) {
+        fontConvertUpload.file.close();
+      }
+      if (!fontConvertUpload.filePath.empty()) {
+        Storage.remove(fontConvertUpload.filePath.c_str());
+      }
+      fontConvertUpload.valid = false;
+      LOG_DBG("WEB", "Convert-font upload aborted");
+      break;
+    }
+  }
+}
+
+void CrossPointWebServer::handleFontConvert() {
+  if (!fontConvertUpload.valid) {
+    server->send(400, "application/json", "{\"error\":\"Invalid font file, family name, or language\"}");
+    return;
+  }
+
+  // Copy out of fontConvertUpload before this handler's long relay wait --
+  // nothing else touches fontConvertUpload meanwhile (single-threaded
+  // WebServer), but copying keeps intent clear and survives if that ever
+  // changes.
+  const std::string tempPath = fontConvertUpload.filePath;
+  const std::string family = fontConvertUpload.familyName;
+  const std::string language = fontConvertUpload.language;
+  auto cleanupTemp = [&tempPath]() { Storage.remove(tempPath.c_str()); };
+
+  const wifi_mode_t wifiMode = WiFi.getMode();
+  const bool isStaConnected = (wifiMode & WIFI_MODE_STA) && (WiFi.status() == WL_CONNECTED);
+  if (!isStaConnected) {
+    LOG_ERR("WEB", "Convert font: device is not connected to the internet (wifiMode=%d)", wifiMode);
+    cleanupTemp();
+    server->send(503, "application/json", "{\"error\":\"Device is not connected to the internet.\"}");
+    return;
+  }
+
+  std::string response;
+  const std::vector<std::pair<std::string, std::string>> fields = {{"language", language}, {"family", family}};
+  const bool posted =
+      HttpDownloader::postFileMultipart(FOULAD_EBOOKS_FONT_CONVERT_URL, tempPath, fields, response, 120000);
+  cleanupTemp();
+
+  if (!posted) {
+    LOG_ERR("WEB", "Convert font: relay request to conversion service failed");
+    server->send(502, "application/json", "{\"error\":\"Couldn't reach the font conversion service.\"}");
+    return;
+  }
+
+  JsonDocument doc;
+  DeserializationError parseErr = deserializeJson(doc, response);
+  if (parseErr || !doc["ok"].is<bool>() || !doc["ok"].as<bool>() || !doc["files"].is<JsonArray>()) {
+    JsonDocument errDoc;
+    if (!parseErr && doc["error"].is<const char*>()) {
+      errDoc["error"] = doc["error"].as<const char*>();
+    } else {
+      errDoc["error"] = "Font conversion service returned an unexpected response.";
+    }
+    String json;
+    serializeJson(errDoc, json);
+    LOG_ERR("WEB", "Convert font: bad response from conversion service");
+    server->send(502, "application/json", json);
+    return;
+  }
+
+  FontInstaller installer(sdFontSystem.registry());
+  if (!installer.ensureFamilyDir(family.c_str())) {
+    LOG_ERR("WEB", "Convert font: failed to create family dir for %s", family.c_str());
+    server->send(500, "application/json", "{\"error\":\"Failed to create font family directory.\"}");
+    return;
+  }
+
+  JsonArray files = doc["files"].as<JsonArray>();
+  size_t downloadedCount = 0;
+  for (JsonObject f : files) {
+    if (!f["size"].is<int>() || !f["url"].is<const char*>()) continue;
+    const int size = f["size"];
+    const char* url = f["url"];
+
+    char filename[48];
+    snprintf(filename, sizeof(filename), "%s_%d.cpfont", family.c_str(), size);
+    char path[160];
+    FontInstaller::buildFontPath(family.c_str(), filename, path, sizeof(path));
+
+    if (HttpDownloader::downloadToFile(url, path) != HttpDownloader::OK) {
+      LOG_ERR("WEB", "Convert font: failed to download %s -> %s", url, path);
+      continue;
+    }
+    downloadedCount++;
+  }
+
+  if (downloadedCount == 0) {
+    installer.deleteFamily(family.c_str());
+    server->send(502, "application/json", "{\"error\":\"Failed to download the converted font files.\"}");
+    return;
+  }
+
+  sdFontSystem.markRegistryDirty();
+  server->send(200, "application/json", "{\"ok\":true}");
+  LOG_DBG("WEB", "Convert font complete: family=%s, files=%zu/%zu", family.c_str(), downloadedCount, files.size());
 }

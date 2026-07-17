@@ -87,8 +87,6 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
   // One slot, two states: Logout when an account is stored, Login when not --
   // after logging out (which also swaps the home menu's eBooks slot to Files),
   // this is the way back in.
@@ -100,6 +98,14 @@ void SettingsActivity::rebuildSettingsLists() {
   } else {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGIN, SettingAction::FouladEbooksLogin));
   }
+  // User request: Browse Files / File Transfer are the two most-used System
+  // entries, so pin them to the very top regardless of everything else
+  // appended above -- inserted last (not where they'd naturally fall in the
+  // push_back order) so this stays correct even if more entries are added
+  // before this point later.
+  systemSettings.insert(systemSettings.begin(),
+                        {SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles),
+                         SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer)});
   // Reader list order (user-specified): English Font, English Font Size,
   // Arabic Font, Arabic Font Size, Manage Fonts, then the rest. The base table
   // supplies [English Font, English Font Size, Arabic Font Size, ...]; insert

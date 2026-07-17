@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CrossPoint Reader - Fonts</title>
+    <title>Foulad eInk - Fonts</title>
     <style>
       :root {
         --font-color: #333;
@@ -111,7 +111,14 @@
         color: var(--font-color);
       }
       .upload-form input[type="file"] { flex: 1; min-width: 200px; }
-      #status {
+      .upload-form select {
+        padding: 6px 10px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--font-color);
+      }
+      #status, #convertStatus {
         margin-top: 10px;
         padding: 8px;
         border-radius: 4px;
@@ -123,7 +130,7 @@
     </style>
   </head>
   <body>
-    <h1>📚 CrossPoint Reader</h1>
+    <h1>📚 Foulad eInk</h1>
 
     <div class="nav-links">
       <a href="/">Home</a>
@@ -145,6 +152,23 @@
       </form>
       <p id="pickedInfo" class="family-meta" style="margin: 8px 0 0;"></p>
       <div id="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>Convert a Font</h2>
+      <p class="family-meta" style="margin: 0 0 12px;">
+        Requires the device to be connected to the internet.
+      </p>
+      <form class="upload-form" id="convertForm">
+        <input type="file" id="convertFontFile" accept=".ttf,.otf" required />
+        <input type="text" id="convertFamilyName" placeholder="Font name" required />
+        <select id="convertLanguage">
+          <option value="arabic">Arabic</option>
+          <option value="english">English</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Convert</button>
+      </form>
+      <div id="convertStatus"></div>
     </div>
 
   <script>
@@ -314,6 +338,48 @@
       status.className = 'status-ok';
       status.textContent = 'Uploaded ' + uploaded + ' file' + (uploaded === 1 ? '' : 's') +
         ' to family "' + family + '".';
+      await loadFonts();
+    });
+
+    document.getElementById('convertForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const status = document.getElementById('convertStatus');
+      const fileInput = document.getElementById('convertFontFile');
+      const family = sanitizeFamily(document.getElementById('convertFamilyName').value.trim());
+      const language = document.getElementById('convertLanguage').value;
+
+      if (!fileInput.files[0] || !family) {
+        status.className = 'status-err';
+        status.style.display = 'block';
+        status.textContent = 'Pick a .ttf/.otf file and enter a font name.';
+        return;
+      }
+
+      status.className = '';
+      status.style.display = 'block';
+      status.textContent = 'Converting... this can take a couple of minutes. Keep this page open.';
+
+      const formData = new FormData();
+      formData.append('font', fileInput.files[0], fileInput.files[0].name);
+      formData.append('family', family);
+      formData.append('language', language);
+
+      try {
+        const res = await fetch('/api/fonts/convert', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok) {
+          status.className = 'status-ok';
+          status.textContent = 'Converted and installed as "' + family + '".';
+          fileInput.value = '';
+          document.getElementById('convertFamilyName').value = '';
+        } else {
+          status.className = 'status-err';
+          status.textContent = data.error || 'Conversion failed.';
+        }
+      } catch (err) {
+        status.className = 'status-err';
+        status.textContent = 'Conversion error: ' + err.message;
+      }
       await loadFonts();
     });
 

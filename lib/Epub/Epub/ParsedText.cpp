@@ -558,16 +558,37 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   // entirely — no heap allocation. For SD card fonts this reads glyph metadata
   // (advanceX only, no bitmaps) for all unique codepoints in this paragraph so
   // that calculateWordWidths() can measure text without on-demand SD I/O.
+  //
+  // Style mask: only ask the SD font to load advances for styles actually
+  // used in this paragraph. Style index is the low two bits (regular/bold/
+  // italic/bold-italic); the underline bit is irrelevant to advance metrics.
+  uint8_t styleMask = 0;
+  for (auto s : wordStyles) {
+    styleMask |= static_cast<uint8_t>(1u << (static_cast<uint8_t>(s) & 0x03));
+  }
+  if (styleMask == 0) styleMask = 0x01;  // defensive: regular only
+
   if (renderer.isSdCardFont(fontId)) {
-    // Style mask: only ask the SD font to load advances for styles actually
-    // used in this paragraph. Style index is the low two bits (regular/bold/
-    // italic/bold-italic); the underline bit is irrelevant to advance metrics.
-    uint8_t styleMask = 0;
-    for (auto s : wordStyles) {
-      styleMask |= static_cast<uint8_t>(1u << (static_cast<uint8_t>(s) & 0x03));
-    }
-    if (styleMask == 0) styleMask = 0x01;  // defensive: regular only
     renderer.ensureSdCardFontReady(fontId, words, hyphenationEnabled, styleMask);
+  }
+  // Arabic runs measure width against a RESOLVED Arabic font (see
+  // GfxRenderer::getArabicTextWidth()), which can be a different font --
+  // often a different SD card font -- than fontId itself (e.g. a Latin flash
+  // reading font with a custom Arabic SD font configured separately in
+  // Settings). Without also pre-building THAT font's advance table here,
+  // every Arabic word's width lookup during this whole chapter's layout falls
+  // through to an unbatched, on-demand SD read instead of one sorted,
+  // sequential pass -- the exact same bug class already fixed once for the
+  // render-time prewarm path (FontCacheManager::recordArabicText(), fixed for
+  // the Quran's blank-page/slow-turn symptom), just on the layout/pagination
+  // path instead. Real-device symptom: a whole chapter's "build" (pagination)
+  // taking 60-90+ seconds with a custom Arabic SD font, vs under a second once
+  // this is batched.
+  if (hasRtlWord) {
+    const int arabicFontId = renderer.getArabicFontIdFor(fontId);
+    if (arabicFontId != fontId && renderer.isSdCardFont(arabicFontId)) {
+      renderer.ensureSdCardFontReady(arabicFontId, words, hyphenationEnabled, styleMask);
+    }
   }
 
   const int pageWidth = viewportWidth;

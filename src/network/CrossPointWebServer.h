@@ -114,6 +114,8 @@ class CrossPointWebServer {
   void handleFontUpload();
   void handleFontUploadData();
   void handleFontDelete();
+  void handleFontConvert();
+  void handleFontConvertUploadData();
 
   // Font upload state
   struct FontUploadState {
@@ -129,6 +131,27 @@ class CrossPointWebServer {
 
     FontUploadState() { buffer.resize(BUFFER_SIZE); }
   } fontUpload;
+
+  // Convert-font upload state: the raw TTF/OTF is staged to a scratch path
+  // (not installed as a font directly) before being relayed to foulad-ebooks.
+  // See handleFontConvertUploadData()/handleFontConvert().
+  struct FontConvertUploadState {
+    HalFile file;
+    std::string familyName;
+    std::string language;  // "arabic" or "english"
+    std::string filePath;
+    bool valid = false;
+    size_t bytesWritten = 0;
+    // Raw font files (esp. variable fonts) can run a few MB -- cap well below
+    // available SD/heap headroom so a bad/huge upload fails cleanly instead of
+    // filling the card or ballooning the relay's own read buffer needs.
+    static constexpr size_t MAX_SIZE = 10 * 1024 * 1024;
+    static constexpr size_t BUFFER_SIZE = 4096;
+    std::vector<uint8_t> buffer;
+    size_t bufferPos = 0;
+
+    FontConvertUploadState() { buffer.resize(BUFFER_SIZE); }
+  } fontConvertUpload;
 
   // OPDS server handlers
   void handleGetOpdsServers() const;

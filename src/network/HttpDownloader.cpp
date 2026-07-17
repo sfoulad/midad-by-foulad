@@ -6,12 +6,15 @@
 #include <base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
+#include <esp_task_wdt.h>
 #include <esp_wifi.h>
 
 #include <algorithm>
 #include <cstring>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 // RX holds the response headers. 4096 fits real OPDS servers; GitHub's release
@@ -33,6 +36,13 @@ constexpr size_t READ_CHUNK = 2048;
 #ifdef SIMULATOR
 int getHttpClientErrno(esp_http_client_handle_t) { return 0; }
 void logTlsError(esp_http_client_handle_t) {}
+// crosspoint-simulator's esp_http_client.h stub only implements the GET/read
+// path (matching every other simulator-buildable feature so far); it has no
+// esp_http_client_write() at all. postFileMultipart() -- used only by the
+// Convert Font web-portal relay -- has no simulator-testable counterpart
+// anyway (no live foulad-ebooks endpoint in dev), so this just fails cleanly
+// rather than needing a real stub.
+int httpClientWrite(esp_http_client_handle_t, const char*, int) { return -1; }
 #else
 int getHttpClientErrno(esp_http_client_handle_t client) { return esp_http_client_get_errno(client); }
 // A bare ESP_ERR_HTTP_CONNECT + errno=0 means the raw socket connect succeeded (or
@@ -51,6 +61,9 @@ void logTlsError(esp_http_client_handle_t client) {
     // as -0x3000) -- print it as mbedTLS's own negative convention for readability.
     LOG_ERR("HTTP", "tls detail: esp_tls_error_code=-0x%X esp_tls_flags=0x%X", tlsErrorCode, tlsFlags);
   }
+}
+int httpClientWrite(esp_http_client_handle_t client, const char* data, int len) {
+  return esp_http_client_write(client, data, len);
 }
 #endif
 
@@ -239,6 +252,179 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
   return HttpDownloader::OK;
 }
+
+// Streams a file as a multipart/form-data POST body (never buffers the whole
+// file into RAM) plus plain string fields, then reads a small, expected-JSON
+// response body into outResponse. Mirrors runGet()'s manual open/read
+// structure rather than esp_http_client_perform() (same reasons as runGet's
+// comment), plus streaming the outbound body ourselves via
+// esp_http_client_write() between esp_http_client_open()'s write_len and
+// esp_http_client_fetch_headers() -- the standard esp_http_client pattern for
+// a POST with a known Content-Length.
+HttpDownloader::DownloadError runPostFile(const std::string& url, const std::string& filePath,
+                                          const std::vector<std::pair<std::string, std::string>>& fields,
+                                          std::string& outResponse, int timeoutMs) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
+  outResponse.clear();
+  WifiPowerSaveGuard psGuard;
+
+  HalFile file;
+  if (!Storage.openFileForRead("HTTP", filePath.c_str(), file)) {
+    LOG_ERR("HTTP", "postFileMultipart: failed to open %s", filePath.c_str());
+    return HttpDownloader::FILE_ERROR;
+  }
+  const size_t fileSize = file.size();
+
+  // Basename only -- multipart filename= doesn't need the full SD path.
+  std::string fileName = filePath;
+  const size_t slash = fileName.find_last_of('/');
+  if (slash != std::string::npos) fileName = fileName.substr(slash + 1);
+
+  const std::string boundary = "----FouladEInkBoundary7f3c9a";
+
+  // Build every part's header text up front so the total Content-Length is
+  // known before opening the connection (esp_http_client_open()'s write_len
+  // needs the real total) -- only the file's own bytes stream in READ_CHUNK
+  // pieces, never held whole in RAM.
+  std::vector<std::string> fieldParts;
+  fieldParts.reserve(fields.size());
+  for (const auto& field : fields) {
+    fieldParts.push_back("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field.first + "\"\r\n\r\n" +
+                         field.second + "\r\n");
+  }
+  const std::string filePartHeader = "--" + boundary +
+                                     "\r\nContent-Disposition: form-data; name=\"font\"; filename=\"" + fileName +
+                                     "\"\r\nContent-Type: application/octet-stream\r\n\r\n";
+  const std::string closing = "\r\n--" + boundary + "--\r\n";
+
+  size_t contentLength = filePartHeader.size() + fileSize + closing.size();
+  for (const auto& p : fieldParts) contentLength += p.size();
+
+  auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
+  if (!buf) {
+    LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)READ_CHUNK, ESP.getFreeHeap());
+    setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
+    file.close();
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.method = HTTP_METHOD_POST;
+  config.buffer_size = HTTP_RX_BUF;
+  config.buffer_size_tx = HTTP_TX_BUF;
+  config.timeout_ms = timeoutMs;
+  config.crt_bundle_attach = esp_crt_bundle_attach;
+  config.keep_alive_enable = true;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (!client) {
+    LOG_ERR("HTTP", "client init failed");
+    setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
+    file.close();
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  const std::string contentType = "multipart/form-data; boundary=" + boundary;
+  esp_http_client_set_header(client, "Content-Type", contentType.c_str());
+
+  esp_err_t err = esp_http_client_open(client, static_cast<int>(contentLength));
+  if (err != ESP_OK) {
+    LOG_ERR("HTTP", "postFileMultipart open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
+            getHttpClientErrno(client), ESP.getFreeHeap());
+    logTlsError(client);
+    setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
+    esp_http_client_cleanup(client);
+    file.close();
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  auto writeAll = [&](const char* data, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+      const int written = httpClientWrite(client, data + off, static_cast<int>(len - off));
+      if (written < 0) return false;
+      off += static_cast<size_t>(written);
+    }
+    return true;
+  };
+
+  bool writeOk = true;
+  for (const auto& p : fieldParts) {
+    if (!writeAll(p.data(), p.size())) {
+      writeOk = false;
+      break;
+    }
+  }
+  if (writeOk) writeOk = writeAll(filePartHeader.data(), filePartHeader.size());
+
+  // Stream the file body in READ_CHUNK pieces, same size as the download
+  // path's read buffer -- never holds more than one chunk in RAM. Reset the
+  // watchdog per chunk, matching handleFontUploadData()'s existing pattern
+  // for a comparably long SD read/write loop.
+  if (writeOk) {
+    size_t remaining = fileSize;
+    while (remaining > 0) {
+      esp_task_wdt_reset();
+      const size_t want = std::min(remaining, READ_CHUNK);
+      const int got = file.read(reinterpret_cast<uint8_t*>(buf.get()), want);
+      if (got <= 0) {
+        writeOk = false;
+        break;
+      }
+      if (!writeAll(buf.get(), static_cast<size_t>(got))) {
+        writeOk = false;
+        break;
+      }
+      remaining -= static_cast<size_t>(got);
+    }
+  }
+  file.close();
+
+  if (writeOk) writeOk = writeAll(closing.data(), closing.size());
+
+  if (!writeOk) {
+    LOG_ERR("HTTP", "postFileMultipart write failed (errno=%d)", getHttpClientErrno(client));
+    setLastFailure(HttpDownloader::FailStage::OPEN, getHttpClientErrno(client));
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_fetch_headers(client);
+  const int status = esp_http_client_get_status_code(client);
+  if (status != 200) {
+    LOG_ERR("HTTP", "postFileMultipart unexpected status: %d", status);
+    setLastFailure(HttpDownloader::FailStage::STATUS, status);
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  while (true) {
+    const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
+    if (read < 0) {
+      LOG_ERR("HTTP", "postFileMultipart read error after %zu bytes", outResponse.size());
+      setLastFailure(HttpDownloader::FailStage::READ,
+                     static_cast<int>(std::min<size_t>(outResponse.size(), INT32_MAX)));
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (read == 0) break;
+    outResponse.append(buf.get(), static_cast<size_t>(read));
+    // Response is expected to be a small JSON object (see postFileMultipart's
+    // doc comment) -- cap it generously so an unexpected huge body can't
+    // accumulate without bound.
+    if (outResponse.size() > 16384) {
+      LOG_ERR("HTTP", "postFileMultipart response too large, aborting");
+      setLastFailure(HttpDownloader::FailStage::INCOMPLETE, static_cast<int>(outResponse.size()));
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+  }
+
+  esp_http_client_cleanup(client);
+  return HttpDownloader::OK;
+}
 }  // namespace
 
 HttpDownloader::LastFailure HttpDownloader::getLastFailure() { return gLastFailure; }
@@ -306,4 +492,11 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   }
   LOG_DBG("HTTP", "Downloaded %zu bytes", sink.downloaded);
   return OK;
+}
+
+bool HttpDownloader::postFileMultipart(const std::string& url, const std::string& filePath,
+                                       const std::vector<std::pair<std::string, std::string>>& fields,
+                                       std::string& outResponse, int timeoutMs) {
+  LOG_DBG("HTTP", "Posting: %s -> %s", filePath.c_str(), url.c_str());
+  return runPostFile(url, filePath, fields, outResponse, timeoutMs) == OK;
 }

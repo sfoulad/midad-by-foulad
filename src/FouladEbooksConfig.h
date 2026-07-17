@@ -15,3 +15,12 @@ constexpr char FOULAD_EBOOKS_NAME[] = "Foulad eBooks";
 // connection as a result -- an accepted, explicit tradeoff for beta, not something
 // to carry into a production release without revisiting.
 constexpr char FOULAD_EBOOKS_URL[] = "http://foulad.one/opds";
+
+// Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
+// Convert a Font): the device uploads a raw TTF/OTF plus a language choice,
+// foulad-ebooks converts it into the device's .cpfont SD-font format (4 sizes)
+// and responds with download URLs. Open endpoint, no auth -- foulad-ebooks is
+// expected to rate-limit this server-side. Plain http:// for the same reason
+// as FOULAD_EBOOKS_URL above (foulad.one's current certificate chain isn't in
+// ESP-IDF's trust bundle); revisit alongside that fix.
+constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://foulad.one/api/fonts/convert";

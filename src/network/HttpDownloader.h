@@ -3,6 +3,8 @@
 
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 /**
  * HTTP client utility for fetching content and downloading files. Built on
@@ -68,4 +70,18 @@ class HttpDownloader {
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
                                       ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
                                       const std::string& username = "", const std::string& password = "");
+
+  /**
+   * POST a file (streamed from SD, never buffered whole into RAM) as one
+   * multipart/form-data part named "font", alongside plain string fields, to
+   * url. Response body (expected to be small JSON) is accumulated into
+   * outResponse. Used for the font-conversion relay to foulad-ebooks, whose
+   * response can legitimately take much longer than a normal fetch -- pass a
+   * generous timeoutMs (this does NOT reuse the GET path's tuned-for-downloads
+   * timeout constant). Returns false on any network/file error; check
+   * getLastFailure() for detail.
+   */
+  static bool postFileMultipart(const std::string& url, const std::string& filePath,
+                                const std::vector<std::pair<std::string, std::string>>& fields,
+                                std::string& outResponse, int timeoutMs = 120000);
 };

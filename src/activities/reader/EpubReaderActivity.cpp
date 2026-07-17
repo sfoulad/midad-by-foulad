@@ -1119,6 +1119,10 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
     const unsigned long chapterLoadStartMs = millis();
+    // Zero SD-card font read/seek stats before a fresh build so the "built" log
+    // line below reports THIS chapter's SD I/O, not whatever leaked over from
+    // the previous page turn's render-time prewarm.
+    if (auto* fcmForBuildStats = renderer.getFontCacheManager()) fcmForBuildStats->resetStats();
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
 
     // A finalized cache serves every page as-is. A partial cache (suspended build from a
@@ -1249,10 +1253,43 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // scratch. A run of "built" entries for the SAME book is the signature
       // of a section cache that never sticks (e.g. a settings/font mismatch
       // re-triggering a rebuild every open) rather than genuinely slow layout.
-      char buf[192];
-      snprintf(buf, sizeof(buf), "%lu spine=%d %s elapsed=%lums heap=%u pages=%u \"%s\"", millis(), currentSpineIndex,
+      char buf[320] = "";
+      snprintf(buf, sizeof(buf), "%lu spine=%d %s elapsed=%lums heap=%u pages=%u", millis(), currentSpineIndex,
                cacheComplete ? "cache" : "built", millis() - chapterLoadStartMs, (unsigned)ESP.getFreeHeap(),
-               (unsigned)section->pageCount, epub->getTitle().c_str());
+               (unsigned)section->pageCount);
+      // SD-card font read/seek stats accumulated during THIS build (see the
+      // resetStats() call above) -- a "built" line's elapsed time is dominated
+      // by SD I/O when a custom SD-card font (esp. a separately-configured
+      // Arabic font, different from the reading font) is in play; these say
+      // exactly how much of it was spent reading the font vs everything else
+      // in layout (HTML/CSS parsing, line-breaking, page-splitting). Reports
+      // both the reading font and its resolved Arabic font (if different and
+      // SD-backed) since a chapter's layout can touch both.
+      if (auto* fcmForBuildStats = renderer.getFontCacheManager()) {
+        const int readerFontId = SETTINGS.getReaderFontId();
+        const int arabicFontId = renderer.getArabicFontIdFor(readerFontId);
+        uint32_t prewarmMs = 0, readMs = 0, seeks = 0, glyphs = 0, bytes = 0;
+        fcmForBuildStats->getSdFontDiagStats(readerFontId, prewarmMs, readMs, seeks, glyphs, bytes);
+        if (seeks > 0 || bytes > 0) {
+          char part[96];
+          snprintf(part, sizeof(part), " font_sd_ms=%lu font_seeks=%lu font_glyphs=%lu font_bytes=%lu",
+                   (unsigned long)readMs, (unsigned long)seeks, (unsigned long)glyphs, (unsigned long)bytes);
+          strncat(buf, part, sizeof(buf) - strlen(buf) - 1);
+        }
+        if (arabicFontId != readerFontId) {
+          uint32_t aPrewarmMs = 0, aReadMs = 0, aSeeks = 0, aGlyphs = 0, aBytes = 0;
+          fcmForBuildStats->getSdFontDiagStats(arabicFontId, aPrewarmMs, aReadMs, aSeeks, aGlyphs, aBytes);
+          if (aSeeks > 0 || aBytes > 0) {
+            char part[96];
+            snprintf(part, sizeof(part), " arabic_sd_ms=%lu arabic_seeks=%lu arabic_glyphs=%lu arabic_bytes=%lu",
+                     (unsigned long)aReadMs, (unsigned long)aSeeks, (unsigned long)aGlyphs, (unsigned long)aBytes);
+            strncat(buf, part, sizeof(buf) - strlen(buf) - 1);
+          }
+        }
+      }
+      char titlePart[64];
+      snprintf(titlePart, sizeof(titlePart), " \"%s\"", epub->getTitle().c_str());
+      strncat(buf, titlePart, sizeof(buf) - strlen(buf) - 1);
       ReaderPerfLog::append(buf);
     }
 
