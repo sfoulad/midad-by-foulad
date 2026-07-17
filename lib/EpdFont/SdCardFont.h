@@ -55,6 +55,16 @@ class SdCardFont {
   // Returns the 12.4 fixed-point advance, or 0 if not found.
   uint16_t getAdvance(uint32_t codepoint, uint8_t style) const;
 
+  // Cheap glyph-existence test: a RAM-only interval lookup, no SD access.
+  // Exactly equivalent to `getGlyph(codepoint, style) != nullptr` -- onGlyphMiss()
+  // returns nullptr iff findGlobalGlyphIndex() < 0 -- but WITHOUT the per-call
+  // .cpfont open/seek/read that a getGlyph miss performs. The Arabic shaper probes
+  // glyph existence for every character (often several times each), so during a
+  // page's scan pass, before prewarm populates the RAM glyph cache, using getGlyph
+  // meant hundreds of SD reads (~1.5s). `style` is a resolved style index (see
+  // resolveStyle), masked like getAdvance.
+  bool hasGlyph(uint32_t codepoint, uint8_t style) const;
+
   // Returns true if advance table is populated for at least one style.
   bool hasAdvanceTable() const;
 

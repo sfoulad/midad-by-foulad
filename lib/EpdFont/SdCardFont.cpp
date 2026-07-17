@@ -1068,6 +1068,17 @@ bool SdCardFont::hasAdvanceTable() const {
   return false;
 }
 
+bool SdCardFont::hasGlyph(uint32_t codepoint, uint8_t style) const {
+  if (!loaded_) return false;
+  style &= (MAX_STYLES - 1);
+  const PerStyle& s = styles_[style];
+  // Mirror onGlyphMiss()'s existence preconditions exactly, minus the SD read:
+  // no intervals resident -> no glyph; otherwise the codepoint exists iff it's
+  // in the interval table.
+  if (!s.present || (!s.fullIntervals && !s.bmpIntervals)) return false;
+  return findGlobalGlyphIndex(s, codepoint) >= 0;
+}
+
 uint16_t SdCardFont::getAdvance(uint32_t codepoint, uint8_t style) const {
   style &= (MAX_STYLES - 1);
   if (!advanceTable_[style]) return 0;

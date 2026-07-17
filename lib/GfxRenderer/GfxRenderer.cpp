@@ -807,7 +807,17 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     return glyph ? fp4::toPixel(glyph->advanceX) * BISMILLAH_SCALE_NUM / BISMILLAH_SCALE_DEN : 0;
   }
 
-  const auto hasGlyphFn = [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; };
+  // Resolve the SD-card backing (if any) once. The Arabic shaper probes glyph
+  // existence for every character and this loop reads an advance per shaped glyph;
+  // for SD fonts, routing both through the RAM interval table / advance table
+  // avoids the per-glyph .cpfont open/seek/read that dominated the scan pass.
+  const auto arSdIt = sdCardFonts_.find(resolveArabicFontId(fontId));
+  SdCardFont* const sdFont = (arSdIt != sdCardFonts_.end()) ? arSdIt->second : nullptr;
+  const uint8_t sdStyleIdx = sdFont ? resolveSdCardStyle(*sdFont, style) : 0;
+
+  const auto hasGlyphFn = [&](uint32_t c) {
+    return sdFont ? sdFont->hasGlyph(c, sdStyleIdx) : (font.getGlyph(c, style) != nullptr);
+  };
   int tatweelPx = 0;
   if (kashidaExtraPx > 0) {
     if (const EpdGlyph* tatweel = font.getGlyph(0x0640, style)) tatweelPx = fp4::toPixel(tatweel->advanceX);
@@ -816,9 +826,22 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
                                   : ArabicShaper::shapeText(text, hasGlyphFn);
   int width = 0;
   for (const uint32_t cp : cps) {
-    const EpdGlyph* glyph = font.getGlyph(cp, style);
-    if (glyph) {
-      width += fp4::toPixel(glyph->advanceX);
+    // Per-glyph pixel rounding (fp4::toPixel each advance, then sum) is preserved
+    // exactly so measured width still matches drawArabicText's per-glyph pen
+    // advance. Only the SOURCE of the advance changes for SD fonts: the advance
+    // table (RAM) first, falling back to getGlyph only on a genuine miss.
+    if (sdFont) {
+      int32_t advFP = sdFont->getAdvance(cp, sdStyleIdx);
+      if (advFP == 0 && !utf8IsCombiningMark(cp)) {
+        const EpdGlyph* glyph = font.getGlyph(cp, style);
+        advFP = glyph ? glyph->advanceX : 0;
+      }
+      width += fp4::toPixel(advFP);
+    } else {
+      const EpdGlyph* glyph = font.getGlyph(cp, style);
+      if (glyph) {
+        width += fp4::toPixel(glyph->advanceX);
+      }
     }
   }
   return width;
@@ -865,6 +888,18 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     return;
   }
   const auto& font = fontIt->second;
+
+  // SD-card backing (if any) for the resolved Arabic font, so glyph-existence
+  // probes during shaping answer from the RAM interval table instead of a
+  // .cpfont open/seek/read per character. This recording/shaping runs on every
+  // scan-pass page turn; on SD-Arabic fonts the getGlyph-based existence checks
+  // were the dominant cost of a multi-second turn (see getArabicTextWidth).
+  const auto arSdIt = sdCardFonts_.find(resolvedArabicFontId);
+  SdCardFont* const arSdFont = (arSdIt != sdCardFonts_.end()) ? arSdIt->second : nullptr;
+  const uint8_t arSdStyleIdx = arSdFont ? resolveSdCardStyle(*arSdFont, style) : 0;
+  const auto fontHasGlyph = [&](uint32_t c) {
+    return arSdFont ? arSdFont->hasGlyph(c, arSdStyleIdx) : (font.getGlyph(c, style) != nullptr);
+  };
 
   if (fontCacheManager_ && fontCacheManager_->isScanning()) {
     // Record the codepoints this call will ACTUALLY draw -- not just the raw input
@@ -946,12 +981,12 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
     } else if (parseCartoucheMarker(text, cartoucheInner)) {
       for (const uint32_t cp : ArabicShaper::shapeText(
-               cartoucheInner.c_str(), [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; })) {
+               cartoucheInner.c_str(), fontHasGlyph)) {
         if (cp != CARTOUCHE_SPACE_CP) appendUtf8(shaped, cp);
       }
     } else {
       for (const uint32_t cp :
-           ArabicShaper::shapeText(text, [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; }))
+           ArabicShaper::shapeText(text, fontHasGlyph))
         appendUtf8(shaped, cp);
     }
     fontCacheManager_->recordArabicText(shaped.c_str(), resolvedArabicFontId);
