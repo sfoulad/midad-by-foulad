@@ -3,6 +3,7 @@
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Serialization.h>
 
 #include "Epub/converters/DirectPixelWriter.h"
@@ -117,6 +118,26 @@ bool renderFromCache(GfxRenderer& renderer, const std::string& cachePath, int x,
   return true;
 }
 
+// RAM-resident twin of renderFromCache's pixel walk: identical unpack and
+// band-clipping logic, minus every SD read. Used for passes 2..N of a page
+// view once ImageBlock has the packed .pxc body in ramCache_.
+void renderFrom2bpp(GfxRenderer& renderer, const uint8_t* pixels, int x, int y, uint16_t w, uint16_t h) {
+  const int bytesPerRow = (w + 3) / 4;  // 2 bits per pixel, 4 pixels per byte
+  DirectPixelWriter pw;
+  pw.init(renderer);
+  for (int row = 0; row < h; row++) {
+    const uint8_t* rowBuffer = pixels + static_cast<size_t>(row) * bytesPerRow;
+    pw.beginRow(y + row);
+    int colStart, colEnd;
+    pw.bandColRange(x, w, colStart, colEnd);
+    for (int col = colStart; col < colEnd; col++) {
+      const int byteIdx = col >> 2;            // col / 4
+      const int bitShift = 6 - (col & 3) * 2;  // MSB first within byte
+      pw.writePixel(x + col, (rowBuffer[byteIdx] >> bitShift) & 0x03);
+    }
+  }
+}
+
 }  // namespace
 
 void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
@@ -150,8 +171,36 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     return;
   }
 
-  // Try to render from cache first
   std::string cachePath = getCachePath(imagePath);
+
+  // One-shot attempt to pull the whole packed cache into RAM for this page
+  // view (see RAM_CACHE_MAX_BYTES in the header for why). Every later render
+  // pass of this page then skips the SD entirely.
+  if (!ramCacheTried_) {
+    ramCacheTried_ = true;
+    HalFile cacheFile;
+    if (Storage.openFileForRead("IMG", cachePath.c_str(), cacheFile)) {
+      uint16_t w = 0, h = 0;
+      if (cacheFile.read(&w, 2) == 2 && cacheFile.read(&h, 2) == 2 && abs(w - width) <= 1 && abs(h - height) <= 1) {
+        const size_t bytes = static_cast<size_t>((w + 3) / 4) * h;
+        if (bytes > 0 && bytes <= RAM_CACHE_MAX_BYTES) {
+          auto buf = makeUniqueNoThrow<uint8_t[]>(bytes);
+          if (buf && cacheFile.read(buf.get(), bytes) == static_cast<int>(bytes)) {
+            ramCache_ = std::move(buf);
+            ramCacheW_ = w;
+            ramCacheH_ = h;
+            LOG_DBG("IMG", "RAM-cached %ux%u (%u bytes) for this page view", w, h, (unsigned)bytes);
+          }
+        }
+      }
+    }
+  }
+  if (ramCache_) {
+    renderFrom2bpp(renderer, ramCache_.get(), x, y, ramCacheW_, ramCacheH_);
+    return;
+  }
+
+  // Try to render from cache first
   if (renderFromCache(renderer, cachePath, x, y, width, height)) {
     return;  // Successfully rendered from cache
   }
@@ -197,6 +246,10 @@ void ImageBlock::render(GfxRenderer& renderer, const int x, const int y) {
     LOG_ERR("IMG", "Failed to decode image: %s", imagePath.c_str());
     return;
   }
+
+  // The decode just wrote the .pxc cache: let the NEXT render pass of this
+  // page view load it into RAM instead of streaming it from SD ~12 more times.
+  ramCacheTried_ = false;
 
   LOG_DBG("IMG", "Decode successful");
 }
