@@ -377,11 +377,14 @@ void EpubReaderActivity::loop() {
         // enough to swallow a quick tap so a "buttons went dead mid-book"
         // report lines up against concrete blocked windows in the perf log.
         const unsigned long bgChunkStart = millis();
-        if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK)) {
+        if (!section->buildSomeMore(BACKGROUND_BUILD_PAGES_PER_TICK, BACKGROUND_BUILD_BUDGET_MS)) {
           LOG_ERR("ERS", "Background section build failed");
           section.reset();
           requestUpdate();
-        } else if (const unsigned long bgChunkMs = millis() - bgChunkStart; bgChunkMs > 750) {
+        } else if (const unsigned long bgChunkMs = millis() - bgChunkStart; bgChunkMs > 500) {
+          // With the 250ms budget a healthy chunk stays well under this; anything
+          // logged here means one parseStep (a single paragraph/image) overshot
+          // the budget by itself -- worth seeing in a device log.
           char buf[112];
           snprintf(buf, sizeof(buf), "%lu bg_chunk=%lums spine=%d pages=%u heap=%u", millis(), bgChunkMs,
                    currentSpineIndex, section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap());

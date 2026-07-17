@@ -104,7 +104,13 @@ class Section {
                   uint8_t imageRendering, bool focusReadingEnabled, const std::function<void()>& popupFn = nullptr);
   // Lay out up to maxPages more pages (maxPages <= 0 = build to completion). Returns
   // false on error (the build is abandoned). Sets isBuildComplete() when finished.
-  bool buildSomeMore(int maxPages);
+  // budgetMs > 0 additionally time-boxes the call: it yields (returns true, build
+  // still in progress) once the budget elapses, even mid-page. Callers whose loop
+  // is input-blind while this runs (the reader's background tick: polled buttons
+  // aren't sampled, so a quick tap can vanish) need the time-box -- a page-count
+  // pace alone lets one heavy page (or a power-saving-clocked CPU) stretch the
+  // blind window to seconds.
+  bool buildSomeMore(int maxPages, unsigned long budgetMs = 0);
   bool isBuilding() const { return static_cast<bool>(build_); }
   bool isBuildComplete() const { return buildComplete_; }
   // Best-known total page count: the exact pageCount once finalized, or a smoothed byte-based

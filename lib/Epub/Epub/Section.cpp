@@ -434,7 +434,7 @@ bool Section::startBuild(const int fontId, const float lineCompression, const bo
   return true;
 }
 
-bool Section::buildSomeMore(const int maxPages) {
+bool Section::buildSomeMore(const int maxPages, const unsigned long budgetMs) {
   if (!build_ || !build_->parser) {
     LOG_ERR("SCT", "buildSomeMore with no active build");
     return false;
@@ -443,6 +443,7 @@ bool Section::buildSomeMore(const int maxPages) {
   // pageCount stays pinned at the partial's watermark until the build passes it, which
   // would otherwise turn one "small" chunk into a blocking rebuild of the whole watermark.
   const int startCount = builtPageCount_;
+  const unsigned long startMs = budgetMs > 0 ? millis() : 0;
   for (;;) {
     const auto status = build_->parser->parseStep();
     if (status == ChapterHtmlSlimParser::ParseStatus::Error) {
@@ -453,8 +454,11 @@ bool Section::buildSomeMore(const int maxPages) {
     if (status == ChapterHtmlSlimParser::ParseStatus::Done) {
       return finalizeBuild();
     }
-    // ParseStatus::More: yield once we've laid out the requested number of pages.
-    if (maxPages > 0 && (builtPageCount_ - startCount) >= maxPages) {
+    // ParseStatus::More: yield once we've laid out the requested number of pages,
+    // or once the time budget elapses (parseStep granularity: roughly one
+    // paragraph, so the overshoot past the budget stays small).
+    if ((maxPages > 0 && (builtPageCount_ - startCount) >= maxPages) ||
+        (budgetMs > 0 && millis() - startMs >= budgetMs)) {
       build_->bytesConsumed = build_->parser->parseBytesConsumed();
       return true;
     }

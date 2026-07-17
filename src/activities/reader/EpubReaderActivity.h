@@ -84,6 +84,12 @@ class EpubReaderActivity final : public Activity {
   // past the target page; 1 (was 2) halves the background tick's blind window.
   static constexpr int BUILD_PAGES_PER_CHUNK = 2;
   static constexpr int BACKGROUND_BUILD_PAGES_PER_TICK = 1;
+  // Hard cap on one background tick's input-blind window. Real-device perf logs
+  // showed page-count pacing alone letting a single chunk run 1-3.6s (heavy
+  // page layout, further stretched by the power-saving CPU clock while the user
+  // reads quietly) -- long enough to swallow a quick page-turn tap entirely.
+  // buildSomeMore() yields mid-page once this elapses and resumes next tick.
+  static constexpr unsigned long BACKGROUND_BUILD_BUDGET_MS = 250;
   // How many pages to keep laid out ahead of the reader for a still-building section. A page
   // turn is ~1s on e-ink and a page builds in ~30ms, so the reader can't out-click the builder
   // -- a tiny buffer is enough. The background build stops once the watermark is this far
