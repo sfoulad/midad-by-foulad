@@ -156,6 +156,14 @@ class EpubReaderActivity final : public Activity {
   void loop() override;
   void render(RenderLock&& lock) override;
   bool isReaderActivity() const override { return true; }
+  // Full performance while a background section build is in flight: after just
+  // IDLE_POWER_SAVING_MS (3s) without a button press -- i.e. always, while the
+  // user reads quietly -- the main loop drops the CPU clock and inserts a 50ms
+  // tick delay, stretching each (input-blind) build chunk 3-4x and the post-open
+  // watermark-rebuild storm to a minute-plus of degraded responsiveness. Race to
+  // idle instead: build at full clock, then let power saving resume. Auto-sleep
+  // is unaffected (its timer doesn't consult this).
+  bool skipLoopDelay() override { return section && section->isBuilding(); }
   ScreenshotInfo getScreenshotInfo() const override;
   CrossPointPosition getCurrentPosition() const;
 };

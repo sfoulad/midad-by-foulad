@@ -333,6 +333,19 @@ void EpubReaderActivity::openReaderMenu() {
       });
 }
 
+namespace {
+// Current CPU clock for the perf log: distinguishes "layout is slow" from
+// "layout ran at the power-saving clock" -- indistinguishable from timings
+// alone (see EpubReaderActivity::skipLoopDelay).
+unsigned cpuMhzNow() {
+#ifdef SIMULATOR
+  return 0;
+#else
+  return static_cast<unsigned>(getCpuFrequencyMhz());
+#endif
+}
+}  // namespace
+
 void EpubReaderActivity::loop() {
   if (!epub) {
     // Should never happen
@@ -385,9 +398,10 @@ void EpubReaderActivity::loop() {
           // With the 250ms budget a healthy chunk stays well under this; anything
           // logged here means one parseStep (a single paragraph/image) overshot
           // the budget by itself -- worth seeing in a device log.
-          char buf[112];
-          snprintf(buf, sizeof(buf), "%lu bg_chunk=%lums spine=%d pages=%u heap=%u", millis(), bgChunkMs,
-                   currentSpineIndex, section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap());
+          char buf[144];
+          snprintf(buf, sizeof(buf), "%lu bg_chunk=%lums spine=%d pages=%u heap=%u max=%u cpu=%u", millis(),
+                   bgChunkMs, currentSpineIndex, section ? (unsigned)section->pageCount : 0u,
+                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow());
           ReaderPerfLog::append(buf);
         }
         if (section && section->isBuildComplete() && applyDeferredReposition()) {
@@ -1075,9 +1089,10 @@ namespace {
 void logSlowBlockingBuild(const char* tag, unsigned long startMs, int spineIndex, const Section* section) {
   const unsigned long ms = millis() - startMs;
   if (ms <= 750) return;
-  char buf[112];
-  snprintf(buf, sizeof(buf), "%lu %s=%lums spine=%d pages=%u heap=%u", millis(), tag, ms, spineIndex,
-           section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap());
+  char buf[144];
+  snprintf(buf, sizeof(buf), "%lu %s=%lums spine=%d pages=%u heap=%u max=%u cpu=%u", millis(), tag, ms, spineIndex,
+           section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
+           cpuMhzNow());
   ReaderPerfLog::append(buf);
 }
 }  // namespace
@@ -1287,8 +1302,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       // of a section cache that never sticks (e.g. a settings/font mismatch
       // re-triggering a rebuild every open) rather than genuinely slow layout.
       char buf[320] = "";
-      snprintf(buf, sizeof(buf), "%lu spine=%d %s elapsed=%lums heap=%u pages=%u", millis(), currentSpineIndex,
-               cacheComplete ? "cache" : "built", millis() - chapterLoadStartMs, (unsigned)ESP.getFreeHeap(),
+      snprintf(buf, sizeof(buf), "%lu spine=%d %s elapsed=%lums heap=%u max=%u cpu=%u pages=%u", millis(),
+               currentSpineIndex, cacheComplete ? "cache" : "built", millis() - chapterLoadStartMs,
+               (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow(),
                (unsigned)section->pageCount);
       // SD-card font read/seek stats accumulated during THIS build (see the
       // resetStats() call above) -- a "built" line's elapsed time is dominated
@@ -1666,10 +1682,10 @@ void logSlowPageTurn(unsigned long t0, unsigned long tScanRender, unsigned long 
   char buf[640];
   snprintf(buf, sizeof(buf),
            "%lu turn spine=%d scan=%lums prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums "
-           "heap=%u%s \"%s\"",
+           "heap=%u max=%u cpu=%u%s \"%s\"",
            millis(), spineIndex, tScanRender - t0, tPrewarm - tScanRender, tBwRender - tPrewarm,
-           tDisplay - tBwRender, tEnd - tDisplay, total,
-           (unsigned)ESP.getFreeHeap(), statsPart, title.c_str());
+           tDisplay - tBwRender, tEnd - tDisplay, total, (unsigned)ESP.getFreeHeap(),
+           (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow(), statsPart, title.c_str());
   ReaderPerfLog::append(buf);
 }
 }  // namespace
