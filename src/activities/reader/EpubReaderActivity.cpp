@@ -1521,9 +1521,9 @@ constexpr unsigned long SLOW_PAGE_TURN_MS = 3000;
 // stall here (e.g. hundreds of per-glyph decompressions each doing a real SD read)
 // never showed up in simulator testing -- this is the only way to see which phase a
 // real multi-second turn is actually spending time in.
-void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBwRender, unsigned long tDisplay,
-                     unsigned long tEnd, int spineIndex, const std::string& title, FontCacheManager* fcm,
-                     size_t preEndScanArabicBytes, int preEndScanArabicFontId) {
+void logSlowPageTurn(unsigned long t0, unsigned long tScanRender, unsigned long tPrewarm, unsigned long tBwRender,
+                     unsigned long tDisplay, unsigned long tEnd, int spineIndex, const std::string& title,
+                     FontCacheManager* fcm, size_t preEndScanArabicBytes, int preEndScanArabicFontId) {
   const unsigned long total = tEnd - t0;
   // A failed malloc() inside FontDecompressor::getBitmap() (real-device memory
   // pressure only -- never reproduced against the simulator's effectively-unlimited
@@ -1628,8 +1628,10 @@ void logSlowPageTurn(unsigned long t0, unsigned long tPrewarm, unsigned long tBw
   }
   char buf[640];
   snprintf(buf, sizeof(buf),
-           "%lu turn spine=%d prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums heap=%u%s \"%s\"",
-           millis(), spineIndex, tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - tDisplay, total,
+           "%lu turn spine=%d scan=%lums prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums "
+           "heap=%u%s \"%s\"",
+           millis(), spineIndex, tScanRender - t0, tPrewarm - tScanRender, tBwRender - tPrewarm,
+           tDisplay - tBwRender, tEnd - tDisplay, total,
            (unsigned)ESP.getFreeHeap(), statsPart, title.c_str());
   ReaderPerfLog::append(buf);
 }
@@ -1645,6 +1647,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);  // scan pass
+  // Split point: the scan render (shaping + width measurement, no rasterization) vs
+  // endScanAndPrewarm() (batched glyph prewarm) were previously lumped into one
+  // "prewarm=" figure. On real-device SD-Arabic turns the scan render dominates
+  // (prewarmTotalMs stays ~100ms), so time them separately to prove which phase the
+  // multi-second cost is in before optimizing.
+  const auto tScanRender = millis();
   // Diagnostics only: captured at the earliest possible point after the scan pass
   // returns, before endScanAndPrewarm() reads/clears the same accumulator a few lines
   // down -- see FontCacheManager::peekScanArabicTextSize().
@@ -1754,7 +1762,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_msb=%lums gray_display=%lums cleanup=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tGrayLsb - tDisplay, tGrayMsb - tGrayLsb,
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
+      logSlowPageTurn(t0, tScanRender, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
                       preEndScanArabicBytes, preEndScanArabicFontId);
     }
   } else {
@@ -1798,7 +1806,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               "gray_lsb=%lums gray_msb=%lums gray_display=%lums bw_restore=%lums total=%lums",
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
+      logSlowPageTurn(t0, tScanRender, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
                       preEndScanArabicBytes, preEndScanArabicFontId);
     } else {
       // No text AA and no images: BW frame already displayed above, no grayscale
@@ -1806,7 +1814,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       const auto tEnd = millis();
       LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
-      logSlowPageTurn(t0, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
+      logSlowPageTurn(t0, tScanRender, tPrewarm, tBwRender, tDisplay, tEnd, currentSpineIndex, epub->getTitle(), fcm,
                       preEndScanArabicBytes, preEndScanArabicFontId);
     }
   }
