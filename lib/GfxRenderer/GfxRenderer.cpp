@@ -824,6 +824,27 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
   }
   const auto cps = tatweelPx > 0 ? ArabicShaper::shapeTextWithKashida(text, kashidaExtraPx, tatweelPx, hasGlyphFn)
                                   : ArabicShaper::shapeText(text, hasGlyphFn);
+  if (sdFont) {
+    // The advance table is prebuilt from RAW text codepoints, but this loop looks
+    // up SHAPED presentation forms (U+FExx contextual variants) -- which the
+    // prebuild can never contain. Without this top-up every shaped glyph of every
+    // word missed the table and fell back to getGlyph's per-glyph on-demand SD
+    // load (.cpfont open+seek+read through an 8-slot ring): a section build
+    // measuring thousands of words issued tens of thousands of SD reads, turning
+    // "indexing" into minutes of dead-input crawl on real hardware. Batch the
+    // missing shaped forms into the table instead -- one mostly-sequential SD
+    // pass per NEW glyph, amortized across the session (fetch skips
+    // already-cached codepoints without touching the SD at all).
+    std::string missingUtf8;
+    for (const uint32_t cp : cps) {
+      if (!utf8IsCombiningMark(cp) && sdFont->getAdvance(cp, sdStyleIdx) == 0 && sdFont->hasGlyph(cp, sdStyleIdx)) {
+        appendUtf8(missingUtf8, cp);
+      }
+    }
+    if (!missingUtf8.empty()) {
+      sdFont->buildAdvanceTable(missingUtf8.c_str(), static_cast<uint8_t>(1u << sdStyleIdx));
+    }
+  }
   int width = 0;
   for (const uint32_t cp : cps) {
     // Per-glyph pixel rounding (fp4::toPixel each advance, then sum) is preserved
@@ -2612,9 +2633,19 @@ int GfxRenderer::getKashidaGlyphWidth(const int fontId, const EpdFontFamily::Sty
 // Layout-time query: does this single word contain a legal kashida insertion point
 // in the active Arabic font? See ArabicShaper::hasKashidaPoint for the exact rule.
 bool GfxRenderer::wordHasKashidaPoint(const int fontId, const char* word, const EpdFontFamily::Style style) const {
-  const auto fontIt = fontMap.find(resolveArabicFontId(fontId));
+  const int arabicFontId = resolveArabicFontId(fontId);
+  const auto fontIt = fontMap.find(arabicFontId);
   if (fontIt == fontMap.end()) return false;
   const auto& font = fontIt->second;
+  // SD fonts: answer existence from the RAM interval table -- getGlyph misses
+  // here trigger a per-character on-demand SD load during layout (see
+  // getArabicTextWidth for the full reasoning).
+  const auto arSdIt = sdCardFonts_.find(arabicFontId);
+  if (arSdIt != sdCardFonts_.end()) {
+    SdCardFont* const sdFont = arSdIt->second;
+    const uint8_t sdStyleIdx = resolveSdCardStyle(*sdFont, style);
+    return ArabicShaper::hasKashidaPoint(word, [&](uint32_t c) { return sdFont->hasGlyph(c, sdStyleIdx); });
+  }
   return ArabicShaper::hasKashidaPoint(word, [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; });
 }
 
