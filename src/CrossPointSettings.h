@@ -269,6 +269,10 @@ class CrossPointSettings {
   // devices with an older saved settings.json keep their stored value and can
   // enable it under Settings -> Display -> Sunlight Fading Fix.
   uint8_t fadingFix = 1;
+  // Global dark mode: the framebuffer is inverted at the panel-push points in
+  // GfxRenderer (see setDarkMode), so the whole UI -- reader, Arabic text,
+  // games, home theme -- renders white-on-black with zero per-activity code.
+  uint8_t darkModeEnabled = 0;
   // Power button return from footnotes (1 = enabled, 0 = disabled)
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

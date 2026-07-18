@@ -2409,7 +2409,13 @@ void GfxRenderer::invertScreen() const {
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
+  // Dark mode inverts only for the panel push, then restores -- everything
+  // that reads the framebuffer afterwards sees normal polarity (see
+  // setDarkMode). Two 48KB XOR passes ~= 1-2ms at 160MHz, negligible next to
+  // the e-ink refresh itself. Same wrap on every other pixel-push below.
+  if (darkMode_) invertScreen();
   display.displayBuffer(refreshMode, fadingFix);
+  if (darkMode_) invertScreen();
 }
 
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
@@ -2878,7 +2884,9 @@ size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
 // void GfxRenderer::grayscaleRevert() const { display.grayscaleRevert(); }
 
 void GfxRenderer::displayGrayscaleBase(HalDisplay::RefreshMode fallback) const {
+  if (darkMode_) invertScreen();
   display.displayGrayscaleBase(fallback, fadingFix);
+  if (darkMode_) invertScreen();
 }
 
 void GfxRenderer::preconditionGrayscale() const { display.preconditionGrayscale(); }
@@ -2901,15 +2909,33 @@ void GfxRenderer::preconditionGrayscale(int x, int y, int w, int h) const {
                                 static_cast<uint16_t>(x1 - x0 + 1), static_cast<uint16_t>(y1 - y0 + 1));
 }
 
-void GfxRenderer::copyGrayscaleLsbBuffers() const { display.copyGrayscaleLsbBuffers(frameBuffer); }
+void GfxRenderer::copyGrayscaleLsbBuffers() const {
+  if (darkMode_) invertScreen();
+  display.copyGrayscaleLsbBuffers(frameBuffer);
+  if (darkMode_) invertScreen();
+}
 
-void GfxRenderer::copyGrayscaleMsbBuffers() const { display.copyGrayscaleMsbBuffers(frameBuffer); }
+void GfxRenderer::copyGrayscaleMsbBuffers() const {
+  if (darkMode_) invertScreen();
+  display.copyGrayscaleMsbBuffers(frameBuffer);
+  if (darkMode_) invertScreen();
+}
 
 void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
 
 void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const {
   // Guard the uint16_t casts below: a negative would wrap to a huge length.
   assert(yStart >= 0 && numRows > 0 && yStart <= static_cast<int>(panelHeight) - numRows);
+  if (darkMode_) {
+    // Invert the strip for the push, restore after -- keeps the caller's
+    // scratch contract side-effect-free (see setDarkMode). Strip is ~8KB.
+    auto* mutableScratch = const_cast<uint8_t*>(scratch);
+    const size_t stripBytes = static_cast<size_t>(numRows) * panelWidthBytes;
+    for (size_t i = 0; i < stripBytes; i++) mutableScratch[i] = ~mutableScratch[i];
+    display.writeGrayscalePlaneStrip(lsbPlane, scratch, static_cast<uint16_t>(yStart), static_cast<uint16_t>(numRows));
+    for (size_t i = 0; i < stripBytes; i++) mutableScratch[i] = ~mutableScratch[i];
+    return;
+  }
   display.writeGrayscalePlaneStrip(lsbPlane, scratch, static_cast<uint16_t>(yStart), static_cast<uint16_t>(numRows));
 }
 
@@ -2996,7 +3022,12 @@ void GfxRenderer::restoreBwBuffer() {
  */
 void GfxRenderer::cleanupGrayscaleWithFrameBuffer() const {
   if (frameBuffer) {
+    // Controller RAM must hold what the panel SHOWS (the inverted frame in
+    // dark mode) or the next differential refresh diffs against the wrong
+    // baseline and ghosts every changed pixel.
+    if (darkMode_) invertScreen();
     display.cleanupGrayscaleBuffers(frameBuffer);
+    if (darkMode_) invertScreen();
   }
 }
 

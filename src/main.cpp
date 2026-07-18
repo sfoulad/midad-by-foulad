@@ -666,6 +666,9 @@ void loop() {
 #endif
 
   renderer.setFadingFix(SETTINGS.fadingFix);
+  // Applied per tick like fadingFix, so flipping the toggle inverts the very
+  // next refresh -- including the settings screen itself.
+  renderer.setDarkMode(SETTINGS.darkModeEnabled != 0);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),

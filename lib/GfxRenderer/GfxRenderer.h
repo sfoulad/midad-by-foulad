@@ -56,6 +56,7 @@ class GfxRenderer {
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
+  bool darkMode_ = false;
   uint8_t* frameBuffer = nullptr;
   uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
   uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
@@ -257,6 +258,16 @@ class GfxRenderer {
 
   // Fading fix control
   void setFadingFix(const bool enabled) { fadingFix = enabled; }
+  // Global dark mode: the framebuffer (and grayscale planes) are inverted at
+  // the moment pixels are pushed to the panel, then restored -- so EVERY
+  // consumer (reader incl. Arabic shaping/markers, games, home theme, status
+  // bar) flips with zero per-activity code, and anything that reads the
+  // framebuffer (screenshots, sleep-frame save, region cache, grayscale
+  // re-sync) still sees normal polarity. Grays invert symmetrically (2-bit
+  // planes are bitwise-NOTed, so AA edges stay correct around white-on-black
+  // text); photos render as negatives -- accepted v1 tradeoff.
+  void setDarkMode(const bool enabled) { darkMode_ = enabled; }
+  bool isDarkMode() const { return darkMode_; }
 
   // Screen ops
   int getScreenWidth() const;
