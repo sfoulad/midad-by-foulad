@@ -2142,7 +2142,12 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
         continue;
       }
 
-      const uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+      const uint8_t rawVal = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+      // Dark mode: draw the bitmap PRE-INVERTED so the global panel-push
+      // inversion (see setDarkMode) cancels out and photographic content --
+      // covers, sleep images -- keeps its true polarity while the chrome
+      // around it inverts. Kindle-style: dark UI, normal covers.
+      const uint8_t val = darkMode_ ? static_cast<uint8_t>(3 - rawVal) : rawVal;
 
       if (renderMode == BW && val < 3) {
         drawPixel(screenX, screenY);
@@ -2213,7 +2218,10 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
         const uint32_t black3 = 3u * blackCount[destX];
         const uint32_t total = totalCount[destX];
         // black3/total in [0,3]: >=2 black, <1 white, in between checkerboard.
-        if (black3 >= 2 * total || (black3 >= total && ((screenX + screenY) & 1) == 0)) {
+        const bool drawBlack = black3 >= 2 * total || (black3 >= total && ((screenX + screenY) & 1) == 0);
+        // Dark mode: pre-invert (see drawBitmap) so the panel-push inversion
+        // restores the cover's true polarity.
+        if (darkMode_ ? !drawBlack : drawBlack) {
           drawPixel(screenX, screenY, true);
         }
       }
@@ -2276,11 +2284,12 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       const uint8_t val = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
 
       // For 1-bit source: 0 or 1 -> map to black (0,1,2) or white (3)
-      // val < 3 means black pixel (draw it)
-      if (val < 3) {
+      // val < 3 means black pixel (draw it). Dark mode: pre-invert (see
+      // drawBitmap) so the panel-push inversion restores true polarity --
+      // the WHITE source pixels get drawn instead.
+      if (darkMode_ ? (val == 3) : (val < 3)) {
         drawPixel(screenX, screenY, true);
       }
-      // White pixels (val == 3) are not drawn (leave background)
     }
   }
 
