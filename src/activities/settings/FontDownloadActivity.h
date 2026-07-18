@@ -14,8 +14,17 @@
 // support a new manifest schema.
 #define FONTS_MANIFEST_VERSION 1
 
+// Primary font source: the Foulad eBooks catalog (same manifest schema as the
+// legacy source, plus a per-family "language" field driving the Arabic/English
+// filter). Plain http for the same reason as FOULAD_EBOOKS_URL -- see
+// src/FouladEbooksConfig.h. Overridable for local testing.
+#ifndef FOULAD_FONTS_CATALOG_URL
+#define FOULAD_FONTS_CATALOG_URL "http://foulad.one/api/fonts/catalog"
+#endif
+
 #ifndef FONT_MANIFEST_URL
-// Manifest + .cpfont assets are published by .github/workflows/release-fonts.yml
+// LEGACY FALLBACK, tried only when the Foulad eBooks catalog is unreachable:
+// manifest + .cpfont assets published by .github/workflows/release-fonts.yml
 // to the crosspoint-fonts repo under the "sd-fonts-m<META>-b<BIN>" tag. The tag
 // pattern must stay in sync with the workflow; it derives its version numbers
 // from lib/EpdFont/scripts/cpfont_version.py.
@@ -68,6 +77,9 @@ class FontDownloadActivity : public Activity {
     size_t totalSize = 0;
     bool installed = false;
     bool hasUpdate = false;
+    // From the catalog's per-family "language" field ("arabic"/"english",
+    // missing = english). Drives the list's language filter.
+    bool arabic = false;
   };
 
   State state_ = WIFI_SELECTION;
@@ -78,6 +90,11 @@ class FontDownloadActivity : public Activity {
   std::string baseUrl_;
   std::vector<ManifestFamily> families_;
   int selectedIndex_ = 0;
+  // Language filter: row 0 of the list is a pinned toggle (Confirm switches
+  // Arabic <-> English; Left/Right can't be used -- they already scroll the
+  // list). visible_ holds indices into families_ matching the filter.
+  bool showArabic_ = true;
+  std::vector<int> visible_;
 
   // Download progress
   size_t currentFileIndex_ = 0;
@@ -90,6 +107,9 @@ class FontDownloadActivity : public Activity {
 
   void onWifiSelectionComplete(bool success);
   bool fetchAndParseManifest();
+  bool fetchManifestFrom(const char* url);
+  void rebuildVisibleList();
+  bool isFilterRow(int index) const { return index == 0; }
   void downloadFamily(ManifestFamily& family);
   void downloadAll();
   void updateAll();
@@ -102,7 +122,9 @@ class FontDownloadActivity : public Activity {
   bool isSelectedFamilyDeletable() const;
   void promptDeleteSelectedFamily();
   void onDeleteConfirmationResult(const ActivityResult& result);
-  int familyIndexFromList(int listIndex) const { return listIndex - specialRowCount(); }
+  // Maps a list row to a families_ index through the language filter, or -1
+  // for the filter row / special rows / out of range.
+  int familyIndexFromList(int listIndex) const;
   int listItemCount() const;
   size_t totalDownloadSize() const;
   size_t totalUpdateSize() const;
