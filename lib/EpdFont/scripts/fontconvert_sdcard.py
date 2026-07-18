@@ -528,6 +528,192 @@ def extract_ligatures_fonttools(font_path, codepoints):
     return pairs
 
 
+# Arabic Presentation Forms ranges (the "arabic" preset's Presentation-Forms
+# sub-ranges live inside these).
+_PRESENTATION_FORM_RANGES = ((0xFB50, 0xFDFF), (0xFE70, 0xFEFF))
+
+
+def _intervals_touch_presentation_forms(intervals):
+    """Cheap overlap test -- avoids running GSUB analysis on fonts/interval
+    sets that never asked for Arabic presentation forms in the first place."""
+    for i_start, i_end in intervals:
+        for p_start, p_end in _PRESENTATION_FORM_RANGES:
+            if i_start <= p_end and p_start <= i_end:
+                return True
+    return False
+
+
+def synthesize_presentation_forms(font_path, intervals):
+    """Build a {codepoint: glyph_id} override map for Arabic presentation-form
+    codepoints that have no cmap entry but ARE reachable through the font's
+    own GSUB init/medi/fina/isol substitutions (plus rlig/liga/ccmp ligatures
+    for lam-alef). cmap always wins -- callers only consult this map for a
+    codepoint after face.get_char_index() has already returned 0 for it, so a
+    font that maps presentation forms directly in cmap (Amiri, Cairo) is
+    completely unaffected and converts byte-identical to before.
+
+    Needed because modern Arabic fonts (Aref Ruqaa and most Google Fonts
+    Arabic families) implement joining purely via GSUB contextual features
+    and carry NO presentation-form codepoints in cmap at all -- previously
+    that meant the "arabic" interval preset emitted nothing at those
+    codepoints, the device's ArabicShaper fell back to isolated base letters,
+    and joined Arabic text rendered as disconnected letters.
+
+    Returns {} immediately (without opening the font a second time via
+    fontTools) if `intervals` never touches the presentation-form ranges.
+    """
+    if not _intervals_touch_presentation_forms(intervals):
+        return {}
+
+    # Restrict to the overlap between requested intervals and the
+    # presentation-form ranges -- avoids scanning unrelated (possibly huge,
+    # e.g. CJK) requested ranges just to build this candidate list.
+    candidate_cps = []
+    for i_start, i_end in intervals:
+        for p_start, p_end in _PRESENTATION_FORM_RANGES:
+            lo, hi = max(i_start, p_start), min(i_end, p_end)
+            if lo <= hi:
+                candidate_cps.extend(range(lo, hi + 1))
+
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(font_path)
+    cmap = font.getBestCmap() or {}
+
+    missing_cps = [cp for cp in candidate_cps if cp not in cmap]
+    if not missing_cps or 'GSUB' not in font:
+        font.close()
+        return {}
+
+    gsub = font['GSUB'].table
+
+    def collect_single_subst(feature_tags):
+        """feature_tag -> {input_glyph_name: output_glyph_name}, merging every
+        lookup behind every FeatureRecord with a matching tag (mirrors
+        extract_ligatures_fonttools's approach -- don't over-filter by
+        script/lang system)."""
+        result = {tag: {} for tag in feature_tags}
+        lookup_indices_by_tag = {tag: set() for tag in feature_tags}
+        if gsub.FeatureList:
+            for fr in gsub.FeatureList.FeatureRecord:
+                if fr.FeatureTag in feature_tags:
+                    lookup_indices_by_tag[fr.FeatureTag].update(fr.Feature.LookupListIndex)
+        for tag, lookup_indices in lookup_indices_by_tag.items():
+            for li in lookup_indices:
+                lookup = gsub.LookupList.Lookup[li]
+                for st in lookup.SubTable:
+                    actual = st
+                    # Unwrap Extension (lookup type 7) wrappers, same as extract_ligatures_fonttools.
+                    if lookup.LookupType == 7 and hasattr(st, 'ExtSubTable'):
+                        actual = st.ExtSubTable
+                    if not hasattr(actual, 'mapping'):
+                        continue
+                    # SingleSubst (lookup type 1) -- fontTools normalizes both
+                    # its on-disk formats to a flat {glyph: glyph} .mapping.
+                    # MultipleSubst (lookup type 2) -- some font toolchains
+                    # (confirmed: Aref Ruqaa) encode a contextual single-
+                    # letterform swap as a 1-element MultipleSubst instead of
+                    # a SingleSubst; its .mapping values are lists. Treat a
+                    # single-element list the same as a SingleSubst entry. A
+                    # genuine multi-glyph expansion isn't a letterform swap,
+                    # so anything longer is left alone (not collected).
+                    for in_glyph, out in actual.mapping.items():
+                        if isinstance(out, str):
+                            result[tag][in_glyph] = out
+                        elif isinstance(out, (list, tuple)) and len(out) == 1:
+                            result[tag][in_glyph] = out[0]
+        return result
+
+    def collect_two_glyph_ligatures(feature_tags):
+        """(first_glyph, second_glyph) -> ligature_glyph, 2-component ligatures
+        only -- all lam-alef presentation forms decompose to exactly 2 base
+        codepoints, so that's all this needs."""
+        result = {}
+        lookup_indices = set()
+        if gsub.FeatureList:
+            for fr in gsub.FeatureList.FeatureRecord:
+                if fr.FeatureTag in feature_tags:
+                    lookup_indices.update(fr.Feature.LookupListIndex)
+        for li in lookup_indices:
+            lookup = gsub.LookupList.Lookup[li]
+            for st in lookup.SubTable:
+                actual = st
+                if lookup.LookupType == 7 and hasattr(st, 'ExtSubTable'):
+                    actual = st.ExtSubTable
+                if not hasattr(actual, 'ligatures'):
+                    continue
+                for first_glyph, ligature_list in actual.ligatures.items():
+                    for lig in ligature_list:
+                        if len(lig.Component) == 1:
+                            result[(first_glyph, lig.Component[0])] = lig.LigGlyph
+        return result
+
+    feature_map = collect_single_subst(('init', 'medi', 'fina', 'isol'))
+    ligature_map = collect_two_glyph_ligatures(('rlig', 'liga', 'ccmp'))
+
+    overrides = {}
+    for cp in missing_cps:
+        # unicodedata.decomposition() returns e.g. "<initial> 0628" for a
+        # compatibility decomposition, or "" / a bare (untagged) canonical
+        # decomposition for anything else -- only the tagged form describes a
+        # contextual letterform, so skip anything not starting with "<"
+        # (same parsing idiom as fontconvert.py's --shape-fallback).
+        decomp = unicodedata.decomposition(chr(cp))
+        if not decomp.startswith('<'):
+            continue
+        tag, _, rest = decomp.partition('> ')
+        tag += '>'
+        base_cps = [int(h, 16) for h in rest.split()]
+
+        if len(base_cps) == 1:
+            base_cp = base_cps[0]
+            if base_cp not in cmap:
+                continue
+            base_glyph = cmap[base_cp]
+            if tag == '<isolated>':
+                # The cmap glyph IS the isolated form when there's no isol feature.
+                form_glyph = feature_map['isol'].get(base_glyph, base_glyph)
+            elif tag == '<initial>':
+                form_glyph = feature_map['init'].get(base_glyph)
+            elif tag == '<medial>':
+                form_glyph = feature_map['medi'].get(base_glyph)
+            elif tag == '<final>':
+                form_glyph = feature_map['fina'].get(base_glyph)
+            else:
+                continue
+            if form_glyph is None:
+                continue
+            overrides[cp] = font.getGlyphID(form_glyph)
+
+        elif len(base_cps) == 2:
+            # Lam-alef ligatures (U+FEF5-FEFC and the isolated forms in
+            # FB50-FDFF): apply contextual forms to each base letter first,
+            # then look up the pair in the ligature map.
+            lam_cp, alef_cp = base_cps
+            if lam_cp not in cmap or alef_cp not in cmap:
+                continue
+            lam_glyph = cmap[lam_cp]
+            alef_glyph = cmap[alef_cp]
+            if tag == '<final>':
+                first = feature_map['medi'].get(lam_glyph) or feature_map['init'].get(lam_glyph) or lam_glyph
+                second = feature_map['fina'].get(alef_glyph, alef_glyph)
+            elif tag == '<isolated>':
+                first = feature_map['init'].get(lam_glyph) or feature_map['isol'].get(lam_glyph) or lam_glyph
+                second = feature_map['fina'].get(alef_glyph) or feature_map['isol'].get(alef_glyph) or alef_glyph
+            else:
+                continue
+            lig_glyph = ligature_map.get((first, second))
+            if lig_glyph is None:
+                # No ligature glyph -- skip. The device shaper draws lam+alef
+                # as two separately-joined letters instead, which now looks
+                # correct thanks to the synthesized init/fina forms above.
+                continue
+            overrides[cp] = font.getGlyphID(lig_glyph)
+
+    font.close()
+    return overrides
+
+
 def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=False,
                          fallback_fontfile=None, reposition_marks=False):
     """Rasterize all glyphs for one font style. Returns StyleRasterData."""
@@ -551,10 +737,23 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
     if force_autohint:
         load_flags |= freetype.FT_LOAD_FORCE_AUTOHINT
 
+    # GSUB-synthesized presentation-form overrides (see synthesize_presentation_
+    # forms's docstring) -- only ever consulted below after face.get_char_index()
+    # has already returned 0 for a codepoint, so a font with direct cmap
+    # coverage for its presentation forms (Amiri, Cairo) is unaffected and
+    # converts byte-identical to before this existed.
+    presentation_form_overrides = synthesize_presentation_forms(fontfile, intervals)
+    if presentation_form_overrides:
+        print(f"  [{style_label}] GSUB-synthesized {len(presentation_form_overrides)} presentation forms "
+              f"(font has no cmap coverage for them)", file=sys.stderr)
+
     def load_glyph(code_point):
         glyph_index = face.get_char_index(code_point)
         if glyph_index > 0:
             face.load_glyph(glyph_index, load_flags)
+            return face
+        if code_point in presentation_form_overrides:
+            face.load_glyph(presentation_form_overrides[code_point], load_flags)
             return face
         if fallback_face:
             fallback_glyph_index = fallback_face.get_char_index(code_point)
@@ -574,7 +773,8 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
         for code_point in range(i_start, i_end + 1):
             has_primary = face.get_char_index(code_point) != 0
             has_fallback = fallback_face and fallback_face.get_char_index(code_point) != 0
-            if not has_primary and not has_fallback:
+            has_override = code_point in presentation_form_overrides
+            if not has_primary and not has_fallback and not has_override:
                 if start < code_point:
                     validated_intervals.append((start, code_point - 1))
                 start = code_point + 1
