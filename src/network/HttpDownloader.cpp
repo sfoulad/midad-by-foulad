@@ -261,50 +261,64 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 // esp_http_client_write() between esp_http_client_open()'s write_len and
 // esp_http_client_fetch_headers() -- the standard esp_http_client pattern for
 // a POST with a known Content-Length.
-HttpDownloader::DownloadError runPostFile(const std::string& url, const std::string& filePath,
+HttpDownloader::DownloadError runPostFile(const std::string& url,
+                                          const std::vector<std::pair<std::string, std::string>>& files,
                                           const std::vector<std::pair<std::string, std::string>>& fields,
                                           std::string& outResponse, int timeoutMs) {
   setLastFailure(HttpDownloader::FailStage::NONE, 0);
   outResponse.clear();
   WifiPowerSaveGuard psGuard;
 
-  HalFile file;
-  if (!Storage.openFileForRead("HTTP", filePath.c_str(), file)) {
-    LOG_ERR("HTTP", "postFileMultipart: failed to open %s", filePath.c_str());
-    return HttpDownloader::FILE_ERROR;
+  // Pass 1: size every file up front -- the total Content-Length must be
+  // known before opening the connection (esp_http_client_open()'s write_len
+  // needs the real total). Files are re-opened one at a time while streaming,
+  // so at most one SD handle is held at once.
+  std::vector<size_t> fileSizes;
+  fileSizes.reserve(files.size());
+  for (const auto& f : files) {
+    HalFile file;
+    if (!Storage.openFileForRead("HTTP", f.second.c_str(), file)) {
+      LOG_ERR("HTTP", "postFileMultipart: failed to open %s", f.second.c_str());
+      return HttpDownloader::FILE_ERROR;
+    }
+    fileSizes.push_back(file.size());
   }
-  const size_t fileSize = file.size();
-
-  // Basename only -- multipart filename= doesn't need the full SD path.
-  std::string fileName = filePath;
-  const size_t slash = fileName.find_last_of('/');
-  if (slash != std::string::npos) fileName = fileName.substr(slash + 1);
 
   const std::string boundary = "----FouladEInkBoundary7f3c9a";
 
-  // Build every part's header text up front so the total Content-Length is
-  // known before opening the connection (esp_http_client_open()'s write_len
-  // needs the real total) -- only the file's own bytes stream in READ_CHUNK
-  // pieces, never held whole in RAM.
+  // Build every part's header text up front (see Content-Length note above) --
+  // only the files' own bytes stream in READ_CHUNK pieces, never held whole
+  // in RAM. Each file part ends with its own "\r\n" terminator; the closing
+  // boundary no longer carries it.
   std::vector<std::string> fieldParts;
   fieldParts.reserve(fields.size());
   for (const auto& field : fields) {
     fieldParts.push_back("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field.first + "\"\r\n\r\n" +
                          field.second + "\r\n");
   }
-  const std::string filePartHeader = "--" + boundary +
-                                     "\r\nContent-Disposition: form-data; name=\"font\"; filename=\"" + fileName +
-                                     "\"\r\nContent-Type: application/octet-stream\r\n\r\n";
-  const std::string closing = "\r\n--" + boundary + "--\r\n";
+  std::vector<std::string> filePartHeaders;
+  filePartHeaders.reserve(files.size());
+  for (const auto& f : files) {
+    // Basename only -- multipart filename= doesn't need the full SD path.
+    std::string fileName = f.second;
+    const size_t slash = fileName.find_last_of('/');
+    if (slash != std::string::npos) fileName = fileName.substr(slash + 1);
+    filePartHeaders.push_back("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + f.first +
+                              "\"; filename=\"" + fileName +
+                              "\"\r\nContent-Type: application/octet-stream\r\n\r\n");
+  }
+  const std::string closing = "--" + boundary + "--\r\n";
 
-  size_t contentLength = filePartHeader.size() + fileSize + closing.size();
+  size_t contentLength = closing.size();
   for (const auto& p : fieldParts) contentLength += p.size();
+  for (size_t i = 0; i < files.size(); i++) {
+    contentLength += filePartHeaders[i].size() + fileSizes[i] + 2;  // +2: the part's "\r\n"
+  }
 
   auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
   if (!buf) {
     LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)READ_CHUNK, ESP.getFreeHeap());
     setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
-    file.close();
     return HttpDownloader::HTTP_ERROR;
   }
 
@@ -321,7 +335,6 @@ HttpDownloader::DownloadError runPostFile(const std::string& url, const std::str
   if (!client) {
     LOG_ERR("HTTP", "client init failed");
     setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
-    file.close();
     return HttpDownloader::HTTP_ERROR;
   }
 
@@ -336,7 +349,6 @@ HttpDownloader::DownloadError runPostFile(const std::string& url, const std::str
     logTlsError(client);
     setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
     esp_http_client_cleanup(client);
-    file.close();
     return HttpDownloader::HTTP_ERROR;
   }
 
@@ -357,14 +369,24 @@ HttpDownloader::DownloadError runPostFile(const std::string& url, const std::str
       break;
     }
   }
-  if (writeOk) writeOk = writeAll(filePartHeader.data(), filePartHeader.size());
 
-  // Stream the file body in READ_CHUNK pieces, same size as the download
-  // path's read buffer -- never holds more than one chunk in RAM. Reset the
-  // watchdog per chunk, matching handleFontUploadData()'s existing pattern
-  // for a comparably long SD read/write loop.
-  if (writeOk) {
-    size_t remaining = fileSize;
+  // Stream each file's body in READ_CHUNK pieces, same size as the download
+  // path's read buffer -- never holds more than one chunk (or one open SD
+  // handle) in RAM. Reset the watchdog per chunk, matching
+  // handleFontUploadData()'s existing pattern for a comparably long SD
+  // read/write loop.
+  for (size_t i = 0; writeOk && i < files.size(); i++) {
+    if (!writeAll(filePartHeaders[i].data(), filePartHeaders[i].size())) {
+      writeOk = false;
+      break;
+    }
+    HalFile file;
+    if (!Storage.openFileForRead("HTTP", files[i].second.c_str(), file)) {
+      LOG_ERR("HTTP", "postFileMultipart: reopen failed: %s", files[i].second.c_str());
+      writeOk = false;
+      break;
+    }
+    size_t remaining = fileSizes[i];
     while (remaining > 0) {
       esp_task_wdt_reset();
       const size_t want = std::min(remaining, READ_CHUNK);
@@ -379,8 +401,8 @@ HttpDownloader::DownloadError runPostFile(const std::string& url, const std::str
       }
       remaining -= static_cast<size_t>(got);
     }
+    if (writeOk) writeOk = writeAll("\r\n", 2);
   }
-  file.close();
 
   if (writeOk) writeOk = writeAll(closing.data(), closing.size());
 
@@ -497,6 +519,15 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
 bool HttpDownloader::postFileMultipart(const std::string& url, const std::string& filePath,
                                        const std::vector<std::pair<std::string, std::string>>& fields,
                                        std::string& outResponse, int timeoutMs) {
-  LOG_DBG("HTTP", "Posting: %s -> %s", filePath.c_str(), url.c_str());
-  return runPostFile(url, filePath, fields, outResponse, timeoutMs) == OK;
+  return postFilesMultipart(url, {{"font", filePath}}, fields, outResponse, timeoutMs);
+}
+
+bool HttpDownloader::postFilesMultipart(const std::string& url,
+                                        const std::vector<std::pair<std::string, std::string>>& files,
+                                        const std::vector<std::pair<std::string, std::string>>& fields,
+                                        std::string& outResponse, int timeoutMs) {
+  for (const auto& f : files) {
+    LOG_DBG("HTTP", "Posting %s: %s -> %s", f.first.c_str(), f.second.c_str(), url.c_str());
+  }
+  return runPostFile(url, files, fields, outResponse, timeoutMs) == OK;
 }

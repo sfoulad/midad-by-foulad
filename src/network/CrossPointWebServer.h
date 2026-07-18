@@ -136,21 +136,31 @@ class CrossPointWebServer {
   // (not installed as a font directly) before being relayed to foulad-ebooks.
   // See handleFontConvertUploadData()/handleFontConvert().
   struct FontConvertUploadState {
-    HalFile file;
+    // Up to 4 style files arrive sequentially as multipart parts named
+    // "font" (regular, required), "font_bold", "font_italic",
+    // "font_bolditalic" -- matching the foulad-ebooks endpoint. Each saved
+    // part is relayed onward by handleFontConvert(). Only one part streams at
+    // a time, so a single write buffer is shared across them.
+    static constexpr int MAX_STYLE_FILES = 4;
+    static constexpr const char* PART_NAMES[MAX_STYLE_FILES] = {"font", "font_bold", "font_italic", "font_bolditalic"};
+    HalFile file;         // the part currently streaming
+    int currentSlot = -1;  // index into PART_NAMES for the streaming part
+    std::string filePaths[MAX_STYLE_FILES];  // temp SD path per saved part ("" = absent)
+    int partsSeen = 0;
     // family/language are NOT stored here: they're read straight from
     // server->arg() in handleFontConvert() after the full body is parsed, which
     // is order-independent. Storing them meant reading during the upload
     // callback, where fields after the file part aren't parsed yet.
-    std::string filePath;
     bool valid = false;
     // Specific reason valid==false, surfaced to the web UI so the user sees
     // *which* field was rejected instead of one opaque combined message (the
     // real reason was previously only in the serial log they can't see).
     std::string rejectReason;
-    size_t bytesWritten = 0;
+    size_t bytesWritten = 0;  // total across all parts
     // Raw font files (esp. variable fonts) can run a few MB -- cap well below
     // available SD/heap headroom so a bad/huge upload fails cleanly instead of
     // filling the card or ballooning the relay's own read buffer needs.
+    // Applied to the TOTAL across all style files.
     static constexpr size_t MAX_SIZE = 10 * 1024 * 1024;
     static constexpr size_t BUFFER_SIZE = 4096;
     std::vector<uint8_t> buffer;

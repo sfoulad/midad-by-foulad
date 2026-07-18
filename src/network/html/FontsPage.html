@@ -166,6 +166,12 @@
           <option value="arabic">Arabic</option>
           <option value="english">English</option>
         </select>
+        <details style="margin: 8px 0;">
+          <summary class="family-meta" style="cursor: pointer;">Optional styles (Bold / Italic / Bold Italic)</summary>
+          <label class="family-meta">Bold: <input type="file" id="convertFontBold" accept=".ttf,.otf" /></label><br />
+          <label class="family-meta">Italic: <input type="file" id="convertFontItalic" accept=".ttf,.otf" /></label><br />
+          <label class="family-meta">Bold Italic: <input type="file" id="convertFontBoldItalic" accept=".ttf,.otf" /></label>
+        </details>
         <button type="submit" class="btn btn-primary">Convert</button>
       </form>
       <div id="convertStatus"></div>
@@ -368,6 +374,17 @@
       formData.append('family', family);
       formData.append('language', language);
       formData.append('font', fileInput.files[0], fileInput.files[0].name);
+      // Optional style files -- the device relays each to the conversion
+      // service, which packs all supplied styles into one multi-style family.
+      const styleInputs = [
+        ['font_bold', 'convertFontBold'],
+        ['font_italic', 'convertFontItalic'],
+        ['font_bolditalic', 'convertFontBoldItalic'],
+      ];
+      for (const [field, id] of styleInputs) {
+        const input = document.getElementById(id);
+        if (input && input.files[0]) formData.append(field, input.files[0], input.files[0].name);
+      }
 
       try {
         const res = await fetch('/api/fonts/convert', { method: 'POST', body: formData });

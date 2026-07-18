@@ -84,4 +84,16 @@ class HttpDownloader {
   static bool postFileMultipart(const std::string& url, const std::string& filePath,
                                 const std::vector<std::pair<std::string, std::string>>& fields,
                                 std::string& outResponse, int timeoutMs = 120000);
+
+  /**
+   * Multi-file variant of postFileMultipart: each (fieldName, sdPath) pair
+   * becomes its own streamed multipart file part. Used by the Convert Font
+   * relay to send optional bold/italic/bolditalic style fonts alongside the
+   * required regular one ("font", "font_bold", "font_italic",
+   * "font_bolditalic" -- matching the foulad-ebooks endpoint).
+   */
+  static bool postFilesMultipart(const std::string& url,
+                                 const std::vector<std::pair<std::string, std::string>>& files,
+                                 const std::vector<std::pair<std::string, std::string>>& fields,
+                                 std::string& outResponse, int timeoutMs = 120000);
 };

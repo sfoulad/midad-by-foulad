@@ -1986,12 +1986,38 @@ void CrossPointWebServer::handleFontConvertUploadData() {
       // file -- a fragile coupling that silently broke Convert Font for every
       // font. They're validated later in handleFontConvert(), which runs after
       // the full body is parsed and every field is guaranteed present.
+      //
+      // This callback fires once per FILE PART: the regular font plus optional
+      // bold/italic/bolditalic style files. Full reset happens only on the
+      // request's first part; later parts accumulate into their own slots.
+      if (fontConvertUpload.partsSeen == 0) {
+        for (auto& p : fontConvertUpload.filePaths) p.clear();
+        fontConvertUpload.rejectReason.clear();
+        fontConvertUpload.valid = false;
+        fontConvertUpload.bytesWritten = 0;
+        fontConvertUpload.bufferPos = 0;
+      }
       fontConvertUpload.file = HalFile();
-      fontConvertUpload.filePath.clear();
-      fontConvertUpload.rejectReason.clear();
-      fontConvertUpload.valid = false;
-      fontConvertUpload.bytesWritten = 0;
-      fontConvertUpload.bufferPos = 0;
+      fontConvertUpload.currentSlot = -1;
+      fontConvertUpload.partsSeen++;
+
+      // An earlier part already failed: swallow the rest of the body quietly,
+      // the recorded rejectReason wins.
+      if (!fontConvertUpload.rejectReason.empty()) break;
+
+      int slot = -1;
+      for (int i = 0; i < FontConvertUploadState::MAX_STYLE_FILES; i++) {
+        if (upload.name == FontConvertUploadState::PART_NAMES[i]) {
+          slot = i;
+          break;
+        }
+      }
+      if (slot < 0) {
+        LOG_ERR("WEB", "Convert font: unknown file part: %s", upload.name.c_str());
+        fontConvertUpload.rejectReason = "Unexpected file field in the upload.";
+        fontConvertUpload.valid = false;
+        break;
+      }
 
       // The filename comes from the file part's own headers, so it IS available
       // here regardless of field order.
@@ -1999,30 +2025,35 @@ void CrossPointWebServer::handleFontConvertUploadData() {
       if (!isValidFontConvertFilename(filename.c_str())) {
         LOG_ERR("WEB", "Convert font: invalid filename: %s", filename.c_str());
         fontConvertUpload.rejectReason =
-            "The file must be a .ttf or .otf whose name uses only letters, digits, spaces, hyphens, or "
+            "Each file must be a .ttf or .otf whose name uses only letters, digits, spaces, hyphens, or "
             "underscores -- no dots, parentheses, or Arabic characters. Try renaming it to e.g. Amiri-Regular.ttf.";
+        fontConvertUpload.valid = false;
         break;
       }
 
       Storage.mkdir(FONT_CONVERT_TMP_DIR);
 
+      // Slot-prefixed temp name so two styles sharing a filename can't collide.
       char path[160];
-      snprintf(path, sizeof(path), "%s/%s", FONT_CONVERT_TMP_DIR, filename.c_str());
-      fontConvertUpload.filePath = path;
+      snprintf(path, sizeof(path), "%s/s%d_%s", FONT_CONVERT_TMP_DIR, slot, filename.c_str());
 
       if (!Storage.openFileForWrite("WEB", path, fontConvertUpload.file)) {
         LOG_ERR("WEB", "Failed to open convert-font temp file for write: %s", path);
         fontConvertUpload.rejectReason = "Couldn't write the upload to the SD card.";
+        fontConvertUpload.valid = false;
         break;
       }
 
+      fontConvertUpload.filePaths[slot] = path;
+      fontConvertUpload.currentSlot = slot;
       fontConvertUpload.valid = true;
-      LOG_DBG("WEB", "Convert-font upload started: %s", filename.c_str());
+      LOG_DBG("WEB", "Convert-font upload started: %s -> slot %d (%s)", filename.c_str(), slot,
+              FontConvertUploadState::PART_NAMES[slot]);
       break;
     }
 
     case UPLOAD_FILE_WRITE: {
-      if (!fontConvertUpload.valid) break;
+      if (!fontConvertUpload.valid || fontConvertUpload.currentSlot < 0) break;
       esp_task_wdt_reset();
 
       if (fontConvertUpload.bytesWritten + upload.currentSize > FontConvertUploadState::MAX_SIZE) {
@@ -2054,32 +2085,37 @@ void CrossPointWebServer::handleFontConvertUploadData() {
     }
 
     case UPLOAD_FILE_END: {
-      if (fontConvertUpload.valid && fontConvertUpload.bufferPos > 0) {
+      // End of ONE part: flush its tail and close its handle. Cleanup of any
+      // rejected request's temp files is centralized in handleFontConvert(),
+      // which always runs after the body completes.
+      if (fontConvertUpload.valid && fontConvertUpload.currentSlot >= 0 && fontConvertUpload.bufferPos > 0) {
         fontConvertUpload.file.write(fontConvertUpload.buffer.data(), fontConvertUpload.bufferPos);
         fontConvertUpload.bytesWritten += fontConvertUpload.bufferPos;
-        fontConvertUpload.bufferPos = 0;
       }
+      fontConvertUpload.bufferPos = 0;
       if (fontConvertUpload.file.isOpen()) {
         fontConvertUpload.file.close();
       }
+      fontConvertUpload.currentSlot = -1;
 
-      if (!fontConvertUpload.valid && !fontConvertUpload.filePath.empty()) {
-        Storage.remove(fontConvertUpload.filePath.c_str());
-      }
-
-      LOG_DBG("WEB", "Convert-font upload end: valid=%d, %zu bytes", fontConvertUpload.valid,
+      LOG_DBG("WEB", "Convert-font part end: valid=%d, %zu total bytes", fontConvertUpload.valid,
               fontConvertUpload.bytesWritten);
       break;
     }
 
     case UPLOAD_FILE_ABORTED: {
+      // Connection dropped: handleFontConvert() will never run for this
+      // request, so clean everything here and re-arm for the next request.
       if (fontConvertUpload.file) {
         fontConvertUpload.file.close();
       }
-      if (!fontConvertUpload.filePath.empty()) {
-        Storage.remove(fontConvertUpload.filePath.c_str());
+      for (auto& p : fontConvertUpload.filePaths) {
+        if (!p.empty()) Storage.remove(p.c_str());
+        p.clear();
       }
       fontConvertUpload.valid = false;
+      fontConvertUpload.currentSlot = -1;
+      fontConvertUpload.partsSeen = 0;
       LOG_DBG("WEB", "Convert-font upload aborted");
       break;
     }
@@ -2087,13 +2123,29 @@ void CrossPointWebServer::handleFontConvertUploadData() {
 }
 
 void CrossPointWebServer::handleFontConvert() {
-  if (!fontConvertUpload.valid) {
+  // Copy out + centralized cleanup of every saved style part; also re-arms the
+  // per-request reset (partsSeen) for the next upload.
+  std::vector<std::pair<std::string, std::string>> styleFiles;  // (part name, temp path)
+  for (int i = 0; i < FontConvertUploadState::MAX_STYLE_FILES; i++) {
+    if (!fontConvertUpload.filePaths[i].empty()) {
+      styleFiles.emplace_back(FontConvertUploadState::PART_NAMES[i], fontConvertUpload.filePaths[i]);
+    }
+  }
+  auto cleanupTemp = [this, &styleFiles]() {
+    for (const auto& f : styleFiles) Storage.remove(f.second.c_str());
+    for (auto& p : fontConvertUpload.filePaths) p.clear();
+    fontConvertUpload.partsSeen = 0;
+  };
+
+  const bool haveRegular = !fontConvertUpload.filePaths[0].empty();
+  if (!fontConvertUpload.valid || !haveRegular) {
     JsonDocument errDoc;
-    errDoc["error"] = fontConvertUpload.rejectReason.empty()
-                          ? "Invalid font file, family name, or language."
-                          : fontConvertUpload.rejectReason.c_str();
+    errDoc["error"] = !fontConvertUpload.rejectReason.empty() ? fontConvertUpload.rejectReason.c_str()
+                      : !haveRegular ? "The regular font file is missing."
+                                     : "Invalid font file, family name, or language.";
     String json;
     serializeJson(errDoc, json);
+    cleanupTemp();
     server->send(400, "application/json", json);
     return;
   }
@@ -2102,11 +2154,8 @@ void CrossPointWebServer::handleFontConvert() {
   // full multipart body is parsed, so server->arg() returns them regardless of
   // whether the browser sent them before or after the file part (see
   // handleFontConvertUploadData for why reading them during upload was fragile).
-  // tempPath is also copied out before the long relay wait.
-  const std::string tempPath = fontConvertUpload.filePath;
   const std::string family = server->arg("family").c_str();
   const std::string language = server->arg("language").c_str();
-  auto cleanupTemp = [&tempPath]() { Storage.remove(tempPath.c_str()); };
 
   if (!FontInstaller::isValidFamilyName(family.c_str())) {
     LOG_ERR("WEB", "Convert font: invalid family name: %s", family.c_str());
@@ -2134,7 +2183,7 @@ void CrossPointWebServer::handleFontConvert() {
   std::string response;
   const std::vector<std::pair<std::string, std::string>> fields = {{"language", language}, {"family", family}};
   const bool posted =
-      HttpDownloader::postFileMultipart(FOULAD_EBOOKS_FONT_CONVERT_URL, tempPath, fields, response, 120000);
+      HttpDownloader::postFilesMultipart(FOULAD_EBOOKS_FONT_CONVERT_URL, styleFiles, fields, response, 120000);
   cleanupTemp();
 
   if (!posted) {
