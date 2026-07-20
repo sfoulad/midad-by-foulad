@@ -95,15 +95,18 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainItems(const bool hasBookmarks) const {
   std::vector<MenuItem> items;
   items.reserve(9);
+  // Only offered once a dictionary is actually installed -- otherwise the row
+  // would open straight into DICTIONARY_NONE_SELECTED every time. Pinned
+  // first (user request) with the same label as the Settings/Apps entry
+  // (STR_DICTIONARY, not STR_LOOKUP_WORD) so it reads as one feature name
+  // whether reached from the reader or from Settings.
+  if (DICTIONARIES.hasAnyDictionary()) {
+    items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_DICTIONARY});
+  }
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
   if (hasBookmarks) {
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
-  }
-  // Only offered once a dictionary is actually installed -- otherwise the row
-  // would open straight into DICTIONARY_NONE_SELECTED every time.
-  if (DICTIONARIES.hasAnyDictionary()) {
-    items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_LOOKUP_WORD});
   }
   items.push_back({MenuAction::FONT_SIZE, StrId::STR_FONT_SIZE_GENERIC});
   if (isArabicBook || !sdFamilies.empty()) {
