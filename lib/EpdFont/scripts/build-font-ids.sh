@@ -20,10 +20,13 @@ echo "#pragma once"
 echo ""
 
 for size in 12 14 16 18; do
-  echo "#define NOTOSERIF_${size}_FONT_ID ($(id_for ./notoserif_${size}_regular.h ./notoserif_${size}_bold.h ./notoserif_${size}_bolditalic.h ./notoserif_${size}_italic.h))"
+  echo "#define BITTER_${size}_FONT_ID ($(id_for ./bitter_${size}_regular.h ./bitter_${size}_bold.h ./bitter_${size}_bolditalic.h ./bitter_${size}_italic.h))"
+done
+for size in 12 14 16 18; do
+  echo "#define LEXENDDECA_${size}_FONT_ID ($(id_for ./lexenddeca_${size}_regular.h ./lexenddeca_${size}_bold.h))"
 done
 for size in 10 12; do
-  echo "#define UI_${size}_FONT_ID ($(id_for ./ubuntu_${size}_regular.h ./ubuntu_${size}_bold.h))"
+  echo "#define UI_${size}_FONT_ID ($(id_for ./inter_${size}_regular.h ./inter_${size}_bold.h))"
 done
 echo "#define SMALL_FONT_ID ($(id_for ./notosans_8_regular.h))"
 for size in 8 10 12; do

@@ -26,3 +26,5 @@ lib/EpdFont/scripts/output/
 !.claude/skills/
 fs_/
 build-banners/
+# Local/private handoff & ops notes — never commit (contains test creds, internal notes)
+HANDOFF.md

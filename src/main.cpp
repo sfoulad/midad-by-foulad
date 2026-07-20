@@ -35,6 +35,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
+#include "util/BatteryDiagLog.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepDiagLog.h"
@@ -49,43 +50,59 @@ FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts
 static unsigned long allowSleepAt = 0;
 
 // Fonts
-EpdFont notoserif14RegularFont(&notoserif_14_regular);
-EpdFont notoserif14BoldFont(&notoserif_14_bold);
-EpdFont notoserif14ItalicFont(&notoserif_14_italic);
-EpdFont notoserif14BoldItalicFont(&notoserif_14_bolditalic);
-EpdFontFamily notoserif14FontFamily(&notoserif14RegularFont, &notoserif14BoldFont, &notoserif14ItalicFont,
-                                    &notoserif14BoldItalicFont);
+EpdFont bitter14RegularFont(&bitter_14_regular);
+EpdFont bitter14BoldFont(&bitter_14_bold);
+EpdFont bitter14ItalicFont(&bitter_14_italic);
+EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
+EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont,
+                                 &bitter14BoldItalicFont);
+EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
+EpdFont lexenddeca14BoldFont(&lexenddeca_14_bold);
+EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont);
 #ifndef OMIT_FONTS
-EpdFont notoserif12RegularFont(&notoserif_12_regular);
-EpdFont notoserif12BoldFont(&notoserif_12_bold);
-EpdFont notoserif12ItalicFont(&notoserif_12_italic);
-EpdFont notoserif12BoldItalicFont(&notoserif_12_bolditalic);
-EpdFontFamily notoserif12FontFamily(&notoserif12RegularFont, &notoserif12BoldFont, &notoserif12ItalicFont,
-                                    &notoserif12BoldItalicFont);
-EpdFont notoserif16RegularFont(&notoserif_16_regular);
-EpdFont notoserif16BoldFont(&notoserif_16_bold);
-EpdFont notoserif16ItalicFont(&notoserif_16_italic);
-EpdFont notoserif16BoldItalicFont(&notoserif_16_bolditalic);
-EpdFontFamily notoserif16FontFamily(&notoserif16RegularFont, &notoserif16BoldFont, &notoserif16ItalicFont,
-                                    &notoserif16BoldItalicFont);
-EpdFont notoserif18RegularFont(&notoserif_18_regular);
-EpdFont notoserif18BoldFont(&notoserif_18_bold);
-EpdFont notoserif18ItalicFont(&notoserif_18_italic);
-EpdFont notoserif18BoldItalicFont(&notoserif_18_bolditalic);
-EpdFontFamily notoserif18FontFamily(&notoserif18RegularFont, &notoserif18BoldFont, &notoserif18ItalicFont,
-                                    &notoserif18BoldItalicFont);
+EpdFont bitter12RegularFont(&bitter_12_regular);
+EpdFont bitter12BoldFont(&bitter_12_bold);
+EpdFont bitter12ItalicFont(&bitter_12_italic);
+EpdFont bitter12BoldItalicFont(&bitter_12_bolditalic);
+EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitter12ItalicFont,
+                                 &bitter12BoldItalicFont);
+EpdFont bitter16RegularFont(&bitter_16_regular);
+EpdFont bitter16BoldFont(&bitter_16_bold);
+EpdFont bitter16ItalicFont(&bitter_16_italic);
+EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
+EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont,
+                                 &bitter16BoldItalicFont);
+EpdFont bitter18RegularFont(&bitter_18_regular);
+EpdFont bitter18BoldFont(&bitter_18_bold);
+EpdFont bitter18ItalicFont(&bitter_18_italic);
+EpdFont bitter18BoldItalicFont(&bitter_18_bolditalic);
+EpdFontFamily bitter18FontFamily(&bitter18RegularFont, &bitter18BoldFont, &bitter18ItalicFont,
+                                 &bitter18BoldItalicFont);
+
+EpdFont lexenddeca12RegularFont(&lexenddeca_12_regular);
+EpdFont lexenddeca12BoldFont(&lexenddeca_12_bold);
+EpdFontFamily lexenddeca12FontFamily(&lexenddeca12RegularFont, &lexenddeca12BoldFont);
+EpdFont lexenddeca16RegularFont(&lexenddeca_16_regular);
+EpdFont lexenddeca16BoldFont(&lexenddeca_16_bold);
+EpdFontFamily lexenddeca16FontFamily(&lexenddeca16RegularFont, &lexenddeca16BoldFont);
+EpdFont lexenddeca18RegularFont(&lexenddeca_18_regular);
+EpdFont lexenddeca18BoldFont(&lexenddeca_18_bold);
+EpdFontFamily lexenddeca18FontFamily(&lexenddeca18RegularFont, &lexenddeca18BoldFont);
 
 #endif  // OMIT_FONTS
 
 EpdFont smallFont(&notosans_8_regular);
 EpdFontFamily smallFontFamily(&smallFont);
 
-EpdFont ui10RegularFont(&ubuntu_10_regular);
-EpdFont ui10BoldFont(&ubuntu_10_bold);
+// UI_10_FONT_ID/UI_12_FONT_ID are backed by Inter (was Ubuntu) -- see
+// lib/EpdFont/scripts/convert-builtin-fonts.sh for the swap rationale. Macro
+// names kept unchanged so no other call site needs touching.
+EpdFont ui10RegularFont(&inter_10_regular);
+EpdFont ui10BoldFont(&inter_10_bold);
 EpdFontFamily ui10FontFamily(&ui10RegularFont, &ui10BoldFont);
 
-EpdFont ui12RegularFont(&ubuntu_12_regular);
-EpdFont ui12BoldFont(&ubuntu_12_bold);
+EpdFont ui12RegularFont(&inter_12_regular);
+EpdFont ui12BoldFont(&inter_12_bold);
 EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 
 // Built-in default for ArabicFontSystem -- always present in flash so Arabic titles
@@ -372,8 +389,22 @@ void enterDeepSleep(bool fromTimeout = false) {
   // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
   // Wake from deep sleep is effectively a chip reset, so no state needs to survive.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
+    // This backstop firing means some activity's onExit() didn't disconnect WiFi
+    // itself -- worth a permanent record since that's exactly the kind of leak a
+    // "battery drains fast" report can't otherwise be traced to off-device.
+    char wifiBuf[96];
+    snprintf(wifiBuf, sizeof(wifiBuf), "%lu WiFi still on at sleep entry (mode=%d) -- backstop disconnect",
+             millis(), static_cast<int>(WiFi.getMode()));
+    BatteryDiagLog::append(wifiBuf);
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
+  }
+
+  {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%lu entering deep sleep battery=%u%% fromTimeout=%d", millis(),
+              powerManager.getBatteryPercentage(), fromTimeout);
+    BatteryDiagLog::append(buf);
   }
 
   halTiltSensor.deepSleep();
@@ -395,11 +426,15 @@ void setupDisplayAndFonts(bool seamless = false) {
   }
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   renderer.setFontCacheManager(&fontCacheManager);
-  renderer.insertFont(NOTOSERIF_14_FONT_ID, notoserif14FontFamily);
+  renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
+  renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
 #ifndef OMIT_FONTS
-  renderer.insertFont(NOTOSERIF_12_FONT_ID, notoserif12FontFamily);
-  renderer.insertFont(NOTOSERIF_16_FONT_ID, notoserif16FontFamily);
-  renderer.insertFont(NOTOSERIF_18_FONT_ID, notoserif18FontFamily);
+  renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
+  renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
+  renderer.insertFont(BITTER_18_FONT_ID, bitter18FontFamily);
+  renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
+  renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
+  renderer.insertFont(LEXENDDECA_18_FONT_ID, lexenddeca18FontFamily);
 
 #endif  // OMIT_FONTS
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
@@ -715,6 +750,25 @@ void loop() {
                 anyReleased, tiltActivity, blockedByActivity,
                 blockedByActivity ? activityManager.currentActivityDebugName() : "-");
       SleepDiagLog::append(buf);
+    }
+  }
+
+  // Periodic battery/WiFi/CPU-frequency breadcrumb, independent of the sleep-diag
+  // block above (which only fires on activity) -- a "battery drains fast" report has
+  // no serial cable to show us whether the radio was left on or the CPU stuck at full
+  // frequency; sampled every 5 minutes so a long session doesn't blow through
+  // BatteryDiagLog::MAX_LINES in minutes.
+  {
+    static unsigned long lastBatteryDiagLogMs = 0;
+    const unsigned long nowMs = millis();
+    if (nowMs - lastBatteryDiagLogMs >= 300000) {
+      lastBatteryDiagLogMs = nowMs;
+      char buf[160];
+      snprintf(buf, sizeof(buf), "%lu battery=%u%% wifiMode=%d wifiStatus=%d powerSaving=%d activity=%s", nowMs,
+                powerManager.getBatteryPercentage(), static_cast<int>(WiFi.getMode()),
+                static_cast<int>(WiFi.status()), millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS,
+                activityManager.currentActivityDebugName());
+      BatteryDiagLog::append(buf);
     }
   }
 

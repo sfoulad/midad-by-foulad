@@ -32,6 +32,11 @@ class CrossPointSettings {
     COVER_CUSTOM = 4,
     BLANK = 5,
     QUICK_RESUME = 6,
+    // Appended rather than inserted -- the settings list below stores the
+    // picked label's index straight into this field, so any reordering of
+    // existing values needs the display list re-synced too (see the comment
+    // there). Appending keeps every existing saved value's meaning intact.
+    DASHBOARD = 7,
     SLEEP_SCREEN_MODE_COUNT
   };
   enum SLEEP_SCREEN_COVER_MODE { FIT = 0, CROP = 1, SLEEP_SCREEN_COVER_MODE_COUNT };
@@ -107,9 +112,22 @@ class CrossPointSettings {
   enum SIDE_BUTTON_LAYOUT { PREV_NEXT = 0, NEXT_PREV = 1, SIDE_BUTTONS_DISABLED = 2, SIDE_BUTTON_LAYOUT_COUNT };
 
   // Font family options (built-in fonts only; SD card fonts use sdFontFamilyName).
-  // Noto Sans (formerly = 1) was trimmed from flash to keep OTA images small;
-  // saved fontFamily values >= FONT_FAMILY_COUNT clamp back to Noto Serif on load.
-  enum FONT_FAMILY { NOTOSERIF = 0, FONT_FAMILY_COUNT };
+  // Noto Sans (formerly = 1) was trimmed from flash to keep OTA images small.
+  // Noto Serif itself (formerly = 0) was replaced outright by Bitter -- an
+  // e-ink-tuned slab serif with a flatter, more uniform stroke weight that
+  // anti-aliases with noticeably less ghosting on this panel's 2-bit
+  // grayscale, the same reasoning CrossInk (uxjulia/crossink) documents for
+  // its own font choice. Measured cost of the swap: ~1071KB (Bitter, 4
+  // sizes x 4 styles) vs ~1055KB (NotoSerif) -- effectively flat. Existing
+  // saved fontFamily=0 therefore silently becomes Bitter on next boot, same
+  // as any other "the default serif changed" migration this fork has done
+  // before. Lexend Deca is a genuinely NEW second option (a sans, chosen for
+  // the same anti-aliasing reasoning) -- measured cost ~297KB (4 sizes x 2
+  // styles; Lexend Deca has no italic master at all, so italic/bold-italic
+  // fall back to upright via EpdFontFamily's style-fallback, same as any
+  // font missing a style). Saved fontFamily values >= FONT_FAMILY_COUNT
+  // clamp back to Bitter on load.
+  enum FONT_FAMILY { BITTER = 0, LEXENDDECA = 1, FONT_FAMILY_COUNT };
   static constexpr uint8_t LEGACY_OPENDYSLEXIC = 2;
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
   // Font size options
@@ -242,7 +260,7 @@ class CrossPointSettings {
   uint8_t frontButtonLeft = FRONT_HW_LEFT;
   uint8_t frontButtonRight = FRONT_HW_RIGHT;
   // Reader font settings
-  uint8_t fontFamily = NOTOSERIF;
+  uint8_t fontFamily = BITTER;
   uint8_t fontSize = MEDIUM;
   uint8_t lineSpacing = NORMAL;
   uint8_t paragraphAlignment = JUSTIFIED;
@@ -329,6 +347,11 @@ class CrossPointSettings {
   // family). The Quran defaults to UTHMANICHAFS via its extraction-time
   // sidecar (see QuranBook::writeDefaultSidecarIfMissing).
   uint8_t bookArabicFontFamily = BOOK_NO_OVERRIDE;
+  // Which BUILT-IN Latin family this book uses when the built-in path is
+  // active (bookSdFontFamilyName forced-builtin or global has no SD family) --
+  // same role as bookArabicFontFamily above, added once there was a second
+  // built-in Latin option (Bitter/Lexend Deca) to actually choose between.
+  uint8_t bookFontFamily = BOOK_NO_OVERRIDE;
   uint8_t bookLineSpacing = BOOK_NO_OVERRIDE;
   uint8_t bookParagraphAlignment = BOOK_NO_OVERRIDE;
   char bookSdFontFamilyName[32] = "";
@@ -341,6 +364,7 @@ class CrossPointSettings {
   uint8_t effArabicFontFamily() const {
     return bookArabicFontFamily != BOOK_NO_OVERRIDE ? bookArabicFontFamily : arabicFontFamily;
   }
+  uint8_t effFontFamily() const { return bookFontFamily != BOOK_NO_OVERRIDE ? bookFontFamily : fontFamily; }
   uint8_t effLineSpacing() const { return bookLineSpacing != BOOK_NO_OVERRIDE ? bookLineSpacing : lineSpacing; }
   uint8_t effParagraphAlignment() const {
     return bookParagraphAlignment != BOOK_NO_OVERRIDE ? bookParagraphAlignment : paragraphAlignment;
@@ -357,13 +381,13 @@ class CrossPointSettings {
   }
   bool hasBookOverrides() const {
     return bookFontSize != BOOK_NO_OVERRIDE || bookArabicFontSize != BOOK_NO_OVERRIDE ||
-           bookArabicFontFamily != BOOK_NO_OVERRIDE || bookLineSpacing != BOOK_NO_OVERRIDE ||
-           bookParagraphAlignment != BOOK_NO_OVERRIDE || bookSdFontFamilyName[0] != '\0' ||
-           bookSdArabicFontFamilyName[0] != '\0';
+           bookArabicFontFamily != BOOK_NO_OVERRIDE || bookFontFamily != BOOK_NO_OVERRIDE ||
+           bookLineSpacing != BOOK_NO_OVERRIDE || bookParagraphAlignment != BOOK_NO_OVERRIDE ||
+           bookSdFontFamilyName[0] != '\0' || bookSdArabicFontFamilyName[0] != '\0';
   }
   void clearBookOverrides() {
-    bookFontSize = bookArabicFontSize = bookArabicFontFamily = bookLineSpacing = bookParagraphAlignment =
-        BOOK_NO_OVERRIDE;
+    bookFontSize = bookArabicFontSize = bookArabicFontFamily = bookFontFamily = bookLineSpacing =
+        bookParagraphAlignment = BOOK_NO_OVERRIDE;
     bookSdFontFamilyName[0] = '\0';
     bookSdArabicFontFamilyName[0] = '\0';
   }

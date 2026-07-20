@@ -19,13 +19,18 @@
 namespace BookReaderSettings {
 
 constexpr char FILE_NAME[] = "/book_settings.bin";
-// Layout v2: 'B' 'K' version, then fontSize, arabicFontSize, lineSpacing,
-// paragraphAlignment, arabicFontFamily (0xFF = inherit), then the two 32-byte
-// family names ("" = inherit, "\x01" = force built-in -- same encoding as the
-// fields). v1 lacked the arabicFontFamily byte and is still readable.
-constexpr uint8_t FORMAT_VERSION = 2;
-constexpr size_t PAYLOAD_SIZE = 3 + 5 + 32 + 32;
+// Layout v3: 'B' 'K' version, then fontSize, arabicFontSize, lineSpacing,
+// paragraphAlignment, arabicFontFamily, fontFamily (0xFF = inherit), then the
+// two 32-byte family names ("" = inherit, "\x01" = force built-in -- same
+// encoding as the fields). v2 lacked the fontFamily byte (there was only one
+// built-in Latin family, so "force built-in" alone was unambiguous -- once
+// Bitter/Lexend Deca added a second one, WHICH built-in needed its own byte,
+// same reasoning as arabicFontFamily in v2). v1 lacked arabicFontFamily too.
+// Both v1 and v2 are still readable.
+constexpr uint8_t FORMAT_VERSION = 3;
+constexpr size_t PAYLOAD_SIZE = 3 + 6 + 32 + 32;
 constexpr size_t V1_PAYLOAD_SIZE = 3 + 4 + 32 + 32;
+constexpr size_t V2_PAYLOAD_SIZE = 3 + 5 + 32 + 32;
 
 inline uint8_t sanitizeEnum(const uint8_t v, const uint8_t count) {
   return v < count ? v : CrossPointSettings::BOOK_NO_OVERRIDE;
@@ -43,16 +48,20 @@ inline void applyToSettings(const std::string& bookCachePath) {
   const int got = f.read(buf, PAYLOAD_SIZE);
   if (buf[0] != 'B' || buf[1] != 'K') return;
   const bool v1 = buf[2] == 1 && got == static_cast<int>(V1_PAYLOAD_SIZE);
-  const bool v2 = buf[2] == FORMAT_VERSION && got == static_cast<int>(PAYLOAD_SIZE);
-  if (!v1 && !v2) return;
-  const size_t namesAt = v2 ? 8 : 7;
+  const bool v2 = buf[2] == 2 && got == static_cast<int>(V2_PAYLOAD_SIZE);
+  const bool v3 = buf[2] == FORMAT_VERSION && got == static_cast<int>(PAYLOAD_SIZE);
+  if (!v1 && !v2 && !v3) return;
+  const size_t namesAt = v3 ? 9 : (v2 ? 8 : 7);
 
   SETTINGS.bookFontSize = sanitizeEnum(buf[3], CrossPointSettings::FONT_SIZE_COUNT);
   SETTINGS.bookArabicFontSize = sanitizeEnum(buf[4], CrossPointSettings::FONT_SIZE_COUNT);
   SETTINGS.bookLineSpacing = sanitizeEnum(buf[5], CrossPointSettings::LINE_COMPRESSION_COUNT);
   SETTINGS.bookParagraphAlignment = sanitizeEnum(buf[6], CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT);
-  if (v2) {
+  if (v2 || v3) {
     SETTINGS.bookArabicFontFamily = sanitizeEnum(buf[7], CrossPointSettings::ARABIC_FONT_FAMILY_COUNT);
+  }
+  if (v3) {
+    SETTINGS.bookFontFamily = sanitizeEnum(buf[8], CrossPointSettings::FONT_FAMILY_COUNT);
   }
   memcpy(SETTINGS.bookSdFontFamilyName, buf + namesAt, sizeof(SETTINGS.bookSdFontFamilyName));
   SETTINGS.bookSdFontFamilyName[sizeof(SETTINGS.bookSdFontFamilyName) - 1] = '\0';
@@ -81,8 +90,9 @@ inline bool saveFromSettings(const std::string& bookCachePath) {
   buf[5] = SETTINGS.bookLineSpacing;
   buf[6] = SETTINGS.bookParagraphAlignment;
   buf[7] = SETTINGS.bookArabicFontFamily;
-  memcpy(buf + 8, SETTINGS.bookSdFontFamilyName, sizeof(SETTINGS.bookSdFontFamilyName));
-  memcpy(buf + 8 + 32, SETTINGS.bookSdArabicFontFamilyName, sizeof(SETTINGS.bookSdArabicFontFamilyName));
+  buf[8] = SETTINGS.bookFontFamily;
+  memcpy(buf + 9, SETTINGS.bookSdFontFamilyName, sizeof(SETTINGS.bookSdFontFamilyName));
+  memcpy(buf + 9 + 32, SETTINGS.bookSdArabicFontFamilyName, sizeof(SETTINGS.bookSdArabicFontFamilyName));
 
   HalFile f;
   if (!Storage.openFileForWrite("BKS", path, f)) {

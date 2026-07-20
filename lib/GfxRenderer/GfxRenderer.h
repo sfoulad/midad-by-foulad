@@ -103,15 +103,17 @@ class GfxRenderer {
   // REQUESTED Latin font's baseline (baseline = y + Latin ascender) instead of the
   // Arabic font's own, much taller, nominal ascender. The Noto Arabic fonts reserve
   // enormous headroom above baseline for stacked diacritics (10pt: ascender 29px vs
-  // Ubuntu 10's 20px), so anchoring by the Arabic ascender pushes every Arabic string
-  // ~9px lower than the Latin text the fixed UI geometry (30px list rows, 40px button
-  // hints, 45px header) was sized for -- clipping the bottom of the glyphs. Plain,
-  // undiacritized UI labels never use that headroom (measured worst-case ink above
-  // baseline across all shaped presentation forms at 10pt: 21px, barely above Ubuntu's
-  // 20px ascender), so sharing the Latin baseline both fits the existing geometry and
-  // vertically aligns mixed Arabic/Latin strings. Reading-text mappings deliberately
-  // stay unmatched: EPUB body rows are already sized for the full Arabic line height
-  // and real book text does carry diacritics that need the taller headroom.
+  // the UI font's 21px at 10pt -- Inter; was Ubuntu's 20px), so anchoring by the
+  // Arabic ascender pushes every Arabic string ~8px lower than the Latin text the
+  // fixed UI geometry (30px list rows, 40px button hints, 45px header) was sized
+  // for -- clipping the bottom of the glyphs. Plain, undiacritized UI labels never
+  // use that headroom (measured worst-case ink above baseline across all shaped
+  // presentation forms at 10pt: 21px, exactly at Inter's own 21px ascender; was
+  // barely above Ubuntu's 20px), so sharing the Latin baseline both fits the
+  // existing geometry and vertically aligns mixed Arabic/Latin strings.
+  // Reading-text mappings deliberately stay unmatched: EPUB body rows are already
+  // sized for the full Arabic line height and real book text does carry
+  // diacritics that need the taller headroom.
   std::set<int> arabicBaselineMatchFontIds_;
   // Mutable because ensureSdCardFontReady() is const (called from layout code
   // that holds a const GfxRenderer&) but triggers SD card reads and heap

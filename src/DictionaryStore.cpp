@@ -1131,7 +1131,7 @@ void DictionaryStore::clearActiveOnlyEntry() {
 }
 
 bool DictionaryStore::loadEntryFromIfoPath(const std::string& ifoPath, DictionaryEntry& entry) const {
-  if (!hasExtension(ifoPath, ".ifo")) return false;
+  if (!hasExtension(ifoPath, ".ifo") || !Storage.exists(ifoPath.c_str())) return false;
 
   entry = DictionaryEntry{};
   entry.ifoPath = ifoPath;
@@ -1305,6 +1305,15 @@ bool DictionaryStore::setActiveIndex(const int index) {
   activeIfoPath = entries[index].ifoPath;
   clearActiveOnlyEntry();
   return saveConfig();
+}
+
+void DictionaryStore::clearActiveIfMatches(const std::string& ifoPath) {
+  if (!configLoaded) loadConfig();
+  if (activeIfoPath != ifoPath) return;
+  activeIfoPath.clear();
+  activeIndex = -1;
+  clearActiveOnlyEntry();
+  saveConfig();
 }
 
 std::string DictionaryStore::getActiveLabel() const {

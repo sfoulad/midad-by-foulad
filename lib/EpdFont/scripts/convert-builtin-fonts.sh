@@ -5,13 +5,41 @@ set -e
 cd "$(dirname "$0")"
 
 READER_FONT_STYLES=("Regular" "Italic" "Bold" "BoldItalic")
-NOTOSERIF_FONT_SIZES=(12 14 16 18)
+BITTER_FONT_SIZES=(12 14 16 18)
+LEXENDDECA_FONT_SIZES=(12 14 16 18)
 NOTOSANS_FONT_SIZES=(12 14 16 18)
 
-for size in ${NOTOSERIF_FONT_SIZES[@]}; do
+# Bitter (OFL, google/fonts ofl/bitter): default built-in Latin reading serif,
+# replacing NotoSerif -- chosen (like CrossInk, uxjulia/crossink) for its
+# flatter, more uniform stroke weight, which anti-aliases with less ghosting
+# on this panel's 2-bit grayscale than NotoSerif's higher-contrast strokes.
+# Static instances pinned from the variable font at wght=500 (regular) /
+# wght=700 (bold) via fonttools.instancer, matching CrossInk's own choice of
+# a Medium (not Regular/400) weight for readability at small e-ink sizes --
+# see lib/EpdFont/scripts/sd-fonts.yaml's Bitter entry for the exact pins if
+# regenerating from the variable font instead of the committed static cuts.
+for size in ${BITTER_FONT_SIZES[@]}; do
   for style in ${READER_FONT_STYLES[@]}; do
-    font_name="notoserif_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    font_path="../builtinFonts/source/NotoSerif/NotoSerif-${style}.ttf"
+    font_name="bitter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_path="../builtinFonts/source/Bitter/Bitter-${style}.ttf"
+    output_path="../builtinFonts/${font_name}.h"
+    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
+    echo "Generated $output_path"
+  done
+done
+
+# Lexend Deca (OFL, google/fonts ofl/lexenddeca): second built-in Latin reading
+# option, a sans engineered against reading-fluency research (visual crowding),
+# same anti-aliasing reasoning as Bitter above. Static instance pinned at
+# wght=400/700. No italic master exists for this typeface at all (confirmed:
+# google/fonts ofl/lexenddeca ships exactly one variable file, no italic
+# counterpart) -- EpdFontFamily::getFont() falls back to regular/bold for
+# italic/bold-italic requests when those slots are null, so this is a
+# non-issue, not a missing conversion step.
+for size in ${LEXENDDECA_FONT_SIZES[@]}; do
+  for style in "Regular" "Bold"; do
+    font_name="lexenddeca_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_path="../builtinFonts/source/LexendDeca/LexendDeca-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
     python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
     echo "Generated $output_path"
@@ -31,19 +59,24 @@ done
 UI_FONT_SIZES=(10 12)
 UI_FONT_STYLES=("Regular" "Bold")
 
+# Inter (OFL, google/fonts ofl/inter): UI font, replacing Ubuntu -- improved
+# readability at small sizes, per the same rationale CrossInk documents.
+# Deliberately NOT --2bit/--compress/--pnum: Ubuntu never used them either
+# (1-bit, uncompressed -- crisp UI chrome with no grayscale AA, unlike the
+# 2-bit+AA READING fonts above), and this swap is scoped to the typeface
+# only, not the rendering format. No Hebrew/Vietnamese fallback stacking
+# here (Ubuntu needed it): this fork ships EN+AR UI only (see
+# lib/I18n/translations/), so Hebrew coverage is never exercised; Vietnamese
+# tone marks (U+1EA0-U+1EF9) are natively covered by Inter itself (confirmed:
+# 90/90 codepoints via fontTools' cmap), unlike Ubuntu, which needed the
+# Vietnamese-cut fallback for that block. Static instance pinned at
+# wght=400/700 from the variable font.
 for size in ${UI_FONT_SIZES[@]}; do
   for style in ${UI_FONT_STYLES[@]}; do
-    font_name="ubuntu_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    font_path="../builtinFonts/source/Ubuntu/Ubuntu-${style}.ttf"
-    hebrew_path="../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-${style}.ttf"
-    # Ubuntu lacks the Latin Extended Additional block (U+1EA0-U+1EF9) used for
-    # Vietnamese tone marks. Append a Vietnamese-only Ubuntu cut so those glyphs
-    # are filled from it while every glyph Ubuntu already has stays unchanged
-    # (fontstack is ordered by descending priority).
-    viet_path="../builtinFonts/source/Ubuntu/Ubuntu-Vietnamese-${style}.ttf"
+    font_name="inter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_path="../builtinFonts/source/Inter/Inter-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path $hebrew_path $viet_path \
-      --additional-intervals 0x05D0,0x05EA > $output_path
+    python fontconvert.py $font_name $size $font_path > $output_path
     echo "Generated $output_path"
   done
 done

@@ -465,11 +465,13 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
     // Arabic labels (baseline-matched to the Latin font's baseline) still descend
     // further below that shared baseline than Latin glyphs do, so the selected-tab
     // inversion box and the underline both need a few extra pixels of depth or they
-    // slice/strike through descender tails like the final yaa. 6px comes from the
+    // slice/strike through descender tails like the final yaa. 4px comes from the
     // built-in fonts' measured ink: Arabic 12pt shaped forms reach 11px below
-    // baseline vs Ubuntu 12's 5px -- the nominal font descender (19px) is far deeper
-    // than any real glyph and would leave the underline looking detached.
-    constexpr int ARABIC_DESCENT_EXTRA = 6;
+    // baseline vs Inter 12's real descender of 7px (EpdFontData.descender = -7;
+    // was 5px under the previous UI font, Ubuntu) -- the nominal font descender
+    // (19px) is far deeper than any real glyph and would leave the underline
+    // looking detached.
+    constexpr int ARABIC_DESCENT_EXTRA = 4;
     const int descentExtra = ScriptDetector::containsArabic(tab.label) ? ARABIC_DESCENT_EXTRA : 0;
 
     // Draw underline for selected tab

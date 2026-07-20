@@ -46,6 +46,22 @@ int displayIndexForArabicFamily(const uint8_t family) {
   return 0;  // stale/legacy value (e.g. removed Amiri=1) or out of range
 }
 
+// Selectable built-in Latin families for the per-book override picker, mirroring
+// kSelectableArabicFonts above -- (label, FONT_FAMILY value) pairs, in display order.
+constexpr std::pair<StrId, uint8_t> kSelectableLatinFonts[] = {
+    {StrId::STR_BITTER, CrossPointSettings::BITTER},
+    {StrId::STR_LEXEND_DECA, CrossPointSettings::LEXENDDECA},
+};
+constexpr int kSelectableLatinFontCount =
+    static_cast<int>(sizeof(kSelectableLatinFonts) / sizeof(kSelectableLatinFonts[0]));
+
+int displayIndexForLatinFamily(const uint8_t family) {
+  for (int i = 0; i < kSelectableLatinFontCount; i++) {
+    if (kSelectableLatinFonts[i].second == family) return i;
+  }
+  return 0;  // out of range
+}
+
 std::vector<std::string> sdFamilyNames(const SdCardFontRegistry& registry) {
   std::vector<std::string> names;
   const auto& families = registry.getFamilies();
@@ -184,9 +200,15 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       }
       const char* book = SETTINGS.bookSdFontFamilyName;
       const char* global = SETTINGS.sdFontFamilyName;
-      const char* builtin = I18N.get(StrId::STR_NOTO_SERIF);
-      if (book[0] == '\0') return globalLabel(global[0] != '\0' ? global : builtin);
-      if (book[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) return builtin;
+      if (book[0] == '\0') {
+        return globalLabel(
+            global[0] != '\0'
+                ? global
+                : I18N.get(kSelectableLatinFonts[displayIndexForLatinFamily(SETTINGS.fontFamily)].first));
+      }
+      if (book[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
+        return I18N.get(kSelectableLatinFonts[displayIndexForLatinFamily(SETTINGS.effFontFamily())].first);
+      }
       return book;
     }
     case MenuAction::TEXT_ALIGN:
@@ -290,39 +312,44 @@ void EpubReaderMenuActivity::openSettingEditor(const MenuAction action) {
         break;
       }
 
-      // Latin: option 0 = Global, 1 = built-in Noto Serif, 2+ = SD families.
-      char* field = SETTINGS.bookSdFontFamilyName;
-      const size_t fieldSize = sizeof(SETTINGS.bookSdFontFamilyName);
+      // Latin: option 0 = Global, 1..N = selectable built-in families (Bitter/Lexend
+      // Deca), N+1.. = SD families. Built-in picks set BOTH the forced-builtin marker
+      // and the per-book family value, mirroring the Arabic branch above.
       const char* global = SETTINGS.sdFontFamilyName;
-      const StrId builtinLabel = StrId::STR_NOTO_SERIF;
-
       std::vector<std::string> options;
-      options.reserve(sdFamilies.size() + 2);
-      options.push_back(globalLabel(global[0] != '\0' ? global : I18N.get(builtinLabel)));
-      options.push_back(I18N.get(builtinLabel));
+      options.reserve(sdFamilies.size() + 1 + kSelectableLatinFontCount);
+      options.push_back(globalLabel(
+          global[0] != '\0' ? global
+                            : I18N.get(kSelectableLatinFonts[displayIndexForLatinFamily(SETTINGS.fontFamily)].first)));
+      for (const auto& [strId, familyValue] : kSelectableLatinFonts) options.push_back(I18N.get(strId));
       options.insert(options.end(), sdFamilies.begin(), sdFamilies.end());
 
       int current = 0;
-      if (field[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
-        current = 1;
-      } else if (field[0] != '\0') {
+      if (SETTINGS.bookSdFontFamilyName[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
+        current = 1 + displayIndexForLatinFamily(SETTINGS.effFontFamily());
+      } else if (SETTINGS.bookSdFontFamilyName[0] != '\0') {
         for (size_t i = 0; i < sdFamilies.size(); i++) {
-          if (sdFamilies[i] == field) {
-            current = static_cast<int>(2 + i);
+          if (sdFamilies[i] == SETTINGS.bookSdFontFamilyName) {
+            current = static_cast<int>(1 + kSelectableLatinFontCount + i);
             break;
           }
         }
       }
 
-      optionPopup.show(StrId::STR_FONT_NAME, options, current, [this, field, fieldSize](const int idx) {
-        char newValue[32] = "";
-        if (idx == 1) {
-          newValue[0] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
-        } else if (idx >= 2 && idx - 2 < static_cast<int>(sdFamilies.size())) {
-          setBookFamily(newValue, sizeof(newValue), sdFamilies[idx - 2].c_str());
+      optionPopup.show(StrId::STR_FONT_NAME, options, current, [this](const int idx) {
+        char newName[32] = "";
+        uint8_t newFamily = CrossPointSettings::BOOK_NO_OVERRIDE;
+        if (idx >= 1 && idx <= kSelectableLatinFontCount) {
+          newName[0] = CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0];
+          newFamily = kSelectableLatinFonts[idx - 1].second;
+        } else if (idx > kSelectableLatinFontCount &&
+                   idx - 1 - kSelectableLatinFontCount < static_cast<int>(sdFamilies.size())) {
+          setBookFamily(newName, sizeof(newName), sdFamilies[idx - 1 - kSelectableLatinFontCount].c_str());
         }
-        if (strncmp(field, newValue, fieldSize) != 0) {
-          setBookFamily(field, fieldSize, newValue);
+        if (strncmp(SETTINGS.bookSdFontFamilyName, newName, sizeof(SETTINGS.bookSdFontFamilyName)) != 0 ||
+            SETTINGS.bookFontFamily != newFamily) {
+          setBookFamily(SETTINGS.bookSdFontFamilyName, sizeof(SETTINGS.bookSdFontFamilyName), newName);
+          SETTINGS.bookFontFamily = newFamily;
           bookSettingsChanged = true;
         }
         requestUpdate();

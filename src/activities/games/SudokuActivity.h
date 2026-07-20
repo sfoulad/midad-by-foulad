@@ -20,7 +20,7 @@ class SudokuActivity final : public Activity {
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
-  bool preventAutoSleep() override { return true; }
+  bool preventAutoSleep() override { return state == PLAYING; }
 
  private:
   enum State { PLAYING, SOLVED, NO_SOLUTION };

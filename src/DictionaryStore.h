@@ -65,6 +65,11 @@ class DictionaryStore {
   }
   int getActiveIndex() const { return activeIndex; }
   bool setActiveIndex(int index);
+  // Called when a set is deleted so a since-removed dictionary can't linger
+  // as the persisted active selection (scan() already refuses to resurrect
+  // it, but this also keeps dictionary_config.json itself from pointing at
+  // a path that no longer exists).
+  void clearActiveIfMatches(const std::string& ifoPath);
   std::string getActiveLabel() const;
   uint8_t getDefinitionTextSize() const { return definitionTextSize; }
   bool setDefinitionTextSize(uint8_t size);

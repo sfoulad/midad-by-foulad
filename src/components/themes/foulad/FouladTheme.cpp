@@ -234,7 +234,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   const int dividerLabelY = heroCoverY + kHeroHeight + kDividerHalfSeparation + 10;
   // Arabic UI text draws through whatever font UI_12_FONT_ID's Arabic dispatch
   // actually resolves to (Tajawal -- see ArabicFontSystem::applyArabicMappings),
-  // which sits taller/deeper than the Latin UI_12 (Ubuntu) metrics this block was
+  // which sits taller/deeper than the Latin UI_12 (Inter) metrics this block was
   // originally tuned against. Resolve and measure the font that will REALLY draw
   // the label -- not a hardcoded guess at which font that is -- so the divider
   // rule gap and the thumbnail row start can never drift out of sync with what's
@@ -324,16 +324,20 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   {
     const int heroBottom = heroCoverY + kHeroHeight - 4;
     const bool titleArabic = ScriptDetector::containsArabic(recentBooks[0].title.c_str());
-    // NOTOSERIF_18_FONT_ID doubles as the real EPUB body-text font at XLarge
-    // Latin size (see CrossPointSettings::getReaderFontId), so mapping IT to
-    // Tajawal globally (in ArabicFontSystem::applyArabicMappings) would hijack
-    // actual book reading text away from the user's chosen Arabic reading font
-    // (e.g. UthmanicHafs for the Quran) whenever they read at that size. This
-    // hero title is UI chrome, not reading body text, so it forces Tajawal
+    // BITTER_18_FONT_ID doubles as the real EPUB body-text font at XLarge
+    // Latin size when the user's reading font is Bitter (see
+    // CrossPointSettings::getReaderFontId), so mapping IT to Tajawal globally
+    // (in ArabicFontSystem::applyArabicMappings) would hijack actual book
+    // reading text away from the user's chosen Arabic reading font (e.g.
+    // UthmanicHafs for the Quran) whenever they read at that size. This hero
+    // title is UI chrome, not reading body text, so it forces Tajawal
     // directly and locally instead -- same "Tajawal for all framework Arabic
     // UI" rule as the author line below (already Tajawal via UI_10_FONT_ID's
-    // mapping) and the headers/lists/grid titles elsewhere.
-    const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : NOTOSERIF_18_FONT_ID;
+    // mapping) and the headers/lists/grid titles elsewhere. The Latin hero
+    // title itself is deliberately always Bitter regardless of the user's
+    // chosen reading font (Bitter/Lexend Deca) -- fixed chrome styling, not
+    // meant to track that setting.
+    const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : BITTER_18_FONT_ID;
     const int titleLineHeight = renderer.getLineHeight(titleFontId);
     int textY = heroCoverY + 6;
     const auto titleLines =

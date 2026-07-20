@@ -204,10 +204,15 @@ bool CrossPointSettings::loadFromBinaryFile() {
     {
       uint8_t legacyFontFamily;
       serialization::readPod(inputFile, legacyFontFamily);
-      if (legacyFontFamily < BUILTIN_FONT_COUNT) {
-        fontFamily = legacyFontFamily;
+      // legacyFontFamily==0 always meant "the single default built-in serif"
+      // (NotoSerif, now Bitter) under every numbering this fork has used --
+      // deliberately NOT "< BUILTIN_FONT_COUNT", which stopped safely meaning
+      // that the moment BUILTIN_FONT_COUNT grew past 1: an old value of 1
+      // meant the long-since-trimmed Noto Sans, not the new LEXENDDECA slot.
+      if (legacyFontFamily == 0) {
+        fontFamily = BITTER;
       } else if (legacyFontFamily == LEGACY_OPENDYSLEXIC) {
-        fontFamily = NOTOSERIF;
+        fontFamily = BITTER;
         strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
         sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
       }
@@ -327,15 +332,28 @@ int CrossPointSettings::getReaderFontId() const {
     // Fall through to built-in if SD font not found
   }
 
+  if (effFontFamily() == LEXENDDECA) {
+    switch (effFontSize()) {
+      case SMALL:
+        return LEXENDDECA_12_FONT_ID;
+      case MEDIUM:
+      default:
+        return LEXENDDECA_14_FONT_ID;
+      case LARGE:
+        return LEXENDDECA_16_FONT_ID;
+      case EXTRA_LARGE:
+        return LEXENDDECA_18_FONT_ID;
+    }
+  }
   switch (effFontSize()) {
     case SMALL:
-      return NOTOSERIF_12_FONT_ID;
+      return BITTER_12_FONT_ID;
     case MEDIUM:
     default:
-      return NOTOSERIF_14_FONT_ID;
+      return BITTER_14_FONT_ID;
     case LARGE:
-      return NOTOSERIF_16_FONT_ID;
+      return BITTER_16_FONT_ID;
     case EXTRA_LARGE:
-      return NOTOSERIF_18_FONT_ID;
+      return BITTER_18_FONT_ID;
   }
 }

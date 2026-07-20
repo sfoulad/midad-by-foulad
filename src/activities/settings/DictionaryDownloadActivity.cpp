@@ -262,6 +262,7 @@ void DictionaryDownloadActivity::downloadDict(CatalogDict& dict) {
 
 void DictionaryDownloadActivity::deleteDict(const CatalogDict& dict) {
   const std::string dir = installDir(dict);
+  DICTIONARIES.clearActiveIfMatches(dir + "/" + dict.slug + ".ifo");
   for (const auto& file : dict.files) {
     Storage.remove((dir + "/" + file.name).c_str());
   }

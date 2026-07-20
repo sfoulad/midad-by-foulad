@@ -2,8 +2,10 @@
 # Fonts like NotoSansCJK are downloaded on demand by build-sd-fonts.py.
 *
 !.gitignore
-!NotoSerif/
-!NotoSerif/**
+!Bitter/
+!Bitter/**
+!LexendDeca/
+!LexendDeca/**
 !NotoSans/
 !NotoSans/**
 !NotoSansHebrew/
@@ -18,8 +20,8 @@
 !Cairo/**
 !OpenDyslexic/
 !OpenDyslexic/**
-!Ubuntu/
-!Ubuntu/**
+!Inter/
+!Inter/**
 !UthmanicHafs/
 !UthmanicHafs/**
 !QuranCommon/
