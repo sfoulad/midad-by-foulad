@@ -108,15 +108,17 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.insert(systemSettings.begin(),
                         {SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles),
                          SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer)});
-  // Reader list order (user-specified): English Font, English Font Size,
-  // Arabic Font, Arabic Font Size, Manage Fonts, then the rest. The base table
-  // supplies [English Font, English Font Size, Arabic Font Size, ...]; insert
-  // "Arabic Font" at index 2 so the two Arabic settings pair up in the same
-  // family-then-size order as the English pair. Built via
-  // buildArabicFontFamilySetting() (an ENUM, not a plain Action) so the current
-  // font's name shows inline in the list -- see that function's comment for why.
+  // Reader list order (user-specified): Manage Fonts first (the most-used
+  // entry -- downloading/removing fonts from the Foulad eBooks store), then
+  // English Font, English Font Size, Arabic Font, Arabic Font Size, then the
+  // rest. The base table supplies [English Font, English Font Size, Arabic
+  // Font Size, ...]; insert "Arabic Font" at index 2 so the two Arabic
+  // settings pair up in the same family-then-size order as the English pair.
+  // Built via buildArabicFontFamilySetting() (an ENUM, not a plain Action) so
+  // the current font's name shows inline in the list -- see that function's
+  // comment for why.
   readerSettings.insert(readerSettings.begin() + 2, buildArabicFontFamilySetting(&arabicFontSystem.registry()));
-  readerSettings.insert(readerSettings.begin() + 4,
+  readerSettings.insert(readerSettings.begin(),
                         SettingInfo::Action(StrId::STR_MANAGE_FONTS, SettingAction::DownloadFonts));
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
 

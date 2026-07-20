@@ -52,9 +52,21 @@ class SnakeActivity final : public Activity {
   // Food
   Point food;
 
-  // Timing
+  // Timing. Classic Snake rule: the snake speeds up as it grows (each food
+  // eaten shortens the step interval), not a fixed cadence for the whole run.
   unsigned long lastStepMs = 0;
-  static constexpr unsigned long STEP_INTERVAL_MS = 300;
+  static constexpr unsigned long STEP_INTERVAL_START_MS = 300;
+  // Floor chosen with the e-ink panel in mind: HalDisplay's own FAST_REFRESH
+  // takes tens of ms, so an interval much below this would have the step
+  // timer firing faster than the panel can actually show moves.
+  static constexpr unsigned long STEP_INTERVAL_MIN_MS = 90;
+  // Interval lost per food eaten; tuned so the floor is reached around
+  // length ~30 (300-90)/10 = 21 food eaten -- a satisfying ramp without
+  // maxing out speed almost immediately.
+  static constexpr unsigned long STEP_INTERVAL_DECAY_MS = 10;
+  // Current step interval, recomputed in spawnFood() (i.e. right after
+  // growing) so speed reflects the snake's length for the rest of that run.
+  unsigned long stepIntervalMs = STEP_INTERVAL_START_MS;
 
   // Score
   int score = 0;

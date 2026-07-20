@@ -203,7 +203,7 @@ void FontDownloadActivity::rebuildVisibleList() {
 }
 
 int FontDownloadActivity::familyIndexFromList(int listIndex) const {
-  const int idx = listIndex - 1 - specialRowCount();  // -1: the pinned filter row
+  const int idx = listIndex - specialRowCount();
   if (idx < 0 || idx >= static_cast<int>(visible_.size())) return -1;
   return visible_[idx];
 }
@@ -259,15 +259,16 @@ int FontDownloadActivity::specialRowCount() const {
   return (showDownloadAllRow() ? 1 : 0) + (showUpdateAllRow() ? 1 : 0);
 }
 
-// Row 0 is always the language-filter toggle; special rows follow it.
-bool FontDownloadActivity::isDownloadAllRow(int index) const { return showDownloadAllRow() && index == 1; }
+// The language tab bar lives above the list now (see showArabic_'s comment),
+// so "Download all" is back to being row 0 when present.
+bool FontDownloadActivity::isDownloadAllRow(int index) const { return showDownloadAllRow() && index == 0; }
 
 bool FontDownloadActivity::isUpdateAllRow(int index) const {
-  return showUpdateAllRow() && index == 1 + (showDownloadAllRow() ? 1 : 0);
+  return showUpdateAllRow() && index == (showDownloadAllRow() ? 1 : 0);
 }
 
 int FontDownloadActivity::listItemCount() const {
-  return families_.empty() ? 0 : 1 + specialRowCount() + static_cast<int>(visible_.size());
+  return families_.empty() ? 0 : specialRowCount() + static_cast<int>(visible_.size());
 }
 
 size_t FontDownloadActivity::totalDownloadSize() const {
@@ -497,19 +498,23 @@ void FontDownloadActivity::loop() {
       requestUpdate();
     });
 
+    // Language tab bar: Left/Right (NavNext/NavPrevious) are otherwise idle on
+    // this screen -- Up/Down (ScrollNext/ScrollPrevious) own the list -- same
+    // free-button reasoning as SettingsActivity's own category tabs, which
+    // switch the same way. Only 2 tabs, so next/prev both just flip.
+    auto toggleLanguage = [this] {
+      {
+        RenderLock lock(*this);
+        showArabic_ = !showArabic_;
+        rebuildVisibleList();
+      }
+      requestUpdate();
+    };
+    buttonNavigator_.onNext(toggleLanguage);
+    buttonNavigator_.onPrevious(toggleLanguage);
+
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       if (!families_.empty()) {
-        if (isFilterRow(selectedIndex_)) {
-          // Toggle the Arabic/English filter; Left/Right can't host this
-          // (they already scroll the list via ButtonNavigator).
-          {
-            RenderLock lock(*this);
-            showArabic_ = !showArabic_;
-            rebuildVisibleList();
-          }
-          requestUpdate();
-          return;
-        }
         if (isDownloadAllRow(selectedIndex_)) {
           currentFileIndex_ = 0;
           currentFileTotal_ = 0;
@@ -598,7 +603,6 @@ void FontDownloadActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FONT_BROWSER));
 
   const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const auto contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const auto centerY = (pageHeight - lineHeight) / 2;
 
   if (state_ == LOADING_MANIFEST) {
@@ -609,15 +613,34 @@ void FontDownloadActivity::render(RenderLock&&) {
       const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     } else {
+      // Language selector: a fixed tab bar (same widget SettingsActivity uses
+      // for its own categories), Arabic first to match the reading direction
+      // it serves. A thin divider below separates it from the list, and a
+      // second divider (only when a "Download/Update all" row is present)
+      // separates that action from the plain font list beneath it -- three
+      // visually distinct sections instead of one flat list.
+      const int tabBarTop = metrics.topPadding + metrics.headerHeight;
+      GUI.drawTabBar(renderer, Rect{0, tabBarTop, pageWidth, metrics.tabBarHeight},
+                     {{tr(STR_ARABIC_FONTS), showArabic_}, {tr(STR_ENGLISH_FONTS), !showArabic_}}, false);
+
+      constexpr int DIVIDER_THICKNESS = 1;
+      constexpr int DIVIDER_MARGIN = 12;  // inset from the screen edges, like the list's own side padding
+      const int listTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
+      renderer.fillRect(DIVIDER_MARGIN, listTop, pageWidth - 2 * DIVIDER_MARGIN, DIVIDER_THICKNESS, true);
+
+      const int listContentTop = listTop + metrics.verticalSpacing;
+      const int rows = specialRowCount();
+      if (rows > 0) {
+        const int specialBottom = listContentTop + rows * metrics.listWithSubtitleRowHeight;
+        renderer.fillRect(DIVIDER_MARGIN, specialBottom, pageWidth - 2 * DIVIDER_MARGIN, DIVIDER_THICKNESS, true);
+      }
+
       GUI.drawList(
           renderer,
-          Rect{0, contentTop, pageWidth, pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing},
+          Rect{0, listContentTop, pageWidth,
+               pageHeight - listContentTop - metrics.buttonHintsHeight - metrics.verticalSpacing},
           listItemCount(), selectedIndex_,
           [this](int index) -> std::string {
-            if (isFilterRow(index)) {
-              return std::string(tr(STR_LANGUAGE)) + ": " +
-                     (showArabic_ ? tr(STR_ARABIC_FONTS) : tr(STR_ENGLISH_FONTS));
-            }
             if (isDownloadAllRow(index)) {
               return std::string(tr(STR_DOWNLOAD_ALL)) + " (" + formatSize(totalDownloadSize()) + ")";
             }
@@ -649,8 +672,7 @@ void FontDownloadActivity::render(RenderLock&&) {
           });
 
       const auto labels = mappedInput.mapLabels(tr(STR_BACK),
-                                                isFilterRow(selectedIndex_)      ? tr(STR_SWITCH)
-                                                : isSelectedFamilyDeletable()    ? tr(STR_DELETE)
+                                                isSelectedFamilyDeletable()      ? tr(STR_DELETE)
                                                 : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
                                                                                  : tr(STR_DOWNLOAD),
                                                 tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);

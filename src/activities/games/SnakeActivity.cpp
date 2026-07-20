@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <algorithm>
+
 #include "GameHighScoresStore.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -52,6 +54,7 @@ void SnakeActivity::initGame() {
   isNewBest = false;
   state = PLAYING;
   lastStepMs = millis();
+  stepIntervalMs = STEP_INTERVAL_START_MS;
 
   spawnFood();
   requestUpdate();
@@ -122,6 +125,13 @@ void SnakeActivity::step() {
   // Check food
   if (newHead.x == food.x && newHead.y == food.y) {
     score += 10;
+    // Classic rule: longer snake = faster snake. snake.size() already
+    // reflects the grown length (insert() above ran before this check).
+    // Clamped at STEP_INTERVAL_MIN_MS so speed can't outrun the panel's own
+    // refresh cadence (see its declaration for why that floor).
+    const unsigned long decay = static_cast<unsigned long>(snake.size()) * STEP_INTERVAL_DECAY_MS;
+    stepIntervalMs = (STEP_INTERVAL_START_MS > decay) ? STEP_INTERVAL_START_MS - decay : STEP_INTERVAL_MIN_MS;
+    stepIntervalMs = std::max(stepIntervalMs, STEP_INTERVAL_MIN_MS);
     spawnFood();
   } else {
     snake.pop_back();
@@ -131,7 +141,7 @@ void SnakeActivity::step() {
   // here, not just a style choice: rendering runs on a separate task woken by
   // a notification that coalesces if it arrives faster than the task can
   // service it (see ActivityManager::requestUpdate/renderTaskLoop). E-ink
-  // full/fast-refresh cycles can take longer than STEP_INTERVAL_MS, and
+  // full/fast-refresh cycles can take longer than stepIntervalMs, and
   // loop()'s timer check is wall-clock-based with no catch-up throttle -- so
   // without blocking here, the snake's logical position could advance two or
   // more cells between two *physically shown* frames, which reads as the
@@ -254,9 +264,10 @@ void SnakeActivity::loop() {
     return;
   }
 
-  // Step timer
+  // Step timer -- stepIntervalMs shrinks as the snake grows (see step()'s
+  // food-eaten branch), so later runs move faster than early ones.
   unsigned long now = millis();
-  if (now - lastStepMs >= STEP_INTERVAL_MS) {
+  if (now - lastStepMs >= stepIntervalMs) {
     lastStepMs = now;
     step();
   }

@@ -55,6 +55,14 @@ class DictionaryStore {
   void scan();
   void ensureScanned();
   const std::vector<DictionaryEntry>& getEntries() const { return entries; }
+  // Gates the reader menu's Look up word / Lookup history rows so they only
+  // appear once a dictionary is actually installed. Scans on first call so
+  // the row is right the first time the drawer opens, without requiring a
+  // prior visit to the Dictionary app.
+  bool hasAnyDictionary() {
+    ensureScanned();
+    return !entries.empty();
+  }
   int getActiveIndex() const { return activeIndex; }
   bool setActiveIndex(int index);
   std::string getActiveLabel() const;

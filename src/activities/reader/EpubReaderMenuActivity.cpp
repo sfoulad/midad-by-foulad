@@ -10,6 +10,7 @@
 
 #include "ArabicFontSystem.h"
 #include "CrossPointSettings.h"
+#include "DictionaryStore.h"
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
@@ -99,6 +100,11 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainI
   if (hasBookmarks) {
     items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
   }
+  // Only offered once a dictionary is actually installed -- otherwise the row
+  // would open straight into DICTIONARY_NONE_SELECTED every time.
+  if (DICTIONARIES.hasAnyDictionary()) {
+    items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_LOOKUP_WORD});
+  }
   items.push_back({MenuAction::FONT_SIZE, StrId::STR_FONT_SIZE_GENERIC});
   if (isArabicBook || !sdFamilies.empty()) {
     // Arabic books always get the row (two built-in families: Naskh, UthmanicHafs);
@@ -118,6 +124,9 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMoreI
   items.reserve(9);
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
+  }
+  if (DICTIONARIES.hasAnyDictionary()) {
+    items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
   }
   items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});

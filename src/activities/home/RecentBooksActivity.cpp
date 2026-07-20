@@ -55,58 +55,54 @@ std::string filenameStem(const std::string& path) {
   return path.substr(start, end - start);
 }
 
-// Hand-drawn pictogram for the Games tile's "cover" -- there's no real cover
-// image (GAMES_PSEUDO_PATH isn't a book), and the generic BookIcon
-// placeholder used for every other missing-cover case would make it look
-// like a broken/unopened book rather than a deliberate feature tile. Reads
-// as "puzzle games" as a set (a coiled maze/snake trailing into a small
-// numbered grid) rather than any one specific game, since four different
-// games now live behind this one tile. Drawn with plain rect/line
-// primitives to match this app's black-on-white line-art icon style (see
-// BookIcon, GUI icons) without needing a new bitmap asset.
-void drawGamesPuzzleIcon(GfxRenderer& renderer, int cx, int cy, int size) {
-  const int left = cx - size / 2;
-  const int top = cy - size / 2;
+// "Cover" for the Games tile -- there's no real cover image (GAMES_PSEUDO_PATH
+// isn't a book), and the generic BookIcon placeholder used for every other
+// missing-cover case made it look like a broken/unopened book rather than a
+// deliberate feature tile (an earlier hand-drawn puzzle pictogram had the same
+// problem: too easy to mistake for clutter at a glance). A solid black tile
+// with the tr(STR_GAMES) label centered reads instantly as its own distinct
+// "book" in the grid, the way a plain black spine stands out on a shelf.
+// Drawn with plain fillRect/drawText primitives, no bitmap asset needed.
+void drawGamesCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight) {
+  renderer.fillRect(cellX, cellY, cellWidth, cellHeight, true);
 
-  // Coil: concentric square rings, upper-left of the box (Snake/Maze motif).
-  // Sized to leave a real gap before the grid below, so the trail between
-  // them has somewhere to be drawn.
-  const int coilSize = size / 2;
-  const int ringThickness = std::max(2, coilSize / 10);
-  const int ringGap = std::max(2, coilSize / 10);
-  int rl = left, rt = top, rw = coilSize, rh = coilSize;
-  for (int ring = 0; ring < 3 && rw > ringThickness * 2 && rh > ringThickness * 2; ring++) {
-    renderer.drawRect(rl, rt, rw, rh, ringThickness, true);
-    rl += ringThickness + ringGap;
-    rt += ringThickness + ringGap;
-    rw -= 2 * (ringThickness + ringGap);
-    rh -= 2 * (ringThickness + ringGap);
+  // Thin white inset frame -- a plain black rectangle reads as "missing
+  // cover"; a bordered one reads as a designed cover. Inset (not flush)
+  // so it doesn't fight the grid's own cell outline drawn over this by the
+  // caller.
+  const int inset = std::max(4, cellWidth / 20);
+  const int frameThickness = std::max(1, cellWidth / 60);
+  renderer.drawRect(cellX + inset, cellY + inset, cellWidth - 2 * inset, cellHeight - 2 * inset, frameThickness,
+                    false);
+
+  // Largest available UI font, bold, white-on-black, centered in the cell.
+  // Falls back a size down if the label would overflow the inset frame (long
+  // translations, e.g. German/French Games labels).
+  const char* label = tr(STR_GAMES);
+  int fontId = UI_12_FONT_ID;
+  int textWidth = renderer.getTextWidth(fontId, label, EpdFontFamily::BOLD);
+  const int maxTextWidth = cellWidth - 4 * inset;
+  if (textWidth > maxTextWidth) {
+    fontId = UI_10_FONT_ID;
+    textWidth = renderer.getTextWidth(fontId, label, EpdFontFamily::BOLD);
   }
-
-  // Grid: 2x2 cells, lower-right of the box (Sudoku motif), two filled to
-  // suggest placed digits.
-  const int gridSize = size * 3 / 10;
-  const int gridLeft = left + size - gridSize;
-  const int gridTop = top + size - gridSize;
-  const int cell = gridSize / 2;
-  renderer.drawRect(gridLeft, gridTop, gridSize, gridSize, 2, true);
-  renderer.drawLine(gridLeft + cell, gridTop, gridLeft + cell, gridTop + gridSize, true);
-  renderer.drawLine(gridLeft, gridTop + cell, gridLeft + gridSize, gridTop + cell, true);
-  const int pad = std::max(2, cell / 5);
-  renderer.fillRect(gridLeft + pad, gridTop + pad, cell - 2 * pad, cell - 2 * pad, true);
-  renderer.fillRect(gridLeft + cell + pad, gridTop + cell + pad, cell - 2 * pad, cell - 2 * pad, true);
-
-  // Dotted trail bouncing from the coil's outer edge down to the grid's
-  // corner, filling the gap left between them above.
-  const int dotSize = std::max(3, size / 20);
-  const int trailStartX = left + coilSize + ringGap;
-  const int trailStartY = top + coilSize / 2;
-  constexpr int dots = 5;
-  for (int i = 1; i < dots; i++) {
-    int px = trailStartX + (gridLeft - trailStartX) * i / dots;
-    int py = trailStartY + (gridTop - trailStartY) * i / dots;
-    renderer.fillRect(px, py, dotSize, dotSize, true);
+  if (textWidth > maxTextWidth) {
+    fontId = SMALL_FONT_ID;
+    textWidth = renderer.getTextWidth(fontId, label, EpdFontFamily::BOLD);
   }
+  const int textX = cellX + (cellWidth - textWidth) / 2;
+  const int textY = cellY + (cellHeight - renderer.getLineHeight(fontId)) / 2;
+  renderer.drawText(fontId, textX, textY, label, false, EpdFontFamily::BOLD);
+
+  // A short rule above and below the label -- breaks up a plain word on a
+  // plain field into something that looks like a designed logotype/badge
+  // rather than a stray caption.
+  const int ruleWidth = std::min(cellWidth - 6 * inset, textWidth + 4 * inset);
+  const int ruleX = cellX + (cellWidth - ruleWidth) / 2;
+  const int ruleGap = std::max(6, cellHeight / 18);
+  renderer.fillRect(ruleX, textY - ruleGap, ruleWidth, frameThickness, false);
+  renderer.fillRect(ruleX, textY + renderer.getLineHeight(fontId) + ruleGap - frameThickness, ruleWidth,
+                    frameThickness, false);
 }
 }  // namespace
 
@@ -624,8 +620,9 @@ void RecentBooksActivity::render(RenderLock&&) {
       }
       renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
       if (!drawn && book.path == GAMES_PSEUDO_PATH) {
-        drawGamesPuzzleIcon(renderer, cellX + geometry.coverWidth / 2, cellY + geometry.coverHeight / 2,
-                                std::min(geometry.coverWidth, geometry.coverHeight) * 3 / 5);
+        // Solid fill repaints over the thin outline drawRect() just drew --
+        // same black, no visible seam -- with the designed cover on top.
+        drawGamesCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
       } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
                           32);

@@ -114,6 +114,12 @@ class EpubReaderActivity final : public Activity {
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu);
+  // Reloads the current page fresh from the section (mirrors the loadPage()
+  // call in render()) as a shared_ptr for DictionaryWordSelectActivity /
+  // DictionaryHistoryActivity, which outlive the menu-confirm call. Also
+  // computes the same oriented margins render() uses. Returns nullptr if the
+  // page can't be loaded (caller should no-op rather than launch with no text).
+  std::shared_ptr<Page> loadCurrentPageForLookup(int& outMarginLeft, int& outMarginTop);
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op

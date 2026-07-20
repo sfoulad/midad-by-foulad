@@ -90,9 +90,13 @@ class FontDownloadActivity : public Activity {
   std::string baseUrl_;
   std::vector<ManifestFamily> families_;
   int selectedIndex_ = 0;
-  // Language filter: row 0 of the list is a pinned toggle (Confirm switches
-  // Arabic <-> English; Left/Right can't be used -- they already scroll the
-  // list). visible_ holds indices into families_ matching the filter.
+  // Language filter: a fixed tab bar above the list (same widget/idiom as
+  // SettingsActivity's own category tabs), switched with Left/Right
+  // (NavNext/NavPrevious) -- free on this screen since the list already owns
+  // Up/Down (ScrollNext/ScrollPrevious) for scrolling. Unlike the list's
+  // rows, the tab bar isn't part of the ButtonNavigator index space at all,
+  // so there's no virtual "row 0" to keep in sync with the real list size.
+  // visible_ holds indices into families_ matching the filter.
   bool showArabic_ = true;
   std::vector<int> visible_;
 
@@ -109,7 +113,6 @@ class FontDownloadActivity : public Activity {
   bool fetchAndParseManifest();
   bool fetchManifestFrom(const char* url);
   void rebuildVisibleList();
-  bool isFilterRow(int index) const { return index == 0; }
   void downloadFamily(ManifestFamily& family);
   void downloadAll();
   void updateAll();

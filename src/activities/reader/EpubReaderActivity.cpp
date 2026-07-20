@@ -22,6 +22,9 @@
 
 #include "ArabicFontSystem.h"
 #include "BookmarkEntry.h"
+#include "DictionaryStore.h"
+#include "DictionaryHistoryActivity.h"
+#include "DictionaryWordSelectActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "EpubReaderBookmarksActivity.h"
@@ -724,6 +727,27 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   }
 }
 
+std::shared_ptr<Page> EpubReaderActivity::loadCurrentPageForLookup(int& outMarginLeft, int& outMarginTop) {
+  if (!section) return nullptr;
+
+  // Same oriented-margin computation render() uses (see its comment for the
+  // per-orientation/status-bar reasoning) -- duplicated rather than shared
+  // because render()'s locals aren't otherwise exposed, and this is a small,
+  // stable block.
+  int marginTop, marginRight, marginBottom, marginLeft;
+  renderer.getOrientedViewableTRBL(&marginTop, &marginRight, &marginBottom, &marginLeft);
+  marginTop += SETTINGS.screenMargin;
+  marginLeft += SETTINGS.screenMargin;
+  marginRight += SETTINGS.screenMargin;
+  const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  marginBottom += std::max(SETTINGS.screenMargin, statusBarHeight);
+  outMarginLeft = marginLeft;
+  outMarginTop = marginTop;
+
+  if (section->currentPage < 0 || section->currentPage >= section->pageCount) return nullptr;
+  return section->loadPage(section->currentPage);
+}
+
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu) {
   auto progressChangeResultHandler = [this](const ActivityResult& result) {
     loadCachedBookmarks();
@@ -863,6 +887,30 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::TOGGLE_BOOKMARK: {
       addBookmark();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::LOOKUP_WORD: {
+      int marginLeft = 0, marginTop = 0;
+      if (auto page = loadCurrentPageForLookup(marginLeft, marginTop)) {
+        startActivityForResult(std::make_unique<DictionaryWordSelectActivity>(
+                                   renderer, mappedInput, std::move(page), SETTINGS.getReaderFontId(), marginLeft,
+                                   marginTop),
+                               [this](const ActivityResult&) { requestUpdate(); });
+      } else {
+        requestUpdate();
+      }
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::LOOKUP_HISTORY: {
+      int marginLeft = 0, marginTop = 0;
+      // History's own definition viewer needs a page purely as render context
+      // (for images-in-background etc.); nullptr is acceptable if the page
+      // fails to load -- history/definitions still work without it.
+      auto page = loadCurrentPageForLookup(marginLeft, marginTop);
+      startActivityForResult(std::make_unique<DictionaryHistoryActivity>(renderer, mappedInput, std::move(page),
+                                                                         SETTINGS.getReaderFontId(), marginLeft,
+                                                                         marginTop),
+                             [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
     default:
