@@ -152,11 +152,16 @@ void DictionaryActivity::loop() {
   const int totalItems = static_cast<int>(entries.size()) + DICTIONARY_ACTION_COUNT;
   const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  // wasPressed, NOT vcodex's wasReleased: our SettingsActivity dispatches on
+  // the Confirm PRESS, so the leftover RELEASE landed here and instantly
+  // opened row 0 ("Look up a word") on entry. All dictionary activities act
+  // on presses so edges can't leak across the chain (same convention as
+  // FontDownloadActivity, launched from the same menu).
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     selectCurrent();
     return;
   }
