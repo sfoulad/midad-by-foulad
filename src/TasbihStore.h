@@ -27,6 +27,13 @@ class TasbihStore : public PersistableStore<TasbihStore> {
 
   friend class PersistableStore<TasbihStore>;
 
+  // Commits todayCount into maxSingleDayCount/yearTotal (same fold rule
+  // ensureCurrentDay() uses for a real day rollover). Shared by
+  // ensureCurrentDay() (day/year change) and resetToday() (manual reset) so
+  // a mid-day reset can't make the live getters' displayed figures drop --
+  // see resetToday()'s own comment for why that matters.
+  void foldTodayIntoAggregates();
+
  public:
   static const char* getFilePath() { return "/.crosspoint/tasbih.json"; }
   void toJson(JsonDocument& doc) const;
@@ -41,12 +48,15 @@ class TasbihStore : public PersistableStore<TasbihStore> {
   void ensureCurrentDay();
 
   void increment();
-  // Manual "start over" -- zeroes today's count immediately (unlike
-  // increment(), a deliberate, infrequent action so saving right away is
-  // fine). Does NOT touch maxSingleDayCount/yearTotal: those only fold in a
-  // day's count at rollover, so whatever the count is when the day actually
-  // ends is what counts toward them -- resetting mid-day simply means the
-  // pre-reset taps aren't carried forward, matching "start fresh" intent.
+  // Manual "start over" -- folds today's count-so-far into
+  // maxSingleDayCount/yearTotal (same as a real day rollover would), then
+  // zeroes today's count. Folding first is required: getMaxSingleDayCount()/
+  // getYearTotal() add the live todayCount on top of the persisted fields, so
+  // simply zeroing it without folding first made those figures visibly drop
+  // the instant the user pressed reset -- read as "reset also reset Best
+  // Day/Total this year" even though the persisted fields themselves never
+  // changed (user report). Folding first means a reset only restarts the
+  // on-screen tally; credit already tapped today is never lost.
   void resetToday();
 
   uint32_t getTodayCount() const { return todayCount; }

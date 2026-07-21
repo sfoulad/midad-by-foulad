@@ -579,6 +579,13 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
       const int underlineX = view == View::READING ? readingX : settingsX;
       renderer.fillRect(underlineX - 2, underlineY, kTabIconSize + 4, kTabUnderlineHeight, true);
     }
+
+    // Vertical divider between the two icon halves, and a horizontal separator
+    // under the whole tab row -- splits Reading/Settings visually and separates
+    // the tab row from the list below it.
+    const int tabRowBottom = tabBarTop + kTabIconSize + kTabPadding * 2;
+    renderer.drawLine(pageWidth / 2, tabBarTop, pageWidth / 2, tabRowBottom, 1, true);
+    renderer.drawLine(0, tabRowBottom, pageWidth - 1, tabRowBottom, 3, true);
   }
 
   const int contentTop = tabBarTop + tabBarHeight;

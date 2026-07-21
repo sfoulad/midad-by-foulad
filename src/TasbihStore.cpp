@@ -21,22 +21,25 @@ bool TasbihStore::fromJson(JsonVariantConst doc) {
   return true;
 }
 
+void TasbihStore::foldTodayIntoAggregates() {
+  // Only if a real (clock-valid) day was actually recorded; todayDayOrdinal==0
+  // means "no day recorded yet" (fresh install), never a phantom day to fold in.
+  if (todayDayOrdinal == 0 || todayCount == 0) return;
+
+  int oldYear = 0;
+  unsigned oldMonth = 0, oldDay = 0;
+  if (TimeUtils::getDateFromDayOrdinal(todayDayOrdinal, oldYear, oldMonth, oldDay) &&
+      static_cast<uint32_t>(oldYear) == yearCovered) {
+    yearTotal += todayCount;
+  }
+  maxSingleDayCount = std::max(maxSingleDayCount, todayCount);
+}
+
 void TasbihStore::ensureCurrentDay() {
   const uint32_t today = TimeUtils::todayOrdinal();
   if (today == 0 || today == todayDayOrdinal) return;
 
-  // Fold the day that just ended into the aggregates -- but only if a real
-  // (clock-valid) day was actually recorded; todayDayOrdinal==0 means "no day
-  // recorded yet" (fresh install), never a phantom day to fold in.
-  if (todayDayOrdinal != 0 && todayCount > 0) {
-    int oldYear = 0;
-    unsigned oldMonth = 0, oldDay = 0;
-    if (TimeUtils::getDateFromDayOrdinal(todayDayOrdinal, oldYear, oldMonth, oldDay) &&
-        static_cast<uint32_t>(oldYear) == yearCovered) {
-      yearTotal += todayCount;
-    }
-    maxSingleDayCount = std::max(maxSingleDayCount, todayCount);
-  }
+  foldTodayIntoAggregates();
 
   todayDayOrdinal = today;
   todayCount = 0;
@@ -63,6 +66,8 @@ void TasbihStore::increment() {
 }
 
 void TasbihStore::resetToday() {
+  // Fold today's count-so-far in before zeroing -- see header comment for why.
+  foldTodayIntoAggregates();
   todayCount = 0;
   saveToFile();
 }

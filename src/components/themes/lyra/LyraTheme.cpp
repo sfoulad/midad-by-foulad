@@ -29,6 +29,7 @@
 #include "components/icons/stats.h"
 #include "components/icons/text24.h"
 #include "components/icons/transfer.h"
+#include "components/icons/transfer24.h"
 #include "components/icons/wifi.h"
 #include "fontIds.h"
 
@@ -56,6 +57,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Book24Icon;
       case UIIcon::File:
         return File24Icon;
+      case UIIcon::Transfer:
+        return Transfer24Icon;
       default:
         return nullptr;
     }
