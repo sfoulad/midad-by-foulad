@@ -307,6 +307,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // extraction step needed, same as Games.
         SettingInfo::Toggle(StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled, "tasbihEnabled",
                             StrId::STR_CAT_APPS),
+        // Stop Watch toggle: pins a "Stop Watch" tile in My Books (see
+        // STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp) that opens the
+        // built-in stopwatch. No extraction step needed, same as Games.
+        SettingInfo::Toggle(StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled, "stopwatchEnabled",
+                            StrId::STR_CAT_APPS),
         // KOReader Sync itself is a device-only ACTION appended in
         // SettingsActivity::rebuildSettingsLists() (web-only, uses
         // KOReaderCredentialStore) -- see the comment further below.

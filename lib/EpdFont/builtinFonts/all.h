@@ -17,6 +17,7 @@
 #include <builtinFonts/bitter_18_italic.h>
 #include <builtinFonts/bitter_18_regular.h>
 #include <builtinFonts/tasbih_32_bold.h>
+#include <builtinFonts/stopwatch_32_bold.h>
 #include <builtinFonts/lexenddeca_12_bold.h>
 #include <builtinFonts/lexenddeca_12_regular.h>
 #include <builtinFonts/lexenddeca_14_bold.h>

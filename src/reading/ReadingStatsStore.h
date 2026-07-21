@@ -75,6 +75,11 @@ class ReadingStatsStore {
   // Aggregate across books, ascending dayOrdinal; rebuilt on load.
   std::vector<ReadingDayStats> readingDays;
   uint16_t maxStreakDays = 0;  // persisted: survives aggregate-day pruning
+  // Persisted, never decremented -- unlike counting `books[].completed` live
+  // (which undercounts/regresses once touchBook()'s MAX_BOOKS eviction drops
+  // an old completed book to make room for a newly-opened one). Incremented
+  // once per book's false->true completed transition in endSession().
+  uint32_t lifetimeBooksFinished = 0;
   SessionState session;
   bool loaded = false;
   bool dirty = false;
@@ -123,7 +128,9 @@ class ReadingStatsStore {
   uint32_t getCurrentStreakDays() const;
   uint32_t getMaxStreakDays() const { return maxStreakDays; }
   uint32_t getBooksStartedCount() const { return static_cast<uint32_t>(books.size()); }
-  uint32_t getBooksFinishedCount() const;
+  // Lifetime count (see lifetimeBooksFinished) -- NOT bounded by MAX_BOOKS and
+  // never decreases, unlike getBooksStartedCount()'s live `books` size.
+  uint32_t getBooksFinishedCount() const { return lifetimeBooksFinished; }
   // Newest day ordinal with any reading; 0 when there is none.
   uint32_t getLatestReadingDayOrdinal() const;
 

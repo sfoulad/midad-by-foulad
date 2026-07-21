@@ -325,6 +325,12 @@ class CrossPointSettings {
   // extraction needed, same as Games.
   uint8_t tasbihEnabled = 0;
 
+  // Settings -> Apps -> Stop Watch: pins a synthetic "Stop Watch" tile in My
+  // Books (see STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp), between
+  // Tasbih and Games, that opens the built-in stopwatch (StopwatchActivity).
+  // No SD extraction or persisted state, same as Games.
+  uint8_t stopwatchEnabled = 0;
+
   // Settings -> Apps -> Debug: gates whether ANY of the rolling SD diagnostic
   // logs (sleep_diag_log.txt, reader_perf_log.txt, game_input_diag_log.txt,
   // cover_diag_log.txt, mybooks_scan_log.txt, opds_error_log.txt,

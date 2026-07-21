@@ -16,6 +16,7 @@
 #include "CrossPointSettings.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
+#include "activities/apps/StopwatchActivity.h"
 #include "activities/apps/TasbihActivity.h"
 #include "activities/games/GamesMenuActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -35,6 +36,9 @@ constexpr const char* GAMES_PSEUDO_PATH = "/Games";
 // Same idea for the Tasbih tile (see SETTINGS.tasbihEnabled) -- opens
 // TasbihActivity instead of the reader.
 constexpr const char* TASBIH_PSEUDO_PATH = "/Tasbih";
+// Same idea for the Stop Watch tile (see SETTINGS.stopwatchEnabled) -- opens
+// StopwatchActivity instead of the reader.
+constexpr const char* STOPWATCH_PSEUDO_PATH = "/StopWatch";
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
@@ -216,11 +220,26 @@ void RecentBooksActivity::loadRecentBooks() {
     recentBooks.insert(recentBooks.begin(), std::move(games));
   }
 
+  // Pinned Stop Watch: synthetic tile (STOPWATCH_PSEUDO_PATH is never a real
+  // SD file), shown between Tasbih and Games -- opens StopwatchActivity
+  // instead of the reader (see loop()'s special-case). Inserted at the front
+  // AFTER Games (above) but BEFORE Tasbih (below), so Tasbih's own front-
+  // insert pushes this down one slot, same technique Games uses against Quran.
+  if (SETTINGS.stopwatchEnabled) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == STOPWATCH_PSEUDO_PATH; }),
+                      recentBooks.end());
+    RecentBook stopwatch;
+    stopwatch.path = STOPWATCH_PSEUDO_PATH;
+    stopwatch.title = tr(STR_STOPWATCH);
+    recentBooks.insert(recentBooks.begin(), std::move(stopwatch));
+  }
+
   // Pinned Tasbih: synthetic tile (TASBIH_PSEUDO_PATH is never a real SD
-  // file), shown between Quran and Games (user request) -- opens
+  // file), shown between Quran and Stop Watch (user request) -- opens
   // TasbihActivity instead of the reader (see loop()'s special-case).
-  // Inserted at the front AFTER Games (above) but BEFORE Quran (below), so
-  // Quran's own unconditional front-insert pushes this to the second slot,
+  // Inserted at the front AFTER Stop Watch (above) but BEFORE Quran (below),
+  // so Quran's own unconditional front-insert pushes this to the second slot,
   // same technique the Games block already uses against Quran.
   if (SETTINGS.tasbihEnabled) {
     recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
@@ -288,6 +307,7 @@ void RecentBooksActivity::loop() {
       recentBooks[selectorIndex].path != QuranBook::PATH &&
       recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -304,6 +324,11 @@ void RecentBooksActivity::loop() {
       }
       if (recentBooks[selectorIndex].path == TASBIH_PSEUDO_PATH) {
         startActivityForResult(std::make_unique<TasbihActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+        return;
+      }
+      if (recentBooks[selectorIndex].path == STOPWATCH_PSEUDO_PATH) {
+        startActivityForResult(std::make_unique<StopwatchActivity>(renderer, mappedInput),
+                               [](const ActivityResult&) {});
         return;
       }
       onSelectBook(recentBooks[selectorIndex].path);
@@ -651,6 +676,8 @@ void RecentBooksActivity::render(RenderLock&&) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GAMES));
       } else if (!drawn && book.path == TASBIH_PSEUDO_PATH) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_TASBIH));
+      } else if (!drawn && book.path == STOPWATCH_PSEUDO_PATH) {
+        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_STOPWATCH));
       } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
                           32);

@@ -37,6 +37,14 @@ python fontconvert.py tasbih_32_bold 32 ../builtinFonts/source/Bitter/Bitter-Bol
   --script none --additional-intervals 0x30,0x39 > ../builtinFonts/tasbih_32_bold.h
 echo "Generated ../builtinFonts/tasbih_32_bold.h"
 
+# Stop Watch counter digits: same idea as the Tasbih font above, but also
+# needs a colon for "MM:SS" -- '0'-':' (0x3A immediately follows '9'=0x39 in
+# ASCII) is one contiguous range, so a single --additional-intervals covers
+# both digits and the separator.
+python fontconvert.py stopwatch_32_bold 32 ../builtinFonts/source/Bitter/Bitter-Bold.ttf --2bit --compress \
+  --script none --additional-intervals 0x30,0x3A > ../builtinFonts/stopwatch_32_bold.h
+echo "Generated ../builtinFonts/stopwatch_32_bold.h"
+
 # Lexend Deca (OFL, google/fonts ofl/lexenddeca): second built-in Latin reading
 # option, a sans engineered against reading-fluency research (visual crowding),
 # same anti-aliasing reasoning as Bitter above. Static instance pinned at

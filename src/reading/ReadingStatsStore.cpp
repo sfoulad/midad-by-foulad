@@ -15,7 +15,10 @@
 namespace {
 constexpr char STATS_PATH[] = "/.crosspoint/reading_stats.bin";
 constexpr char LEGACY_GLOBAL_STATS_PATH[] = "/.crosspoint/global_stats.bin";
-constexpr uint8_t STATS_FILE_VERSION = 1;
+// v2 adds lifetimeBooksFinished (persisted, never-decreasing books-finished
+// count) -- see that field's own comment in ReadingStatsStore.h. A v1 file
+// (or any other mismatch) starts fresh per this store's existing convention.
+constexpr uint8_t STATS_FILE_VERSION = 2;
 // Sanity bounds for a corrupt file (counts read before any allocation).
 constexpr uint16_t MAX_FILE_BOOKS = 512;
 constexpr uint16_t MAX_FILE_DAYS = 4096;
@@ -51,16 +54,24 @@ void ReadingStatsStore::ensureLoaded() {
   }
   uint8_t version = 0;
   serialization::readPod(f, version);
-  if (version != STATS_FILE_VERSION) {
+  // v1 (no lifetimeBooksFinished field) reads fine -- migrated below, once,
+  // rather than discarding all existing streak/per-book history just to add
+  // one counter. Anything else (0, or newer than we understand) starts fresh,
+  // same as this store's existing convention.
+  if (version != 1 && version != STATS_FILE_VERSION) {
     LOG_DBG("RSTAT", "Stats file version mismatch (%u), starting fresh", version);
     return;
   }
   serialization::readPod(f, maxStreakDays);
+  if (version >= 2) {
+    serialization::readPod(f, lifetimeBooksFinished);
+  }
   uint16_t bookCount = 0;
   serialization::readPod(f, bookCount);
   if (bookCount > MAX_FILE_BOOKS) {
     LOG_ERR("RSTAT", "Corrupt stats file (%u books), starting fresh", bookCount);
     maxStreakDays = 0;
+    lifetimeBooksFinished = 0;
     return;
   }
   books.reserve(std::min<size_t>(bookCount, MAX_BOOKS));
@@ -85,6 +96,7 @@ void ReadingStatsStore::ensureLoaded() {
       LOG_ERR("RSTAT", "Corrupt stats file (%u days), starting fresh", dayCount);
       books.clear();
       maxStreakDays = 0;
+      lifetimeBooksFinished = 0;
       return;
     }
     book.readingDays.reserve(std::min<size_t>(dayCount, MAX_DAYS_PER_BOOK));
@@ -101,6 +113,17 @@ void ReadingStatsStore::ensureLoaded() {
     }
   }
   rebuildAggregatedDays();
+  if (version < 2) {
+    // One-time migration: seed from whatever's currently marked completed
+    // among the still-tracked books. Undercounts if a completed book had
+    // already been evicted by touchBook()'s MAX_BOOKS cap before this
+    // upgrade, but that's strictly better than starting over at 0 -- and this
+    // only ever runs once, since save() below persists version 2 with the
+    // real field from then on.
+    lifetimeBooksFinished = static_cast<uint32_t>(
+        std::count_if(books.begin(), books.end(), [](const ReadingBookStats& b) { return b.completed; }));
+    save();
+  }
   LOG_DBG("RSTAT", "Loaded stats: %u books, %u aggregate days", static_cast<unsigned>(books.size()),
           static_cast<unsigned>(readingDays.size()));
 }
@@ -285,6 +308,7 @@ void ReadingStatsStore::endSession(const uint32_t estimatedTimeLeftSeconds, cons
     if (book.completedAt == 0) {
       book.completedAt = book.lastReadAt;
     }
+    ++lifetimeBooksFinished;
     dirty = true;
   }
   session = {};
@@ -351,11 +375,6 @@ uint32_t ReadingStatsStore::getCurrentStreakDays() const {
   return streak;
 }
 
-uint32_t ReadingStatsStore::getBooksFinishedCount() const {
-  return static_cast<uint32_t>(
-      std::count_if(books.begin(), books.end(), [](const ReadingBookStats& book) { return book.completed; }));
-}
-
 uint32_t ReadingStatsStore::getLatestReadingDayOrdinal() const {
   return readingDays.empty() ? 0 : readingDays.back().dayOrdinal;
 }
@@ -409,6 +428,7 @@ bool ReadingStatsStore::save() {
   }
   serialization::writePod(f, STATS_FILE_VERSION);
   serialization::writePod(f, maxStreakDays);
+  serialization::writePod(f, lifetimeBooksFinished);
   const uint16_t bookCount = static_cast<uint16_t>(books.size());
   serialization::writePod(f, bookCount);
   for (const auto& book : books) {

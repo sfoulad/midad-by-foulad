@@ -18,6 +18,7 @@
 #include "CrossPointState.h"
 #include "CuratedAyahs.h"
 #include "QuranBook.h"
+#include "ReaderTitles.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "activities/stats/AppMetricCard.h"
@@ -50,29 +51,60 @@ void drawGoalRing(const GfxRenderer& renderer, int cx, int cy, int outerRadius, 
     return;
   }
 
-  constexpr int kThickness = 4;
+  // Bold "sport ring" band -- thick relative to the radius (Apple/Garmin-style
+  // activity ring), not a thin outline. Track is a dithered-gray band at the
+  // SAME thickness as the black progress arc, so progress reads as "filling
+  // in" the ring rather than a thin needle floating over a hairline circle.
+  constexpr int kThickness = 7;
   const int innerRadius = std::max(outerRadius - kThickness, 0);
   const int outerSq = outerRadius * outerRadius;
   const int innerSq = innerRadius * innerRadius;
+  const float progressSweepDeg = clamped * 3.6f;
 
-  // Track: a full thin ring outline, drawn via the existing quadrant-annulus
-  // primitive (called once per quadrant to complete the circle).
-  for (int xDir = -1; xDir <= 1; xDir += 2) {
-    for (int yDir = -1; yDir <= 1; yDir += 2) {
-      renderer.drawArc(outerRadius, cx, cy, xDir, yDir, 1, true);
-    }
-  }
-  if (clamped <= 0) return;
-
-  // Progress: fill the annulus wedge from 12 o'clock clockwise for `clamped`
-  // percent of the full circle.
   for (int dy = -outerRadius; dy <= outerRadius; ++dy) {
     for (int dx = -outerRadius; dx <= outerRadius; ++dx) {
       const int distSq = dx * dx + dy * dy;
       if (distSq > outerSq || distSq < innerSq) continue;
+      const int px = cx + dx;
+      const int py = cy + dy;
       float angleDeg = std::atan2(static_cast<float>(dx), static_cast<float>(-dy)) * 180.0f / static_cast<float>(M_PI);
       if (angleDeg < 0) angleDeg += 360.0f;
-      if (angleDeg <= clamped * 3.6f) renderer.drawPixel(cx + dx, cy + dy, true);
+      if (angleDeg <= progressSweepDeg) {
+        renderer.drawPixel(px, py, true);
+      } else if ((px + py) % 2 == 0) {
+        renderer.drawPixel(px, py, true);
+      }
+    }
+  }
+}
+
+// Small filled 5-point star for the Reader Title badge. No star bitmap exists
+// in this theme's icon set (see components/icons/) and the custom-subset
+// fonts don't carry the Unicode star glyph either, so it's plotted directly:
+// 10 alternating outer/inner vertices, filled via standard ray-casting
+// point-in-polygon over the small bounding box (cheap at badge-icon size).
+void drawStar(const GfxRenderer& renderer, int cx, int cy, int outerRadius) {
+  constexpr int kPoints = 5;
+  constexpr int kVertexCount = kPoints * 2;
+  const float innerRadius = outerRadius * 0.4f;
+  float vx[kVertexCount];
+  float vy[kVertexCount];
+  for (int i = 0; i < kVertexCount; ++i) {
+    const float angle = -static_cast<float>(M_PI) / 2.0f + i * static_cast<float>(M_PI) / kPoints;
+    const float r = (i % 2 == 0) ? static_cast<float>(outerRadius) : innerRadius;
+    vx[i] = cx + r * std::cos(angle);
+    vy[i] = cy + r * std::sin(angle);
+  }
+  for (int py = cy - outerRadius; py <= cy + outerRadius; ++py) {
+    for (int px = cx - outerRadius; px <= cx + outerRadius; ++px) {
+      bool inside = false;
+      for (int i = 0, j = kVertexCount - 1; i < kVertexCount; j = i++) {
+        if (((vy[i] > py) != (vy[j] > py)) &&
+            (static_cast<float>(px) < (vx[j] - vx[i]) * (py - vy[i]) / (vy[j] - vy[i]) + vx[i])) {
+          inside = !inside;
+        }
+      }
+      if (inside) renderer.drawPixel(px, py, true);
     }
   }
 }
@@ -598,13 +630,46 @@ void SleepActivity::renderDashboardSleepScreen() const {
   // a glanceable visual here instead of "X / Y" text.
   {
     const Rect streakRect = cardRect(0, 1);
-    constexpr int kRingRadius = 18;
+    constexpr int kRingRadius = 22;
     const int ringCx = streakRect.x + streakRect.width - kRingRadius - 12;
-    const int ringCy = streakRect.y + kRingRadius + 10;
+    const int ringCy = streakRect.y + streakRect.height / 2;
     const uint64_t goalMs = SETTINGS.getDailyGoalMs();
     const int goalPercent =
         goalMs > 0 ? static_cast<int>(READING_STATS.getTodayReadingMs() * 100ULL / goalMs) : 0;
     drawGoalRing(renderer, ringCx, ringCy, kRingRadius, goalPercent);
+  }
+
+  // Reader Title badge: a gamified rank (star + title name + level number)
+  // driven purely by READING_STATS.getBooksFinishedCount() against the fixed
+  // tier table in ReaderTitles.h -- same dithered-card language as the stat
+  // grid above, so it reads as part of the same stats block, not a separate
+  // widget.
+  {
+    const int badgeTop = gridTop + 2 * kCardHeight + kCardGap + 20;
+    constexpr int kBadgeHeight = 56;
+    renderer.fillRectDither(sidePadding, badgeTop, gridWidth, kBadgeHeight, Color::LightGray);
+    renderer.drawRect(sidePadding, badgeTop, gridWidth, kBadgeHeight);
+
+    const auto& titleEntry = getReaderTitleForBooksFinished(READING_STATS.getBooksFinishedCount());
+
+    constexpr int kStarRadius = 14;
+    const int starCx = sidePadding + 24;
+    const int starCy = badgeTop + kBadgeHeight / 2;
+    drawStar(renderer, starCx, starCy, kStarRadius);
+
+    char levelBuf[16];
+    snprintf(levelBuf, sizeof(levelBuf), tr(STR_READER_LEVEL_FORMAT), titleEntry.level);
+    const int levelWidth = renderer.getTextWidth(SMALL_FONT_ID, levelBuf);
+    const int levelX = sidePadding + gridWidth - levelWidth - 14;
+    renderer.drawText(SMALL_FONT_ID, levelX, badgeTop + (kBadgeHeight - renderer.getLineHeight(SMALL_FONT_ID)) / 2,
+                      levelBuf);
+
+    const int titleX = starCx + kStarRadius + 14;
+    const int titleMaxWidth = levelX - titleX - 10;
+    const std::string shownTitle =
+        renderer.truncatedText(UI_12_FONT_ID, I18N.get(titleEntry.titleId), titleMaxWidth, EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, titleX, badgeTop + (kBadgeHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2,
+                      shownTitle.c_str(), true, EpdFontFamily::BOLD);
   }
 
   // Footer: battery + (RTC devices only) current time -- a black pill sized to
