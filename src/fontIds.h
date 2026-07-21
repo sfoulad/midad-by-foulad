@@ -5,6 +5,7 @@
 #define BITTER_14_FONT_ID (-1517100595)
 #define BITTER_16_FONT_ID (1150157103)
 #define BITTER_18_FONT_ID (-1176394998)
+#define TASBIH_32_FONT_ID (-1832077162)
 #define LEXENDDECA_12_FONT_ID (-1776708632)
 #define LEXENDDECA_14_FONT_ID (352373379)
 #define LEXENDDECA_16_FONT_ID (518536303)
@@ -37,6 +38,7 @@ static_assert(BITTER_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_16_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(BITTER_18_FONT_ID != 0, "Font ID collision with sentinel");
+static_assert(TASBIH_32_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_12_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_14_FONT_ID != 0, "Font ID collision with sentinel");
 static_assert(LEXENDDECA_16_FONT_ID != 0, "Font ID collision with sentinel");

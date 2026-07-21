@@ -54,16 +54,15 @@ void TasbihActivity::render(RenderLock&&) {
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_TASBIH));
 
-  // Big centered count -- BITTER_18_FONT_ID is the largest font this firmware
-  // bundles with full ASCII digit coverage (the only larger built-in,
-  // SURAHBANNER_24_FONT_ID, only covers a private-use glyph range for surah
-  // banners, not real digits).
-  constexpr int kNumberFontId = BITTER_18_FONT_ID;
+  // Big centered count -- TASBIH_32_FONT_ID is a dedicated digit-only 32pt
+  // font (see convert-builtin-fonts.sh), bigger than any reader font size;
+  // registered as a single "regular" style (the font itself is bold weight).
+  constexpr int kNumberFontId = TASBIH_32_FONT_ID;
   char countBuf[12];
   snprintf(countBuf, sizeof(countBuf), "%lu", static_cast<unsigned long>(TASBIH.getTodayCount()));
-  const int numberWidth = renderer.getTextWidth(kNumberFontId, countBuf, EpdFontFamily::BOLD);
+  const int numberWidth = renderer.getTextWidth(kNumberFontId, countBuf);
   const int numberY = pageHeight / 2 - renderer.getLineHeight(kNumberFontId) / 2 - metrics.buttonHintsHeight / 2;
-  renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberY, countBuf, true, EpdFontFamily::BOLD);
+  renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberY, countBuf, true);
 
   // Footer stat cards: Top Tasbih (all-time best day) | Total this year.
   constexpr int kCardHeight = 72;

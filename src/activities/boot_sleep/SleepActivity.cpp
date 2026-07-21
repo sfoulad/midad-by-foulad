@@ -389,7 +389,10 @@ void SleepActivity::renderDashboardSleepScreen() const {
     // CuratedAyahs is curated to short surahs that fit in 2-3 lines; capped at
     // 3 as a safety margin so the card can never crowd the stat cards below.
     const auto ayahLines = renderer.wrappedText(UTHMANICHAFS_16_FONT_ID, entry.text, ayahWidth, /*maxLines=*/3);
-    const int refLineHeight = renderer.getLineHeight(UTHMANICHAFS_12_FONT_ID);
+    // Tajawal 8pt (not Uthmanic Hafs 12pt, the next size down from the ayah
+    // body) -- 12pt only reads as "one step smaller"; 8pt reads as a genuinely
+    // small caption the way a citation under a pull-quote should.
+    const int refLineHeight = renderer.getLineHeight(TAJAWAL_8_FONT_ID);
 
     // Solid black card, white text -- reads as a distinct "screensaver" block
     // rather than more body copy, and a small reference under a larger ayah
@@ -408,8 +411,8 @@ void SleepActivity::renderDashboardSleepScreen() const {
       ayahY += ayahLineHeight + 2;
     }
     ayahY += kCardGapBeforeRef;
-    const int refWidth = renderer.getTextWidth(UTHMANICHAFS_12_FONT_ID, entry.reference);
-    renderer.drawText(UTHMANICHAFS_12_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, false);
+    const int refWidth = renderer.getTextWidth(TAJAWAL_8_FONT_ID, entry.reference);
+    renderer.drawText(TAJAWAL_8_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, false);
     ayahBlockBottom = cardHeight;
   }
 

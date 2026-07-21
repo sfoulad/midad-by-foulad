@@ -80,6 +80,12 @@ EpdFont bitter18BoldItalicFont(&bitter_18_bolditalic);
 EpdFontFamily bitter18FontFamily(&bitter18RegularFont, &bitter18BoldFont, &bitter18ItalicFont,
                                  &bitter18BoldItalicFont);
 
+// Digit-only 32pt font for the Tasbih app's counter -- none of the reader
+// sizes above go this large. Registered as a single "regular" style; the
+// font file itself is bold weight (see convert-builtin-fonts.sh).
+EpdFont tasbih32BoldFont(&tasbih_32_bold);
+EpdFontFamily tasbih32FontFamily(&tasbih32BoldFont);
+
 EpdFont lexenddeca12RegularFont(&lexenddeca_12_regular);
 EpdFont lexenddeca12BoldFont(&lexenddeca_12_bold);
 EpdFontFamily lexenddeca12FontFamily(&lexenddeca12RegularFont, &lexenddeca12BoldFont);
@@ -433,6 +439,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
   renderer.insertFont(BITTER_18_FONT_ID, bitter18FontFamily);
+  renderer.insertFont(TASBIH_32_FONT_ID, tasbih32FontFamily);
   renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
   renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
   renderer.insertFont(LEXENDDECA_18_FONT_ID, lexenddeca18FontFamily);

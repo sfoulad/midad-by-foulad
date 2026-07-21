@@ -22,6 +22,7 @@ echo ""
 for size in 12 14 16 18; do
   echo "#define BITTER_${size}_FONT_ID ($(id_for ./bitter_${size}_regular.h ./bitter_${size}_bold.h ./bitter_${size}_bolditalic.h ./bitter_${size}_italic.h))"
 done
+echo "#define TASBIH_32_FONT_ID ($(id_for ./tasbih_32_bold.h))"
 for size in 12 14 16 18; do
   echo "#define LEXENDDECA_${size}_FONT_ID ($(id_for ./lexenddeca_${size}_regular.h ./lexenddeca_${size}_bold.h))"
 done

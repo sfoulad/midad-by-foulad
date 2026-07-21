@@ -28,6 +28,15 @@ for size in ${BITTER_FONT_SIZES[@]}; do
   done
 done
 
+# Tasbih counter digits: a genuinely large (32pt) display size for the Tasbih
+# app's counter, which none of the reader font sizes above go up to. Digit-
+# only (--script none --additional-intervals 0x30,0x39 = '0'-'9') keeps this
+# cheap in flash (10 glyphs, ~1.3KB compressed) despite the large point size --
+# reuses the same Bitter-Bold source as the reading font above.
+python fontconvert.py tasbih_32_bold 32 ../builtinFonts/source/Bitter/Bitter-Bold.ttf --2bit --compress \
+  --script none --additional-intervals 0x30,0x39 > ../builtinFonts/tasbih_32_bold.h
+echo "Generated ../builtinFonts/tasbih_32_bold.h"
+
 # Lexend Deca (OFL, google/fonts ofl/lexenddeca): second built-in Latin reading
 # option, a sans engineered against reading-fluency research (visual crowding),
 # same anti-aliasing reasoning as Bitter above. Static instance pinned at
