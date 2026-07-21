@@ -274,7 +274,11 @@ class GfxRenderer {
   // Screen ops
   int getScreenWidth() const;
   int getScreenHeight() const;
-  void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH) const;
+  // forceCleanBaseOnHalf: see HalDisplay::displayBuffer's own comment. Defaults
+  // to true (existing behavior); the reader's periodic ghost-cleanup refresh
+  // is the one caller that passes false.
+  void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH,
+                     bool forceCleanBaseOnHalf = true) const;
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   // void displayWindow(int x, int y, int width, int height) const;
   void invertScreen() const;

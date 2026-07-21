@@ -41,6 +41,13 @@ class TasbihStore : public PersistableStore<TasbihStore> {
   void ensureCurrentDay();
 
   void increment();
+  // Manual "start over" -- zeroes today's count immediately (unlike
+  // increment(), a deliberate, infrequent action so saving right away is
+  // fine). Does NOT touch maxSingleDayCount/yearTotal: those only fold in a
+  // day's count at rollover, so whatever the count is when the day actually
+  // ends is what counts toward them -- resetting mid-day simply means the
+  // pre-reset taps aren't carried forward, matching "start fresh" intent.
+  void resetToday();
 
   uint32_t getTodayCount() const { return todayCount; }
   uint32_t getMaxSingleDayCount() const;

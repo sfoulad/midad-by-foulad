@@ -443,25 +443,18 @@ void EpubReaderMenuActivity::loop() {
   // one, and Confirm there cycles tabs the same way Settings' Confirm-on-tab
   // does. Not offered while browsing Chapters -- that's a drill-down from
   // Reading, not a third tab; Back below returns it to Reading instead.
+  //
+  // Deliberately NOT also bound to Left/Right: those are legitimate list-
+  // scroll shortcuts too (MappedInputManager::Button::ScrollNext/Previous map
+  // the front Left/Right buttons to the same next/previous-row action as the
+  // physical Up/Down side buttons -- "front buttons doubling as shortcuts for
+  // the side Up/Down buttons"). An earlier version of this code intercepted
+  // Left/Right for tab-switching before they reached buttonNavigator below,
+  // which silently broke list scrolling via the front buttons entirely (user
+  // report: "no matter which button I press, it never scrolls, it just
+  // switches tabs").
   const bool tabsActive = view != View::CHAPTERS;
   const bool onTabRow = tabsActive && activeIndex() == -1;
-
-  // Left/Right also switch tabs directly, spatially matching their left/right
-  // position in the bar -- lands on the new tab's row (-1) either way.
-  if (tabsActive) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Left) && view != View::READING) {
-      view = View::READING;
-      selectedIndex = -1;
-      requestUpdate();
-      return;
-    }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Right) && view != View::SETTINGS_TAB) {
-      view = View::SETTINGS_TAB;
-      settingsSelectedIndex = -1;
-      requestUpdate();
-      return;
-    }
-  }
 
   const int itemCount = activeItemCount();
 
@@ -571,9 +564,9 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
     const int settingsX = pageWidth * 3 / 4 - kTabIconSize / 2;
     const int iconY = tabBarTop + (onTabRow ? kTabPadding : 0);
     // Focus resting on the tab row itself (index -1, reached by scrolling up
-    // past the first list row or via Left/Right) gets a filled pill behind the
-    // active icon, mirroring BaseTheme::drawTabBar's row-focused inversion;
-    // otherwise the active tab just gets a plain underline.
+    // past the first list row) gets a filled pill behind the active icon,
+    // mirroring BaseTheme::drawTabBar's row-focused inversion; otherwise the
+    // active tab just gets a plain underline.
     if (onTabRow) {
       const int pillX = (view == View::READING ? readingX : settingsX) - kTabPadding;
       renderer.fillRoundedRect(pillX, tabBarTop, kTabIconSize + kTabPadding * 2, kTabIconSize + kTabPadding * 2,

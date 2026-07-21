@@ -385,14 +385,31 @@ void SleepActivity::renderDashboardSleepScreen() const {
   if (QuranBook::isPinned()) {
     const auto& entry = CuratedAyahs::kEntries[random(static_cast<long>(CuratedAyahs::kCount))];
     const int ayahWidth = pageWidth - sidePadding * 2;
-    const int ayahLineHeight = renderer.getLineHeight(UTHMANICHAFS_16_FONT_ID);
+    // GfxRenderer::drawText resolves Arabic text through resolveArabicFontId(),
+    // NOT the literal fontId passed in -- any fontId without an explicit
+    // per-ID override (only SMALL_FONT_ID/UI_10/UI_12 have one, registered in
+    // ArabicFontSystem::applyArabicMappings for guaranteed-small UI chrome)
+    // silently falls through to the single global Arabic READING font
+    // instead. Passing UTHMANICHAFS_16_FONT_ID/TAJAWAL_8_FONT_ID directly
+    // (the previous version of this code) was therefore ignored for both
+    // lines -- both actually rendered in whatever the user's current Arabic
+    // reading font/size is, while the card height was computed from
+    // UTHMANICHAFS_16/TAJAWAL_8's OWN (unused) metrics, so the real ink
+    // didn't match the computed box and got clipped. getLineHeight() doesn't
+    // do this resolution itself, so it must be done explicitly before
+    // measuring; getTextWidth/wrappedText/drawText resolve internally and are
+    // fine to call with the original nominal id.
+    const int ayahFontId = renderer.getResolvedArabicFontId(UTHMANICHAFS_16_FONT_ID);
+    const int ayahLineHeight = renderer.getLineHeight(ayahFontId);
     // CuratedAyahs is curated to short surahs that fit in 2-3 lines; capped at
     // 3 as a safety margin so the card can never crowd the stat cards below.
     const auto ayahLines = renderer.wrappedText(UTHMANICHAFS_16_FONT_ID, entry.text, ayahWidth, /*maxLines=*/3);
-    // Tajawal 8pt (not Uthmanic Hafs 12pt, the next size down from the ayah
-    // body) -- 12pt only reads as "one step smaller"; 8pt reads as a genuinely
-    // small caption the way a citation under a pull-quote should.
-    const int refLineHeight = renderer.getLineHeight(TAJAWAL_8_FONT_ID);
+    // SMALL_FONT_ID is the one font id that DOES have a guaranteed Arabic
+    // override (-> TAJAWAL_8_FONT_ID, see applyArabicMappings) -- reusing it
+    // here (rather than requesting TAJAWAL_8_FONT_ID directly, which has no
+    // override registered FOR ITSELF and would hit the exact same fallback
+    // bug as the ayah body font) is what actually renders small.
+    const int refLineHeight = renderer.getLineHeight(renderer.getResolvedArabicFontId(SMALL_FONT_ID));
 
     // Solid black card, white text -- reads as a distinct "screensaver" block
     // rather than more body copy, and a small reference under a larger ayah
@@ -411,8 +428,8 @@ void SleepActivity::renderDashboardSleepScreen() const {
       ayahY += ayahLineHeight + 2;
     }
     ayahY += kCardGapBeforeRef;
-    const int refWidth = renderer.getTextWidth(TAJAWAL_8_FONT_ID, entry.reference);
-    renderer.drawText(TAJAWAL_8_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, false);
+    const int refWidth = renderer.getTextWidth(SMALL_FONT_ID, entry.reference);
+    renderer.drawText(SMALL_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, false);
     ayahBlockBottom = cardHeight;
   }
 

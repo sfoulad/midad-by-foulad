@@ -8,6 +8,7 @@
 #include "MappedInputManager.h"
 #include "TasbihStore.h"
 #include "activities/stats/AppMetricCard.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -36,6 +37,23 @@ void TasbihActivity::loop() {
       mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     TASBIH.increment();
     requestUpdate();
+    return;
+  }
+
+  // Confirm is otherwise unused in this activity (Up/Down already own
+  // counting) -- reuse it for "start over", the one thing users asked for
+  // that a physical tasbih doesn't need (its beads reset by sliding them back
+  // by hand). Confirmed via a popup, not a bare press/long-press, since this
+  // discards today's progress.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    startActivityForResult(
+        std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_TASBIH_RESET_TITLE),
+                                               tr(STR_TASBIH_RESET_BODY)),
+        [this](const ActivityResult& result) {
+          if (result.isCancelled) return;
+          TASBIH.resetToday();
+          requestUpdate();
+        });
     return;
   }
 
@@ -80,7 +98,8 @@ void TasbihActivity::render(RenderLock&&) {
   AppMetricCard::draw(renderer, Rect{sidePadding + cardWidth + kCardGap, cardTop, cardWidth, kCardHeight},
                       tr(STR_TASBIH_YEAR_TOTAL), yearBuf);
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+  const auto labels =
+      mappedInput.mapLabels(tr(STR_BACK), tr(STR_RESET), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

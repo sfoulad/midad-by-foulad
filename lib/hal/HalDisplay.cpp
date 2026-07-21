@@ -57,8 +57,8 @@ EInkDisplay::RefreshMode convertRefreshMode(HalDisplay::RefreshMode mode) {
   }
 }
 
-void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen) {
-  if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH) {
+void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen, bool forceCleanBaseOnHalf) {
+  if (gpio.deviceIsX3() && mode == RefreshMode::HALF_REFRESH && forceCleanBaseOnHalf) {
     einkDisplay.requestResync(1);
   }
 

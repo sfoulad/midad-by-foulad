@@ -38,7 +38,20 @@ class HalDisplay {
   void drawImageTransparent(const uint8_t* imageData, uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                             bool fromProgmem = false) const;
 
-  void displayBuffer(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
+  // forceCleanBaseOnHalf: on X3, HALF_REFRESH normally also forces a resync
+  // (requestResync) so the panel starts from a guaranteed-clean base -- needed
+  // when the caller is clearing arbitrary prior content (e.g. before a
+  // grayscale/image render, see displayGrayscaleBase's own comment). That
+  // resync makes the SDK driver chain a forced-full-sync pass plus its
+  // post-condition and settle passes on top of the requested HALF_REFRESH --
+  // three physical panel waveforms instead of one (~3.4s vs ~800ms measured
+  // on-device). The reader's own periodic ghost-cleanup HALF_REFRESH (every
+  // getRefreshFrequency() pages) doesn't need that guarantee: it's already a
+  // full-pixel scrub of the CURRENT page, not a base-clearing operation, so it
+  // passes false here (see ReaderUtils::displayWithRefreshCycle). Defaults to
+  // true so every other existing call site's behavior is unchanged.
+  void displayBuffer(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false,
+                     bool forceCleanBaseOnHalf = true);
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
 
   // Power management

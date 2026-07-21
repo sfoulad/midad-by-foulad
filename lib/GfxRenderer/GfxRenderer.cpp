@@ -2415,7 +2415,7 @@ void GfxRenderer::invertScreen() const {
   }
 }
 
-void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const {
+void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
   // Dark mode inverts only for the panel push, then restores -- everything
@@ -2423,7 +2423,7 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const
   // setDarkMode). Two 48KB XOR passes ~= 1-2ms at 160MHz, negligible next to
   // the e-ink refresh itself. Same wrap on every other pixel-push below.
   if (darkMode_) invertScreen();
-  display.displayBuffer(refreshMode, fadingFix);
+  display.displayBuffer(refreshMode, fadingFix, forceCleanBaseOnHalf);
   if (darkMode_) invertScreen();
 }
 

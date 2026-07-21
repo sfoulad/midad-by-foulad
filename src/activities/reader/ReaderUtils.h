@@ -61,7 +61,12 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
 
 inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {
   if (pagesUntilFullRefresh <= 1) {
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    // forceCleanBaseOnHalf=false: this is a periodic full-pixel scrub of the
+    // page already on screen, not a base-clearing operation -- the forced
+    // resync it would otherwise trigger on X3 chains 2 extra panel waveform
+    // passes on top of this one (~3.4s vs ~800ms measured on-device) for no
+    // visual benefit here. See HalDisplay::displayBuffer's comment.
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH, /*forceCleanBaseOnHalf=*/false);
     pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
   } else {
     renderer.displayBuffer();

@@ -62,6 +62,11 @@ void TasbihStore::increment() {
   // immediately on a day/year rollover, since those are rare (~daily).
 }
 
+void TasbihStore::resetToday() {
+  todayCount = 0;
+  saveToFile();
+}
+
 uint32_t TasbihStore::getMaxSingleDayCount() const { return std::max(maxSingleDayCount, todayCount); }
 
 uint32_t TasbihStore::getYearTotal() const {
