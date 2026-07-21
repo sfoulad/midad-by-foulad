@@ -539,7 +539,9 @@ void SleepActivity::renderDashboardSleepScreen() const {
   cardAt(1, 0, tr(STR_READING_TIME), totalBuf);
   cardAt(1, 1, tr(STR_BOOKS_FINISHED), finishedBuf);
 
-  // Footer: battery + (RTC devices only) current time.
+  // Footer: battery + (RTC devices only) current time -- a black pill sized to
+  // just the text (not a full-width bar) with white text, flush against the
+  // very bottom edge of the screen rather than floating with a margin.
   {
     char timeBuf[16] = "";
     halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockUtcOffsetQ, SETTINGS.clockFormat == 1);
@@ -549,8 +551,15 @@ void SleepActivity::renderDashboardSleepScreen() const {
     } else {
       snprintf(footer, sizeof(footer), "%s: %u%%", tr(STR_BATTERY), powerManager.getBatteryPercentage());
     }
-    const int footerY = renderer.getScreenHeight() - renderer.getLineHeight(UI_10_FONT_ID) - 16;
-    renderer.drawCenteredText(UI_10_FONT_ID, footerY, footer);
+    constexpr int kPillPaddingX = 14;
+    constexpr int kPillPaddingY = 8;
+    const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, footer);
+    const int pillWidth = textWidth + kPillPaddingX * 2;
+    const int pillHeight = renderer.getLineHeight(UI_10_FONT_ID) + kPillPaddingY * 2;
+    const int pillX = (pageWidth - pillWidth) / 2;
+    const int pillY = renderer.getScreenHeight() - pillHeight;
+    renderer.fillRect(pillX, pillY, pillWidth, pillHeight, true);
+    renderer.drawCenteredText(UI_10_FONT_ID, pillY + kPillPaddingY, footer, false);
   }
 
   renderer.displayBuffer(HalDisplay::FULL_REFRESH);

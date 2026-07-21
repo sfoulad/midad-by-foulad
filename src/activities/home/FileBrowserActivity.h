@@ -38,6 +38,14 @@ class FileBrowserActivity final : public Activity {
   void loadFiles();
   size_t findEntry(const std::string& name) const;
 
+  // Synthetic "File Transfer" row shown ABOVE the real file/folder listing,
+  // only at the SD card root in normal browsing (not the firmware picker,
+  // and not once you've navigated into a subfolder). Kept out of `files`
+  // (real filesystem entries) rather than prepended into it, so delete/
+  // navigate logic never has to special-case a fake entry -- callers instead
+  // add 1 to indices into `files` (see hasTransferRow()'s call sites).
+  bool hasTransferRow() const { return mode == Mode::Books && basepath == "/"; }
+
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
                                Mode mode = Mode::Books)

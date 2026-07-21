@@ -10,6 +10,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "SilentRestart.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -91,7 +92,7 @@ void FileBrowserActivity::onEnter() {
 
     const auto pos = oldPath.find_last_of('/');
     const std::string fileName = oldPath.substr(pos + 1);
-    selectorIndex = findEntry(fileName);
+    selectorIndex = findEntry(fileName) + (hasTransferRow() ? 1 : 0);
   } else {
     loadFiles();
   }
@@ -211,9 +212,16 @@ void FileBrowserActivity::loop() {
       lockNextConfirmRelease = false;
       return;
     }
-    if (files.empty()) return;
 
-    const std::string& entry = files[selectorIndex];
+    const bool transferRow = hasTransferRow();
+    if (transferRow && selectorIndex == 0) {
+      silentRestartToFileTransfer();
+      return;
+    }
+    const size_t fileIndex = transferRow ? selectorIndex - 1 : selectorIndex;
+    if (files.empty() || fileIndex >= files.size()) return;
+
+    const std::string& entry = files[fileIndex];
     bool isDirectory = (entry.back() == '/');
 
     // Firmware picker: select file -> return path; navigate into directories normally.
@@ -239,11 +247,12 @@ void FileBrowserActivity::loop() {
           if (removeDirFile(fullPath)) {
             LOG_DBG("FileBrowser", "Deleted successfully");
             loadFiles();
-            if (files.empty()) {
+            const size_t totalRows = files.size() + (hasTransferRow() ? 1 : 0);
+            if (totalRows == 0) {
               selectorIndex = 0;
-            } else if (selectorIndex >= files.size()) {
+            } else if (selectorIndex >= totalRows) {
               // Move selection to the new "last" item
-              selectorIndex = files.size() - 1;
+              selectorIndex = totalRows - 1;
             }
 
             requestUpdate(true);
@@ -287,7 +296,8 @@ void FileBrowserActivity::loop() {
 
         const auto pos = oldPath.find_last_of('/');
         const std::string dirName = oldPath.substr(pos + 1) + "/";
-        selectorIndex = findEntry(dirName);
+        // +1 if landing back at root re-introduces the transfer row above the list.
+        selectorIndex = findEntry(dirName) + (hasTransferRow() ? 1 : 0);
 
         requestUpdate();
       } else if (mode == Mode::PickFirmware) {
@@ -302,7 +312,7 @@ void FileBrowserActivity::loop() {
     }
   }
 
-  int listSize = static_cast<int>(files.size());
+  int listSize = static_cast<int>(files.size()) + (hasTransferRow() ? 1 : 0);
   buttonNavigator.onScrollNextRelease([this, listSize] {
     selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
@@ -362,15 +372,37 @@ void FileBrowserActivity::render(RenderLock&&) {
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight =
       pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing - pathReserved;
-  if (files.empty()) {
+
+  // "File Transfer" row above the real listing, root only (see hasTransferRow's
+  // comment) -- kept out of `files`, so every index into `files` below is
+  // offset by 1 while it's showing.
+  const bool transferRow = hasTransferRow();
+  const int totalItems = static_cast<int>(files.size()) + (transferRow ? 1 : 0);
+  if (totalItems == 0) {
     const char* emptyMsg = (mode == Mode::PickFirmware) ? tr(STR_NO_BIN_FILES) : tr(STR_NO_FILES_FOUND);
     renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, contentTop + 20, emptyMsg);
   } else {
     GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight}, files.size(), selectorIndex,
-        [this](int index) { return getFileName(files[index]); }, nullptr,
-        [this](int index) { return UITheme::getFileIcon(files[index]); },
-        [this](int index) { return getFileExtension(files[index]); }, false);
+        renderer, Rect{0, contentTop, pageWidth, contentHeight}, totalItems, selectorIndex,
+        [this, transferRow](int index) {
+          if (transferRow && index == 0) return std::string(tr(STR_FILE_TRANSFER));
+          return getFileName(files[transferRow ? index - 1 : index]);
+        },
+        nullptr,
+        [this, transferRow](int index) {
+          if (transferRow && index == 0) return UIIcon::Transfer;
+          return UITheme::getFileIcon(files[transferRow ? index - 1 : index]);
+        },
+        [this, transferRow](int index) {
+          if (transferRow && index == 0) return std::string();
+          return getFileExtension(files[transferRow ? index - 1 : index]);
+        },
+        false);
+    // Divider between the File Transfer row and the real listing below it.
+    if (transferRow) {
+      const int dividerY = contentTop + metrics.listRowHeight;
+      renderer.drawLine(0, dividerY, pageWidth - 1, dividerY, 3, true);
+    }
   }
 
   // Full path display
