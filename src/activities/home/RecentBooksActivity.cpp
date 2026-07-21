@@ -594,9 +594,10 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  // "My Books" (STR_RECENTS), matching the home screen's divider label: this
-  // page lists every book on the SD card now, not just recently-opened ones.
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_RECENTS));
+  // Home screen's own "My Books" divider/tile label (STR_RECENTS) stays as-is
+  // -- this page's own header uses a distinct string ("My Books & Apps")
+  // since it also lists the pinned Quran/Games/Tasbih tiles, not just books.
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_RECENTS_PAGE_TITLE));
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 

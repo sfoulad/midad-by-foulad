@@ -617,8 +617,14 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   }
   renderRows(nullptr);  // real draw pass
 
-  // Footer / Hints
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+  // Footer / Hints. While focus is on the tab row, Confirm cycles to the
+  // OTHER tab, so the hint previews its name instead of the generic "Select"
+  // -- same convention as Settings' own tab row (SettingsActivity.cpp's
+  // confirmLabel).
+  const char* confirmLabel =
+      onTabRow ? (view == View::READING ? tr(STR_SETTINGS_TITLE) : tr(STR_CAT_READER)) : tr(STR_SELECT);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN),
+                                            /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

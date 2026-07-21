@@ -101,7 +101,9 @@ class EpubReaderMenuActivity final : public Activity {
   std::vector<MenuItem> readingItems;
   std::vector<MenuItem> settingsItems;
   View view = View::READING;
-  int selectedIndex = 0;
+  // Starts on the tab row (matching Settings' own default focus position, per
+  // user request), not the first list item.
+  int selectedIndex = -1;
   int settingsSelectedIndex = 0;
   int chapterSelectedIndex = 0;
 
