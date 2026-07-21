@@ -12,6 +12,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -26,6 +27,56 @@
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
 #include "reading/ReadingStatsStore.h"
+
+namespace {
+// Small circular "today's reading goal" progress ring, drawn as a corner badge
+// on the Dashboard's Streak card. GfxRenderer has no arbitrary-angle arc
+// primitive (drawArc/fillArc are quadrant-only, for rounded-rect corners), so
+// the filled portion is plotted pixel-by-pixel by polar angle -- cheap at this
+// size (a ~40px-diameter bounding box), done once per sleep-screen render.
+void drawGoalRing(const GfxRenderer& renderer, int cx, int cy, int outerRadius, int percent) {
+  const int clamped = std::clamp(percent, 0, 100);
+  if (clamped >= 100) {
+    // Goal met -- solid filled disk + checkmark reads clearly at a glance,
+    // no need to parse a percentage.
+    for (int dy = -outerRadius; dy <= outerRadius; ++dy) {
+      for (int dx = -outerRadius; dx <= outerRadius; ++dx) {
+        if (dx * dx + dy * dy <= outerRadius * outerRadius) renderer.drawPixel(cx + dx, cy + dy, true);
+      }
+    }
+    renderer.drawLine(cx - outerRadius / 2, cy, cx - outerRadius / 6, cy + outerRadius / 2, 2, false);
+    renderer.drawLine(cx - outerRadius / 6, cy + outerRadius / 2, cx + outerRadius / 2, cy - outerRadius / 3, 2,
+                      false);
+    return;
+  }
+
+  constexpr int kThickness = 4;
+  const int innerRadius = std::max(outerRadius - kThickness, 0);
+  const int outerSq = outerRadius * outerRadius;
+  const int innerSq = innerRadius * innerRadius;
+
+  // Track: a full thin ring outline, drawn via the existing quadrant-annulus
+  // primitive (called once per quadrant to complete the circle).
+  for (int xDir = -1; xDir <= 1; xDir += 2) {
+    for (int yDir = -1; yDir <= 1; yDir += 2) {
+      renderer.drawArc(outerRadius, cx, cy, xDir, yDir, 1, true);
+    }
+  }
+  if (clamped <= 0) return;
+
+  // Progress: fill the annulus wedge from 12 o'clock clockwise for `clamped`
+  // percent of the full circle.
+  for (int dy = -outerRadius; dy <= outerRadius; ++dy) {
+    for (int dx = -outerRadius; dx <= outerRadius; ++dx) {
+      const int distSq = dx * dx + dy * dy;
+      if (distSq > outerSq || distSq < innerSq) continue;
+      float angleDeg = std::atan2(static_cast<float>(dx), static_cast<float>(-dy)) * 180.0f / static_cast<float>(M_PI);
+      if (angleDeg < 0) angleDeg += 360.0f;
+      if (angleDeg <= clamped * 3.6f) renderer.drawPixel(cx + dx, cy + dy, true);
+    }
+  }
+}
+}  // namespace
 
 void SleepActivity::onEnter() {
   Activity::onEnter();
@@ -529,15 +580,32 @@ void SleepActivity::renderDashboardSleepScreen() const {
   char finishedBuf[16];
   snprintf(finishedBuf, sizeof(finishedBuf), "%lu", static_cast<unsigned long>(READING_STATS.getBooksFinishedCount()));
 
+  const auto cardRect = [&](const int row, const int col) {
+    return Rect{sidePadding + col * (cardWidth + kCardGap), gridTop + row * (kCardHeight + kCardGap), cardWidth,
+               kCardHeight};
+  };
   const auto cardAt = [&](const int row, const int col, const char* label, const char* value) {
-    const Rect rect{sidePadding + col * (cardWidth + kCardGap), gridTop + row * (kCardHeight + kCardGap), cardWidth,
-                    kCardHeight};
-    AppMetricCard::draw(renderer, rect, label, value);
+    AppMetricCard::draw(renderer, cardRect(row, col), label, value);
   };
   cardAt(0, 0, tr(STR_EST_LEFT), leftBuf);
   cardAt(0, 1, tr(STR_STREAK), streakBuf);
   cardAt(1, 0, tr(STR_READING_TIME), totalBuf);
   cardAt(1, 1, tr(STR_BOOKS_FINISHED), finishedBuf);
+
+  // Today's-reading-goal ring, badged in the Streak card's corner -- reuses
+  // the same daily goal the Stats screen and heatmap already track
+  // (SETTINGS.getDailyGoalMs()/READING_STATS.getTodayReadingMs()), just given
+  // a glanceable visual here instead of "X / Y" text.
+  {
+    const Rect streakRect = cardRect(0, 1);
+    constexpr int kRingRadius = 18;
+    const int ringCx = streakRect.x + streakRect.width - kRingRadius - 12;
+    const int ringCy = streakRect.y + kRingRadius + 10;
+    const uint64_t goalMs = SETTINGS.getDailyGoalMs();
+    const int goalPercent =
+        goalMs > 0 ? static_cast<int>(READING_STATS.getTodayReadingMs() * 100ULL / goalMs) : 0;
+    drawGoalRing(renderer, ringCx, ringCy, kRingRadius, goalPercent);
+  }
 
   // Footer: battery + (RTC devices only) current time -- a black pill sized to
   // just the text (not a full-width bar) with white text, flush against the

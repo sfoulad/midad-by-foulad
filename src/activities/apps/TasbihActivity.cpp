@@ -36,6 +36,12 @@ void TasbihActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Up) ||
       mappedInput.wasReleased(MappedInputManager::Button::Down)) {
     TASBIH.increment();
+    // Standard dhikr counts -- a brief inverted flash makes hitting one feel
+    // like an actual milestone instead of just another tap.
+    const uint32_t count = TASBIH.getTodayCount();
+    if (count == 33 || count == 99 || count == 100) {
+      milestoneFlash = true;
+    }
     requestUpdate();
     return;
   }
@@ -80,7 +86,17 @@ void TasbihActivity::render(RenderLock&&) {
   snprintf(countBuf, sizeof(countBuf), "%lu", static_cast<unsigned long>(TASBIH.getTodayCount()));
   const int numberWidth = renderer.getTextWidth(kNumberFontId, countBuf);
   const int numberY = pageHeight / 2 - renderer.getLineHeight(kNumberFontId) / 2 - metrics.buttonHintsHeight / 2;
-  renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberY, countBuf, true);
+  if (milestoneFlash) {
+    constexpr int kFlashPaddingX = 24;
+    constexpr int kFlashPaddingY = 16;
+    const int lineHeight = renderer.getLineHeight(kNumberFontId);
+    renderer.fillRoundedRect((pageWidth - numberWidth) / 2 - kFlashPaddingX, numberY - kFlashPaddingY,
+                             numberWidth + kFlashPaddingX * 2, lineHeight + kFlashPaddingY * 2, 10, Color::Black);
+    renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberY, countBuf, false);
+    milestoneFlash = false;
+  } else {
+    renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberY, countBuf, true);
+  }
 
   // Footer stat cards: Top Tasbih (all-time best day) | Total this year.
   constexpr int kCardHeight = 72;

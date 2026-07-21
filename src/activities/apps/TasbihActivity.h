@@ -18,4 +18,13 @@ class TasbihActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+
+ private:
+  // Set when a tap just landed on a standard dhikr milestone (33/99/100) --
+  // render() draws the count inverted (white-on-black) for that one pass as a
+  // small "you hit it" cue, then clears the flag so the next redraw is back to
+  // normal. No timer/auto-revert: e-ink has no capacity for a real timed blink
+  // without wasting a whole extra full-refresh cycle just to undo it, so the
+  // flash simply lasts until the next natural redraw (next button press).
+  bool milestoneFlash = false;
 };
