@@ -114,9 +114,15 @@ void TasbihActivity::render(RenderLock&&) {
   AppMetricCard::draw(renderer, Rect{sidePadding + cardWidth + kCardGap, cardTop, cardWidth, kCardHeight},
                       tr(STR_TASBIH_YEAR_TOTAL), yearBuf);
 
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_BACK), tr(STR_RESET), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+  // The counting action is the physical SIDE Up/Down buttons (see header
+  // comment) -- mapLabels()'s previous/next params actually label the front
+  // Left/Right buttons (MappedInputManager::mapLabels, keyed off
+  // SETTINGS.frontButtonLeft/Right), so STR_DIR_UP/DOWN were showing next to
+  // buttons that don't count anything when pressed. The side buttons have
+  // their own dedicated hint widget.
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RESET), "", "", /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   renderer.displayBuffer();
 }

@@ -23,6 +23,8 @@
 #include "QuranBook.h"
 #include "CrossPointState.h"
 #include "GameHighScoresStore.h"
+#include "GymLogStore.h"
+#include "GymPlanStore.h"
 #include "TasbihStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
@@ -85,6 +87,10 @@ EpdFontFamily bitter18FontFamily(&bitter18RegularFont, &bitter18BoldFont, &bitte
 // font file itself is bold weight (see convert-builtin-fonts.sh).
 EpdFont tasbih32BoldFont(&tasbih_32_bold);
 EpdFontFamily tasbih32FontFamily(&tasbih32BoldFont);
+
+// Digit+colon-only 32pt font for the Stop Watch app's MM:SS display.
+EpdFont stopwatch32BoldFont(&stopwatch_32_bold);
+EpdFontFamily stopwatch32FontFamily(&stopwatch32BoldFont);
 
 EpdFont lexenddeca12RegularFont(&lexenddeca_12_regular);
 EpdFont lexenddeca12BoldFont(&lexenddeca_12_bold);
@@ -440,6 +446,7 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
   renderer.insertFont(BITTER_18_FONT_ID, bitter18FontFamily);
   renderer.insertFont(TASBIH_32_FONT_ID, tasbih32FontFamily);
+  renderer.insertFont(STOPWATCH_32_FONT_ID, stopwatch32FontFamily);
   renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
   renderer.insertFont(LEXENDDECA_16_FONT_ID, lexenddeca16FontFamily);
   renderer.insertFont(LEXENDDECA_18_FONT_ID, lexenddeca18FontFamily);
@@ -530,6 +537,8 @@ void setup() {
   RECENT_BOOKS.loadFromFile();
   GAME_SCORES.loadFromFile();
   TASBIH.loadFromFile();
+  GYM_PLAN.loadFromFile();
+  GYM_LOG.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();

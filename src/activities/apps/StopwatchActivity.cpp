@@ -144,10 +144,17 @@ void StopwatchActivity::render(RenderLock&&) {
         false);
   }
 
+  // Start/Pause and Lap/Reset are the physical SIDE Up/Down buttons (see
+  // header comment), not front buttons -- mapLabels()'s previous/next params
+  // actually label the front Left/Right buttons (MappedInputManager::mapLabels,
+  // keyed off SETTINGS.frontButtonLeft/Right), so passing the action labels
+  // there showed them next to buttons that do nothing when pressed. The side
+  // buttons have their own dedicated hint widget.
   const char* startPauseLabel = running ? tr(STR_PAUSE) : tr(STR_START);
   const char* lapResetLabel = running ? tr(STR_LAP) : tr(STR_RESET);
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", startPauseLabel, lapResetLabel, /*rtlSwap=*/false);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "", /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  GUI.drawSideButtonHints(renderer, startPauseLabel, lapResetLabel);
 
   renderer.displayBuffer();
 }

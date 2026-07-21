@@ -312,6 +312,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // built-in stopwatch. No extraction step needed, same as Games.
         SettingInfo::Toggle(StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled, "stopwatchEnabled",
                             StrId::STR_CAT_APPS),
+        // Gym toggle: pins a "Gym" tile in My Books (see GYM_PSEUDO_PATH in
+        // RecentBooksActivity.cpp) that opens the built-in workout planner.
+        SettingInfo::Toggle(StrId::STR_GYM, &CrossPointSettings::gymEnabled, "gymEnabled", StrId::STR_CAT_APPS),
+        SettingInfo::Enum(StrId::STR_GYM_WEIGHT_UNIT, &CrossPointSettings::gymWeightUnit,
+                          {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB}, "gymWeightUnit", StrId::STR_CAT_APPS),
         // KOReader Sync itself is a device-only ACTION appended in
         // SettingsActivity::rebuildSettingsLists() (web-only, uses
         // KOReaderCredentialStore) -- see the comment further below.

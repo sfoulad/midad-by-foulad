@@ -331,6 +331,19 @@ class CrossPointSettings {
   // No SD extraction or persisted state, same as Games.
   uint8_t stopwatchEnabled = 0;
 
+  // Settings -> Apps -> Gym: pins a synthetic "Gym" tile in My Books (see
+  // GYM_PSEUDO_PATH in RecentBooksActivity.cpp), between Stop Watch and Games,
+  // that opens the built-in 7-day workout planner. Unlike Games/Tasbih/Stop
+  // Watch, this DOES need SD data (the downloaded exercise catalog) -- the
+  // tile itself works with zero downloaded data (shows an empty plan), so no
+  // extraction gate is needed here, only inside the exercise browser.
+  uint8_t gymEnabled = 0;
+  // Display unit for logged weights: 0 = kg, 1 = lb. Weight is always stored
+  // internally in kg (GymLogStore) regardless of this setting, so toggling it
+  // never rewrites persisted data, only how it's displayed.
+  enum GYM_WEIGHT_UNIT { GYM_WEIGHT_KG = 0, GYM_WEIGHT_LB = 1, GYM_WEIGHT_UNIT_COUNT };
+  uint8_t gymWeightUnit = GYM_WEIGHT_KG;
+
   // Settings -> Apps -> Debug: gates whether ANY of the rolling SD diagnostic
   // logs (sleep_diag_log.txt, reader_perf_log.txt, game_input_diag_log.txt,
   // cover_diag_log.txt, mybooks_scan_log.txt, opds_error_log.txt,

@@ -16,6 +16,7 @@
 #include "CrossPointSettings.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
+#include "activities/apps/GymActivity.h"
 #include "activities/apps/StopwatchActivity.h"
 #include "activities/apps/TasbihActivity.h"
 #include "activities/games/GamesMenuActivity.h"
@@ -39,6 +40,9 @@ constexpr const char* TASBIH_PSEUDO_PATH = "/Tasbih";
 // Same idea for the Stop Watch tile (see SETTINGS.stopwatchEnabled) -- opens
 // StopwatchActivity instead of the reader.
 constexpr const char* STOPWATCH_PSEUDO_PATH = "/StopWatch";
+// Same idea for the Gym tile (see SETTINGS.gymEnabled) -- opens GymActivity
+// instead of the reader.
+constexpr const char* GYM_PSEUDO_PATH = "/Gym";
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
@@ -220,10 +224,25 @@ void RecentBooksActivity::loadRecentBooks() {
     recentBooks.insert(recentBooks.begin(), std::move(games));
   }
 
+  // Pinned Gym: synthetic tile (GYM_PSEUDO_PATH is never a real SD file),
+  // shown between Stop Watch and Games -- opens GymActivity instead of the
+  // reader (see loop()'s special-case). Inserted at the front AFTER Games
+  // (above) but BEFORE Stop Watch (below), so Stop Watch's own front-insert
+  // pushes this down one slot, same technique Games uses against Quran.
+  if (SETTINGS.gymEnabled) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == GYM_PSEUDO_PATH; }),
+                      recentBooks.end());
+    RecentBook gym;
+    gym.path = GYM_PSEUDO_PATH;
+    gym.title = tr(STR_GYM);
+    recentBooks.insert(recentBooks.begin(), std::move(gym));
+  }
+
   // Pinned Stop Watch: synthetic tile (STOPWATCH_PSEUDO_PATH is never a real
-  // SD file), shown between Tasbih and Games -- opens StopwatchActivity
+  // SD file), shown between Tasbih and Gym -- opens StopwatchActivity
   // instead of the reader (see loop()'s special-case). Inserted at the front
-  // AFTER Games (above) but BEFORE Tasbih (below), so Tasbih's own front-
+  // AFTER Gym (above) but BEFORE Tasbih (below), so Tasbih's own front-
   // insert pushes this down one slot, same technique Games uses against Quran.
   if (SETTINGS.stopwatchEnabled) {
     recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
@@ -308,6 +327,7 @@ void RecentBooksActivity::loop() {
       recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -329,6 +349,10 @@ void RecentBooksActivity::loop() {
       if (recentBooks[selectorIndex].path == STOPWATCH_PSEUDO_PATH) {
         startActivityForResult(std::make_unique<StopwatchActivity>(renderer, mappedInput),
                                [](const ActivityResult&) {});
+        return;
+      }
+      if (recentBooks[selectorIndex].path == GYM_PSEUDO_PATH) {
+        startActivityForResult(std::make_unique<GymActivity>(renderer, mappedInput), [](const ActivityResult&) {});
         return;
       }
       onSelectBook(recentBooks[selectorIndex].path);
@@ -678,6 +702,8 @@ void RecentBooksActivity::render(RenderLock&&) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_TASBIH));
       } else if (!drawn && book.path == STOPWATCH_PSEUDO_PATH) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_STOPWATCH));
+      } else if (!drawn && book.path == GYM_PSEUDO_PATH) {
+        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GYM));
       } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
                           32);
