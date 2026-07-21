@@ -15,6 +15,8 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "CuratedAyahs.h"
+#include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "activities/reader/ReaderUtils.h"
 #include "activities/stats/AppMetricCard.h"
@@ -371,18 +373,53 @@ void SleepActivity::renderDashboardSleepScreen() const {
   const int pageWidth = renderer.getScreenWidth();
   const int sidePadding = UITheme::getInstance().getMetrics().contentSidePadding;
 
+  // Rotating ayah quote, only when the Quran feature is actually enabled+extracted
+  // (QuranBook::isPinned()) -- otherwise the layout is unchanged from before. A
+  // full short surah (not a single verse) is picked at random each time this
+  // screen renders, from CuratedAyahs (sourced from the app's own embedded Quran
+  // text -- see that header for why a curated set instead of a true-random verse
+  // extracted live from the Quran EPUB). Same on X3 and X4: both share the same
+  // physical screen resolution (only RTC-clock availability and button layout
+  // differ between them), so no device-specific sizing is needed here.
+  int ayahBlockBottom = 20;
+  if (QuranBook::isPinned()) {
+    const auto& entry = CuratedAyahs::kEntries[random(static_cast<long>(CuratedAyahs::kCount))];
+    const int ayahWidth = pageWidth - sidePadding * 2;
+    const int ayahLineHeight = renderer.getLineHeight(UTHMANICHAFS_16_FONT_ID);
+    const auto ayahLines = renderer.wrappedText(UTHMANICHAFS_16_FONT_ID, entry.text, ayahWidth, /*maxLines=*/4);
+    int ayahY = ayahBlockBottom;
+    for (const auto& line : ayahLines) {
+      const int lineWidth = renderer.getTextWidth(UTHMANICHAFS_16_FONT_ID, line.c_str());
+      renderer.drawText(UTHMANICHAFS_16_FONT_ID, (pageWidth - lineWidth) / 2, ayahY, line.c_str(), true);
+      ayahY += ayahLineHeight + 2;
+    }
+    ayahY += 4;
+    const int refLineHeight = renderer.getLineHeight(UTHMANICHAFS_12_FONT_ID);
+    const int refWidth = renderer.getTextWidth(UTHMANICHAFS_12_FONT_ID, entry.reference);
+    renderer.drawText(UTHMANICHAFS_12_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, true);
+    ayahY += refLineHeight + 10;
+    renderer.drawLine(sidePadding, ayahY, pageWidth - sidePadding, ayahY, true);
+    ayahBlockBottom = ayahY + 16;
+  }
+
   // Cover, top-left -- same 200x300 box the Home screen's hero card uses, drawn
   // straight from the book's full-resolution generated cover (drawBitmap only
   // ever scales down, so a single shrink-to-fit pass is enough).
   constexpr int kCoverWidth = 200;
   constexpr int kCoverHeight = 300;
   const int coverX = sidePadding;
-  const int coverY = 40;
+  const int coverY = ayahBlockBottom + 20;
 
   bool hasCover = false;
   {
     HalFile file;
-    if (!book.coverBmpPath.empty() && Storage.openFileForRead("SLP", book.coverBmpPath, file)) {
+    // book.coverBmpPath is a TEMPLATE (Epub::getThumbBmpPath()'s "[HEIGHT]"
+    // placeholder), not a real file path -- thumbnails only ever exist at the
+    // Home screen's homeCoverHeight, so that's the only substitution that
+    // resolves to a file actually on disk (drawBitmap scales the rest down).
+    const std::string thumbPath =
+        UITheme::getCoverThumbPath(book.coverBmpPath, UITheme::getInstance().getMetrics().homeCoverHeight);
+    if (!thumbPath.empty() && Storage.openFileForRead("SLP", thumbPath, file)) {
       Bitmap bitmap(file);
       if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
         const float scale = std::min(static_cast<float>(kCoverWidth) / bitmap.getWidth(),

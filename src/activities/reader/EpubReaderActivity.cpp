@@ -1066,11 +1066,17 @@ bool EpubReaderActivity::estimateTimeLeftSeconds(uint32_t& seconds) const {
   if (currentSpineIndex >= epub->getSpineItemsCount()) {
     return false;  // end-of-book screen
   }
-  // Pages left in the current (already laid out) section are exact; the rest of the
-  // spine is estimated by scaling its remaining bytes with this section's
-  // bytes-per-page, since later sections haven't been paginated yet.
+  // Pages left in the current section, then the rest of the spine is estimated by
+  // scaling its remaining bytes with this section's bytes-per-page, since later
+  // sections haven't been paginated yet. Must use estimatedTotalPages(), not the
+  // raw pageCount: while a chapter is still incrementally building, pageCount is
+  // only "pages laid out so far" (a watermark trailing currentPage), not the
+  // chapter's true total -- using it directly collapsed both sectionPagesLeft and
+  // bytesPerPage toward the current chapter alone, making the estimate ignore the
+  // rest of the book entirely.
+  const uint32_t sectionTotalPages = section->estimatedTotalPages();
   const uint32_t sectionPagesLeft =
-      section->currentPage < section->pageCount ? (section->pageCount - section->currentPage - 1) : 0;
+      section->currentPage < sectionTotalPages ? (sectionTotalPages - section->currentPage - 1) : 0;
   const uint32_t cumulativeEnd = epub->getSpineItem(currentSpineIndex).cumulativeSize;
   const uint32_t cumulativeStart = currentSpineIndex > 0 ? epub->getSpineItem(currentSpineIndex - 1).cumulativeSize : 0;
   const uint32_t sectionBytes = cumulativeEnd > cumulativeStart ? cumulativeEnd - cumulativeStart : 0;
@@ -1078,7 +1084,7 @@ bool EpubReaderActivity::estimateTimeLeftSeconds(uint32_t& seconds) const {
   const uint32_t remainingBytes = bookSize > cumulativeEnd ? bookSize - cumulativeEnd : 0;
   float remainingPages = static_cast<float>(sectionPagesLeft);
   if (sectionBytes > 0 && remainingBytes > 0) {
-    const float bytesPerPage = static_cast<float>(sectionBytes) / static_cast<float>(section->pageCount);
+    const float bytesPerPage = static_cast<float>(sectionBytes) / static_cast<float>(sectionTotalPages);
     if (bytesPerPage > 0.0f) {
       remainingPages += static_cast<float>(remainingBytes) / bytesPerPage;
     }

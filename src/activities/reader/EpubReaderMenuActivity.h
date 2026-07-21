@@ -10,13 +10,14 @@
 #include "util/ButtonNavigator.h"
 
 // In-book menu, rendered as a bottom drawer (~85% of the screen, live page
-// visible above). The main list carries the most-used actions plus the
-// per-book reading settings (font size/name, line spacing, alignment --
-// script-aware: an Arabic book shows only the Arabic font rows, a Latin book
-// only the English ones); everything else lives in a "More" sub-list, and the
-// chapter list opens as a third in-drawer view (no separate activity).
-// Setting rows edit the RAM-only SETTINGS.book* overrides in place (see
-// CrossPointSettings.h) and are reported back via
+// visible above). Two icon tabs at the top switch between the Reading list
+// (most-used actions plus the per-book reading settings -- font size/name,
+// line spacing, alignment -- script-aware: an Arabic book shows only the
+// Arabic font rows, a Latin book only the English ones) and the Settings list
+// (everything else). The chapter list opens as a drill-down from the Reading
+// tab (no separate activity); Back from it returns to the Reading tab rather
+// than exiting the drawer. Setting rows edit the RAM-only SETTINGS.book*
+// overrides in place (see CrossPointSettings.h) and are reported back via
 // MenuResult::bookSettingsChanged so the reader persists the sidecar and
 // re-lays-out on close.
 class EpubReaderMenuActivity final : public Activity {
@@ -43,8 +44,7 @@ class EpubReaderMenuActivity final : public Activity {
     FONT_NAME,
     TEXT_ALIGN,
     LINE_SPACING,
-    RESET_BOOK_SETTINGS,
-    MORE
+    RESET_BOOK_SETTINGS
   };
 
   // `epub` is non-owning: the reader keeps the Epub alive for the whole time
@@ -60,15 +60,18 @@ class EpubReaderMenuActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
-  enum class View : uint8_t { MAIN, MORE, CHAPTERS };
+  // READING and SETTINGS are the two top-level icon tabs; CHAPTERS is a
+  // drill-down reached from a row in the Reading tab (Back returns to
+  // READING, not to a "MAIN" state -- there is no third tab).
+  enum class View : uint8_t { READING, SETTINGS_TAB, CHAPTERS };
 
   struct MenuItem {
     MenuAction action;
     StrId labelId;
   };
 
-  std::vector<MenuItem> buildMainItems(bool hasBookmarks) const;
-  std::vector<MenuItem> buildMoreItems(bool hasFootnotes) const;
+  std::vector<MenuItem> buildReadingItems(bool hasBookmarks) const;
+  std::vector<MenuItem> buildSettingsItems(bool hasFootnotes) const;
 
   std::string valueLabel(MenuAction action) const;
   std::string globalLabel(const char* effectiveValueLabel) const;
@@ -76,11 +79,13 @@ class EpubReaderMenuActivity final : public Activity {
   void finishWithAction(int action, bool cancelled);
   void handleListConfirm();
 
-  const std::vector<MenuItem>& activeItems() const { return view == View::MORE ? moreItems : mainItems; }
+  const std::vector<MenuItem>& activeItems() const {
+    return view == View::SETTINGS_TAB ? settingsItems : readingItems;
+  }
   int& activeIndex() {
     switch (view) {
-      case View::MORE:
-        return moreSelectedIndex;
+      case View::SETTINGS_TAB:
+        return settingsSelectedIndex;
       case View::CHAPTERS:
         return chapterSelectedIndex;
       default:
@@ -93,11 +98,11 @@ class EpubReaderMenuActivity final : public Activity {
   const int currentSpineIndex;
 
   // Fixed menu layout
-  std::vector<MenuItem> mainItems;
-  std::vector<MenuItem> moreItems;
-  View view = View::MAIN;
+  std::vector<MenuItem> readingItems;
+  std::vector<MenuItem> settingsItems;
+  View view = View::READING;
   int selectedIndex = 0;
-  int moreSelectedIndex = 0;
+  int settingsSelectedIndex = 0;
   int chapterSelectedIndex = 0;
 
   const bool isArabicBook;

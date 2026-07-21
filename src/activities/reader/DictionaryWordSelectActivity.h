@@ -74,6 +74,14 @@ class DictionaryWordSelectActivity final : public Activity {
   void extractWords();
   void prepareReaderFontMetrics();
   int measureWordWidth(const char* text) const;
+  // readerFontId is always the Latin reading font (Bitter/Lexend Deca), even for
+  // an Arabic book -- GfxRenderer::drawText resolves Arabic text to a taller
+  // Arabic font internally (see ArabicFontSystem), so a highlight/region box
+  // sized off readerFontId's own line height clips Arabic glyphs whenever the
+  // resolved Arabic font's ascender+descender exceeds it (worst with Cairo,
+  // whose real metrics run ~1.87x em vs Bitter's ~1.0x). Mirrors
+  // ChapterHtmlSlimParser::computeLineHeight's max() approach for page layout.
+  int lineHeightForWord(const WordInfo& word) const;
   void mergeHyphenatedWords();
   void moveRow(int delta);
   void moveWord(int delta);

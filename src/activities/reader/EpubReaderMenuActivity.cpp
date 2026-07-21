@@ -14,6 +14,8 @@
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
+#include "components/icons/book.h"
+#include "components/icons/settings2.h"
 #include "fontIds.h"
 
 namespace {
@@ -102,15 +104,16 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {
-  mainItems = buildMainItems(hasBookmarks);
-  moreItems = buildMoreItems(hasFootnotes);
+  readingItems = buildReadingItems(hasBookmarks);
+  settingsItems = buildSettingsItems(hasFootnotes);
 }
 
 // Most-used first: chapters, bookmarking, then the per-book reading settings,
-// then orientation; everything else is one level down behind "More".
-std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainItems(const bool hasBookmarks) const {
+// then orientation; everything else lives in the Settings tab.
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadingItems(
+    const bool hasBookmarks) const {
   std::vector<MenuItem> items;
-  items.reserve(9);
+  items.reserve(8);
   // Only offered once a dictionary is actually installed -- otherwise the row
   // would open straight into DICTIONARY_NONE_SELECTED every time. Pinned
   // first (user request) with the same label as the Settings/Apps entry
@@ -134,11 +137,11 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMainI
   items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
   items.push_back({MenuAction::TEXT_ALIGN, StrId::STR_TEXT_ALIGNMENT});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  items.push_back({MenuAction::MORE, StrId::STR_MORE});
   return items;
 }
 
-std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMoreItems(const bool hasFootnotes) const {
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSettingsItems(
+    const bool hasFootnotes) const {
   std::vector<MenuItem> items;
   items.reserve(9);
   if (hasFootnotes) {
@@ -396,14 +399,9 @@ void EpubReaderMenuActivity::handleListConfirm() {
   const auto selectedAction = activeItems()[activeIndex()].action;
   switch (selectedAction) {
     case MenuAction::SELECT_CHAPTER:
-      // Chapter list is an in-drawer view, not a separate full-screen activity.
+      // Chapter list is an in-drawer drill-down, not a separate full-screen activity.
       view = View::CHAPTERS;
       chapterSelectedIndex = epub ? std::max(0, epub->getTocIndexForSpineIndex(currentSpineIndex)) : 0;
-      requestUpdate();
-      return;
-    case MenuAction::MORE:
-      view = View::MORE;
-      moreSelectedIndex = 0;
       requestUpdate();
       return;
     case MenuAction::ROTATE_SCREEN:
@@ -439,6 +437,23 @@ void EpubReaderMenuActivity::handleListConfirm() {
 void EpubReaderMenuActivity::loop() {
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
+  // Left/Right switch between the two top-level tabs (book = Reading, gear =
+  // Settings), spatially matching their left/right position in the tab bar.
+  // Not offered while browsing Chapters -- that's a drill-down from Reading,
+  // not a third tab; Back below returns it to Reading instead.
+  if (view != View::CHAPTERS) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Left) && view != View::READING) {
+      view = View::READING;
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right) && view != View::SETTINGS_TAB) {
+      view = View::SETTINGS_TAB;
+      requestUpdate();
+      return;
+    }
+  }
+
   const int itemCount = activeItemCount();
 
   // Handle navigation
@@ -458,8 +473,8 @@ void EpubReaderMenuActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (view != View::MAIN) {
-      view = View::MAIN;
+    if (view == View::CHAPTERS) {
+      view = View::READING;
       requestUpdate();
       return;
     }
@@ -517,18 +532,43 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
                       EpdFontFamily::BOLD);
   }
 
-  const int contentTop = subTop + subHeight + metrics.verticalSpacing;
+  // Two icon tabs (book = Reading, gear = Settings), centered under the progress
+  // band. Hidden while browsing Chapters -- that's a drill-down from Reading, not
+  // a third tab, so it uses the full content area below like the old MORE view did.
+  const bool showTabs = view != View::CHAPTERS;
+  const int tabBarTop = subTop + subHeight + metrics.verticalSpacing;
+  // Must match BookIcon/Settings2Icon's actual bitmap size exactly -- drawIcon
+  // has no scaling; it reads the bitmap assuming size x size packed rows.
+  constexpr int kTabIconSize = 32;
+  constexpr int kTabGap = 40;
+  constexpr int kTabUnderlineGap = 4;
+  constexpr int kTabUnderlineHeight = 2;
+  const int tabBarHeight = showTabs ? (kTabIconSize + kTabUnderlineGap + kTabUnderlineHeight + metrics.verticalSpacing)
+                                    : 0;
+  if (showTabs) {
+    const int totalTabsWidth = kTabIconSize * 2 + kTabGap;
+    const int readingX = (pageWidth - totalTabsWidth) / 2;
+    const int settingsX = readingX + kTabIconSize + kTabGap;
+    renderer.drawIcon(BookIcon, readingX, tabBarTop, kTabIconSize);
+    renderer.drawIcon(Settings2Icon, settingsX, tabBarTop, kTabIconSize);
+    const int underlineY = tabBarTop + kTabIconSize + kTabUnderlineGap;
+    const int underlineX = view == View::READING ? readingX : settingsX;
+    renderer.fillRect(underlineX - 2, underlineY, kTabIconSize + 4, kTabUnderlineHeight, true);
+  }
+
+  const int contentTop = tabBarTop + tabBarHeight;
   // Safe area already excludes the button-hints strip at the bottom.
   const int contentHeight = (screen.y + screen.height) - contentTop - metrics.verticalSpacing;
 
   const int itemCount = activeItemCount();
-  const int index = view == View::MORE ? moreSelectedIndex : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
+  const int index = view == View::SETTINGS_TAB ? settingsSelectedIndex
+                                                : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
   // The chapter list draws Arabic surah titles through the same compressed-font path
   // as the reader page, but -- unlike renderContents() -- never prewarmed them, so
   // every row hit FontDecompressor's slow per-glyph hot-group fallback on every
   // redraw (moving the selection redraws the visible rows each time). Scan the rows
   // once, prewarm, then draw for real -- the same two-pass pattern the reader already
-  // uses. Harmless (nearly free) for the non-Arabic View::MORE/settings branch too.
+  // uses. Harmless (nearly free) for the non-Arabic Settings-tab branch too.
   auto* fcm = renderer.getFontCacheManager();
   auto renderRows = [&](FontCacheManager::PrewarmScope* scope) {
     if (view == View::CHAPTERS) {

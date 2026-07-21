@@ -4,6 +4,7 @@
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 
 #include <algorithm>
 #include <climits>
@@ -231,6 +232,13 @@ void DictionaryWordSelectActivity::prewarmCurrentSelectionText() const {
   }
 }
 
+int DictionaryWordSelectActivity::lineHeightForWord(const WordInfo& word) const {
+  const int latinLineHeight = renderer.getLineHeight(readerFontId);
+  if (!ScriptDetector::containsArabic(word.text.c_str())) return latinLineHeight;
+  const int arabicLineHeight = renderer.getLineHeight(renderer.getResolvedArabicFontId(readerFontId));
+  return std::max(latinLineHeight, arabicLineHeight);
+}
+
 size_t DictionaryWordSelectActivity::collectSelectionRects(SelectionRect* rects, const size_t maxRects) const {
   if (!rects || maxRects == 0 || rows.empty() || currentRow < 0 || currentRow >= static_cast<int>(rows.size()) ||
       currentWordInRow < 0 || currentWordInRow >= static_cast<int>(rows[currentRow].wordIndices.size())) {
@@ -239,7 +247,7 @@ size_t DictionaryWordSelectActivity::collectSelectionRects(SelectionRect* rects,
 
   auto addRect = [&](const WordInfo& selectedWord, size_t& count) {
     if (count >= maxRects) return;
-    const int lineHeight = renderer.getLineHeight(readerFontId);
+    const int lineHeight = lineHeightForWord(selectedWord);
     rects[count++] = SelectionRect{selectedWord.screenX - HIGHLIGHT_PADDING_X,
                                    selectedWord.screenY - HIGHLIGHT_PADDING_Y,
                                    selectedWord.width + HIGHLIGHT_PADDING_X * 2,
@@ -340,9 +348,9 @@ void DictionaryWordSelectActivity::drawSelectionHighlight() {
 
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
   const auto& word = words[wordIndex];
-  const int lineHeight = renderer.getLineHeight(readerFontId);
 
   auto drawSelectedWord = [&](const WordInfo& selectedWord) {
+    const int lineHeight = lineHeightForWord(selectedWord);
     renderer.fillRoundedRect(selectedWord.screenX - HIGHLIGHT_PADDING_X, selectedWord.screenY - HIGHLIGHT_PADDING_Y,
                              selectedWord.width + HIGHLIGHT_PADDING_X * 2, lineHeight + HIGHLIGHT_PADDING_Y * 2,
                              HIGHLIGHT_RADIUS, Color::Black);
