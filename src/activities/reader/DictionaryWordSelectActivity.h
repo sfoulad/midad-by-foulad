@@ -36,6 +36,13 @@ class DictionaryWordSelectActivity final : public Activity {
     int16_t row = 0;
     int continuationIndex = -1;
     int continuationOf = -1;
+    // Extra pixels TextBlock's real render inserted as a tatweel/kashida glyph
+    // to justify this word (0 for most words). Selection highlight/redraw must
+    // use the same value the real paragraph draw used (see drawSelectionHighlight),
+    // or the box undershoots the actual painted ink and leaves a sliver of the
+    // original glyphs showing through -- most visible on the word's lead
+    // letters for RTL text, looking like a duplicated first letter.
+    uint16_t kashidaExtraPx = 0;
   };
 
   struct Row {

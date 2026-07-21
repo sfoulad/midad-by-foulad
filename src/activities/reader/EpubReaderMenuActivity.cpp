@@ -437,18 +437,27 @@ void EpubReaderMenuActivity::handleListConfirm() {
 void EpubReaderMenuActivity::loop() {
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
-  // Left/Right switch between the two top-level tabs (book = Reading, gear =
-  // Settings), spatially matching their left/right position in the tab bar.
-  // Not offered while browsing Chapters -- that's a drill-down from Reading,
-  // not a third tab; Back below returns it to Reading instead.
-  if (view != View::CHAPTERS) {
+  // The tab row is a stop in the same up/down flow as the list below it (index
+  // -1), mirroring Settings' "category tabs are index 0" pattern -- scrolling
+  // up from the first row reaches the tabs and the selector visibly rests on
+  // one, and Confirm there cycles tabs the same way Settings' Confirm-on-tab
+  // does. Not offered while browsing Chapters -- that's a drill-down from
+  // Reading, not a third tab; Back below returns it to Reading instead.
+  const bool tabsActive = view != View::CHAPTERS;
+  const bool onTabRow = tabsActive && activeIndex() == -1;
+
+  // Left/Right also switch tabs directly, spatially matching their left/right
+  // position in the bar -- lands on the new tab's row (-1) either way.
+  if (tabsActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Left) && view != View::READING) {
       view = View::READING;
+      selectedIndex = -1;
       requestUpdate();
       return;
     }
     if (mappedInput.wasReleased(MappedInputManager::Button::Right) && view != View::SETTINGS_TAB) {
       view = View::SETTINGS_TAB;
+      settingsSelectedIndex = -1;
       requestUpdate();
       return;
     }
@@ -456,18 +465,27 @@ void EpubReaderMenuActivity::loop() {
 
   const int itemCount = activeItemCount();
 
-  // Handle navigation
-  buttonNavigator.onScrollNext([this, itemCount] {
-    activeIndex() = ButtonNavigator::nextIndex(activeIndex(), itemCount);
+  // Handle navigation. When tabs aren't offered (Chapters), the range is the
+  // plain [0, itemCount); otherwise it's [-1, itemCount) with -1 = tab row.
+  buttonNavigator.onScrollNext([this, itemCount, tabsActive] {
+    activeIndex() = tabsActive ? ButtonNavigator::nextIndex(activeIndex() + 1, itemCount + 1) - 1
+                               : ButtonNavigator::nextIndex(activeIndex(), itemCount);
     requestUpdate();
   });
 
-  buttonNavigator.onScrollPrevious([this, itemCount] {
-    activeIndex() = ButtonNavigator::previousIndex(activeIndex(), itemCount);
+  buttonNavigator.onScrollPrevious([this, itemCount, tabsActive] {
+    activeIndex() = tabsActive ? ButtonNavigator::previousIndex(activeIndex() + 1, itemCount + 1) - 1
+                               : ButtonNavigator::previousIndex(activeIndex(), itemCount);
     requestUpdate();
   });
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (onTabRow) {
+      view = view == View::READING ? View::SETTINGS_TAB : View::READING;
+      activeIndex() = -1;
+      requestUpdate();
+      return;
+    }
     if (itemCount > 0) handleListConfirm();
     return;
   }
@@ -532,28 +550,42 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
                       EpdFontFamily::BOLD);
   }
 
-  // Two icon tabs (book = Reading, gear = Settings), centered under the progress
-  // band. Hidden while browsing Chapters -- that's a drill-down from Reading, not
-  // a third tab, so it uses the full content area below like the old MORE view did.
+  // Two icon tabs (book = Reading, gear = Settings), each centered in its own
+  // half of the drawer width -- not clustered together in the middle. Hidden
+  // while browsing Chapters -- that's a drill-down from Reading, not a third
+  // tab, so it uses the full content area below like the old MORE view did.
   const bool showTabs = view != View::CHAPTERS;
+  const bool onTabRow = showTabs && activeIndex() == -1;
   const int tabBarTop = subTop + subHeight + metrics.verticalSpacing;
   // Must match BookIcon/Settings2Icon's actual bitmap size exactly -- drawIcon
   // has no scaling; it reads the bitmap assuming size x size packed rows.
   constexpr int kTabIconSize = 32;
-  constexpr int kTabGap = 40;
+  constexpr int kTabPadding = 10;    // around the icon inside the focused-row pill
   constexpr int kTabUnderlineGap = 4;
   constexpr int kTabUnderlineHeight = 2;
-  const int tabBarHeight = showTabs ? (kTabIconSize + kTabUnderlineGap + kTabUnderlineHeight + metrics.verticalSpacing)
-                                    : 0;
+  // Reserve room for the taller of the two states (the focused pill) so the
+  // content below never shifts as focus moves on/off the tab row.
+  const int tabBarHeight = showTabs ? (kTabIconSize + kTabPadding * 2 + metrics.verticalSpacing) : 0;
   if (showTabs) {
-    const int totalTabsWidth = kTabIconSize * 2 + kTabGap;
-    const int readingX = (pageWidth - totalTabsWidth) / 2;
-    const int settingsX = readingX + kTabIconSize + kTabGap;
-    renderer.drawIcon(BookIcon, readingX, tabBarTop, kTabIconSize);
-    renderer.drawIcon(Settings2Icon, settingsX, tabBarTop, kTabIconSize);
-    const int underlineY = tabBarTop + kTabIconSize + kTabUnderlineGap;
-    const int underlineX = view == View::READING ? readingX : settingsX;
-    renderer.fillRect(underlineX - 2, underlineY, kTabIconSize + 4, kTabUnderlineHeight, true);
+    const int readingX = pageWidth / 4 - kTabIconSize / 2;
+    const int settingsX = pageWidth * 3 / 4 - kTabIconSize / 2;
+    const int iconY = tabBarTop + (onTabRow ? kTabPadding : 0);
+    // Focus resting on the tab row itself (index -1, reached by scrolling up
+    // past the first list row or via Left/Right) gets a filled pill behind the
+    // active icon, mirroring BaseTheme::drawTabBar's row-focused inversion;
+    // otherwise the active tab just gets a plain underline.
+    if (onTabRow) {
+      const int pillX = (view == View::READING ? readingX : settingsX) - kTabPadding;
+      renderer.fillRoundedRect(pillX, tabBarTop, kTabIconSize + kTabPadding * 2, kTabIconSize + kTabPadding * 2,
+                               kTabPadding, Color::LightGray);
+    }
+    renderer.drawIcon(BookIcon, readingX, iconY, kTabIconSize);
+    renderer.drawIcon(Settings2Icon, settingsX, iconY, kTabIconSize);
+    if (!onTabRow) {
+      const int underlineY = iconY + kTabIconSize + kTabUnderlineGap;
+      const int underlineX = view == View::READING ? readingX : settingsX;
+      renderer.fillRect(underlineX - 2, underlineY, kTabIconSize + 4, kTabUnderlineHeight, true);
+    }
   }
 
   const int contentTop = tabBarTop + tabBarHeight;

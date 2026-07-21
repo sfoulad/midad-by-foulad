@@ -2,53 +2,32 @@
 
 #include <cstddef>
 
-// Short, complete surahs shown as a rotating quote at the top of the Dashboard
-// sleep screen, only when QuranBook::isPinned() (Settings -> System -> Quran
-// enabled). Text extracted directly from the app's own embedded Quran source
-// (tools/quran/source/kfgqpc_chapters/chapter-*.xhtml -- the same KFGQPC
-// Uthmanic Hafs Mushaf text QuranBook.cpp ships), not typed from memory:
-// accuracy matters for religious text. Each entry is a COMPLETE short surah
-// rather than a single extracted verse, so nothing is ever shown out of
-// context.
+// Short individual ayahs (not whole surahs) shown as a rotating quote at the
+// top of the Dashboard sleep screen, only when QuranBook::isPinned() (Settings
+// -> System -> Quran enabled). Text extracted directly from the app's own
+// embedded Quran source (tools/quran/source/kfgqpc_chapters/chapter-*.xhtml --
+// the same KFGQPC Uthmanic Hafs Mushaf text QuranBook.cpp ships), not typed
+// from memory: accuracy matters for religious text. Each entry is one or two
+// complete, consecutive ayah(s) by their real ayah-number boundaries (never a
+// fragment cut mid-ayah), chosen for reading well on their own.
+//
+// An on-device photo showed an earlier version of this list (whole short
+// surahs, e.g. Al-Falaq) wrapping to 4 lines and pushing the stat cards below
+// the fold -- single ayahs stay well within 1-2 lines, avoiding that.
 namespace CuratedAyahs {
 
 struct Entry {
-  const char* reference;  // Arabic surah name
+  const char* reference;  // Arabic surah name + ayah number(s)
   const char* text;
 };
 
 constexpr Entry kEntries[] = {
-    {"سورة الإخلاص",
-     "قُلۡ هُوَ ٱللَّهُ أَحَدٌ ٱللَّهُ ٱلصَّمَدُ لَمۡ يَلِدۡ وَلَمۡ يُولَدۡ وَلَمۡ يَكُن لَّهُۥ كُفُوًا أَحَدُۢ"},
-    {"سورة الفلق",
-     "قُلۡ أَعُوذُ بِرَبِّ ٱلۡفَلَقِ مِن شَرِّ مَا خَلَقَ وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ وَمِن شَرِّ "
-     "ٱلنَّفَّٰثَٰتِ فِي ٱلۡعُقَدِ وَمِن شَرِّ حَاسِدٍ إِذَا حَسَدَ"},
-    {"سورة الناس",
-     "قُلۡ أَعُوذُ بِرَبِّ ٱلنَّاسِ مَلِكِ ٱلنَّاسِ إِلَٰهِ ٱلنَّاسِ مِن شَرِّ ٱلۡوَسۡوَاسِ ٱلۡخَنَّاسِ "
-     "ٱلَّذِي يُوَسۡوِسُ فِي صُدُورِ ٱلنَّاسِ مِنَ ٱلۡجِنَّةِ وَٱلنَّاسِ"},
-    {"سورة الكوثر", "إِنَّآ أَعۡطَيۡنَٰكَ ٱلۡكَوۡثَرَ فَصَلِّ لِرَبِّكَ وَٱنۡحَرۡ إِنَّ شَانِئَكَ هُوَ ٱلۡأَبۡتَرُ"},
-    {"سورة العصر",
-     "وَٱلۡعَصۡرِ إِنَّ ٱلۡإِنسَٰنَ لَفِي خُسۡرٍ إِلَّا ٱلَّذِينَ ءَامَنُواْ وَعَمِلُواْ ٱلصَّٰلِحَٰتِ "
-     "وَتَوَاصَوۡاْ بِٱلۡحَقِّ وَتَوَاصَوۡاْ بِٱلصَّبۡرِ"},
-    {"سورة النصر",
-     "إِذَا جَآءَ نَصۡرُ ٱللَّهِ وَٱلۡفَتۡحُ وَرَأَيۡتَ ٱلنَّاسَ يَدۡخُلُونَ فِي دِينِ ٱللَّهِ أَفۡوَاجٗا "
-     "فَسَبِّحۡ بِحَمۡدِ رَبِّكَ وَٱسۡتَغۡفِرۡهُۚ إِنَّهُۥ كَانَ تَوَّابَۢا"},
-    {"سورة الكافرون",
-     "قُلۡ يَٰٓأَيُّهَا ٱلۡكَٰفِرُونَ لَآ أَعۡبُدُ مَا تَعۡبُدُونَ وَلَآ أَنتُمۡ عَٰبِدُونَ مَآ أَعۡبُدُ وَلَآ "
-     "أَنَا۠ عَابِدٞ مَّا عَبَدتُّمۡ وَلَآ أَنتُمۡ عَٰبِدُونَ مَآ أَعۡبُدُ لَكُمۡ دِينُكُمۡ وَلِيَ دِينِ"},
-    {"سورة الماعون",
-     "أَرَءَيۡتَ ٱلَّذِي يُكَذِّبُ بِٱلدِّينِ فَذَٰلِكَ ٱلَّذِي يَدُعُّ ٱلۡيَتِيمَ وَلَا يَحُضُّ عَلَىٰ طَعَامِ "
-     "ٱلۡمِسۡكِينِ فَوَيۡلٞ لِّلۡمُصَلِّينَ ٱلَّذِينَ هُمۡ عَن صَلَاتِهِمۡ سَاهُونَ ٱلَّذِينَ هُمۡ يُرَآءُونَ "
-     "وَيَمۡنَعُونَ ٱلۡمَاعُونَ"},
-    {"سورة قريش",
-     "لِإِيلَٰفِ قُرَيۡشٍ إِۦلَٰفِهِمۡ رِحۡلَةَ ٱلشِّتَآءِ وَٱلصَّيۡفِ فَلۡيَعۡبُدُواْ رَبَّ هَٰذَا ٱلۡبَيۡتِ "
-     "ٱلَّذِيٓ أَطۡعَمَهُم مِّن جُوعٖ وَءَامَنَهُم مِّنۡ خَوۡفِۭ"},
-    {"سورة الفيل",
-     "أَلَمۡ تَرَ كَيۡفَ فَعَلَ رَبُّكَ بِأَصۡحَٰبِ ٱلۡفِيلِ أَلَمۡ يَجۡعَلۡ كَيۡدَهُمۡ فِي تَضۡلِيلٖ وَأَرۡسَلَ "
-     "عَلَيۡهِمۡ طَيۡرًا أَبَابِيلَ تَرۡمِيهِم بِحِجَارَةٖ مِّن سِجِّيلٖ فَجَعَلَهُمۡ كَعَصۡفٖ مَّأۡكُولِۭ"},
-    {"سورة المسد",
-     "تَبَّتۡ يَدَآ أَبِي لَهَبٖ وَتَبَّ مَآ أَغۡنَىٰ عَنۡهُ مَالُهُۥ وَمَا كَسَبَ سَيَصۡلَىٰ نَارٗا ذَاتَ لَهَبٖ "
-     "وَٱمۡرَأَتُهُۥ حَمَّالَةَ ٱلۡحَطَبِ فِي جِيدِهَا حَبۡلٞ مِّن مَّسَدِۭ"},
+    {"سورة الشرح - ٥", "فَإِنَّ مَعَ ٱلۡعُسۡرِ يُسۡرًا"},
+    {"سورة الشرح - ١", "أَلَمۡ نَشۡرَحۡ لَكَ صَدۡرَكَ"},
+    {"سورة الشرح - ٧-٨", "فَإِذَا فَرَغۡتَ فَٱنصَبۡ وَإِلَىٰ رَبِّكَ فَٱرۡغَب"},
+    {"سورة الإخلاص - ١", "قُلۡ هُوَ ٱللَّهُ أَحَدٌ"},
+    {"سورة الكوثر - ١", "إِنَّآ أَعۡطَيۡنَٰكَ ٱلۡكَوۡثَرَ"},
+    {"سورة العصر - ١-٢", "وَٱلۡعَصۡرِ إِنَّ ٱلۡإِنسَٰنَ لَفِي خُسۡرٍ"},
 };
 constexpr size_t kCount = sizeof(kEntries) / sizeof(kEntries[0]);
 

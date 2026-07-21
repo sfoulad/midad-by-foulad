@@ -23,6 +23,7 @@
 #include "QuranBook.h"
 #include "CrossPointState.h"
 #include "GameHighScoresStore.h"
+#include "TasbihStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -521,6 +522,7 @@ void setup() {
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   GAME_SCORES.loadFromFile();
+  TASBIH.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();

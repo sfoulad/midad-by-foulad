@@ -319,6 +319,12 @@ class CrossPointSettings {
   // Quran) -- the games are compiled into the firmware directly.
   uint8_t gamesEnabled = 0;
 
+  // Settings -> Apps -> Tasbih: pins a synthetic "Tasbih" tile in My Books
+  // (see TASBIH_PSEUDO_PATH in RecentBooksActivity.cpp), between Quran and
+  // Games, that opens the built-in dhikr counter (TasbihActivity). No SD
+  // extraction needed, same as Games.
+  uint8_t tasbihEnabled = 0;
+
   // Settings -> Apps -> Debug: gates whether ANY of the rolling SD diagnostic
   // logs (sleep_diag_log.txt, reader_perf_log.txt, game_input_diag_log.txt,
   // cover_diag_log.txt, mybooks_scan_log.txt, opds_error_log.txt,

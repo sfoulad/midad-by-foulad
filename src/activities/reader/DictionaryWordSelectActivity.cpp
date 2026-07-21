@@ -69,8 +69,9 @@ void DictionaryWordSelectActivity::extractWords() {
       if (cleaned.empty()) continue;
       const int16_t x = static_cast<int16_t>(line.xPos + block->wordXpos(i) + marginLeft);
       const int16_t y = static_cast<int16_t>(line.yPos + marginTop);
-      const int16_t width = static_cast<int16_t>(std::max(1, measureWordWidth(wordStr.c_str())));
-      words.push_back(WordInfo{wordStr, cleaned, x, y, width, 0});
+      const uint16_t kashida = block->kashidaExtraPx(i);
+      const int16_t width = static_cast<int16_t>(std::max(1, measureWordWidth(wordStr.c_str()) + kashida));
+      words.push_back(WordInfo{wordStr, cleaned, x, y, width, 0, -1, -1, kashida});
     }
   }
 
@@ -354,7 +355,8 @@ void DictionaryWordSelectActivity::drawSelectionHighlight() {
     renderer.fillRoundedRect(selectedWord.screenX - HIGHLIGHT_PADDING_X, selectedWord.screenY - HIGHLIGHT_PADDING_Y,
                              selectedWord.width + HIGHLIGHT_PADDING_X * 2, lineHeight + HIGHLIGHT_PADDING_Y * 2,
                              HIGHLIGHT_RADIUS, Color::Black);
-    renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false);
+    renderer.drawText(readerFontId, selectedWord.screenX, selectedWord.screenY, selectedWord.text.c_str(), false,
+                      EpdFontFamily::REGULAR, BidiUtils::BidiBaseDir::AUTO, selectedWord.kashidaExtraPx);
   };
 
   drawSelectedWord(word);

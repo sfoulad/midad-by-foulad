@@ -386,20 +386,31 @@ void SleepActivity::renderDashboardSleepScreen() const {
     const auto& entry = CuratedAyahs::kEntries[random(static_cast<long>(CuratedAyahs::kCount))];
     const int ayahWidth = pageWidth - sidePadding * 2;
     const int ayahLineHeight = renderer.getLineHeight(UTHMANICHAFS_16_FONT_ID);
-    const auto ayahLines = renderer.wrappedText(UTHMANICHAFS_16_FONT_ID, entry.text, ayahWidth, /*maxLines=*/4);
-    int ayahY = ayahBlockBottom;
+    // CuratedAyahs is curated to short surahs that fit in 2-3 lines; capped at
+    // 3 as a safety margin so the card can never crowd the stat cards below.
+    const auto ayahLines = renderer.wrappedText(UTHMANICHAFS_16_FONT_ID, entry.text, ayahWidth, /*maxLines=*/3);
+    const int refLineHeight = renderer.getLineHeight(UTHMANICHAFS_12_FONT_ID);
+
+    // Solid black card, white text -- reads as a distinct "screensaver" block
+    // rather than more body copy, and a small reference under a larger ayah
+    // is the usual quote-card convention.
+    constexpr int kCardPaddingTop = 16;
+    constexpr int kCardPaddingBottom = 14;
+    constexpr int kCardGapBeforeRef = 6;
+    const int cardHeight = kCardPaddingTop + static_cast<int>(ayahLines.size()) * (ayahLineHeight + 2) +
+                           kCardGapBeforeRef + refLineHeight + kCardPaddingBottom;
+    renderer.fillRect(0, 0, pageWidth, cardHeight, true);
+
+    int ayahY = kCardPaddingTop;
     for (const auto& line : ayahLines) {
       const int lineWidth = renderer.getTextWidth(UTHMANICHAFS_16_FONT_ID, line.c_str());
-      renderer.drawText(UTHMANICHAFS_16_FONT_ID, (pageWidth - lineWidth) / 2, ayahY, line.c_str(), true);
+      renderer.drawText(UTHMANICHAFS_16_FONT_ID, (pageWidth - lineWidth) / 2, ayahY, line.c_str(), false);
       ayahY += ayahLineHeight + 2;
     }
-    ayahY += 4;
-    const int refLineHeight = renderer.getLineHeight(UTHMANICHAFS_12_FONT_ID);
+    ayahY += kCardGapBeforeRef;
     const int refWidth = renderer.getTextWidth(UTHMANICHAFS_12_FONT_ID, entry.reference);
-    renderer.drawText(UTHMANICHAFS_12_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, true);
-    ayahY += refLineHeight + 10;
-    renderer.drawLine(sidePadding, ayahY, pageWidth - sidePadding, ayahY, true);
-    ayahBlockBottom = ayahY + 16;
+    renderer.drawText(UTHMANICHAFS_12_FONT_ID, (pageWidth - refWidth) / 2, ayahY, entry.reference, false);
+    ayahBlockBottom = cardHeight;
   }
 
   // Cover, top-left -- same 200x300 box the Home screen's hero card uses, drawn
@@ -432,7 +443,6 @@ void SleepActivity::renderDashboardSleepScreen() const {
       }
     }
   }
-  renderer.drawRoundedRect(coverX, coverY, kCoverWidth, kCoverHeight, 1, 6, true);
   if (!hasCover) {
     renderer.drawIcon(CoverIcon, coverX + (kCoverWidth - 32) / 2, coverY + kCoverHeight / 2 - 16, 32);
   }

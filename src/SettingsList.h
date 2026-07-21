@@ -302,6 +302,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // step needed -- unlike Quran, nothing but the toggle itself is required.
         SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled",
                             StrId::STR_CAT_APPS),
+        // Tasbih toggle: pins a "Tasbih" tile in My Books (see TASBIH_PSEUDO_PATH
+        // in RecentBooksActivity.cpp) that opens the built-in dhikr counter. No
+        // extraction step needed, same as Games.
+        SettingInfo::Toggle(StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled, "tasbihEnabled",
+                            StrId::STR_CAT_APPS),
         // KOReader Sync itself is a device-only ACTION appended in
         // SettingsActivity::rebuildSettingsLists() (web-only, uses
         // KOReaderCredentialStore) -- see the comment further below.

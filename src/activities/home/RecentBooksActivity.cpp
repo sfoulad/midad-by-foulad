@@ -16,6 +16,7 @@
 #include "CrossPointSettings.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
+#include "activities/apps/TasbihActivity.h"
 #include "activities/games/GamesMenuActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
@@ -31,6 +32,9 @@ namespace {
 // EPUB/XTC load path below (empty cover, no matching extension). Tapping it
 // is special-cased in loop() to open GamesMenuActivity instead of the reader.
 constexpr const char* GAMES_PSEUDO_PATH = "/Games";
+// Same idea for the Tasbih tile (see SETTINGS.tasbihEnabled) -- opens
+// TasbihActivity instead of the reader.
+constexpr const char* TASBIH_PSEUDO_PATH = "/Tasbih";
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
@@ -55,15 +59,16 @@ std::string filenameStem(const std::string& path) {
   return path.substr(start, end - start);
 }
 
-// "Cover" for the Games tile -- there's no real cover image (GAMES_PSEUDO_PATH
-// isn't a book), and the generic BookIcon placeholder used for every other
-// missing-cover case made it look like a broken/unopened book rather than a
-// deliberate feature tile (an earlier hand-drawn puzzle pictogram had the same
-// problem: too easy to mistake for clutter at a glance). A solid black tile
-// with the tr(STR_GAMES) label centered reads instantly as its own distinct
-// "book" in the grid, the way a plain black spine stands out on a shelf.
-// Drawn with plain fillRect/drawText primitives, no bitmap asset needed.
-void drawGamesCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight) {
+// "Cover" for synthetic feature tiles (Games, Tasbih) -- there's no real cover
+// image (their paths are never real SD files), and the generic BookIcon
+// placeholder used for every other missing-cover case made it look like a
+// broken/unopened book rather than a deliberate feature tile (an earlier
+// hand-drawn puzzle pictogram had the same problem: too easy to mistake for
+// clutter at a glance). A solid black tile with the label centered reads
+// instantly as its own distinct "book" in the grid, the way a plain black
+// spine stands out on a shelf. Drawn with plain fillRect/drawText primitives,
+// no bitmap asset needed.
+void drawTileCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight, const char* label) {
   renderer.fillRect(cellX, cellY, cellWidth, cellHeight, true);
 
   // Thin white inset frame -- a plain black rectangle reads as "missing
@@ -77,8 +82,7 @@ void drawGamesCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, 
 
   // Largest available UI font, bold, white-on-black, centered in the cell.
   // Falls back a size down if the label would overflow the inset frame (long
-  // translations, e.g. German/French Games labels).
-  const char* label = tr(STR_GAMES);
+  // translations, e.g. German/French labels).
   int fontId = UI_12_FONT_ID;
   int textWidth = renderer.getTextWidth(fontId, label, EpdFontFamily::BOLD);
   const int maxTextWidth = cellWidth - 4 * inset;
@@ -212,6 +216,22 @@ void RecentBooksActivity::loadRecentBooks() {
     recentBooks.insert(recentBooks.begin(), std::move(games));
   }
 
+  // Pinned Tasbih: synthetic tile (TASBIH_PSEUDO_PATH is never a real SD
+  // file), shown between Quran and Games (user request) -- opens
+  // TasbihActivity instead of the reader (see loop()'s special-case).
+  // Inserted at the front AFTER Games (above) but BEFORE Quran (below), so
+  // Quran's own unconditional front-insert pushes this to the second slot,
+  // same technique the Games block already uses against Quran.
+  if (SETTINGS.tasbihEnabled) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == TASBIH_PSEUDO_PATH; }),
+                      recentBooks.end());
+    RecentBook tasbih;
+    tasbih.path = TASBIH_PSEUDO_PATH;
+    tasbih.title = tr(STR_TASBIH);
+    recentBooks.insert(recentBooks.begin(), std::move(tasbih));
+  }
+
   // Pinned Quran: when enabled in Settings -> System (and extracted), it is
   // always the FIRST book -- drop whatever entry the scan/recents produced for
   // it and re-insert at the front with its canonical Arabic title.
@@ -267,6 +287,7 @@ void RecentBooksActivity::loop() {
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
       recentBooks[selectorIndex].path != QuranBook::PATH &&
       recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -279,6 +300,10 @@ void RecentBooksActivity::loop() {
       if (recentBooks[selectorIndex].path == GAMES_PSEUDO_PATH) {
         startActivityForResult(std::make_unique<GamesMenuActivity>(renderer, mappedInput),
                                [](const ActivityResult&) {});
+        return;
+      }
+      if (recentBooks[selectorIndex].path == TASBIH_PSEUDO_PATH) {
+        startActivityForResult(std::make_unique<TasbihActivity>(renderer, mappedInput), [](const ActivityResult&) {});
         return;
       }
       onSelectBook(recentBooks[selectorIndex].path);
@@ -622,7 +647,9 @@ void RecentBooksActivity::render(RenderLock&&) {
       if (!drawn && book.path == GAMES_PSEUDO_PATH) {
         // Solid fill repaints over the thin outline drawRect() just drew --
         // same black, no visible seam -- with the designed cover on top.
-        drawGamesCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
+        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GAMES));
+      } else if (!drawn && book.path == TASBIH_PSEUDO_PATH) {
+        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_TASBIH));
       } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
                           32);

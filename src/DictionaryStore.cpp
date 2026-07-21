@@ -1920,13 +1920,25 @@ std::vector<std::string> DictionaryStore::findSuggestions(const DictionaryEntry&
   HalFile idx;
   if (!Storage.openFileForRead("DICT", entry.idxPath, idx)) return results;
 
+  // getFallbackForms() strips diacritics/hamza variants and common proclitics
+  // (definite article ال, وال/فال/بال/كال, etc.) -- computed once here and
+  // reused below for the exact-fallback pass. Its LAST distinct form is the
+  // most heavily stripped one available (bare -> hamza-folded -> proclitic-
+  // stripped, in that order), so anchoring the neighborhood scan and scoring
+  // on it instead of the raw query keeps a word like "القدماء" (no exact hit)
+  // from landing the scan among unrelated ال*-prefixed headwords that merely
+  // sort near the raw query -- it lands near "قدماء"/"قديم" instead, the same
+  // neighborhood the exact-fallback lookups already target.
+  const std::vector<std::string> fallbackForms = getFallbackForms(entry, word);
+  const std::string& anchorWord = fallbackForms.empty() ? word : fallbackForms.back();
+
   int lo = 0;
   int hi = static_cast<int>(entry.checkpoints.size()) - 1;
   while (lo < hi) {
     const int mid = lo + (hi - lo + 1) / 2;
     idx.seekSet(entry.checkpoints[mid]);
     const std::string key = readIndexWord(idx);
-    if (compareWords(key, word) <= 0) {
+    if (compareWords(key, anchorWord) <= 0) {
       lo = mid;
     } else {
       hi = mid - 1;
@@ -1941,7 +1953,7 @@ std::vector<std::string> DictionaryStore::findSuggestions(const DictionaryEntry&
   if (entry.totalWords > entry.ordinals[startSegment]) {
     totalToScan = std::min<uint32_t>(totalToScan, entry.totalWords - entry.ordinals[startSegment]);
   }
-  const std::string scoreWord = suggestionScoreKey(word);
+  const std::string scoreWord = suggestionScoreKey(anchorWord);
   const int maxDistance = std::max(2, static_cast<int>(scoreWord.size()) / 3 + 1);
 
   struct Candidate {
@@ -1972,7 +1984,7 @@ std::vector<std::string> DictionaryStore::findSuggestions(const DictionaryEntry&
     }
   };
 
-  for (const std::string& fallback : getFallbackForms(entry, word)) {
+  for (const std::string& fallback : fallbackForms) {
     IndexHit hit;
     std::string canonical;
     if (findIndexHit(entry, fallback, hit)) {
