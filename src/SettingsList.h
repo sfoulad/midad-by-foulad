@@ -208,15 +208,19 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     std::vector<SettingInfo> v;
     v.reserve(64);
     // --- Display ---
-    // Order MUST match SLEEP_SCREEN_MODE's numeric values: the option popup
-    // stores the picked label's INDEX straight into the setting. The old
-    // order had Cover+Custom and None swapped relative to the enum
-    // (COVER_CUSTOM=5, BLANK=4), so picking "Cover + Custom" stored BLANK
-    // -- a deliberately blank sleep screen displayed as "Cover + Custom"
-    // (live user report; the same bug exists upstream).
+    // Order MUST match SLEEP_SCREEN_MODE's numeric values (DARK=0, LIGHT=1,
+    // CUSTOM=2, COVER=3, COVER_CUSTOM=4, BLANK=5, QUICK_RESUME=6,
+    // DASHBOARD=7): the option popup stores the picked label's INDEX
+    // straight into the setting. A prior "fix" here swapped None and
+    // Cover+Custom in the WRONG direction, so picking "Cover + Custom"
+    // stored index 5 = BLANK -- a deliberately blank sleep screen displayed
+    // as "Cover + Custom" (live user report: blank screen when sleeping
+    // from inside a book with Cover+Custom selected -- SleepActivity.cpp's
+    // COVER_CUSTOM case correctly shows the book cover in that situation,
+    // but the setting never actually stored COVER_CUSTOM=4).
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                                   {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-                                   StrId::STR_NONE_OPT, StrId::STR_COVER_CUSTOM, StrId::STR_QUICK_RESUME,
+                                   StrId::STR_COVER_CUSTOM, StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME,
                                    StrId::STR_SLEEP_DASHBOARD},
                                   "sleepScreen", StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
