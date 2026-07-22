@@ -217,6 +217,9 @@ constexpr uint32_t SILENT_REBOOT_TARGET_OTA_INSTALL = 2;
 constexpr uint32_t SILENT_REBOOT_TARGET_OTA_CHECK = 3;
 constexpr uint32_t SILENT_REBOOT_TARGET_FILE_TRANSFER = 4;
 constexpr uint32_t SILENT_REBOOT_TARGET_FOULAD_EBOOKS = 5;
+constexpr uint32_t SILENT_REBOOT_TARGET_GYM = 6;
+constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 7;
+constexpr uint32_t SILENT_REBOOT_TARGET_DICTIONARY = 8;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -298,6 +301,36 @@ void silentRestartToFouladEbooks() {
   silentRebootTarget = SILENT_REBOOT_TARGET_FOULAD_EBOOKS;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=foulad_ebooks)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToGym() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_GYM;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=gym)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToSettings() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_SETTINGS;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=settings)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToDictionary() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_DICTIONARY;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=dictionary)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -509,7 +542,7 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_FOULAD_EBOOKS) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_DICTIONARY) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   gBootWasSilentRestart = isSilentReboot;
@@ -660,6 +693,16 @@ void setup() {
     // cover download/decode allocations; started from a fragmented session
     // heap it aborted with OOM twice on-device (crash reports 7 and 8).
     activityManager.goToFouladEbooks();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_GYM) {
+    // Return-to-caller: Gym catalog/asset sync reboots here instead of Home
+    // so the user lands back in the Gym app they were actually using.
+    activityManager.goToGym();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SETTINGS) {
+    // Return-to-caller: the font download store reboots here instead of Home.
+    activityManager.goToSettings();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_DICTIONARY) {
+    // Return-to-caller: the dictionary download store reboots here instead of Home.
+    activityManager.goToDictionary();
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader" logic, which fires on stale

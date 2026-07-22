@@ -45,4 +45,8 @@ class GymWorkoutActivity final : public Activity {
   void logSetAndAdvance();
   void promptEndWorkout();
   void finishWorkoutComplete();
+  // Draws the header, set-progress dots, weight/reps, last-performance line,
+  // and hints -- everything except the image itself, which render() decodes
+  // and draws separately (only on the one-time initial render per exercise).
+  void drawExercisingScreen(const PlannedExercise& ex);
 };

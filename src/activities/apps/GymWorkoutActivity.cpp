@@ -1,6 +1,6 @@
 #include "GymWorkoutActivity.h"
 
-#include <Epub/converters/ImageDecoderFactory.h>
+#include <Bitmap.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -19,6 +19,10 @@
 
 namespace {
 constexpr float KG_TO_LB = 2.20462f;
+constexpr int kImageMaxWidth = 400;
+constexpr int kImageMaxHeight = 280;
+constexpr int kDotSize = 14;
+constexpr int kDotGap = 10;
 
 std::string formatWeight(const float weightKg) {
   const bool isLb = SETTINGS.gymWeightUnit == CrossPointSettings::GYM_WEIGHT_LB;
@@ -43,7 +47,13 @@ void GymWorkoutActivity::beginExercise() {
   const auto* ex = currentExercise();
   if (!ex) return;
 
-  hasImage_ = Storage.exists(GymCatalog::imagePath(ex->slug).c_str());
+  // ensureImageThumb generates (and caches to SD) a 1-bit dithered BMP the
+  // first time this exercise's photo is needed -- see its header comment for
+  // why that's a real BW-mode-safe dither, unlike the JPEG decoder's own
+  // 4-level dither. Treat generation failure as imageless rather than
+  // crashing or showing a broken image.
+  hasImage_ = Storage.exists(GymCatalog::imagePath(ex->slug).c_str()) &&
+              GymCatalog::ensureImageThumb(ex->slug, kImageMaxWidth, kImageMaxHeight);
 
   if (const auto* last = GYM_LOG.findPerformance(ex->slug)) {
     weightKg_ = last->lastWeightKg;
@@ -133,7 +143,14 @@ void GymWorkoutActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  // wasReleased, not wasPressed -- matching GymActivity's own Back-exit and
+  // this same screen's COMPLETE-state handling below. Mixing press-edge and
+  // release-edge Back checks across the Gym/GymDayDetail/GymWorkout stack
+  // made a fast double-tap (encouraged by e-ink's slow ~500ms+ visual
+  // feedback, which makes a first tap look like it didn't register) land on
+  // whichever activity happened to be current when each edge fired, cascading
+  // an extra unintended pop (confirmed via on-device serial log).
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     promptEndWorkout();
     return;
   }
@@ -147,29 +164,18 @@ void GymWorkoutActivity::loop() {
     requestUpdate();
     return;
   }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-    ++reps_;
-    requestUpdate();
-    return;
-  }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
-    reps_ = std::max(0, reps_ - 1);
-    requestUpdate();
-    return;
-  }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     logSetAndAdvance();
   }
 }
 
 void GymWorkoutActivity::render(RenderLock&&) {
-  renderer.clearScreen();
-
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
 
   if (state_ == COMPLETE) {
+    renderer.clearScreen();
     GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_GYM));
     const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
     const int msgWidth = renderer.getTextWidth(UI_12_FONT_ID, tr(STR_WORKOUT_COMPLETE), EpdFontFamily::BOLD);
@@ -183,16 +189,32 @@ void GymWorkoutActivity::render(RenderLock&&) {
 
   const auto* ex = currentExercise();
   if (!ex) {
+    renderer.clearScreen();
     renderer.displayBuffer();
     return;
   }
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, ex->name.c_str());
+  // The image (when present) is a pre-dithered 1-bit BMP -- see
+  // GymCatalog::ensureImageThumb -- so drawing it is just a bitmap blit, as
+  // cheap as any other element on this screen. No multi-pass grayscale
+  // sequence, no one-time-vs-incremental split needed: every render() call
+  // redraws the whole screen in one plain BW pass, same as every other
+  // activity in this codebase.
+  renderer.clearScreen();
+  drawExercisingScreen(*ex);
+  renderer.displayBuffer();
+}
+
+void GymWorkoutActivity::drawExercisingScreen(const PlannedExercise& ex) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, ex.name.c_str());
 
   int contentY = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 8;
 
   char setBuf[24];
-  snprintf(setBuf, sizeof(setBuf), tr(STR_SET_FORMAT), currentSet_, ex->targetSets);
+  snprintf(setBuf, sizeof(setBuf), tr(STR_SET_FORMAT), currentSet_, ex.targetSets);
   const int setWidth = renderer.getTextWidth(UI_10_FONT_ID, setBuf);
   renderer.drawText(UI_10_FONT_ID, (pageWidth - setWidth) / 2, contentY, setBuf);
   contentY += renderer.getLineHeight(UI_10_FONT_ID) + 10;
@@ -201,9 +223,7 @@ void GymWorkoutActivity::render(RenderLock&&) {
   // the current set outlined+filled, remaining ones outline-only. More
   // scannable at a glance than the "Set X/Y" text alone.
   {
-    constexpr int kDotSize = 14;
-    constexpr int kDotGap = 10;
-    const int totalSets = ex->targetSets;
+    const int totalSets = ex.targetSets;
     const int rowWidth = totalSets * kDotSize + (totalSets - 1) * kDotGap;
     int dotX = (pageWidth - rowWidth) / 2;
     for (int s = 1; s <= totalSets; ++s) {
@@ -220,19 +240,16 @@ void GymWorkoutActivity::render(RenderLock&&) {
     contentY += kDotSize + 14;
   }
 
-  constexpr int kImageMaxWidth = 260;
-  constexpr int kImageMaxHeight = 180;
   if (hasImage_) {
-    const std::string imgPath = GymCatalog::imagePath(ex->slug);
-    RenderConfig config;
-    config.x = (pageWidth - kImageMaxWidth) / 2;
-    config.y = contentY;
-    config.maxWidth = kImageMaxWidth;
-    config.maxHeight = kImageMaxHeight;
-    config.useGrayscale = true;
-    config.useDithering = true;
-    ImageToFramebufferDecoder* decoder = ImageDecoderFactory::getDecoder(imgPath);
-    if (decoder) decoder->decodeToFramebuffer(imgPath, renderer, config);
+    HalFile thumbFile;
+    if (Storage.openFileForRead("GYM", GymCatalog::imageThumbPath(ex.slug, kImageMaxWidth, kImageMaxHeight).c_str(),
+                                thumbFile)) {
+      Bitmap bitmap(thumbFile);
+      if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+        const int imgX = (pageWidth - kImageMaxWidth) / 2;
+        renderer.drawBitmap(bitmap, imgX, contentY, kImageMaxWidth, kImageMaxHeight);
+      }
+    }
     contentY += kImageMaxHeight + 16;
   }
 
@@ -243,7 +260,7 @@ void GymWorkoutActivity::render(RenderLock&&) {
   renderer.drawText(UI_12_FONT_ID, (pageWidth - bigWidth) / 2, contentY, bigBuf, true, EpdFontFamily::BOLD);
   contentY += renderer.getLineHeight(UI_12_FONT_ID) + 8;
 
-  if (const auto* last = GYM_LOG.findPerformance(ex->slug)) {
+  if (const auto* last = GYM_LOG.findPerformance(ex.slug)) {
     char lastBuf[48];
     snprintf(lastBuf, sizeof(lastBuf), tr(STR_LAST_TIME_FORMAT), formatWeight(last->lastWeightKg).c_str(),
              last->lastReps);
@@ -252,11 +269,10 @@ void GymWorkoutActivity::render(RenderLock&&) {
   }
 
   // Weight is adjusted via the physical side buttons -- symbols only ("+"/"-"),
-  // language-neutral so no i18n string is needed.
+  // language-neutral so no i18n string is needed. Front Left/Right no longer
+  // adjust reps (removed per user request) -- reps_ is still tracked (shown
+  // here, logged with the set) but is no longer live-editable mid-workout.
   GUI.drawSideButtonHints(renderer, "+", "-");
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_END), tr(STR_LOG_SET), tr(STR_REP_MINUS), tr(STR_REP_PLUS), /*rtlSwap=*/false);
+  const auto labels = mappedInput.mapLabels(tr(STR_END), tr(STR_LOG_SET), "", "", /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
-  renderer.displayBuffer();
 }

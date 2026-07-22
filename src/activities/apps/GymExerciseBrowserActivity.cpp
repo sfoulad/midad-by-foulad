@@ -31,22 +31,17 @@ GymExerciseBrowserActivity::GymExerciseBrowserActivity(GfxRenderer& renderer, Ma
 
 void GymExerciseBrowserActivity::onEnter() {
   Activity::onEnter();
-  GymCatalog::loadFromSd(allExercises_);
+
+  std::vector<GymBodyPartCount> summary;
+  GymCatalog::loadBodyPartCounts(summary);
+  std::sort(summary.begin(), summary.end(),
+           [](const GymBodyPartCount& a, const GymBodyPartCount& b) { return a.bodyPart < b.bodyPart; });
 
   bodyParts_.clear();
-  for (const auto& entry : allExercises_) {
-    if (std::find(bodyParts_.begin(), bodyParts_.end(), entry.bodyPart) == bodyParts_.end()) {
-      bodyParts_.push_back(entry.bodyPart);
-    }
-  }
-  std::sort(bodyParts_.begin(), bodyParts_.end());
-
-  bodyPartCounts_.assign(bodyParts_.size(), 0);
-  for (const auto& entry : allExercises_) {
-    const auto it = std::find(bodyParts_.begin(), bodyParts_.end(), entry.bodyPart);
-    if (it != bodyParts_.end()) {
-      ++bodyPartCounts_[static_cast<size_t>(it - bodyParts_.begin())];
-    }
+  bodyPartCounts_.clear();
+  for (const auto& s : summary) {
+    bodyParts_.push_back(s.bodyPart);
+    bodyPartCounts_.push_back(s.count);
   }
 
   state_ = BODY_PART_LIST;
@@ -55,15 +50,12 @@ void GymExerciseBrowserActivity::onEnter() {
 }
 
 void GymExerciseBrowserActivity::filterByBodyPart(const std::string& bodyPart) {
-  filteredIndices_.clear();
-  for (size_t i = 0; i < allExercises_.size(); i++) {
-    if (allExercises_[i].bodyPart == bodyPart) filteredIndices_.push_back(i);
-  }
+  GymCatalog::loadExercisesForBodyPart(bodyPart, currentBodyPartExercises_);
 }
 
 void GymExerciseBrowserActivity::addSelectedExercise() {
-  if (exerciseIndex_ < 0 || static_cast<size_t>(exerciseIndex_) >= filteredIndices_.size()) return;
-  const auto& entry = allExercises_[filteredIndices_[static_cast<size_t>(exerciseIndex_)]];
+  if (exerciseIndex_ < 0 || static_cast<size_t>(exerciseIndex_) >= currentBodyPartExercises_.size()) return;
+  const auto& entry = currentBodyPartExercises_[static_cast<size_t>(exerciseIndex_)];
 
   PlannedExercise ex;
   ex.slug = entry.slug;
@@ -142,7 +134,7 @@ void GymExerciseBrowserActivity::loop() {
       requestUpdate();
     }
   } else {
-    const int count = static_cast<int>(filteredIndices_.size());
+    const int count = static_cast<int>(currentBodyPartExercises_.size());
     // Exercise list's 2nd drawList arg is the equipment subtitle, so it uses
     // the taller with-subtitle row height -- must match here or page jumps
     // would land on the wrong row.
@@ -201,15 +193,15 @@ void GymExerciseBrowserActivity::render(RenderLock&&) {
           return std::string(buf);
         },
         false);
-  } else if (filteredIndices_.empty()) {
+  } else if (currentBodyPartExercises_.empty()) {
     const int msgWidth = renderer.getTextWidth(UI_10_FONT_ID, tr(STR_NO_EXERCISES_FOR_BODY_PART));
     renderer.drawText(UI_10_FONT_ID, (pageWidth - msgWidth) / 2, contentTop + 40, tr(STR_NO_EXERCISES_FOR_BODY_PART));
   } else {
     GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(filteredIndices_.size()),
-        exerciseIndex_,
-        [this](int i) { return allExercises_[filteredIndices_[static_cast<size_t>(i)]].name; },
-        [this](int i) { return allExercises_[filteredIndices_[static_cast<size_t>(i)]].equipment; }, nullptr, nullptr,
+        renderer, Rect{0, contentTop, pageWidth, contentHeight},
+        static_cast<int>(currentBodyPartExercises_.size()), exerciseIndex_,
+        [this](int i) { return currentBodyPartExercises_[static_cast<size_t>(i)].name; },
+        [this](int i) { return currentBodyPartExercises_[static_cast<size_t>(i)].equipment; }, nullptr, nullptr,
         false);
   }
 

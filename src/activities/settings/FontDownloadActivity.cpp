@@ -32,10 +32,12 @@ void FontDownloadActivity::onEnter() {
 void FontDownloadActivity::onExit() {
   Activity::onExit();
 
+  // Targeted restart (not bare silentRestart()) so the user lands back on
+  // Settings, where this activity is always launched from, not on Home.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestart();
+    silentRestartToSettings();
   }
 }
 

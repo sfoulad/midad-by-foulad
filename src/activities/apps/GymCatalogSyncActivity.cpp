@@ -34,11 +34,12 @@ void GymCatalogSyncActivity::onExit() {
   Activity::onExit();
   // Same reasoning as Dictionary/Font download: tear down WiFi and restart on
   // a fresh heap rather than risk running the rest of the session on a
-  // TLS-fragmented one.
+  // TLS-fragmented one. Targeted (not bare silentRestart()) so the user lands
+  // back in the Gym app they were using, not on Home.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestart();
+    silentRestartToGym();
   }
 }
 
@@ -74,8 +75,13 @@ void GymCatalogSyncActivity::syncCatalog() {
 
   // Validate before committing over the existing (working) catalog -- a
   // truncated/malformed download must never clobber a good local copy.
-  std::vector<GymCatalogEntry> parsed;
-  if (!GymCatalog::loadFromPath(CATALOG_TMP, parsed) || parsed.empty()) {
+  // Uses validate() (count-only, retains no entries), NOT loadFromPath(): at
+  // this point WiFi/TLS is still connected (only torn down in onExit()), and
+  // a real device crash confirmed that even one ~40-70KB
+  // vector<GymCatalogEntry> allocation can fail against that fragmented
+  // heap, aborting the whole device under -fno-exceptions.
+  size_t exerciseCount = 0;
+  if (!GymCatalog::validate(CATALOG_TMP, exerciseCount) || exerciseCount == 0) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%lu gym catalog_sync result=parse_failed", millis());
     GymDiagLog::append(buf);
@@ -99,7 +105,7 @@ void GymCatalogSyncActivity::syncCatalog() {
     return;
   }
 
-  exerciseCount_ = static_cast<int>(parsed.size());
+  exerciseCount_ = static_cast<int>(exerciseCount);
   char buf[96];
   snprintf(buf, sizeof(buf), "%lu gym catalog_sync result=ok count=%d elapsed=%lums", millis(), exerciseCount_,
            millis() - startMs);

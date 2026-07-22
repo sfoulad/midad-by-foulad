@@ -134,6 +134,8 @@ class ActivityManager {
   void goToRecentBooks();
   void goToBrowser();
   void goToFouladEbooks();
+  void goToGym();
+  void goToDictionary();
   void goToReader(std::string path);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();

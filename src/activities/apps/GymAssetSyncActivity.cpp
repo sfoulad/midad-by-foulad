@@ -31,10 +31,12 @@ void GymAssetSyncActivity::onEnter() {
 
 void GymAssetSyncActivity::onExit() {
   Activity::onExit();
+  // Targeted restart (not bare silentRestart()) so the user lands back in
+  // the Gym app they were using, not on Home.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestart();
+    silentRestartToGym();
   }
 }
 

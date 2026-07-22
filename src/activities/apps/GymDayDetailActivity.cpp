@@ -27,8 +27,15 @@ void GymDayDetailActivity::onEnter() {
 }
 
 void GymDayDetailActivity::startWorkoutPressed() {
+  // GymWorkoutActivity only ever finish()es via a deliberately-confirmed
+  // early end or an acknowledged "Workout Complete" screen -- there's no
+  // "just backed out without ending" path (Back mid-workout opens a confirm
+  // dialog first; cancelling it stays in the workout). So every return here
+  // means the workout is genuinely over -- go straight back to Gym home
+  // (skip re-showing this specific day's detail screen) instead of making
+  // the user press Back again to leave it.
   startActivityForResult(std::make_unique<GymWorkoutActivity>(renderer, mappedInput, dayIndex_),
-                         [this](const ActivityResult&) { requestUpdate(); });
+                         [this](const ActivityResult&) { finish(); });
 }
 
 void GymDayDetailActivity::addExercisePressed() {
@@ -103,7 +110,11 @@ void GymDayDetailActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  // wasReleased, not wasPressed -- see GymWorkoutActivity's matching Back
+  // check for why (mixed press/release edges across this Gym/Day
+  // Detail/Workout stack let a fast double-tap land an extra pop on
+  // whichever activity happened to be current when each edge fired).
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
     return;
   }

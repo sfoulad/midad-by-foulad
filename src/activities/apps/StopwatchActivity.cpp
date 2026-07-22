@@ -14,17 +14,22 @@ namespace {
 // STOPWATCH_32_FONT_ID only has glyphs for '0'-'9' and ':' (see
 // convert-builtin-fonts.sh) -- this format string never produces anything
 // else, so it's safe to draw with that font directly.
+//
+// MM:SS:CS (centiseconds, i.e. hundredths -- a Casio-style stopwatch's third
+// field is hundredths, not literal milliseconds). The live running display
+// still only calls requestUpdate() once per second (see loop()'s 1000ms
+// tick) -- the e-ink panel's 1-2s full-refresh cost (see CLAUDE.md) makes a
+// smoothly-animating hundredths digit infeasible, so this shows the real
+// elapsed time's exact centiseconds each second (not always "00"), but it
+// steps once per second rather than animating continuously. Lap times and
+// the paused/stopped display are exact, frozen values either way.
 void formatElapsed(const uint32_t ms, char* buf, const size_t len) {
   const uint32_t totalSeconds = ms / 1000;
-  const uint32_t hours = totalSeconds / 3600;
-  const uint32_t minutes = (totalSeconds % 3600) / 60;
+  const uint32_t minutes = totalSeconds / 60;
   const uint32_t seconds = totalSeconds % 60;
-  if (hours > 0) {
-    snprintf(buf, len, "%lu:%02lu:%02lu", static_cast<unsigned long>(hours), static_cast<unsigned long>(minutes),
-             static_cast<unsigned long>(seconds));
-  } else {
-    snprintf(buf, len, "%02lu:%02lu", static_cast<unsigned long>(minutes), static_cast<unsigned long>(seconds));
-  }
+  const uint32_t centiseconds = (ms % 1000) / 10;
+  snprintf(buf, len, "%02lu:%02lu:%02lu", static_cast<unsigned long>(minutes), static_cast<unsigned long>(seconds),
+           static_cast<unsigned long>(centiseconds));
 }
 }  // namespace
 

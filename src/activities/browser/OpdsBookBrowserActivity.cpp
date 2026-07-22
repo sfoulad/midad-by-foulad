@@ -15,6 +15,7 @@
 #include <memory>
 
 #include "CrossPointState.h"
+#include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "OpdsCoverCache.h"
 #include "SilentRestart.h"
@@ -137,6 +138,11 @@ void OpdsBookBrowserActivity::onExit() {
       APP_STATE.openEpubPath = pendingReaderPath;
       APP_STATE.saveToFile();
       silentRestartToReader();
+    } else if (server.url == FOULAD_EBOOKS_URL) {
+      // Return-to-caller: browsing Foulad eBooks specifically (not a custom
+      // OPDS server) reboots back into it rather than Home -- landing on Home
+      // after just browsing (no download) was a real user complaint.
+      silentRestartToFouladEbooks();
     } else {
       silentRestart();
     }

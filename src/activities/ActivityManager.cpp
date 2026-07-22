@@ -9,6 +9,8 @@
 #include "FouladEbooksConfig.h"
 #include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
+#include "apps/DictionaryActivity.h"
+#include "apps/GymActivity.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
 #include "browser/FouladEbooksSetupActivity.h"
@@ -180,6 +182,12 @@ void ActivityManager::goToFileTransfer() {
 }
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToGym() { replaceActivity(std::make_unique<GymActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToDictionary() {
+  replaceActivity(std::make_unique<DictionaryActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
