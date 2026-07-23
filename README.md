@@ -74,6 +74,20 @@
 <br>
 
 <p align="center">
+  <img src="./docs/images/games/snake.png" width="200" alt="Snake on Foulad eInk">
+  <img src="./docs/images/games/tetris.png" width="200" alt="Tetris on Foulad eInk">
+  <img src="./docs/images/games/sudoku.png" width="200" alt="Sudoku on Foulad eInk">
+  <img src="./docs/images/games/maze.png" width="200" alt="Maze on Foulad eInk">
+</p>
+<h3 align="center">🎮 Four games, zero downloads.</h3>
+<p align="center">
+  Snake, Tetris, Sudoku, and Maze, built right into the firmware — pinned in My Books & Apps for whenever you want a
+  break from reading.
+</p>
+
+<br>
+
+<p align="center">
   <img src="./docs/images/gym.png" width="380" alt="Gym workout planner on Foulad eInk">
 </p>
 <h3 align="center">🏋️ Plan your week, log every set.</h3>
