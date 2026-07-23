@@ -53,6 +53,16 @@
 <br>
 
 <p align="center">
+  <img src="./docs/images/fonts/font-browser.png" width="380" alt="Font Browser on Foulad eInk">
+</p>
+<h3 align="center">🔤 Download fonts, Arabic and English, on the go.</h3>
+<p align="center">
+  Browse and download font families for both scripts straight over Wi-Fi — no SD card swap, no computer required.
+</p>
+
+<br>
+
+<p align="center">
   <img src="./docs/images/stats.png" width="380" alt="Reading statistics on Foulad eInk">
 </p>
 <h3 align="center">📊 See your reading, at a glance.</h3>
