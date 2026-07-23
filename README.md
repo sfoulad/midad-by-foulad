@@ -74,10 +74,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/games/snake.png" width="200" alt="Snake on Foulad eInk">
-  <img src="./docs/images/games/tetris.png" width="200" alt="Tetris on Foulad eInk">
-  <img src="./docs/images/games/sudoku.png" width="200" alt="Sudoku on Foulad eInk">
-  <img src="./docs/images/games/maze.png" width="200" alt="Maze on Foulad eInk">
+  <img src="./docs/images/games/games-slideshow.gif" width="300" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
 </p>
 <h3 align="center">🎮 Four games, zero downloads.</h3>
 <p align="center">
