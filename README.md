@@ -85,7 +85,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/gym.png" width="380" alt="Gym workout planner on Foulad eInk">
+  <img src="./docs/images/gym/gym-slideshow.gif" width="380" alt="Gym workout planner on Foulad eInk">
 </p>
 <h3 align="center">🏋️ Plan your week, log every set.</h3>
 <p align="center">
