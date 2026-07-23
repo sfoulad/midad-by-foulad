@@ -63,17 +63,6 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/apps.png" width="380" alt="Games, Tasbih, Stop Watch, and Gym tiles on Foulad eInk">
-</p>
-<h3 align="center">🧩 More than a reader.</h3>
-<p align="center">
-  Snake, Tetris, Sudoku, and Maze for a break, a Tasbih dhikr counter, a Stop Watch with lap tracking, and a full
-  Gym workout planner — all pinned right alongside your books, no download required.
-</p>
-
-<br>
-
-<p align="center">
   <img src="./docs/images/games/games-slideshow-v2.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
 </p>
 <h3 align="center">🎮 Four games, zero downloads.</h3>
@@ -91,6 +80,16 @@
 <p align="center">
   A 7-day workout split with a day at a glance — muscle group, exercise count, rest days — then a per-set logger
   that remembers your last weight and reps, and shows the exercise photo right on the page.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="./docs/images/stopwatch/stopwatch.png" width="380" alt="Stop Watch on Foulad eInk">
+</p>
+<h3 align="center">⏱️ Every second, on the dot.</h3>
+<p align="center">
+  Start, pause, and lap tracking with a Casio-style MM:SS:CS display — pinned right alongside your books.
 </p>
 
 <br>
