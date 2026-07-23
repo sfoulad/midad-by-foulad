@@ -12,10 +12,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sfoulad/foulad-eink/releases"><img src="https://img.shields.io/github/v/release/sfoulad/foulad-eink?label=release&color=black&style=flat-square" alt="Latest release"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/foulad-eink?color=black&style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/Arabic-100%25-black?style=flat-square" alt="Arabic support">
-  <img src="https://img.shields.io/badge/updates-over--the--air-black?style=flat-square" alt="OTA updates">
+  <a href="https://github.com/sfoulad/foulad-eink/releases"><img src="https://img.shields.io/github/v/release/sfoulad/foulad-eink?label=release&color=blue&style=flat-square" alt="Latest release"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/foulad-eink?color=brightgreen&style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/Arabic-100%25-orange?style=flat-square" alt="Arabic support">
+  <img src="https://img.shields.io/badge/updates-over--the--air-blueviolet?style=flat-square" alt="OTA updates">
 </p>
 
 <p align="center">
@@ -90,6 +90,17 @@
 <h3 align="center">⏱️ Every second, on the dot.</h3>
 <p align="center">
   Start, pause, and lap tracking with a Casio-style MM:SS:CS display — pinned right alongside your books.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="./docs/images/tasbih/tasbih.png" width="380" alt="Tasbih dhikr counter on Foulad eInk">
+</p>
+<h3 align="center">📿 Count your dhikr, track your best day.</h3>
+<p align="center">
+  Either side button counts — no need to look away from your recitation — with a running total for the year and
+  your all-time best day, plus a flash at 33, 99, and 100.
 </p>
 
 <br>
