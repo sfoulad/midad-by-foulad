@@ -74,7 +74,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/games/games-slideshow.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
+  <img src="./docs/images/games/games-slideshow-v2.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
 </p>
 <h3 align="center">🎮 Four games, zero downloads.</h3>
 <p align="center">
