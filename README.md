@@ -63,11 +63,23 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/games.png" width="380" alt="Sudoku on Foulad eInk">
+  <img src="./docs/images/apps.png" width="380" alt="Games, Tasbih, Stop Watch, and Gym tiles on Foulad eInk">
 </p>
-<h3 align="center">🎮 Take a break.</h3>
+<h3 align="center">🧩 More than a reader.</h3>
 <p align="center">
-  Snake, Tetris, Sudoku, and Maze — built right into the device, no download required.
+  Snake, Tetris, Sudoku, and Maze for a break, a Tasbih dhikr counter, a Stop Watch with lap tracking, and a full
+  Gym workout planner — all pinned right alongside your books, no download required.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="./docs/images/gym.png" width="380" alt="Gym workout planner on Foulad eInk">
+</p>
+<h3 align="center">🏋️ Plan your week, log every set.</h3>
+<p align="center">
+  A 7-day workout split with a day at a glance — muscle group, exercise count, rest days — then a per-set logger
+  that remembers your last weight and reps, and shows the exercise photo right on the page.
 </p>
 
 <br>
@@ -92,6 +104,9 @@
 - ☁️ **Foulad eBooks** — connect to a self-hosted library and browse it as a cover grid, right from the home screen.
 - 📊 **Reading stats** — streaks, a monthly heatmap, and per-book progress.
 - 🎮 **Four built-in games** — Snake, Tetris, Sudoku, and Maze.
+- 🏋️ **Gym workout planner** — a 7-day split, per-set weight/reps logging, and exercise photos, synced from a shared catalog.
+- 📿 **Tasbih counter, Stop Watch, and Dictionary** — a dhikr counter with daily/yearly stats, a lap-tracking stopwatch, and offline word lookup right from the reading drawer.
+- 🎨 **A live Dashboard screensaver** — clock, battery, current book, streak, and a rotating ayah, instead of a static sleep screen.
 - 🔋 **Free, open source, and self-updating** — flash it once, and it keeps itself up to date over Wi-Fi from here on out.
 
 ---
@@ -114,14 +129,19 @@
 - EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, focus reading, and KOReader progress sync.
 - Custom fonts — install your favorite fonts on the SD card.
 - Tilt page turn (X3 only).
+- Offline dictionary — select a word while reading and look it up right from the drawer, no connection needed once a dictionary is installed.
 
 **📊 Reading statistics**
 
 - Total and per-day reading time, a monthly heatmap of your reading activity, per-book time tracking, and a configurable daily reading goal.
+- A live Dashboard sleep screen — clock, battery, current book and progress, reading streak, and a rotating Quran ayah, as an alternative to a static cover/blank sleep screen.
 
-**🎮 Games**
+**🧩 Apps**
 
 - Snake, Tetris, Sudoku, and Maze, pinned as their own tile in your library — no setup, nothing to install.
+- **Gym**: a 7-day workout split shown as a day-at-a-glance grid (muscle group, exercise count, rest days), an exercise picker synced from a shared catalog, and a per-set logger that remembers your last weight/reps and shows the exercise photo on the page.
+- **Tasbih**: a dhikr counter with a top-count leaderboard and daily/yearly totals.
+- **Stop Watch**: start/pause, lap tracking, and a MM:SS:CS Casio-style display.
 
 **☁️ Foulad eBooks**
 
