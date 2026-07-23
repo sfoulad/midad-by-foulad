@@ -83,6 +83,16 @@
 <br>
 
 <p align="center">
+  <img src="./docs/images/settings-apps/settings-apps.png" width="380" alt="Settings — Apps tab on Foulad eInk">
+</p>
+<h3 align="center">🎛️ Enable and disable apps, to taste.</h3>
+<p align="center">
+  Don't want Games or Gym cluttering your library? Turn off whatever you don't use, right from Settings — Apps.
+</p>
+
+<br>
+
+<p align="center">
   <img src="./docs/images/games/games-slideshow-v2.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
 </p>
 <h3 align="center">🎮 Four games, zero downloads.</h3>
