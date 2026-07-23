@@ -63,6 +63,16 @@
 <br>
 
 <p align="center">
+  <img src="./docs/images/books-apps/books-apps.png" width="380" alt="My Books & Apps grid on Foulad eInk">
+</p>
+<h3 align="center">📚 Books and apps, in one place.</h3>
+<p align="center">
+  Every book sits in the same grid as Tasbih, Stop Watch, Gym, and Games — no separate launcher, no digging through menus.
+</p>
+
+<br>
+
+<p align="center">
   <img src="./docs/images/games/games-slideshow-v2.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
 </p>
 <h3 align="center">🎮 Four games, zero downloads.</h3>
