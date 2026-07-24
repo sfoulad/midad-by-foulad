@@ -12,25 +12,31 @@
 
 namespace {
 // STOPWATCH_32_FONT_ID only has glyphs for '0'-'9' and ':' (see
-// convert-builtin-fonts.sh) -- this format string never produces anything
-// else, so it's safe to draw with that font directly.
+// convert-builtin-fonts.sh) -- both format strings below never produce
+// anything else, so it's safe to draw with that font directly.
 //
-// MM:SS:CS (centiseconds, i.e. hundredths -- a Casio-style stopwatch's third
-// field is hundredths, not literal milliseconds). The e-ink panel's 1-2s
-// full-refresh cost (see CLAUDE.md) makes a smoothly-animating hundredths
-// digit infeasible; render() rounds the live running value down to the whole
-// second before formatting, so this field reads a steady ":00" while
-// running rather than the raw sub-second remainder some earlier redraw
-// happened to land on (which looked like it was jumping between numbers,
-// not counting). Lap times and the paused/stopped display pass their exact,
-// frozen elapsed value straight through, centiseconds included.
-void formatElapsed(const uint32_t ms, char* buf, const size_t len) {
+// Centiseconds (hundredths -- a Casio-style stopwatch's third field, not
+// literal milliseconds) are only meaningful on a FROZEN reading (paused,
+// stopped, or a recorded lap): the e-ink panel's 1-2s full-refresh cost (see
+// CLAUDE.md) means the live running display can only redraw ~once/second
+// (see loop()'s 1000ms tick), so a hundredths field there would show either
+// the real value at whatever sub-second moment that tick's own jitter
+// happened to land on -- looking like it jumps between random numbers, not
+// counting -- or a value frozen at :00, which looks stuck. Neither reads as
+// correct, so render() only passes includeCentiseconds=true for frozen
+// readings (paused display, lap list entries); the live running display
+// shows MM:SS only, ticking cleanly once a second same as any plain clock.
+void formatElapsed(const uint32_t ms, char* buf, const size_t len, const bool includeCentiseconds) {
   const uint32_t totalSeconds = ms / 1000;
   const uint32_t minutes = totalSeconds / 60;
   const uint32_t seconds = totalSeconds % 60;
-  const uint32_t centiseconds = (ms % 1000) / 10;
-  snprintf(buf, len, "%02lu:%02lu:%02lu", static_cast<unsigned long>(minutes), static_cast<unsigned long>(seconds),
-           static_cast<unsigned long>(centiseconds));
+  if (includeCentiseconds) {
+    const uint32_t centiseconds = (ms % 1000) / 10;
+    snprintf(buf, len, "%02lu:%02lu:%02lu", static_cast<unsigned long>(minutes), static_cast<unsigned long>(seconds),
+             static_cast<unsigned long>(centiseconds));
+  } else {
+    snprintf(buf, len, "%02lu:%02lu", static_cast<unsigned long>(minutes), static_cast<unsigned long>(seconds));
+  }
 }
 }  // namespace
 
@@ -121,18 +127,10 @@ void StopwatchActivity::render(RenderLock&&) {
 
   constexpr int kNumberFontId = STOPWATCH_32_FONT_ID;
   char timeBuf[16];
-  // While running, the live tick only redraws ~once/second (loop()'s 1000ms
-  // check), so showing elapsedMs()'s raw centiseconds meant each redraw
-  // landed on whatever sub-second remainder the tick happened to fire at --
-  // real, but effectively random-looking from one redraw to the next (a user
-  // report: "last 00 not moving, jumping between numbers"). Rounding down to
-  // the whole second while running shows a clean, steady :00 instead. Once
-  // stopped/paused/lapped, elapsedMs() is a frozen static value (no repeat
-  // redraws to jitter between), so real centiseconds there stay exact and
-  // meaningful, same as a physical stopwatch's lap/stop reading.
-  uint32_t displayMs = elapsedMs();
-  if (running) displayMs -= displayMs % 1000;
-  formatElapsed(displayMs, timeBuf, sizeof(timeBuf));
+  // MM:SS while running (see formatElapsed's comment for why), full
+  // MM:SS:CS once paused/stopped -- elapsedMs() is a frozen static value at
+  // that point, so real centiseconds are meaningful and exact.
+  formatElapsed(elapsedMs(), timeBuf, sizeof(timeBuf), /*includeCentiseconds=*/!running);
   const int numberWidth = renderer.getTextWidth(kNumberFontId, timeBuf);
   const int numberTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 16;
   renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberTop, timeBuf, true);
@@ -155,7 +153,7 @@ void StopwatchActivity::render(RenderLock&&) {
         nullptr, nullptr,
         [this, lapCount](int i) {
           char buf[16];
-          formatElapsed(laps[lapCount - 1 - static_cast<size_t>(i)], buf, sizeof(buf));
+          formatElapsed(laps[lapCount - 1 - static_cast<size_t>(i)], buf, sizeof(buf), /*includeCentiseconds=*/true);
           return std::string(buf);
         },
         false);
