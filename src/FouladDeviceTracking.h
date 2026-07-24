@@ -25,6 +25,15 @@ std::string getSerialNumber();
 // device under the given Foulad eBooks account. Call once per connection,
 // before browsing (e.g. from OpdsBookBrowserActivity right before its first
 // fetchFeed()). No-op if WiFi isn't currently connected.
+//
+// Bidirectional settings sync (EINK_SETTINGS_SYNC_TASKS.md) piggybacks on
+// this same call: the request reports this device's current CrossPointSettings/
+// KOReaderCredentialStore values (display-only, for the "My Devices" web
+// editor), and the response may carry back whatever the user configured
+// there -- applied immediately to local settings.json (and koreader.json for
+// ko* keys) if the user has ever saved that page for this device, otherwise
+// {} and nothing changes. See FouladDeviceTracking.cpp for the exact
+// key/type mapping.
 void registerDevice(const std::string& username, const std::string& password);
 
 // Reports current reading progress for one (device, book) pair.
