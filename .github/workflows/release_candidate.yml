@@ -7,6 +7,8 @@ jobs:
   build-release-candidate:
     if: startsWith(github.ref_name, 'release/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -36,6 +38,7 @@ jobs:
         run: |
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
           echo "BRANCH_SUFFIX=${GITHUB_REF_NAME#release/}" >> $GITHUB_ENV
+          echo "CROSSPOINT_VERSION=$(grep -m1 '^version = ' platformio.ini | cut -d' ' -f3)" >> $GITHUB_ENV
 
       - name: Build CrossPoint Release Candidate
         env:
@@ -52,3 +55,19 @@ jobs:
             .pio/build/gh_release_rc/firmware.elf
             .pio/build/gh_release_rc/firmware.map
             .pio/build/gh_release_rc/partitions.bin
+
+      - name: Publish GitHub Pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Settings -> System -> Pre-release opts a device into checking GitHub's
+          # full /releases list (includes pre-releases) instead of /releases/latest,
+          # which GitHub documents as excluding pre-releases/drafts entirely -- this
+          # step is what actually makes an RC build visible there at all; the CI
+          # artifact above was previously the only output. tag_name doesn't need to
+          # already exist: action-gh-release creates it pointing at this workflow's
+          # own commit. Same firmware.bin-only asset convention as the stable release
+          # workflow (see release.yml) so ReleaseJsonParser/OtaUpdater need no
+          # per-channel special-casing.
+          tag_name: v${{ env.CROSSPOINT_VERSION }}-rc+${{ env.SHORT_SHA }}
+          prerelease: true
+          files: .pio/build/gh_release_rc/firmware.bin
