@@ -31,12 +31,18 @@ std::string readingStatsEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/r
 std::string deviceLogEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/device-log"; }
 std::string deviceStatsEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/device-stats"; }
 
-// Below this free-heap level, reportDeviceStats() skips the books/reading-days
-// arrays this connect (device telemetry alone still sends) -- building that
-// JSON (up to 40 books + 750 heatmap days) is the single largest allocation
-// this module makes, well above RollingSdLog's own 32KB floor for a single
-// log line, so it gets a proportionally larger safety margin.
-constexpr uint32_t MIN_SAFE_HEAP_FOR_READING_SNAPSHOT_BYTES = 100000;
+// reportDeviceStats() skips the books/reading-days arrays this connect
+// (device telemetry alone still sends) unless free heap comfortably covers
+// BOTH the actual current data size AND this fixed margin for whatever OPDS
+// browsing/WiFi/TLS is already holding -- scaled to the CURRENT book/day
+// counts rather than the worst case (40 books + 750 days) once and for all,
+// since a fixed worst-case threshold would never pass for a typical user
+// with a handful of books, even though their real payload only needs a few
+// KB. Per-entry estimates are deliberately generous (ArduinoJson's internal
+// variant-slot overhead plus the final serialized string, per entry).
+constexpr uint32_t READING_SNAPSHOT_SAFETY_MARGIN_BYTES = 40000;
+constexpr uint32_t ESTIMATED_BYTES_PER_BOOK = 350;
+constexpr uint32_t ESTIMATED_BYTES_PER_READING_DAY = 90;
 
 // Last-reported READING_STATS total, to decide whether the (larger) reading
 // snapshot needs resending -- device telemetry is cheap and always sent, but
@@ -553,7 +559,15 @@ void reportDeviceStats(const std::string& username, const std::string& password)
   READING_STATS.ensureLoaded();
   const uint64_t totalMs = READING_STATS.getTotalReadingMs();
   const bool readingChanged = totalMs != lastReportedTotalReadingMs;
-  const bool includeReading = readingChanged && ESP.getFreeHeap() >= MIN_SAFE_HEAP_FOR_READING_SNAPSHOT_BYTES;
+  const uint32_t estimatedReadingBytes =
+      static_cast<uint32_t>(READING_STATS.getBooks().size()) * ESTIMATED_BYTES_PER_BOOK +
+      static_cast<uint32_t>(READING_STATS.getReadingDays().size()) * ESTIMATED_BYTES_PER_READING_DAY;
+  const bool includeReading =
+      readingChanged && ESP.getFreeHeap() >= estimatedReadingBytes + READING_SNAPSHOT_SAFETY_MARGIN_BYTES;
+  if (readingChanged && !includeReading) {
+    diagLog("device-stats reading snapshot skipped: free heap=" + std::to_string(ESP.getFreeHeap()) +
+            " need=" + std::to_string(estimatedReadingBytes + READING_SNAPSHOT_SAFETY_MARGIN_BYTES));
+  }
 
   bool ok = postDeviceStatsOnce(username, password, includeReading);
   if (!ok) {
