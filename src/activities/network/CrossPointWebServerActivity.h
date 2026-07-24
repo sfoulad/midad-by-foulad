@@ -59,6 +59,12 @@ class CrossPointWebServerActivity final : public Activity {
   void onWifiSelectionComplete(bool connected);
   void startAccessPoint();
   void startWebServer();
+  // Registers with Foulad eBooks (if an account is configured -- see
+  // OpdsServerStore) the same way OpdsBookBrowserActivity does, so "online"
+  // status on the "My Devices" web page and pushed-settings sync also work
+  // from File Transfer mode, not just from browsing. STA (Join Network)
+  // only -- AP/hotspot mode has no upstream internet to reach the server.
+  void reportDeviceTrackingOnConnect();
 
  public:
   explicit CrossPointWebServerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

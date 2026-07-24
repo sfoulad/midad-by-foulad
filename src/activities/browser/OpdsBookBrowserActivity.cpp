@@ -153,6 +153,17 @@ void OpdsBookBrowserActivity::loop() {
     return;
   }
 
+  // Re-check for a pushed settings change every ~30s while sitting on the
+  // catalog -- BROWSING only (not LOADING/DOWNLOADING) so this never
+  // competes with an in-flight fetch/download for the same connection.
+  if (state == BrowserState::BROWSING && server.url == FOULAD_EBOOKS_URL && WiFi.status() == WL_CONNECTED) {
+    const unsigned long nowMs = millis();
+    if (nowMs - lastDeviceTrackingCheckMs >= DEVICE_TRACKING_RECHECK_MS) {
+      lastDeviceTrackingCheckMs = nowMs;
+      FouladDeviceTracking::registerDevice(server.username, server.password);
+    }
+  }
+
   if (consumeConfirm && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     consumeConfirm = false;
     return;

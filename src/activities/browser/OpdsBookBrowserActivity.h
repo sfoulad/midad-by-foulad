@@ -45,6 +45,14 @@ class OpdsBookBrowserActivity final : public Activity {
   PendingGridSelect pendingGridSelect = PendingGridSelect::None;
   bool consumeConfirm = false;
   bool consumeBack = false;  // Added missing member
+  // Periodic re-registration while sitting on the BROWSING screen, so a
+  // setting pushed from the "My Devices" web page while this activity is
+  // already open takes effect without the user having to leave and
+  // re-enter Foulad eBooks (see loop()) -- the original connect-time-only
+  // registerDevice() call left a live session with no way to pick up a
+  // mid-session web change short of a full exit/re-enter.
+  unsigned long lastDeviceTrackingCheckMs = 0;
+  static constexpr unsigned long DEVICE_TRACKING_RECHECK_MS = 30000;
   int selectorIndex = 0;
   std::string errorMessage;
   std::string statusMessage;

@@ -7,10 +7,14 @@
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
+#include <algorithm>
 #include <cstddef>
 
+#include "FouladDeviceTracking.h"
+#include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "NetworkModeSelectionActivity.h"
+#include "OpdsServerStore.h"
 #include "SilentRestart.h"
 #include "WifiSelectionActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
@@ -162,12 +166,23 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   }
 }
 
+void CrossPointWebServerActivity::reportDeviceTrackingOnConnect() {
+  const auto& servers = OPDS_STORE.getServers();
+  const auto it =
+      std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+  if (it == servers.end()) return;  // no Foulad eBooks account configured -- nothing to register with
+
+  FouladDeviceTracking::registerDevice(it->username, it->password);
+}
+
 void CrossPointWebServerActivity::onWifiSelectionComplete(const bool connected) {
   LOG_DBG("WEBACT", "WifiSelectionActivity completed, connected=%d", connected);
 
   if (connected) {
     // Get connection info before exiting subactivity
     isApMode = false;
+
+    reportDeviceTrackingOnConnect();
 
     // Start mDNS for hostname resolution
     restartMdns(AP_HOSTNAME, "WEBACT");
