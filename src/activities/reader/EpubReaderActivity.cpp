@@ -31,9 +31,12 @@
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
+#include "FouladDeviceTracking.h"
+#include "FouladEbooksConfig.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
+#include "OpdsServerStore.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
@@ -251,6 +254,33 @@ void EpubReaderActivity::onExit() {
     const uint8_t progressPercent = currentBookProgressPercent();
     const bool finishedBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
     READING_STATS.endSession(haveEstimate ? timeLeft : 0, progressPercent, finishedBook);
+
+    // Foulad eInk device tracking (EINK_DEVICE_TRACKING_TASKS.md): opportunistic
+    // report for Foulad eBooks books only. This is normally a no-op -- WiFi is
+    // torn down before the reader even opens (see
+    // OpdsBookBrowserActivity::onExit()), so the reliable moment this actually
+    // sends is FouladDeviceTracking::flushPendingReadingStats(), called the next
+    // time the device reconnects to Foulad eBooks. Attempted here too in case
+    // WiFi happens to already be up (e.g. a future flow that doesn't tear it
+    // down) -- cheap to check, harmless when it's not.
+    const auto& recentBooksForStats = RECENT_BOOKS.getBooks();
+    const auto recentIt = std::find_if(recentBooksForStats.begin(), recentBooksForStats.end(),
+                                       [this](const RecentBook& b) { return b.path == epub->getPath(); });
+    if (recentIt != recentBooksForStats.end() && !recentIt->fouladBookId.empty()) {
+      const auto& servers = OPDS_STORE.getServers();
+      const auto serverIt = std::find_if(servers.begin(), servers.end(),
+                                         [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+      if (serverIt != servers.end()) {
+        char positionBuf[64];
+        snprintf(positionBuf, sizeof(positionBuf), "spine=%d;page=%d", currentSpineIndex,
+                 section ? section->currentPage : 0);
+        const auto* bookStats = READING_STATS.findBook(epub->getPath());
+        const uint32_t secondsRead =
+            bookStats ? static_cast<uint32_t>(bookStats->totalReadingMs / 1000) : 0;
+        FouladDeviceTracking::reportReadingStats(serverIt->username, serverIt->password, recentIt->fouladBookId,
+                                                 progressPercent, positionBuf, secondsRead);
+      }
+    }
   }
 
   // Leaving mid-footnote loses the in-RAM return stack on deep sleep; persist the

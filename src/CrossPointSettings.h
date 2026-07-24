@@ -344,12 +344,14 @@ class CrossPointSettings {
   enum GYM_WEIGHT_UNIT { GYM_WEIGHT_KG = 0, GYM_WEIGHT_LB = 1, GYM_WEIGHT_UNIT_COUNT };
   uint8_t gymWeightUnit = GYM_WEIGHT_KG;
 
-  // Settings -> Apps -> Debug: gates whether ANY of the rolling SD diagnostic
-  // logs (sleep_diag_log.txt, reader_perf_log.txt, game_input_diag_log.txt,
-  // cover_diag_log.txt, mybooks_scan_log.txt, opds_error_log.txt,
-  // opds_browse_log.txt) actually get written -- see src/util/DebugLogging.h.
-  // Off by default so ordinary users never see log clutter on their SD card;
-  // a user asked to help diagnose an issue turns this on first. Does NOT gate
+  // Settings -> Apps -> Debug: gates whether ANY diagnostic entries get
+  // written to the single shared SD log (/debug_log.txt -- see
+  // src/util/DebugLog.h and src/util/DebugLogging.h) by Gym, Sleep, Battery,
+  // GameInput, ReaderPerf, Cover, OPDS browse/error, My Books scan, and Foulad
+  // device tracking (each line tagged e.g. "[GYM] ..." so subsystems stay
+  // distinguishable when interleaved in the one file). Off by default so
+  // ordinary users never see log clutter on their SD card; a user asked to
+  // help diagnose an issue turns this on first. Does NOT gate
   // crash_report.txt (HalSystem::checkPanic) -- that's a one-shot panic
   // capture on an actual crash, not routine verbose logging, and must always
   // work regardless of this setting.

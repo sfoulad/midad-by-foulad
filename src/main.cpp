@@ -20,17 +20,17 @@
 
 #include "ArabicFontSystem.h"
 #include "CrossPointSettings.h"
-#include "QuranBook.h"
 #include "CrossPointState.h"
 #include "GameHighScoresStore.h"
 #include "GymLogStore.h"
 #include "GymPlanStore.h"
-#include "TasbihStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "TasbihStore.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/OtaUpdateActivity.h"
@@ -57,8 +57,7 @@ EpdFont bitter14RegularFont(&bitter_14_regular);
 EpdFont bitter14BoldFont(&bitter_14_bold);
 EpdFont bitter14ItalicFont(&bitter_14_italic);
 EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
-EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont,
-                                 &bitter14BoldItalicFont);
+EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, &bitter14BoldItalicFont);
 EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
 EpdFont lexenddeca14BoldFont(&lexenddeca_14_bold);
 EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont);
@@ -67,20 +66,17 @@ EpdFont bitter12RegularFont(&bitter_12_regular);
 EpdFont bitter12BoldFont(&bitter_12_bold);
 EpdFont bitter12ItalicFont(&bitter_12_italic);
 EpdFont bitter12BoldItalicFont(&bitter_12_bolditalic);
-EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitter12ItalicFont,
-                                 &bitter12BoldItalicFont);
+EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitter12ItalicFont, &bitter12BoldItalicFont);
 EpdFont bitter16RegularFont(&bitter_16_regular);
 EpdFont bitter16BoldFont(&bitter_16_bold);
 EpdFont bitter16ItalicFont(&bitter_16_italic);
 EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
-EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont,
-                                 &bitter16BoldItalicFont);
+EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
 EpdFont bitter18RegularFont(&bitter_18_regular);
 EpdFont bitter18BoldFont(&bitter_18_bold);
 EpdFont bitter18ItalicFont(&bitter_18_italic);
 EpdFont bitter18BoldItalicFont(&bitter_18_bolditalic);
-EpdFontFamily bitter18FontFamily(&bitter18RegularFont, &bitter18BoldFont, &bitter18ItalicFont,
-                                 &bitter18BoldItalicFont);
+EpdFontFamily bitter18FontFamily(&bitter18RegularFont, &bitter18BoldFont, &bitter18ItalicFont, &bitter18BoldItalicFont);
 
 // Digit-only 32pt font for the Tasbih app's counter -- none of the reader
 // sizes above go this large. Registered as a single "regular" style; the
@@ -439,8 +435,8 @@ void enterDeepSleep(bool fromTimeout = false) {
     // itself -- worth a permanent record since that's exactly the kind of leak a
     // "battery drains fast" report can't otherwise be traced to off-device.
     char wifiBuf[96];
-    snprintf(wifiBuf, sizeof(wifiBuf), "%lu WiFi still on at sleep entry (mode=%d) -- backstop disconnect",
-             millis(), static_cast<int>(WiFi.getMode()));
+    snprintf(wifiBuf, sizeof(wifiBuf), "%lu WiFi still on at sleep entry (mode=%d) -- backstop disconnect", millis(),
+             static_cast<int>(WiFi.getMode()));
     BatteryDiagLog::append(wifiBuf);
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
@@ -449,7 +445,7 @@ void enterDeepSleep(bool fromTimeout = false) {
   {
     char buf[96];
     snprintf(buf, sizeof(buf), "%lu entering deep sleep battery=%u%% fromTimeout=%d", millis(),
-              powerManager.getBatteryPercentage(), fromTimeout);
+             powerManager.getBatteryPercentage(), fromTimeout);
     BatteryDiagLog::append(buf);
   }
 
@@ -808,8 +804,8 @@ void loop() {
       lastSleepDiagLogMs = nowMs;
       char buf[160];
       snprintf(buf, sizeof(buf), "%lu pressed=%d released=%d tilt=%d activityBlock=%d activity=%s", nowMs, anyPressed,
-                anyReleased, tiltActivity, blockedByActivity,
-                blockedByActivity ? activityManager.currentActivityDebugName() : "-");
+               anyReleased, tiltActivity, blockedByActivity,
+               blockedByActivity ? activityManager.currentActivityDebugName() : "-");
       SleepDiagLog::append(buf);
     }
   }
@@ -817,8 +813,8 @@ void loop() {
   // Periodic battery/WiFi/CPU-frequency breadcrumb, independent of the sleep-diag
   // block above (which only fires on activity) -- a "battery drains fast" report has
   // no serial cable to show us whether the radio was left on or the CPU stuck at full
-  // frequency; sampled every 5 minutes so a long session doesn't blow through
-  // BatteryDiagLog::MAX_LINES in minutes.
+  // frequency; sampled every 5 minutes so a long session doesn't crowd out other
+  // subsystems' entries in the shared debug log (DebugLog::MAX_LINES) in minutes.
   {
     static unsigned long lastBatteryDiagLogMs = 0;
     const unsigned long nowMs = millis();
@@ -826,9 +822,9 @@ void loop() {
       lastBatteryDiagLogMs = nowMs;
       char buf[160];
       snprintf(buf, sizeof(buf), "%lu battery=%u%% wifiMode=%d wifiStatus=%d powerSaving=%d activity=%s", nowMs,
-                powerManager.getBatteryPercentage(), static_cast<int>(WiFi.getMode()),
-                static_cast<int>(WiFi.status()), millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS,
-                activityManager.currentActivityDebugName());
+               powerManager.getBatteryPercentage(), static_cast<int>(WiFi.getMode()), static_cast<int>(WiFi.status()),
+               millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS,
+               activityManager.currentActivityDebugName());
       BatteryDiagLog::append(buf);
     }
   }

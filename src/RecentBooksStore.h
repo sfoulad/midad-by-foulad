@@ -10,6 +10,11 @@ struct RecentBook {
   std::string title;
   std::string author;
   std::string coverBmpPath;
+  // Foulad eBooks' server-side numeric book id (see EINK_DEVICE_TRACKING_TASKS.md),
+  // empty for books not downloaded from Foulad eBooks. Used to report reading
+  // progress via FouladDeviceTracking -- see addBook()'s own comment for how
+  // this survives re-adds that don't know about it.
+  std::string fouladBookId;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };
@@ -30,9 +35,14 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
 
-  // Add a book to the recent list (moves to front if already exists)
+  // Add a book to the recent list (moves to front if already exists).
+  // fouladBookId defaults to "" for the common (non-Foulad-eBooks) case; when
+  // omitted, an existing entry's fouladBookId is preserved rather than wiped,
+  // so the reader's own addBook() call (which doesn't know about it) doesn't
+  // clobber the value OpdsBookBrowserActivity::downloadBook() set at download
+  // time. Pass a non-empty value only from that one call site.
   void addBook(const std::string& path, const std::string& title, const std::string& author,
-               const std::string& coverBmpPath);
+               const std::string& coverBmpPath, const std::string& fouladBookId = "");
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath);

@@ -12,12 +12,15 @@
 #include <WiFi.h>
 
 #include <algorithm>
+#include <cctype>
 #include <memory>
 
 #include "CrossPointState.h"
+#include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "OpdsCoverCache.h"
+#include "RecentBooksStore.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -26,8 +29,10 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "util/BookCacheUtils.h"
+#include "util/DebugLog.h"
 #include "util/DebugLogging.h"
 #include "util/GridNav.h"
+#include "util/RollingSdLog.h"
 #include "util/StringUtils.h"
 #include "util/UrlUtils.h"
 
@@ -36,6 +41,20 @@ namespace {
 // previous fixed 30px row height gave the Latin font (24px advanceY) -- see
 // OpdsBookBrowserActivity::getListRowHeight().
 constexpr int LIST_ROW_VERTICAL_PADDING = 6;
+
+// Foulad eBooks' catalog feed writes each book entry's <id> as
+// "urn:opds-library:book:<numeric id>" (see foulad-ebooks'
+// resources/views/opds/books.blade.php) -- the same numeric id used for
+// device reading-stats reporting (EINK_DEVICE_TRACKING_TASKS.md). Returns ""
+// for anything that doesn't end in a run of digits (a non-Foulad OPDS
+// server's own id convention, or a malformed entry) so callers can treat
+// that as "no Foulad book id available" rather than a parse error.
+std::string extractFouladBookId(const std::string& entryId) {
+  size_t end = entryId.size();
+  while (end > 0 && isdigit(static_cast<unsigned char>(entryId[end - 1]))) end--;
+  if (end == entryId.size()) return "";  // no trailing digits at all
+  return entryId.substr(end);
+}
 
 int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
   return GridNav::moveHorizontal(currentIndex, totalItems, moveRight);
@@ -49,56 +68,33 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
 // Mirrors HalSystem::checkPanic's crash_report.txt mechanism, but for an OPDS feed
 // fetch/parse failure instead of a device panic: dumps the same rolling log ring
 // buffer (getLastLogs(), last 16 lines -- HttpDownloader's LOG_ERR lines survive in
-// release builds since LOG_ERR is always compiled in) to an SD file. Lets the user
-// grab a diagnostic log via File Browser/File Transfer without needing a live serial
-// connection, the same way they already can for a crash.
+// release builds since LOG_ERR is always compiled in) into the shared debug log
+// (see util/DebugLog.h). Lets the user grab a diagnostic log via File
+// Browser/File Transfer without needing a live serial connection, the same way
+// they already can for a crash.
 void saveOpdsDiagnosticLog(const std::string& context) {
   if (!DebugLogging::enabled()) return;
-  std::string info = "CrossPoint version: " CROSSPOINT_VERSION;
-  info += "\n\nContext: " + context;
-  info += "\n\nLast logs:\n" + getLastLogs();
+  std::string info = "[OPDS-ERROR] CrossPoint version: " CROSSPOINT_VERSION;
+  info += " | Context: " + context;
+  info += "\nLast logs:\n" + getLastLogs();
 
-  HalFile file;
-  if (Storage.openFileForWrite("OPDS", "/opds_error_log.txt", file)) {
-    file.write(reinterpret_cast<const uint8_t*>(info.data()), info.size());
-    LOG_INF("OPDS", "Saved diagnostic log to /opds_error_log.txt");
-  } else {
-    LOG_ERR("OPDS", "Failed to open opds_error_log.txt for writing");
-  }
+  RollingSdLog::append(DebugLog::PATH, info, DebugLog::MAX_LINES);
+  LOG_INF("OPDS", "Saved diagnostic log to %s", DebugLog::PATH);
 }
 
-// Rolling browse trace (/opds_browse_log.txt): one line per feed fetch (URL,
-// entry/book counts, the pagination links the parser captured) and per grid
-// auto-advance decision. Diagnoses pagination misbehavior ("after page 4 it
-// goes back to page 1") from the SD card: whether the next link was missing
-// from the parse or the navigation itself picked the wrong URL. Same
-// keep-it-all-in-RAM/rewrite-whole-file pattern as CoverThumbs::diagLog.
-constexpr size_t BROWSE_LOG_MAX = 6 * 1024;
-std::string& browseLogBuffer() {
-  static std::string buffer;
-  return buffer;
-}
-
+// Rolling browse trace, tagged into the shared debug log (see util/DebugLog.h):
+// one line per feed fetch (URL, entry/book counts, the pagination links the
+// parser captured) and per grid auto-advance decision. Diagnoses pagination
+// misbehavior ("after page 4 it goes back to page 1") from the SD card:
+// whether the next link was missing from the parse or the navigation itself
+// picked the wrong URL.
 void browseLog(const std::string& line) {
   LOG_INF("OPDS", "%s", line.c_str());
-  if (!DebugLogging::enabled()) return;
 
-  std::string& buffer = browseLogBuffer();
-  if (buffer.empty()) {
-    buffer = "OPDS browse log -- CrossPoint version " CROSSPOINT_VERSION "\n";
-  }
   char prefix[48];
-  snprintf(prefix, sizeof(prefix), "[%lus heap=%u] ", millis() / 1000UL, static_cast<unsigned>(ESP.getFreeHeap()));
-  buffer += prefix;
-  buffer += line;
-  buffer += '\n';
-  if (buffer.size() > BROWSE_LOG_MAX) {
-    buffer.erase(0, buffer.size() / 2);
-  }
-  HalFile file;
-  if (Storage.openFileForWrite("OPDS", "/opds_browse_log.txt", file)) {
-    file.write(reinterpret_cast<const uint8_t*>(buffer.data()), buffer.size());
-  }
+  snprintf(prefix, sizeof(prefix), "[OPDS] [%lus heap=%u] ", millis() / 1000UL,
+           static_cast<unsigned>(ESP.getFreeHeap()));
+  RollingSdLog::append(DebugLog::PATH, prefix + line, DebugLog::MAX_LINES);
 }
 }  // namespace
 
@@ -249,8 +245,7 @@ void OpdsBookBrowserActivity::loop() {
           return;
         }
         const int local = selectorIndex - layout.bookStart;
-        const int candidate =
-            moveVerticalInGrid(local, layout.bookCount, layout.columns, layout.itemsPerPage, false);
+        const int candidate = moveVerticalInGrid(local, layout.bookCount, layout.columns, layout.itemsPerPage, false);
         if (candidate >= local && !feedPrevUrl.empty()) {
           goToFeedPage(false);
           return;
@@ -771,7 +766,8 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
       if (e.type == OpdsEntryType::BOOK) bookCount++;
     }
     browseLog("FETCH " + url + " entries=" + std::to_string(entries.size()) + " books=" + std::to_string(bookCount) +
-              " next=" + (feedNextUrl.empty() ? "-" : feedNextUrl) + " prev=" + (feedPrevUrl.empty() ? "-" : feedPrevUrl));
+              " next=" + (feedNextUrl.empty() ? "-" : feedNextUrl) +
+              " prev=" + (feedPrevUrl.empty() ? "-" : feedPrevUrl));
   }
   requestUpdate();
 }
@@ -823,6 +819,12 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
 
   if (Storage.exists(filename.c_str())) {
     // Already downloaded -- open it directly rather than downloading again.
+    if (server.url == FOULAD_EBOOKS_URL) {
+      const std::string fouladBookId = extractFouladBookId(book.id);
+      if (!fouladBookId.empty()) {
+        RECENT_BOOKS.addBook(filename, book.title, book.author, "", fouladBookId);
+      }
+    }
     pendingReaderPath = filename;
     activityManager.goToReader(filename);
     return;
@@ -880,6 +882,12 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
       if (HttpDownloader::downloadToFile(book.coverUrl, epub.getExternalCoverPath(isPng), nullptr, nullptr,
                                          server.username, server.password) != HttpDownloader::OK) {
         LOG_DBG("OPDS", "External cover download failed (non-fatal): %s", book.coverUrl.c_str());
+      }
+    }
+    if (server.url == FOULAD_EBOOKS_URL) {
+      const std::string fouladBookId = extractFouladBookId(book.id);
+      if (!fouladBookId.empty()) {
+        RECENT_BOOKS.addBook(filename, book.title, book.author, "", fouladBookId);
       }
     }
     pendingReaderPath = filename;
@@ -943,8 +951,22 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
   fetchFeed(url);
 }
 
+void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
+  if (server.url != FOULAD_EBOOKS_URL) return;
+  FouladDeviceTracking::registerDevice(server.username, server.password);
+  // Reading itself never keeps WiFi connected (see onExit() below), so this
+  // is the one reliable moment to sync any progress accumulated since the
+  // last time the device was online.
+  FouladDeviceTracking::flushPendingReadingStats(server.username, server.password);
+  // Same reasoning: uploading the debug log here (rather than at the moment
+  // a book is opened, when WiFi is already gone) is what actually delivers
+  // it. No-op unless Settings -> Apps -> Debug is on.
+  FouladDeviceTracking::uploadDebugLog(server.username, server.password);
+}
+
 void OpdsBookBrowserActivity::checkAndConnectWifi() {
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+    reportDeviceTrackingOnConnect();
     state = BrowserState::LOADING;
     statusMessage = tr(STR_LOADING);
     requestUpdate();
@@ -964,6 +986,7 @@ void OpdsBookBrowserActivity::launchWifiSelection() {
 
 void OpdsBookBrowserActivity::onWifiSelectionComplete(const bool connected) {
   if (connected) {
+    reportDeviceTrackingOnConnect();
     state = BrowserState::LOADING;
     statusMessage = tr(STR_LOADING);
     requestUpdate(true);

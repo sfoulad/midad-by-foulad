@@ -17,6 +17,7 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["title"] = book.title;
     obj["author"] = book.author;
     obj["coverBmpPath"] = book.coverBmpPath;
+    obj["fouladBookId"] = book.fouladBookId;
   }
 }
 
@@ -33,6 +34,7 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.title = obj["title"] | "";
     book.author = obj["author"] | "";
     book.coverBmpPath = obj["coverBmpPath"] | "";
+    book.fouladBookId = obj["fouladBookId"] | "";
     recentBooks.push_back(book);
   }
 
@@ -41,19 +43,29 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
-                               const std::string& coverBmpPath) {
+                               const std::string& coverBmpPath, const std::string& fouladBookId) {
   // Drop stale entries first so a new add can't evict a valid book in their stead.
   pruneMissing();
 
-  // Remove existing entry if present
+  // Remove existing entry if present, but keep its fouladBookId if this call
+  // didn't specify one -- the reader's own addBook() call (title/author/cover
+  // only) must not erase what downloadBook() set when the book was fetched.
+  std::string resolvedFouladBookId = fouladBookId;
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it != recentBooks.end()) {
+    if (resolvedFouladBookId.empty()) resolvedFouladBookId = it->fouladBookId;
     recentBooks.erase(it);
   }
 
   // Add to front
-  recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath});
+  RecentBook book;
+  book.path = path;
+  book.title = title;
+  book.author = author;
+  book.coverBmpPath = coverBmpPath;
+  book.fouladBookId = resolvedFouladBookId;
+  recentBooks.insert(recentBooks.begin(), std::move(book));
 
   // Trim to max size
   if (recentBooks.size() > MAX_RECENT_BOOKS) {

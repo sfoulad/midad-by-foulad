@@ -264,7 +264,8 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 HttpDownloader::DownloadError runPostFile(const std::string& url,
                                           const std::vector<std::pair<std::string, std::string>>& files,
                                           const std::vector<std::pair<std::string, std::string>>& fields,
-                                          std::string& outResponse, int timeoutMs) {
+                                          std::string& outResponse, int timeoutMs, const std::string& username,
+                                          const std::string& password) {
   setLastFailure(HttpDownloader::FailStage::NONE, 0);
   outResponse.clear();
   WifiPowerSaveGuard psGuard;
@@ -304,8 +305,7 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
     const size_t slash = fileName.find_last_of('/');
     if (slash != std::string::npos) fileName = fileName.substr(slash + 1);
     filePartHeaders.push_back("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + f.first +
-                              "\"; filename=\"" + fileName +
-                              "\"\r\nContent-Type: application/octet-stream\r\n\r\n");
+                              "\"; filename=\"" + fileName + "\"\r\nContent-Type: application/octet-stream\r\n\r\n");
   }
   const std::string closing = "--" + boundary + "--\r\n";
 
@@ -341,6 +341,12 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
   const std::string contentType = "multipart/form-data; boundary=" + boundary;
   esp_http_client_set_header(client, "Content-Type", contentType.c_str());
+  if (!username.empty() && !password.empty()) {
+    // Preemptive Basic auth, same convention as runGet/runPostJson.
+    const std::string credentials = username + ":" + password;
+    const String header = "Basic " + base64::encode(credentials.c_str());
+    esp_http_client_set_header(client, "Authorization", header.c_str());
+  }
 
   esp_err_t err = esp_http_client_open(client, static_cast<int>(contentLength));
   if (err != ESP_OK) {
@@ -447,6 +453,116 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
   esp_http_client_cleanup(client);
   return HttpDownloader::OK;
 }
+
+// Small in-memory JSON body POST (never streamed -- callers of postJson pass
+// a pre-serialized string expected to be at most a few hundred bytes, e.g.
+// device-registration/reading-stats payloads). Mirrors runPostFile's manual
+// open/write/fetch_headers/read structure but skips the multipart framing
+// and the size-everything-up-front pass multipart needs, since the whole
+// body is already a single in-memory std::string.
+HttpDownloader::DownloadError runPostJson(const std::string& url, const std::string& jsonBody,
+                                          const std::string& username, const std::string& password,
+                                          std::string& outResponse, int timeoutMs) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
+  outResponse.clear();
+  WifiPowerSaveGuard psGuard;
+
+  auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
+  if (!buf) {
+    LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)READ_CHUNK, ESP.getFreeHeap());
+    setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.method = HTTP_METHOD_POST;
+  config.buffer_size = HTTP_RX_BUF;
+  config.buffer_size_tx = HTTP_TX_BUF;
+  config.timeout_ms = timeoutMs;
+  config.crt_bundle_attach = esp_crt_bundle_attach;
+  config.keep_alive_enable = true;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (!client) {
+    LOG_ERR("HTTP", "client init failed");
+    setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  esp_http_client_set_header(client, "Content-Type", "application/json");
+  if (!username.empty() && !password.empty()) {
+    // Preemptive Basic auth, same convention as runGet -- don't wait for a 401.
+    const std::string credentials = username + ":" + password;
+    const String header = "Basic " + base64::encode(credentials.c_str());
+    esp_http_client_set_header(client, "Authorization", header.c_str());
+  }
+
+  esp_err_t err = esp_http_client_open(client, static_cast<int>(jsonBody.size()));
+  if (err != ESP_OK) {
+    LOG_ERR("HTTP", "postJson open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
+            getHttpClientErrno(client), ESP.getFreeHeap());
+    logTlsError(client);
+    setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  size_t off = 0;
+  bool writeOk = true;
+  while (off < jsonBody.size()) {
+    const int written = httpClientWrite(client, jsonBody.data() + off, static_cast<int>(jsonBody.size() - off));
+    if (written < 0) {
+      writeOk = false;
+      break;
+    }
+    off += static_cast<size_t>(written);
+  }
+  if (!writeOk) {
+    LOG_ERR("HTTP", "postJson write failed (errno=%d)", getHttpClientErrno(client));
+    setLastFailure(HttpDownloader::FailStage::OPEN, getHttpClientErrno(client));
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_fetch_headers(client);
+  const int status = esp_http_client_get_status_code(client);
+  if (status != 200) {
+    // Not necessarily an error the caller should log loudly -- e.g. a 404 from
+    // /opds/reading-stats just means "register the device first" (see
+    // FouladDeviceTracking). Callers inspect getLastFailure().detail for the
+    // status code rather than this function surfacing it as a return value.
+    LOG_DBG("HTTP", "postJson non-200 status: %d", status);
+    setLastFailure(HttpDownloader::FailStage::STATUS, status);
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  while (true) {
+    const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
+    if (read < 0) {
+      LOG_ERR("HTTP", "postJson read error after %zu bytes", outResponse.size());
+      setLastFailure(HttpDownloader::FailStage::READ,
+                     static_cast<int>(std::min<size_t>(outResponse.size(), INT32_MAX)));
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (read == 0) break;
+    outResponse.append(buf.get(), static_cast<size_t>(read));
+    // Response is expected to be a small JSON object -- cap it generously so
+    // an unexpected huge body can't accumulate without bound.
+    if (outResponse.size() > 16384) {
+      LOG_ERR("HTTP", "postJson response too large, aborting");
+      setLastFailure(HttpDownloader::FailStage::INCOMPLETE, static_cast<int>(outResponse.size()));
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+  }
+
+  esp_http_client_cleanup(client);
+  return HttpDownloader::OK;
+}
 }  // namespace
 
 HttpDownloader::LastFailure HttpDownloader::getLastFailure() { return gLastFailure; }
@@ -518,16 +634,25 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
 
 bool HttpDownloader::postFileMultipart(const std::string& url, const std::string& filePath,
                                        const std::vector<std::pair<std::string, std::string>>& fields,
-                                       std::string& outResponse, int timeoutMs) {
-  return postFilesMultipart(url, {{"font", filePath}}, fields, outResponse, timeoutMs);
+                                       std::string& outResponse, int timeoutMs, const std::string& username,
+                                       const std::string& password) {
+  return postFilesMultipart(url, {{"font", filePath}}, fields, outResponse, timeoutMs, username, password);
 }
 
 bool HttpDownloader::postFilesMultipart(const std::string& url,
                                         const std::vector<std::pair<std::string, std::string>>& files,
                                         const std::vector<std::pair<std::string, std::string>>& fields,
-                                        std::string& outResponse, int timeoutMs) {
+                                        std::string& outResponse, int timeoutMs, const std::string& username,
+                                        const std::string& password) {
   for (const auto& f : files) {
     LOG_DBG("HTTP", "Posting %s: %s -> %s", f.first.c_str(), f.second.c_str(), url.c_str());
   }
-  return runPostFile(url, files, fields, outResponse, timeoutMs) == OK;
+  return runPostFile(url, files, fields, outResponse, timeoutMs, username, password) == OK;
+}
+
+HttpDownloader::DownloadError HttpDownloader::postJson(const std::string& url, const std::string& jsonBody,
+                                                       const std::string& username, const std::string& password,
+                                                       std::string& outResponse, int timeoutMs) {
+  LOG_DBG("HTTP", "Posting JSON: %s", url.c_str());
+  return runPostJson(url, jsonBody, username, password, outResponse, timeoutMs);
 }

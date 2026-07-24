@@ -12,8 +12,8 @@
 #include <algorithm>
 #include <memory>
 
-#include "MappedInputManager.h"
 #include "CrossPointSettings.h"
+#include "MappedInputManager.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "activities/apps/GymActivity.h"
@@ -25,8 +25,10 @@
 #include "components/icons/book.h"
 #include "fontIds.h"
 #include "util/CoverThumbs.h"
+#include "util/DebugLog.h"
 #include "util/DebugLogging.h"
 #include "util/GridNav.h"
+#include "util/RollingSdLog.h"
 
 namespace {
 // Sentinel "path" for the synthetic Games tile (see SETTINGS.gamesEnabled) --
@@ -85,8 +87,7 @@ void drawTileCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, i
   // caller.
   const int inset = std::max(4, cellWidth / 20);
   const int frameThickness = std::max(1, cellWidth / 60);
-  renderer.drawRect(cellX + inset, cellY + inset, cellWidth - 2 * inset, cellHeight - 2 * inset, frameThickness,
-                    false);
+  renderer.drawRect(cellX + inset, cellY + inset, cellWidth - 2 * inset, cellHeight - 2 * inset, frameThickness, false);
 
   // Largest available UI font, bold, white-on-black, centered in the cell.
   // Falls back a size down if the label would overflow the inset frame (long
@@ -113,8 +114,8 @@ void drawTileCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, i
   const int ruleX = cellX + (cellWidth - ruleWidth) / 2;
   const int ruleGap = std::max(6, cellHeight / 18);
   renderer.fillRect(ruleX, textY - ruleGap, ruleWidth, frameThickness, false);
-  renderer.fillRect(ruleX, textY + renderer.getLineHeight(fontId) + ruleGap - frameThickness, ruleWidth,
-                    frameThickness, false);
+  renderer.fillRect(ruleX, textY + renderer.getLineHeight(fontId) + ruleGap - frameThickness, ruleWidth, frameThickness,
+                    false);
 }
 }  // namespace
 
@@ -131,14 +132,14 @@ void RecentBooksActivity::loadRecentBooks() {
   size_t dirsScanned = 0;
   char nameBuf[NAME_BUF_SIZE];
 
-  // On-SD scan report (/mybooks_scan_log.txt): every directory visited and how
-  // each entry was classified, so "a book on the card isn't showing up" can be
-  // diagnosed from the SD card without a serial capture. Rewritten per scan.
-  std::string report = "My Books scan -- CrossPoint version " CROSSPOINT_VERSION "\n";
+  // On-SD scan report, tagged into the shared debug log (see util/DebugLog.h):
+  // every directory visited and how each entry was classified, so "a book on
+  // the card isn't showing up" can be diagnosed from the SD card without a
+  // serial capture. Appended as one block per scan.
+  std::string report = "[MYBOOKS] My Books scan -- CrossPoint version " CROSSPOINT_VERSION "\n";
   report += "recents in store: " + std::to_string(recentBooks.size()) + "\n";
 
-  while (!dirs.empty() && dirsScanned < MAX_SCAN_DIRS &&
-         recentBooks.size() + discovered.size() < MAX_LIBRARY_BOOKS) {
+  while (!dirs.empty() && dirsScanned < MAX_SCAN_DIRS && recentBooks.size() + discovered.size() < MAX_LIBRARY_BOOKS) {
     const std::string dirPath = dirs.back();
     dirs.pop_back();
     dirsScanned++;
@@ -196,10 +197,7 @@ void RecentBooksActivity::loadRecentBooks() {
   report += "TOTAL recents=" + std::to_string(RECENT_BOOKS.getBooks().size()) +
             " new=" + std::to_string(discovered.size()) + " dirs=" + std::to_string(dirsScanned) + "\n";
   if (DebugLogging::enabled()) {
-    HalFile logFile;
-    if (Storage.openFileForWrite("MYBOOKS", "/mybooks_scan_log.txt", logFile)) {
-      logFile.write(reinterpret_cast<const uint8_t*>(report.data()), report.size());
-    }
+    RollingSdLog::append(DebugLog::PATH, report, DebugLog::MAX_LINES);
   }
   LOG_INF("MYBOOKS", "scan: recents=%u new=%u dirs=%u", (unsigned)RECENT_BOOKS.getBooks().size(),
           (unsigned)discovered.size(), (unsigned)dirsScanned);
@@ -323,11 +321,9 @@ void RecentBooksActivity::loop() {
   // Fires when the hold times out while still held (firmware hold-to-act pattern,
   // cf. FileBrowserActivity BACK long-press).
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
-      recentBooks[selectorIndex].path != QuranBook::PATH &&
-      recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != QuranBook::PATH && recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH && recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -550,9 +546,9 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
           // there is a lot of books"). OPDS downloads auto-open, so they carry
           // caches (and catalog cover art) already.
           const auto& storedRecents = RECENT_BOOKS.getBooks();
-          const bool everOpened = book.path == QuranBook::PATH ||
-                                  std::any_of(storedRecents.begin(), storedRecents.end(),
-                                              [&book](const RecentBook& r) { return r.path == book.path; });
+          const bool everOpened =
+              book.path == QuranBook::PATH || std::any_of(storedRecents.begin(), storedRecents.end(),
+                                                          [&book](const RecentBook& r) { return r.path == book.path; });
           if (!loaded && everOpened) {
             // Metadata cache missing (cache cleared): build it now behind the
             // loading popup -- see HomeActivity::loadRecentCovers.
@@ -576,8 +572,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
             const std::string title = epub.getTitle();
             if (!title.empty()) book.title = title;
           }
-          CoverThumbs::diagLog(std::string("GRID epub load=") + (loaded ? "1" : "0") + " built=" +
-                               (built ? "1" : "0") + " gen=" + (generated ? "1" : "0") + " " + book.path);
+          CoverThumbs::diagLog(std::string("GRID epub load=") + (loaded ? "1" : "0") + " built=" + (built ? "1" : "0") +
+                               " gen=" + (generated ? "1" : "0") + " " + book.path);
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           Xtc xtc(book.path, "/.crosspoint");
           const bool loaded = xtc.load();

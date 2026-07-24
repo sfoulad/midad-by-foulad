@@ -78,22 +78,36 @@ class HttpDownloader {
    * outResponse. Used for the font-conversion relay to foulad-ebooks, whose
    * response can legitimately take much longer than a normal fetch -- pass a
    * generous timeoutMs (this does NOT reuse the GET path's tuned-for-downloads
-   * timeout constant). Returns false on any network/file error; check
-   * getLastFailure() for detail.
+   * timeout constant). username/password add preemptive Basic Auth (empty by
+   * default, matching the font relay's no-auth convention). Returns false on
+   * any network/file error; check getLastFailure() for detail.
    */
   static bool postFileMultipart(const std::string& url, const std::string& filePath,
                                 const std::vector<std::pair<std::string, std::string>>& fields,
-                                std::string& outResponse, int timeoutMs = 120000);
+                                std::string& outResponse, int timeoutMs = 120000, const std::string& username = "",
+                                const std::string& password = "");
 
   /**
    * Multi-file variant of postFileMultipart: each (fieldName, sdPath) pair
    * becomes its own streamed multipart file part. Used by the Convert Font
    * relay to send optional bold/italic/bolditalic style fonts alongside the
    * required regular one ("font", "font_bold", "font_italic",
-   * "font_bolditalic" -- matching the foulad-ebooks endpoint).
+   * "font_bolditalic" -- matching the foulad-ebooks endpoint), and by
+   * FouladDeviceTracking to stream the on-SD debug log with Basic Auth.
    */
-  static bool postFilesMultipart(const std::string& url,
-                                 const std::vector<std::pair<std::string, std::string>>& files,
+  static bool postFilesMultipart(const std::string& url, const std::vector<std::pair<std::string, std::string>>& files,
                                  const std::vector<std::pair<std::string, std::string>>& fields,
-                                 std::string& outResponse, int timeoutMs = 120000);
+                                 std::string& outResponse, int timeoutMs = 120000, const std::string& username = "",
+                                 const std::string& password = "");
+
+  /**
+   * POST a small pre-serialized JSON body (Content-Type: application/json)
+   * with optional Basic Auth, buffering the (expected-small) JSON response
+   * into outResponse. Unlike postFilesMultipart, returns the DownloadError
+   * enum directly (not collapsed to bool): callers that need to distinguish
+   * e.g. a 404 from other failures should check getLastFailure() after a
+   * non-OK result -- FailStage::STATUS's detail is the raw HTTP status code.
+   */
+  static DownloadError postJson(const std::string& url, const std::string& jsonBody, const std::string& username,
+                                const std::string& password, std::string& outResponse, int timeoutMs = 15000);
 };
