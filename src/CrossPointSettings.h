@@ -436,6 +436,13 @@ class CrossPointSettings {
   uint8_t removeReadBooksFromRecents = 0;
   // Move epub to /Read/ folder on SD card when finished (0 = disabled, 1 = enabled)
   uint8_t moveFinishedToReadFolder = 0;
+  // Settings -> System -> Pre-release: OtaUpdater checks GitHub's full
+  // /releases list (newest-first, includes pre-releases) instead of
+  // /releases/latest (which excludes them) when this is on, so "Check for
+  // Update" can offer a pre-release/RC build if it's newer than the current
+  // stable release. Off by default -- pre-release builds are for testers who
+  // explicitly opt in, not the general OTA channel.
+  uint8_t otaPrereleaseEnabled = 0;
   // Image rendering mode in EPUB reader
   uint8_t imageRendering = IMAGES_DISPLAY;
   // Tilt-based page turning (X3 only — requires QMI8658 IMU)

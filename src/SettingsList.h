@@ -218,11 +218,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // from inside a book with Cover+Custom selected -- SleepActivity.cpp's
     // COVER_CUSTOM case correctly shows the book cover in that situation,
     // but the setting never actually stored COVER_CUSTOM=4).
-    v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
-                                  {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER,
-                                   StrId::STR_COVER_CUSTOM, StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME,
-                                   StrId::STR_SLEEP_DASHBOARD},
-                                  "sleepScreen", StrId::STR_CAT_DISPLAY));
+    v.push_back(SettingInfo::Enum(
+        StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
+        {StrId::STR_DARK, StrId::STR_LIGHT, StrId::STR_CUSTOM, StrId::STR_COVER, StrId::STR_COVER_CUSTOM,
+         StrId::STR_NONE_OPT, StrId::STR_QUICK_RESUME, StrId::STR_SLEEP_DASHBOARD},
+        "sleepScreen", StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                                   {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
@@ -261,10 +261,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                   StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Value(StrId::STR_SCREEN_MARGIN, &CrossPointSettings::screenMargin, {5, 40, 5},
                                    "screenMargin", StrId::STR_CAT_READER));
-    v.push_back(SettingInfo::Enum(StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
-                                  {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT,
-                                   StrId::STR_BOOK_S_STYLE},
-                                  "paragraphAlignment", StrId::STR_CAT_READER));
+    v.push_back(SettingInfo::Enum(
+        StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
+        {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT, StrId::STR_BOOK_S_STYLE},
+        "paragraphAlignment", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                                     StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled,
@@ -285,16 +285,17 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     "extraParagraphSpacing", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing, "textAntiAliasing",
                                     StrId::STR_CAT_READER));
-    v.push_back(SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
-                                  {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
-                                  "imageRendering", StrId::STR_CAT_READER));
+    v.push_back(
+        SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
+                          {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
+                          "imageRendering", StrId::STR_CAT_READER));
     // --- Controls ---
     v.push_back(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
                                   {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_DISABLED}, "sideButtonLayout",
                                   StrId::STR_CAT_CONTROLS));
     v.push_back(SettingInfo::Toggle(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION,
-                                    &CrossPointSettings::frontButtonFollowOrientation,
-                                    "frontButtonFollowOrientation", StrId::STR_CAT_CONTROLS));
+                                    &CrossPointSettings::frontButtonFollowOrientation, "frontButtonFollowOrientation",
+                                    StrId::STR_CAT_CONTROLS));
     v.push_back(SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
                                   {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
                                    StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
@@ -312,13 +313,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // --- Apps ---
     // Quran toggle: SettingsActivity::toggleCurrentSetting() extracts the
     // firmware-embedded EPUB to SD when this turns on (QuranBook::ensureExtracted).
-    v.push_back(SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled",
-                                    StrId::STR_CAT_APPS));
+    v.push_back(
+        SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled", StrId::STR_CAT_APPS));
     // Games toggle: pins a "Games" tile in My Books (see GAMES_PSEUDO_PATH in
     // RecentBooksActivity.cpp) that opens a Snake/Tetris picker. No extraction
     // step needed -- unlike Quran, nothing but the toggle itself is required.
-    v.push_back(SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled",
-                                    StrId::STR_CAT_APPS));
+    v.push_back(
+        SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled", StrId::STR_CAT_APPS));
     // Tasbih toggle: pins a "Tasbih" tile in My Books (see TASBIH_PSEUDO_PATH
     // in RecentBooksActivity.cpp) that opens the built-in dhikr counter. No
     // extraction step needed, same as Games.
@@ -352,6 +353,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     StrId::STR_CAT_SYSTEM));
     v.push_back(SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                                     "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM));
+    v.push_back(SettingInfo::Toggle(StrId::STR_OTA_PRERELEASE, &CrossPointSettings::otaPrereleaseEnabled,
+                                    "otaPrereleaseEnabled", StrId::STR_CAT_SYSTEM));
 
     // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
     v.push_back(SettingInfo::DynamicString(
@@ -392,10 +395,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.push_back(SettingInfo::Enum(StrId::STR_PROGRESS_BAR, &CrossPointSettings::statusBarProgressBar,
                                   {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarProgressBar",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));
-    v.push_back(SettingInfo::Enum(
-        StrId::STR_PROGRESS_BAR_THICKNESS, &CrossPointSettings::statusBarProgressBarThickness,
-        {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM, StrId::STR_PROGRESS_BAR_THICK},
-        "statusBarProgressBarThickness", StrId::STR_CUSTOMISE_STATUS_BAR));
+    v.push_back(
+        SettingInfo::Enum(StrId::STR_PROGRESS_BAR_THICKNESS, &CrossPointSettings::statusBarProgressBarThickness,
+                          {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM, StrId::STR_PROGRESS_BAR_THICK},
+                          "statusBarProgressBarThickness", StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Enum(StrId::STR_TITLE, &CrossPointSettings::statusBarTitle,
                                   {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarTitle",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));

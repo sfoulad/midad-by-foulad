@@ -17,8 +17,17 @@
 #include <cstring>
 #include <string>
 
+#include "CrossPointSettings.h"
+
 namespace {
+// Excludes pre-releases/drafts -- GitHub's own documented behavior for this
+// endpoint. Used when Settings -> System -> Pre-release is off (the default).
 constexpr char latestReleaseUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases/latest";
+// Every release, newest-first, pre-releases included (GitHub does not surface
+// unpublished drafts to an unauthenticated request like this one either way).
+// Used when Settings -> System -> Pre-release is on -- ReleaseJsonParser
+// parses only the first (newest) array element, whichever channel it's on.
+constexpr char allReleasesUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases";
 
 esp_err_t http_client_set_header_cb(esp_http_client_handle_t http_client) {
   return esp_http_client_set_header(http_client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
@@ -26,15 +35,20 @@ esp_err_t http_client_set_header_cb(esp_http_client_handle_t http_client) {
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
-  LOG_DBG("OTA", "Checking for update (current: %s)", CROSSPOINT_VERSION);
+  const bool prerelease = SETTINGS.otaPrereleaseEnabled != 0;
+  const char* url = prerelease ? allReleasesUrl : latestReleaseUrl;
+  LOG_DBG("OTA", "Checking for update (current: %s, channel: %s)", CROSSPOINT_VERSION,
+          prerelease ? "pre-release" : "stable");
 
-  // Stream the ~32KB release JSON straight into the parser as it arrives.
-  // Buffering the whole body in a std::string would add a growing allocation
-  // on top of the TLS session's heap during the fetch; with -fno-exceptions an
-  // OOM there aborts. fetchUrl handles the verified-https GET, redirects, and
-  // User-Agent (see HttpDownloader).
+  // Stream the release JSON straight into the parser as it arrives (the
+  // pre-release channel's /releases list runs well past the ~32KB a single
+  // /releases/latest object does, since it lists every past release). Buffering
+  // the whole body in a std::string would add a growing allocation on top of
+  // the TLS session's heap during the fetch; with -fno-exceptions an OOM there
+  // aborts. fetchUrl handles the verified-https GET, redirects, and User-Agent
+  // (see HttpDownloader).
   ReleaseJsonParser releaseParser;
-  const bool ok = HttpDownloader::fetchUrl(latestReleaseUrl, [&releaseParser](const uint8_t* data, size_t len) {
+  const bool ok = HttpDownloader::fetchUrl(url, [&releaseParser](const uint8_t* data, size_t len) {
     releaseParser.feed(reinterpret_cast<const char*>(data), len);
     return true;
   });

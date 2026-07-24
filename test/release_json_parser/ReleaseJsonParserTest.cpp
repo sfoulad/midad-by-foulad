@@ -580,6 +580,131 @@ TEST(ReleaseJsonParser, MinimalValidJson) {
   EXPECT_EQ(p.getFirmwareSize(), 1u);
 }
 
+TEST(ReleaseJsonParser, ArrayTopLevelTakesFirstElementOnly) {
+  // GET /releases (used for the pre-release channel) returns every release,
+  // newest-first, as a top-level array -- the parser must take only the
+  // FIRST element and ignore the rest, not let a later (older) release
+  // overwrite the first one's already-captured fields.
+  const char* json = R"([
+      {"tag_name": "v2.0", "prerelease": true,
+       "assets": [{"name": "firmware.bin", "browser_download_url": "https://newest", "size": 2000}]},
+      {"tag_name": "v1.0", "prerelease": false,
+       "assets": [{"name": "firmware.bin", "browser_download_url": "https://older", "size": 1000}]}
+    ])";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  EXPECT_TRUE(p.foundTag());
+  EXPECT_TRUE(p.foundFirmware());
+  EXPECT_STREQ(p.getTagName(), "v2.0");
+  EXPECT_STREQ(p.getFirmwareUrl(), "https://newest");
+  EXPECT_EQ(p.getFirmwareSize(), 2000u);
+}
+
+TEST(ReleaseJsonParser, ArrayTopLevelSingleElement) {
+  const char* json =
+      R"([{"tag_name":"v3.0","assets":[{"name":"firmware.bin","browser_download_url":"https://only","size":300}]}])";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  EXPECT_TRUE(p.foundTag());
+  EXPECT_TRUE(p.foundFirmware());
+  EXPECT_STREQ(p.getTagName(), "v3.0");
+  EXPECT_STREQ(p.getFirmwareUrl(), "https://only");
+  EXPECT_EQ(p.getFirmwareSize(), 300u);
+}
+
+TEST(ReleaseJsonParser, ArrayTopLevelEmpty) {
+  const char* json = R"([])";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  EXPECT_FALSE(p.foundTag());
+  EXPECT_FALSE(p.foundFirmware());
+}
+
+TEST(ReleaseJsonParser, ArrayTopLevelFirstElementMissingFirmware) {
+  // First (newest) release has no firmware.bin asset -- correctly reports no
+  // firmware even though an OLDER release in the array does have one; taking
+  // the older release's asset would offer a stale/wrong "update".
+  const char* json = R"([
+      {"tag_name": "v2.0", "assets": [{"name": "notes.txt", "browser_download_url": "https://notes", "size": 10}]},
+      {"tag_name": "v1.0", "assets": [{"name": "firmware.bin", "browser_download_url": "https://old", "size": 500}]}
+    ])";
+
+  ReleaseJsonParser p;
+  p.feed(json, strlen(json));
+
+  EXPECT_TRUE(p.foundTag());
+  EXPECT_STREQ(p.getTagName(), "v2.0");
+  EXPECT_FALSE(p.foundFirmware());
+}
+
+TEST(ReleaseJsonParser, ArrayTopLevelManyReleasesOnlyFirstParsed) {
+  // Realistic shape: dozens of past releases after the first -- correctness
+  // (not overwriting) matters more here than any one of them individually.
+  std::string json = "[";
+  json +=
+      R"({"tag_name": "v50.0", "assets": [{"name": "firmware.bin", "browser_download_url": "https://v50", "size": 5000}]})";
+  for (int i = 49; i >= 1; --i) {
+    json += R"(,{"tag_name": "v)" + std::to_string(i) +
+            R"(.0", "assets": [{"name": "firmware.bin", "browser_download_url": "https://v)" + std::to_string(i) +
+            R"(", "size": )" + std::to_string(i * 100) + "}]}";
+  }
+  json += "]";
+
+  ReleaseJsonParser p;
+  p.feed(json.c_str(), json.size());
+
+  EXPECT_TRUE(p.foundTag());
+  EXPECT_TRUE(p.foundFirmware());
+  EXPECT_STREQ(p.getTagName(), "v50.0");
+  EXPECT_STREQ(p.getFirmwareUrl(), "https://v50");
+  EXPECT_EQ(p.getFirmwareSize(), 5000u);
+}
+
+TEST(ReleaseJsonParser, ArrayTopLevelChunkedFeeding) {
+  const char* json = R"([
+      {"tag_name": "v2.0",
+       "assets": [{"name": "firmware.bin", "browser_download_url": "https://newest", "size": 2000}]},
+      {"tag_name": "v1.0",
+       "assets": [{"name": "firmware.bin", "browser_download_url": "https://older", "size": 1000}]}
+    ])";
+
+  for (size_t chunkSize : {1u, 3u, 7u, 13u, 31u, 64u}) {
+    ReleaseJsonParser p;
+    feedChunked(p, json, chunkSize);
+
+    EXPECT_TRUE(p.foundTag()) << "chunkSize=" << chunkSize;
+    EXPECT_STREQ(p.getTagName(), "v2.0") << "chunkSize=" << chunkSize;
+    EXPECT_STREQ(p.getFirmwareUrl(), "https://newest") << "chunkSize=" << chunkSize;
+    EXPECT_EQ(p.getFirmwareSize(), 2000u) << "chunkSize=" << chunkSize;
+  }
+}
+
+TEST(ReleaseJsonParser, ArrayTopLevelResetAndReuse) {
+  ReleaseJsonParser p;
+
+  const char* json1 =
+      R"([{"tag_name":"v1.0","assets":[{"name":"firmware.bin","browser_download_url":"https://a","size":1}]}])";
+  p.feed(json1, strlen(json1));
+  EXPECT_STREQ(p.getTagName(), "v1.0");
+
+  p.reset();
+
+  // Single-object /releases/latest shape after an array-shaped call, to make
+  // sure topLevelIsArray/done from the previous parse don't leak across reset().
+  const char* json2 =
+      R"({"tag_name":"v2.0","assets":[{"name":"firmware.bin","browser_download_url":"https://b","size":2}]})";
+  p.feed(json2, strlen(json2));
+  EXPECT_TRUE(p.foundTag());
+  EXPECT_STREQ(p.getTagName(), "v2.0");
+  EXPECT_STREQ(p.getFirmwareUrl(), "https://b");
+}
+
 TEST(ReleaseJsonParser, ChunkedRealisticEveryBoundary) {
   // Two-chunk split at every byte boundary on a compact JSON
   const char* json =

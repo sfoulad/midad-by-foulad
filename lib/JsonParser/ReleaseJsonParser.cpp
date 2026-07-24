@@ -25,6 +25,8 @@ void ReleaseJsonParser::reset() {
   lastKey = LastKey::NONE;
   depth = 0;
   assetDepth = 0;
+  topLevelIsArray = false;
+  done = false;
   tagName[0] = '\0';
   firmwareUrl[0] = '\0';
   firmwareSize = 0;
@@ -58,6 +60,7 @@ void ReleaseJsonParser::commitAsset() {
 
 void ReleaseJsonParser::sOnKey(void* ctx, const char* key, size_t len) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   switch (self->position) {
     case Position::TOP_LEVEL:
@@ -89,6 +92,7 @@ void ReleaseJsonParser::sOnKey(void* ctx, const char* key, size_t len) {
 
 void ReleaseJsonParser::sOnString(void* ctx, const char* value, size_t len) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   switch (self->lastKey) {
     case LastKey::TAG_NAME:
@@ -113,6 +117,7 @@ void ReleaseJsonParser::sOnString(void* ctx, const char* value, size_t len) {
 
 void ReleaseJsonParser::sOnNumber(void* ctx, const char* value, size_t /*len*/) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   if (self->lastKey == LastKey::ASSET_SIZE && self->position == Position::IN_ASSET_OBJECT && self->assetDepth == 1) {
     self->currentAssetSize = static_cast<size_t>(strtoul(value, nullptr, 10));
@@ -121,13 +126,20 @@ void ReleaseJsonParser::sOnNumber(void* ctx, const char* value, size_t /*len*/) 
 }
 
 void ReleaseJsonParser::sOnBool(void* ctx, bool /*value*/) {
-  static_cast<ReleaseJsonParser*>(ctx)->lastKey = LastKey::NONE;
+  auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
+  self->lastKey = LastKey::NONE;
 }
 
-void ReleaseJsonParser::sOnNull(void* ctx) { static_cast<ReleaseJsonParser*>(ctx)->lastKey = LastKey::NONE; }
+void ReleaseJsonParser::sOnNull(void* ctx) {
+  auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
+  self->lastKey = LastKey::NONE;
+}
 
 void ReleaseJsonParser::sOnObjectStart(void* ctx) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   switch (self->position) {
     case Position::TOP_LEVEL:
@@ -151,10 +163,17 @@ void ReleaseJsonParser::sOnObjectStart(void* ctx) {
 
 void ReleaseJsonParser::sOnObjectEnd(void* ctx) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   switch (self->position) {
     case Position::TOP_LEVEL:
       if (self->depth > 0) self->depth--;
+      // Closing the outermost object at depth 0 means the release object
+      // itself just ended. When that object was the first (newest) element
+      // of a top-level /releases array, everything after it is an older
+      // release we don't need -- stop paying attention to the rest of the
+      // array (see the class-level comment).
+      if (self->depth == 0 && self->topLevelIsArray) self->done = true;
       break;
     case Position::IN_ASSET_OBJECT:
       self->assetDepth--;
@@ -171,11 +190,19 @@ void ReleaseJsonParser::sOnObjectEnd(void* ctx) {
 
 void ReleaseJsonParser::sOnArrayStart(void* ctx) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   switch (self->position) {
     case Position::TOP_LEVEL:
       if (self->lastKey == LastKey::ASSETS && self->depth == 1) {
         self->position = Position::IN_ASSETS_ARRAY;
+      } else if (self->depth == 0) {
+        // The top-level JSON value is itself an array (GET /releases, newest
+        // first) rather than a single release object (GET /releases/latest).
+        // Note it and otherwise ignore this array-start -- the first
+        // element's own object-start right after this is handled exactly
+        // like the single-object case, so its fields still land at depth 1.
+        self->topLevelIsArray = true;
       } else {
         self->depth++;
       }
@@ -192,6 +219,7 @@ void ReleaseJsonParser::sOnArrayStart(void* ctx) {
 
 void ReleaseJsonParser::sOnArrayEnd(void* ctx) {
   auto* self = static_cast<ReleaseJsonParser*>(ctx);
+  if (self->done) return;
 
   switch (self->position) {
     case Position::TOP_LEVEL:

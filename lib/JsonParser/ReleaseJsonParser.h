@@ -5,6 +5,14 @@
 
 #include "StreamingJsonParser.h"
 
+// Parses either GET /releases/latest's response (a single release object) or
+// GET /releases' response (an array of every release, newest-first, used to
+// find a pre-release/RC -- /releases/latest specifically excludes those) --
+// see OtaUpdater.cpp for which endpoint each mode hits. When fed an array,
+// only the FIRST element (the newest release/pre-release) is parsed; once
+// that element's own object closes, every further SAX event is ignored so a
+// second (older) release in the array can't overwrite the first one's
+// already-captured tag/firmware fields.
 class ReleaseJsonParser {
  public:
   ReleaseJsonParser();
@@ -55,6 +63,12 @@ class ReleaseJsonParser {
   LastKey lastKey;
   uint8_t depth;
   uint8_t assetDepth;
+  // True once the top-level JSON value has been seen to be an array (GET
+  // /releases) rather than a single object (GET /releases/latest).
+  bool topLevelIsArray;
+  // True once the first (newest) release object in a top-level array has
+  // fully closed -- every SAX event past that point is ignored.
+  bool done;
 
   char tagName[32];
   char firmwareUrl[512];
