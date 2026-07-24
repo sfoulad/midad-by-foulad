@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <HalGPIO.h>
+#include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <WiFi.h>
@@ -28,6 +29,20 @@ bool wifiConnected() { return WiFi.status() == WL_CONNECTED; }
 std::string deviceEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/device"; }
 std::string readingStatsEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/reading-stats"; }
 std::string deviceLogEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/device-log"; }
+std::string deviceStatsEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/device-stats"; }
+
+// Below this free-heap level, reportDeviceStats() skips the books/reading-days
+// arrays this connect (device telemetry alone still sends) -- building that
+// JSON (up to 40 books + 750 heatmap days) is the single largest allocation
+// this module makes, well above RollingSdLog's own 32KB floor for a single
+// log line, so it gets a proportionally larger safety margin.
+constexpr uint32_t MIN_SAFE_HEAP_FOR_READING_SNAPSHOT_BYTES = 100000;
+
+// Last-reported READING_STATS total, to decide whether the (larger) reading
+// snapshot needs resending -- device telemetry is cheap and always sent, but
+// the reading snapshot is only worth another POST when something actually
+// changed. Sentinel value ensures the first call after boot always sends it.
+uint64_t lastReportedTotalReadingMs = UINT64_MAX;
 
 // Matches the literal path HalSystem::checkPanic() writes to.
 constexpr char CRASH_REPORT_PATH[] = "/crash_report.txt";
@@ -343,6 +358,62 @@ bool postReadingStatsOnce(const std::string& username, const std::string& passwo
           (ok ? "ok" : "FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail)));
   return ok;
 }
+
+// Single attempt, no 404 handling -- reportDeviceStats() owns the
+// retry-after-register decision, same convention as postReadingStatsOnce().
+// includeReading false sends `device` telemetry alone (unchanged since last
+// send, or heap too tight for the larger arrays right now).
+bool postDeviceStatsOnce(const std::string& username, const std::string& password, const bool includeReading) {
+  JsonDocument doc;
+  doc["serial_number"] = getSerialNumber();
+
+  JsonObject device = doc["device"].to<JsonObject>();
+  device["battery_percent"] = powerManager.getBatteryPercentage();
+  device["wifi_rssi"] = WiFi.RSSI();
+  device["free_heap_bytes"] = ESP.getFreeHeap();
+  device["uptime_seconds"] = millis() / 1000;
+
+  if (includeReading) {
+    JsonObject reading = doc["reading"].to<JsonObject>();
+    reading["current_streak_days"] = READING_STATS.getCurrentStreakDays();
+    reading["max_streak_days"] = READING_STATS.getMaxStreakDays();
+    reading["today_reading_seconds"] = static_cast<uint32_t>(READING_STATS.getTodayReadingMs() / 1000);
+    reading["total_reading_seconds"] = static_cast<uint32_t>(READING_STATS.getTotalReadingMs() / 1000);
+    reading["books_started"] = READING_STATS.getBooksStartedCount();
+    reading["books_finished"] = READING_STATS.getBooksFinishedCount();
+
+    // book.title empty fallback matches StatsActivity's own bookTitle().
+    JsonArray books = reading["books"].to<JsonArray>();
+    for (const auto& book : READING_STATS.getBooks()) {
+      JsonObject b = books.add<JsonObject>();
+      b["title"] = book.title.empty() ? book.path : book.title;
+      b["author"] = book.author;
+      b["total_reading_seconds"] = static_cast<uint32_t>(book.totalReadingMs / 1000);
+      b["sessions"] = book.sessions;
+      b["progress_percent"] = book.lastProgressPercent;
+      b["completed"] = book.completed;
+      b["last_read_at"] = book.lastReadAt;
+      b["estimated_time_left_seconds"] = book.estimatedTimeLeftSeconds;
+    }
+
+    JsonArray days = reading["reading_days"].to<JsonArray>();
+    for (const auto& day : READING_STATS.getReadingDays()) {
+      JsonObject d = days.add<JsonObject>();
+      d["day_ordinal"] = day.dayOrdinal;
+      d["reading_seconds"] = day.readingMs / 1000;
+    }
+  }
+
+  std::string body;
+  serializeJson(doc, body);
+
+  std::string response;
+  const bool ok =
+      HttpDownloader::postJson(deviceStatsEndpoint(), body, username, password, response) == HttpDownloader::OK;
+  diagLog(std::string("device-stats upload (reading=") + (includeReading ? "yes" : "no") + ") -> " +
+          (ok ? "ok" : "FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail)));
+  return ok;
+}
 }  // namespace
 
 std::string getSerialNumber() {
@@ -474,6 +545,31 @@ bool uploadCrashReport(const std::string& username, const std::string& password)
   diagLog(ok ? "crash report upload -> ok"
              : "crash report upload -> FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail));
   return ok;
+}
+
+void reportDeviceStats(const std::string& username, const std::string& password) {
+  if (!wifiConnected() || username.empty() || password.empty()) return;
+
+  READING_STATS.ensureLoaded();
+  const uint64_t totalMs = READING_STATS.getTotalReadingMs();
+  const bool readingChanged = totalMs != lastReportedTotalReadingMs;
+  const bool includeReading = readingChanged && ESP.getFreeHeap() >= MIN_SAFE_HEAP_FOR_READING_SNAPSHOT_BYTES;
+
+  bool ok = postDeviceStatsOnce(username, password, includeReading);
+  if (!ok) {
+    const auto failure = HttpDownloader::getLastFailure();
+    if (failure.stage == HttpDownloader::FailStage::STATUS && failure.detail == 404) {
+      // Unknown device server-side -- register once, then retry exactly once,
+      // same convention as every other upload here.
+      registerDevice(username, password);
+      ok = postDeviceStatsOnce(username, password, includeReading);
+    }
+  }
+
+  // Only remember success -- a failed send (including one that skipped the
+  // reading snapshot for heap reasons) should retry next connect, not be
+  // treated as "already reported."
+  if (ok && includeReading) lastReportedTotalReadingMs = totalMs;
 }
 
 }  // namespace FouladDeviceTracking

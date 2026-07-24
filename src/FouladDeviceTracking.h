@@ -83,4 +83,23 @@ void uploadDebugLog(const std::string& username, const std::string& password);
 // crash report file doesn't exist, or the upload ultimately fails.
 bool uploadCrashReport(const std::string& username, const std::string& password);
 
+// Reports device telemetry (battery/RSSI/free heap/uptime) and a reading-
+// stats snapshot (streaks, totals, per-book history, reading-day heatmap)
+// for the "My Devices" web page's Device Stats / Reading Stats tabs -- see
+// EINK_STATS_SYNC_TASKS.md. A separate endpoint from registerDevice(),
+// deliberately: the reading snapshot can run to several KB (up to 40 books,
+// up to 750 heatmap days), not worth paying on every single connect. Call
+// this alongside flushPendingReadingStats() (same "device reconnected for
+// some other reason" moment); same no-op-when-offline and
+// 404-retry-after-register behavior as every other function here.
+//
+// `device` telemetry is sent every call (cheap); the larger `reading`
+// snapshot is only included when READING_STATS's total has changed since
+// the last successful send, and is skipped entirely (this call still sends
+// `device` alone) when free heap is below a safety floor -- building the
+// full books+reading-days JSON is the single largest allocation this
+// module makes, so it backs off under memory pressure rather than risking
+// the OOM aborts a prior Gym-app bug already demonstrated on this device.
+void reportDeviceStats(const std::string& username, const std::string& password);
+
 }  // namespace FouladDeviceTracking

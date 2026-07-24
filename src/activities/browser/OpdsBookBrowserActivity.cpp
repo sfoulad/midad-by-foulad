@@ -976,6 +976,9 @@ void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
   // a book is opened, when WiFi is already gone) is what actually delivers
   // it. No-op unless Settings -> Apps -> Debug is on.
   FouladDeviceTracking::uploadDebugLog(server.username, server.password);
+  // Device/reading-stats snapshot for the "My Devices" web page's Device
+  // Stats / Reading Stats tabs -- same reliable-moment reasoning.
+  FouladDeviceTracking::reportDeviceStats(server.username, server.password);
 }
 
 void OpdsBookBrowserActivity::checkAndConnectWifi() {

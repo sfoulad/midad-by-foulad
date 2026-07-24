@@ -173,6 +173,7 @@ void CrossPointWebServerActivity::reportDeviceTrackingOnConnect() {
   if (it == servers.end()) return;  // no Foulad eBooks account configured -- nothing to register with
 
   FouladDeviceTracking::registerDevice(it->username, it->password);
+  FouladDeviceTracking::reportDeviceStats(it->username, it->password);
 }
 
 void CrossPointWebServerActivity::onWifiSelectionComplete(const bool connected) {
