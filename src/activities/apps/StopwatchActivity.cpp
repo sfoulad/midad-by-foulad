@@ -16,13 +16,14 @@ namespace {
 // else, so it's safe to draw with that font directly.
 //
 // MM:SS:CS (centiseconds, i.e. hundredths -- a Casio-style stopwatch's third
-// field is hundredths, not literal milliseconds). The live running display
-// still only calls requestUpdate() once per second (see loop()'s 1000ms
-// tick) -- the e-ink panel's 1-2s full-refresh cost (see CLAUDE.md) makes a
-// smoothly-animating hundredths digit infeasible, so this shows the real
-// elapsed time's exact centiseconds each second (not always "00"), but it
-// steps once per second rather than animating continuously. Lap times and
-// the paused/stopped display are exact, frozen values either way.
+// field is hundredths, not literal milliseconds). The e-ink panel's 1-2s
+// full-refresh cost (see CLAUDE.md) makes a smoothly-animating hundredths
+// digit infeasible; render() rounds the live running value down to the whole
+// second before formatting, so this field reads a steady ":00" while
+// running rather than the raw sub-second remainder some earlier redraw
+// happened to land on (which looked like it was jumping between numbers,
+// not counting). Lap times and the paused/stopped display pass their exact,
+// frozen elapsed value straight through, centiseconds included.
 void formatElapsed(const uint32_t ms, char* buf, const size_t len) {
   const uint32_t totalSeconds = ms / 1000;
   const uint32_t minutes = totalSeconds / 60;
@@ -120,7 +121,18 @@ void StopwatchActivity::render(RenderLock&&) {
 
   constexpr int kNumberFontId = STOPWATCH_32_FONT_ID;
   char timeBuf[16];
-  formatElapsed(elapsedMs(), timeBuf, sizeof(timeBuf));
+  // While running, the live tick only redraws ~once/second (loop()'s 1000ms
+  // check), so showing elapsedMs()'s raw centiseconds meant each redraw
+  // landed on whatever sub-second remainder the tick happened to fire at --
+  // real, but effectively random-looking from one redraw to the next (a user
+  // report: "last 00 not moving, jumping between numbers"). Rounding down to
+  // the whole second while running shows a clean, steady :00 instead. Once
+  // stopped/paused/lapped, elapsedMs() is a frozen static value (no repeat
+  // redraws to jitter between), so real centiseconds there stay exact and
+  // meaningful, same as a physical stopwatch's lap/stop reading.
+  uint32_t displayMs = elapsedMs();
+  if (running) displayMs -= displayMs % 1000;
+  formatElapsed(displayMs, timeBuf, sizeof(timeBuf));
   const int numberWidth = renderer.getTextWidth(kNumberFontId, timeBuf);
   const int numberTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing + 16;
   renderer.drawText(kNumberFontId, (pageWidth - numberWidth) / 2, numberTop, timeBuf, true);
