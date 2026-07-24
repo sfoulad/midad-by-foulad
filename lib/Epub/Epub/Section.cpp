@@ -33,7 +33,11 @@ namespace {
 // v37: TextBlock's arena gained an optional kashidaExtraPx[wordCount] array
 // (kashida justification for Arabic body text) -- changes the arena's byte
 // layout and size, so v36 cached blocks can't be read as v37 ones.
-constexpr uint8_t SECTION_FILE_VERSION = 37;
+// v38: upstream merge (#2652, #2679) -- CJK MAX_WORD_SIZE overflow now marks the
+// continuation word so it doesn't get a false leading space, and closing a block
+// tag now starts a fresh text block instead of letting bare text after it inherit
+// the closed block's style (alignment/margins). Both change layout output.
+constexpr uint8_t SECTION_FILE_VERSION = 38;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects

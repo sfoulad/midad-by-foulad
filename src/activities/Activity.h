@@ -53,6 +53,8 @@ class Activity {
   // true) -- a literal per override, not RTTI, so it stays meaningful after mangling.
   virtual const char* activityDebugName() const { return "Activity"; }
   virtual bool isReaderActivity() const { return false; }
+  // Returns true when the activity schedules its own forced refresh.
+  virtual bool handleForcedRefresh() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
   // Start a new activity without destroying the current one
