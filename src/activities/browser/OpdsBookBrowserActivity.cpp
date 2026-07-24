@@ -134,12 +134,15 @@ void OpdsBookBrowserActivity::onExit() {
       APP_STATE.openEpubPath = pendingReaderPath;
       APP_STATE.saveToFile();
       silentRestartToReader();
-    } else if (server.url == FOULAD_EBOOKS_URL) {
-      // Return-to-caller: browsing Foulad eBooks specifically (not a custom
-      // OPDS server) reboots back into it rather than Home -- landing on Home
-      // after just browsing (no download) was a real user complaint.
-      silentRestartToFouladEbooks();
     } else {
+      // NOT silentRestartToFouladEbooks() here even when server.url ==
+      // FOULAD_EBOOKS_URL: that call is how Foulad eBooks is *entered* (see
+      // HomeActivity::onFouladEbooksOpen(), FouladEbooksSetupActivity) --
+      // calling it from this activity's own onExit() rebooted straight back
+      // into itself, so pressing Back to leave (no download in flight)
+      // reconnected WiFi and relaunched the same browser with no way out.
+      // Home is this activity's actual caller in every case; exiting always
+      // goes there, same as any other OPDS server.
       silentRestart();
     }
   }
