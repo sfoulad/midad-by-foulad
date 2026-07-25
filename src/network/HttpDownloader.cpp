@@ -16,6 +16,9 @@
 #include <utility>
 #include <vector>
 
+#include "FouladDeviceTracking.h"
+#include "FouladEbooksConfig.h"
+
 namespace {
 // RX holds the response headers. 4096 fits real OPDS servers; GitHub's release
 // CDN sends more and logs HTTP_HEADER "Buffer length is small", but that's
@@ -30,6 +33,34 @@ constexpr int HTTP_TX_BUF = 1024;
 // HTTPClient's uint16 setTimeout it doesn't silently truncate.
 constexpr int HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 2048;
+
+// Identifies this device to Foulad eBooks on every request, reads included.
+// Removing a device server-side can only cut off its reads if the read itself
+// says which device it is: a reader holding the account password (the pre-QR
+// manual login path) otherwise sends a request byte-for-byte identical to the
+// owner's own browser, so the server cannot refuse one without refusing both.
+// With this header present it answers a removed device 401, which the device
+// already signs itself out on (see OpdsBookBrowserActivity's 401 handling).
+// Contract: EINK_OPDS_SERIAL_HEADER_TASKS.md in the foulad-ebooks repo.
+//
+// Deliberately applied here, at the single choke point every HTTP request
+// passes through, rather than at each OPDS call site -- the spec requires it on
+// *every* request (feeds, search, downloads, covers, signed ?signature= links),
+// and a per-call-site approach silently loses revocation for whichever path
+// someone forgets, with no visible symptom until it matters.
+//
+// Value comes from FouladDeviceTracking::getSerialNumber(), the same source the
+// `serial_number` POST bodies use. If the two ever disagreed the server would
+// match neither and revocation would quietly stop working, so it is read from
+// one place rather than formatted twice.
+void setDeviceSerialHeader(esp_http_client_handle_t client, const std::string& url) {
+  // Host-gated: a user-added third-party OPDS server must never be told this
+  // device's identifier.
+  if (!isFouladEbooksUrl(url)) return;
+  const std::string serial = FouladDeviceTracking::getSerialNumber();
+  if (serial.empty()) return;
+  esp_http_client_set_header(client, "X-Device-Serial", serial.c_str());
+}
 
 // The simulator's esp_http_client.h stub (crosspoint-simulator, an external repo)
 // doesn't implement esp_http_client_get_errno -- only real ESP-IDF has it.
@@ -163,6 +194,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  // Set on the handle, so it survives the manual redirect hops below (which
+  // reopen the same client rather than building a new one).
+  setDeviceSerialHeader(client, url);
   if (!username.empty() && !password.empty()) {
     // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
     const std::string credentials = username + ":" + password;
@@ -339,6 +373,7 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
   }
 
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  setDeviceSerialHeader(client, url);
   const std::string contentType = "multipart/form-data; boundary=" + boundary;
   esp_http_client_set_header(client, "Content-Type", contentType.c_str());
   if (!username.empty() && !password.empty()) {
@@ -491,6 +526,7 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
   }
 
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  setDeviceSerialHeader(client, url);
   esp_http_client_set_header(client, "Content-Type", "application/json");
   if (!username.empty() && !password.empty()) {
     // Preemptive Basic auth, same convention as runGet -- don't wait for a 401.
