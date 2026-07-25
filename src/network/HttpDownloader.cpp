@@ -528,12 +528,18 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
 
   esp_http_client_fetch_headers(client);
   const int status = esp_http_client_get_status_code(client);
-  if (status != 200) {
+  // Any 2xx, not just 200: POSTing to a creation endpoint legitimately answers
+  // 201 Created, and this function returns before reading the body, so treating
+  // that as a failure discards a perfectly good response. /api/device-login/start
+  // does exactly this -- it answers 201 with the pairing code and qr_payload, so
+  // requiring a bare 200 here made QR sign-in fail every time and drop the user on
+  // the error screen instead of a QR (see FouladDeviceLogin::start).
+  if (status < 200 || status > 299) {
     // Not necessarily an error the caller should log loudly -- e.g. a 404 from
     // /opds/reading-stats just means "register the device first" (see
     // FouladDeviceTracking). Callers inspect getLastFailure().detail for the
     // status code rather than this function surfacing it as a return value.
-    LOG_DBG("HTTP", "postJson non-200 status: %d", status);
+    LOG_DBG("HTTP", "postJson non-2xx status: %d", status);
     setLastFailure(HttpDownloader::FailStage::STATUS, status);
     esp_http_client_cleanup(client);
     return HttpDownloader::HTTP_ERROR;
