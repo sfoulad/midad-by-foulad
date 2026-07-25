@@ -18,6 +18,7 @@
 #include "CrossPointState.h"
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "OpdsServerStore.h"
 #include "MappedInputManager.h"
 #include "OpdsCoverCache.h"
 #include "RecentBooksStore.h"
@@ -716,6 +717,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   constexpr int MAX_FETCH_ATTEMPTS = 3;
   std::unique_ptr<OpdsParser> parser;
   bool fetchOk = false;
+  bool authFailed = false;
   for (int attempt = 1; attempt <= MAX_FETCH_ATTEMPTS && !fetchOk; attempt++) {
     if (attempt > 1) {
       LOG_DBG("OPDS", "Retrying feed fetch (attempt %d/%d): %s", attempt, MAX_FETCH_ATTEMPTS, url.c_str());
@@ -724,6 +726,37 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     parser = std::make_unique<OpdsParser>();
     OpdsParserStream stream{*parser};
     fetchOk = HttpDownloader::fetchUrl(url, stream, server.username, server.password);
+    if (!fetchOk) {
+      const auto failure = HttpDownloader::getLastFailure();
+      if (failure.stage == HttpDownloader::FailStage::STATUS && failure.detail == 401) {
+        // Credential rejected. Retrying cannot help and the spec is explicit
+        // about not looping on this (EINK_QR_LOGIN_TASKS.md, "Handling a
+        // revoked token"), so stop immediately and handle it below.
+        authFailed = true;
+        break;
+      }
+    }
+  }
+
+  if (authFailed) {
+    // The account was signed out from the phone app or the web (or the device
+    // token was revoked). Drop the stored credential so the next entry lands on
+    // the sign-in screen rather than failing the same way forever -- for Foulad
+    // eBooks that is now the QR screen. Only the matching entry is removed; any
+    // other configured OPDS server is left alone.
+    saveOpdsDiagnosticLog("Auth rejected (401), clearing stored credential: " + url);
+    LOG_ERR("OPDS", "401 from %s -- signing this device out", server.url.c_str());
+    const auto& servers = OPDS_STORE.getServers();
+    for (size_t i = 0; i < servers.size(); ++i) {
+      if (servers[i].url == server.url && servers[i].username == server.username) {
+        OPDS_STORE.removeServer(i);
+        break;
+      }
+    }
+    state = BrowserState::ERROR;
+    errorMessage = tr(STR_OPDS_SIGNED_OUT);
+    requestUpdate();
+    return;
   }
 
   if (!fetchOk) {
