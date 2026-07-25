@@ -24,3 +24,13 @@ constexpr char FOULAD_EBOOKS_URL[] = "http://foulad.one/opds";
 // as FOULAD_EBOOKS_URL above (foulad.one's current certificate chain isn't in
 // ESP-IDF's trust bundle); revisit alongside that fix.
 constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://foulad.one/api/fonts/convert";
+
+// QR-code sign-in (see FouladDeviceLogin.h). Unauthenticated JSON POSTs, no
+// cookies/CSRF. Plain http:// is deliberate and expected here for the same
+// certificate-chain reason as FOULAD_EBOOKS_URL above -- these two endpoints sit
+// outside the server's HTTPS-forced group precisely so the device can reach them.
+// Nothing secret is sent TO these endpoints; the token they return is what
+// replaces the account password on the wire, so this flow strictly reduces what
+// is exposed rather than adding to it.
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://foulad.one/api/device-login/start";
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://foulad.one/api/device-login/poll";
