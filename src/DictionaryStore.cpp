@@ -6,6 +6,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <cctype>
@@ -132,14 +133,32 @@ bool parseIfoField(const char* line, const char* key, std::string& out) {
   return true;
 }
 
+// Reads one NUL-terminated headword, leaving the stream positioned on the byte
+// AFTER the terminator so the caller can read the 8-byte (offset, size) record
+// that follows.
+//
+// Two things here are deliberate:
+//  - Over-long words are truncated but the stream is still drained to the NUL.
+//    The previous version just broke out of the loop, leaving the file parked
+//    mid-word; the caller then read 8 bytes of headword text as the offset/size
+//    pair and every subsequent entry in that scan window was garbage. Headwords
+//    past this cap are rare but do occur (phrase entries in Wiktionary-derived
+//    and idiom dictionaries), and the failure was silent.
+//  - The reserve(32) is gone. It forced a heap allocation on EVERY call, because
+//    reserving past libstdc++'s 15-char SSO buffer always allocates -- yet most
+//    headwords fit in SSO. findSuggestions() calls this thousands of times per
+//    not-found lookup, so that was thousands of malloc/free pairs per lookup for
+//    nothing: exactly the fragmentation pattern CLAUDE.md warns about on a 380KB
+//    no-PSRAM heap. Without it, typical headwords cost zero heap. A stack buffer
+//    was the other option but wants 256 bytes, over the per-frame budget.
 std::string readIndexWord(HalFile& file) {
+  constexpr size_t MAX_HEADWORD_BYTES = 255;
   std::string word;
-  word.reserve(32);
   while (true) {
     const int c = file.read();
-    if (c <= 0) break;
-    word.push_back(static_cast<char>(c));
-    if (word.size() > 255) break;
+    if (c <= 0) break;  // EOF/error, or the NUL terminator
+    if (word.size() < MAX_HEADWORD_BYTES) word.push_back(static_cast<char>(c));
+    // else: keep consuming to stay in sync, just stop storing.
   }
   return word;
 }
@@ -1069,11 +1088,9 @@ int editDistanceLimited(const std::string& a, const std::string& b, int maxDist)
   return dp[n];
 }
 
-bool isEnglishLanguage(const DictionaryEntry& entry) {
-  const std::string id = lowercaseLatinUtf8(entry.languageId);
-  const std::string lang = lowercaseLatinUtf8(entry.lang);
-  return id == "english" || id == "en" || startsWithAsciiPrefix(lang, "en");
-}
+// (isEnglishLanguage was removed here: the English suffix stems in
+// getFallbackForms() now run unconditionally, since this predicate matched
+// almost no real-world dictionary. See the comment at that call site.)
 
 }  // namespace
 
@@ -1546,6 +1563,35 @@ bool DictionaryStore::ensurePrepared(DictionaryEntry& entry, const std::function
     return true;
   };
 
+  // Buffered scan. This previously called idx.read() once per byte, and every
+  // HalFile call takes storageMutex (SdFat is not thread-safe -- see HalStorage),
+  // so a 2.7MB .idx cost ~2.7 MILLION mutex round-trips: several seconds of pure
+  // call overhead on top of the same underlying SD reads. Walking 4KB at a time
+  // in RAM does identical I/O with ~1/4000th the crossings. This matters because
+  // lookup() calls ensurePrepared() with no progress callback, so the whole build
+  // ran as one unbroken, input-blind stall the first time a dictionary was used.
+  constexpr size_t SCAN_BUFFER_BYTES = 4096;
+  constexpr uint32_t YIELD_INTERVAL_BYTES = 64 * 1024;
+  auto scanBuffer = makeUniqueNoThrow<uint8_t[]>(SCAN_BUFFER_BYTES);
+  if (!scanBuffer) {
+    LOG_ERR("DICT", "OOM: %u byte index scan buffer", static_cast<unsigned>(SCAN_BUFFER_BYTES));
+    idx.close();
+    return false;
+  }
+
+  size_t bufLen = 0;  // valid bytes currently in scanBuffer
+  size_t bufPos = 0;  // read cursor within scanBuffer
+  uint32_t nextYieldPos = YIELD_INTERVAL_BYTES;
+  // Refills on exhaustion; false only at real EOF/error.
+  const auto ensureBuffered = [&]() -> bool {
+    if (bufPos < bufLen) return true;
+    const int got = idx.read(scanBuffer.get(), SCAN_BUFFER_BYTES);
+    if (got <= 0) return false;
+    bufLen = static_cast<size_t>(got);
+    bufPos = 0;
+    return true;
+  };
+
   while (pos < entry.idxFileSize) {
     if (entry.totalWords % CHECKPOINT_INTERVAL == 0) {
       if (!addCheckpoint(pos, entry.totalWords)) {
@@ -1557,21 +1603,38 @@ bool DictionaryStore::ensurePrepared(DictionaryEntry& entry, const std::function
       }
     }
 
-    int c = 0;
-    do {
-      c = idx.read();
-      if (c < 0) {
-        pos = entry.idxFileSize;
+    // Headword: bytes up to and including the NUL terminator.
+    bool sawTerminator = false;
+    while (ensureBuffered()) {
+      const uint8_t c = scanBuffer[bufPos++];
+      ++pos;
+      if (c == 0) {
+        sawTerminator = true;
         break;
       }
-      ++pos;
-    } while (c != 0);
-    if (pos >= entry.idxFileSize) break;
+    }
+    // No terminator, or nothing left for the 8-byte record: truncated tail.
+    if (!sawTerminator || pos >= entry.idxFileSize) break;
 
-    uint8_t skip[8];
-    if (idx.read(skip, sizeof(skip)) != static_cast<int>(sizeof(skip))) break;
-    pos += sizeof(skip);
+    // Fixed 8-byte (BE32 offset, BE32 size) record. Only skipped here -- the
+    // values are re-read on demand during lookup -- so it may span a refill.
+    size_t remaining = sizeof(uint32_t) * 2;
+    while (remaining > 0 && ensureBuffered()) {
+      const size_t take = std::min(remaining, bufLen - bufPos);
+      bufPos += take;
+      pos += take;
+      remaining -= take;
+    }
+    if (remaining != 0) break;
     ++entry.totalWords;
+
+    // Feed the watchdog and let the render/input task run. Without this the
+    // scan holds the CPU for the whole file; CLAUDE.md requires a yield in any
+    // long-running loop, and the previous per-byte version had none at all.
+    if (pos >= nextYieldPos) {
+      nextYieldPos = pos + YIELD_INTERVAL_BYTES;
+      delay(1);
+    }
 
     if (onProgress && entry.idxFileSize > 0) {
       const int progress = static_cast<int>((static_cast<uint64_t>(pos) * 100ULL) / entry.idxFileSize);
@@ -1875,17 +1938,57 @@ std::vector<std::string> DictionaryStore::getFallbackForms(const DictionaryEntry
     addGerundFallback("i\xC3\xA9ndose", "ir");
   }
 
-  if (isEnglishLanguage(entry)) {
-    if (lower.size() > 5 && endsWith("ing")) {
-      add(lower.substr(0, lower.size() - 3));
-      add(lower.substr(0, lower.size() - 3) + "e");
-    }
-    if (lower.size() > 4 && endsWith("ed")) {
-      add(lower.substr(0, lower.size() - 2));
-      add(lower.substr(0, lower.size() - 1));
-    }
-    if (lower.size() > 5 && endsWith("ies")) add(lower.substr(0, lower.size() - 3) + "y");
+  // Deliberately NOT gated on isEnglishLanguage(). That gate matches only a
+  // languageId (the folder name) of exactly "english"/"en", or an .ifo lang=
+  // starting with "en" -- but most StarDict .ifo files carry no lang field at
+  // all, and real folder names look like "eng", "en-ar", "FreeDict", "wiktionary".
+  // So on the majority of installed dictionaries these suffix rules silently
+  // never ran and "walked"/"stories" simply failed. Running them unconditionally
+  // is safe: they are byte compares against ASCII suffixes, so they cannot match
+  // Arabic/Persian text (all bytes >= 0x80), and Arabic returns earlier anyway.
+  // The only cost is a few extra findIndexHit() calls on the miss path, which
+  // already pays for findSuggestions() -- orders of magnitude more work.
+  if (lower.size() > 5 && endsWith("ing")) {
+    add(lower.substr(0, lower.size() - 3));
+    add(lower.substr(0, lower.size() - 3) + "e");
   }
+  if (lower.size() > 4 && endsWith("ed")) {
+    add(lower.substr(0, lower.size() - 2));
+    add(lower.substr(0, lower.size() - 1));
+  }
+  if (lower.size() > 5 && endsWith("ies")) add(lower.substr(0, lower.size() - 3) + "y");
+
+  // Undo a doubled final consonant before -ed/-ing: stopped -> stop, running ->
+  // run, planned -> plan, sitting -> sit. Without this the plain suffix strip
+  // above yields "stopp"/"runn", which no dictionary lists. Common enough in
+  // prose that its absence was a routine lookup failure.
+  const auto addUndoubled = [&](const char* suffix) {
+    const size_t suffixLen = strlen(suffix);
+    if (lower.size() < suffixLen + 3) return;
+    if (lower.compare(lower.size() - suffixLen, suffixLen, suffix) != 0) return;
+    const size_t stemLen = lower.size() - suffixLen;
+    const char last = lower[stemLen - 1];
+    // Only for doubled ASCII consonants; "ee"/"oo" are not this pattern.
+    if (last != lower[stemLen - 2]) return;
+    if (last < 'a' || last > 'z') return;
+    if (last == 'a' || last == 'e' || last == 'i' || last == 'o' || last == 'u') return;
+    add(lower.substr(0, stemLen - 1));
+  };
+  addUndoubled("ed");
+  addUndoubled("ing");
+
+  // Possessives: "dog's" -> "dog". cleanWord() only trims non-alphanumerics at
+  // the EDGES, so an interior apostrophe survives and the generic -s strip above
+  // produces "dog'", which never matches. Handles both ASCII ' and U+2019, the
+  // curly apostrophe most EPUBs actually use.
+  const auto addPossessive = [&](const char* apostrophe) {
+    const std::string suffix = std::string(apostrophe) + "s";
+    if (lower.size() <= suffix.size()) return;
+    if (lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) != 0) return;
+    add(lower.substr(0, lower.size() - suffix.size()));
+  };
+  addPossessive("'");
+  addPossessive("\xE2\x80\x99");
 
   return forms;
 }
