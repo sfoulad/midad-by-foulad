@@ -10,6 +10,15 @@ struct OpdsServer {
   std::string url;
   std::string username;
   std::string password;  // Plaintext in memory; obfuscated with hardware key on disk
+  // True when `password` holds a server-issued per-device token (QR sign-in,
+  // see FouladDeviceLogin) rather than the user's real account password. Both
+  // are sent identically as HTTP Basic Auth, so nothing downstream cares -- this
+  // exists so a later migration can find the installs still sending a real
+  // password over the non-TLS OPDS connection and offer to re-pair them.
+  // Recorded at sign-in time because it cannot be recovered afterwards: a token
+  // is not reliably distinguishable from a password by inspection.
+  // Absent from older opds.json files, where it correctly defaults to false.
+  bool isDeviceToken = false;
 };
 
 /**

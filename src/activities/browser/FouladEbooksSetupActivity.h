@@ -20,6 +20,7 @@ class FouladEbooksSetupActivity final : public Activity {
  private:
   std::string username;
 
+  void launchQrLogin();
   void launchUsernameEntry();
   void launchPasswordEntry();
 };

@@ -14,6 +14,9 @@ void OpdsServerStore::toJson(JsonDocument& doc) const {
     obj["url"] = server.url;
     obj["username"] = server.username;
     obj["password_obf"] = obfuscation::obfuscateToBase64(server.password);
+    // Only written when true, so existing files gain nothing and older firmware
+    // reading this file just ignores the key.
+    if (server.isDeviceToken) obj["is_device_token"] = true;
   }
 }
 
@@ -32,6 +35,9 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
     server.url = obj["url"] | "";
     server.username = obj["username"] | "";
     server.password = extractPassword(obj, needsResave);
+    // Absent on every file written before QR sign-in existed, which is exactly
+    // right: those credentials are typed account passwords.
+    server.isDeviceToken = obj["is_device_token"] | false;
     servers.push_back(std::move(server));
   }
 

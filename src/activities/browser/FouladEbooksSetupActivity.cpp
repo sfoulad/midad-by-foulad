@@ -8,13 +8,40 @@
 #include "SilentRestart.h"
 #include "OpdsServerStore.h"
 #include "activities/ActivityManager.h"
+#include "activities/browser/FouladQrLoginActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 void FouladEbooksSetupActivity::onEnter() {
   Activity::onEnter();
-  launchUsernameEntry();
+  launchQrLogin();
+}
+
+// QR is the primary path; typed credentials are the documented fallback for
+// users without the phone app and the recovery path when the sign-in endpoints
+// are unreachable (EINK_QR_LOGIN_TASKS.md, PART 4). Kept as a separate branch
+// into the original, unmodified entry flow rather than merged into the QR
+// screen, so that when sign-in eventually becomes QR-only this is a small
+// deletion instead of an unpicking job.
+void FouladEbooksSetupActivity::launchQrLogin() {
+  auto handler = [this](const ActivityResult& result) {
+    if (result.isCancelled) {
+      finish();
+      return;
+    }
+    const auto* menu = std::get_if<MenuResult>(&result.data);
+    if (menu && menu->action == FouladQrLoginActivity::ACTION_MANUAL_LOGIN) {
+      launchUsernameEntry();
+      return;
+    }
+    // A successful QR sign-in never returns here -- it stores the credential and
+    // silently restarts into the catalog. Anything else reaching this point is
+    // unexpected, so fall back to typed entry rather than stranding the user on
+    // a blank screen.
+    launchUsernameEntry();
+  };
+  startActivityForResult(std::make_unique<FouladQrLoginActivity>(renderer, mappedInput), handler);
 }
 
 void FouladEbooksSetupActivity::launchUsernameEntry() {
@@ -44,6 +71,9 @@ void FouladEbooksSetupActivity::launchPasswordEntry() {
     server.url = FOULAD_EBOOKS_URL;
     server.username = username;
     server.password = std::get<KeyboardResult>(result.data).text;
+    // Typed by the user, so it is their real account password, not an issued
+    // device token. Recorded explicitly -- see OpdsServer::isDeviceToken.
+    server.isDeviceToken = false;
     OPDS_STORE.addServer(server);  // persists to SD before the reboot below
 
     // Reboot into the catalog on a fresh heap instead of opening it in this
