@@ -123,7 +123,11 @@ void DictionaryActivity::selectCurrent() {
     requestUpdate();
     return;
   }
-  if (entry.missingFiles) {
+  if (entry.missingFiles || entry.unsupportedFormat) {
+    // unsupportedFormat = .ifo declared idxoffsetbits=64. Shares the "missing
+    // files" wording rather than adding a string every translation would have to
+    // carry: from the user's side both mean "this folder isn't usable", and the
+    // 64-bit variant is rare enough not to warrant its own message.
     GUI.drawPopup(renderer, tr(STR_DICTIONARY_MISSING_FILES));
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     delay(1100);
@@ -264,7 +268,7 @@ void DictionaryActivity::render(RenderLock&&) {
           if (index < DICTIONARY_ACTION_COUNT) return std::string();
           const int entryIndex = index - DICTIONARY_ACTION_COUNT;
           if (entries[entryIndex].compressed) return std::string("ZIP");
-          if (entries[entryIndex].missingFiles) return std::string("!");
+          if (entries[entryIndex].missingFiles || entries[entryIndex].unsupportedFormat) return std::string("!");
           return entryIndex == activeIndex ? std::string(tr(STR_DICTIONARY_ACTIVE)) : std::string();
         },
         true);

@@ -21,6 +21,10 @@ struct DictionaryEntry {
   uint32_t idxFileSize = 0;
   bool compressed = false;
   bool missingFiles = false;
+  // .ifo declared idxoffsetbits=64 (12-byte index records instead of 8). Every
+  // index reader here hardcodes the 8-byte layout, so such a dictionary must be
+  // refused outright rather than silently parsed into garbage offsets.
+  bool unsupportedFormat = false;
   mutable std::vector<uint32_t> checkpoints;
   mutable std::vector<uint32_t> ordinals;
   mutable uint32_t totalWords = 0;

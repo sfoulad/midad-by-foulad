@@ -1040,21 +1040,29 @@ int editDistanceLimited(const std::string& a, const std::string& b, int maxDist)
     return maxDist + 1;
   }
 
-  int dp[MAX_EDIT_DISTANCE_BYTES + 1];
-  for (int j = 0; j <= n; ++j) dp[j] = j;
+  // uint16_t, not int: this row is 65 entries, so an int version is 260 bytes of
+  // stack -- over CLAUDE.md's 256-byte per-frame budget, and this runs in a tight
+  // loop over thousands of index entries from findSuggestions(). Every value here
+  // is bounded by max(m, n) <= MAX_EDIT_DISTANCE_BYTES, so 16 bits is ample.
+  // Deliberately still on the stack rather than static: findSuggestions() is
+  // called from activity code, and a function-local static would make this
+  // non-reentrant for no gain now that the array is only 130 bytes.
+  uint16_t dp[MAX_EDIT_DISTANCE_BYTES + 1];
+  for (int j = 0; j <= n; ++j) dp[j] = static_cast<uint16_t>(j);
   for (int i = 1; i <= m; ++i) {
-    int prev = dp[0];
-    dp[0] = i;
+    uint16_t prev = dp[0];
+    dp[0] = static_cast<uint16_t>(i);
     int rowMin = dp[0];
     for (int j = 1; j <= n; ++j) {
-      const int old = dp[j];
+      const uint16_t old = dp[j];
       if (a[i - 1] == b[j - 1]) {
         dp[j] = prev;
       } else {
-        dp[j] = 1 + std::min({prev, dp[j], dp[j - 1]});
+        dp[j] = static_cast<uint16_t>(
+            1 + std::min({static_cast<int>(prev), static_cast<int>(dp[j]), static_cast<int>(dp[j - 1])}));
       }
       prev = old;
-      rowMin = std::min(rowMin, dp[j]);
+      rowMin = std::min(rowMin, static_cast<int>(dp[j]));
     }
     if (rowMin > maxDist) return maxDist + 1;
   }
@@ -1160,15 +1168,29 @@ bool DictionaryStore::loadEntryFromIfoPath(const std::string& ifoPath, Dictionar
         entry.idxFileSize = static_cast<uint32_t>(strtoul(value.c_str(), nullptr, 10));
       } else if (parseIfoField(line, "sametypesequence", value)) {
         entry.sameTypeSequence = limitMetadataText(std::move(value), 16);
+      } else if (parseIfoField(line, "idxoffsetbits", value)) {
+        // StarDict's optional 64-bit index variant: records are 8-byte offset +
+        // 4-byte size (12 bytes) instead of 4+4. Every reader here assumes 8
+        // (see findIndexHit/headwordAtOrdinal/ensurePrepared), so without this
+        // gate such a dictionary parses as garbage rather than failing: the
+        // offset comes out as the high half of the real one (usually 0), the
+        // size as the low half, and the stream desyncs 4 bytes per entry --
+        // which then gets baked into the .cpridx cache with no error surfaced.
+        // Rare in the wild, so reject rather than implement a second record
+        // layout for it.
+        entry.unsupportedFormat = strtoul(value.c_str(), nullptr, 10) == 64;
       }
     }
     ifo.close();
   }
 
-  entry.missingFiles = !Storage.exists(entry.idxPath.c_str()) || !Storage.exists(entry.dictPath.c_str());
-  if (!Storage.exists(entry.dictPath.c_str()) && Storage.exists((entry.dictPath + ".dz").c_str())) {
-    entry.compressed = true;
-  }
+  // Probe for the compressed variant BEFORE deciding missingFiles: a dictionary
+  // shipping only <stem>.dict.dz has no plain .dict, and testing for one first
+  // flagged it as BOTH compressed and missing (harmless while compressed is
+  // itself a rejection, but it made the app show the wrong reason).
+  entry.compressed = !Storage.exists(entry.dictPath.c_str()) && Storage.exists((entry.dictPath + ".dz").c_str());
+  entry.missingFiles =
+      !Storage.exists(entry.idxPath.c_str()) || (!Storage.exists(entry.dictPath.c_str()) && !entry.compressed);
   if (!Storage.exists(entry.synPath.c_str())) {
     entry.synPath.clear();
   }
@@ -1290,7 +1312,8 @@ void DictionaryStore::scan() {
     }
   }
 
-  if (activeIndex < 0 && entries.size() == 1 && !entries[0].compressed && !entries[0].missingFiles) {
+  if (activeIndex < 0 && entries.size() == 1 && !entries[0].compressed && !entries[0].missingFiles &&
+      !entries[0].unsupportedFormat) {
     activeIndex = 0;
     activeIfoPath = entries[0].ifoPath;
     saveConfig();
@@ -1300,7 +1323,7 @@ void DictionaryStore::scan() {
 bool DictionaryStore::setActiveIndex(const int index) {
   if (!scanned) scan();
   if (index < 0 || index >= static_cast<int>(entries.size())) return false;
-  if (entries[index].compressed || entries[index].missingFiles) return false;
+  if (entries[index].compressed || entries[index].missingFiles || entries[index].unsupportedFormat) return false;
   activeIndex = index;
   activeIfoPath = entries[index].ifoPath;
   clearActiveOnlyEntry();
@@ -1486,7 +1509,7 @@ bool DictionaryStore::saveCheckpointCache(const DictionaryEntry& entry) const {
 }
 
 bool DictionaryStore::ensurePrepared(DictionaryEntry& entry, const std::function<void(int percent)>& onProgress) {
-  if (entry.compressed || entry.missingFiles) return false;
+  if (entry.compressed || entry.missingFiles || entry.unsupportedFormat) return false;
   if (!entry.checkpoints.empty() && !entry.ordinals.empty()) return true;
   if (loadCheckpointCache(entry)) return true;
 
@@ -1731,6 +1754,19 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
 
   HalFile dict;
   if (!Storage.openFileForRead("DICT", entry.dictPath, dict)) return "";
+
+  // The offset/size pair comes from the .idx, i.e. from untrusted SD content: a
+  // truncated .dict, an .idx/.dict pair from different builds, or a corrupt
+  // cache all yield offsets past EOF. Without this, seekSet+read past the end
+  // returns whatever the FS hands back and we render it as a definition.
+  // Subtraction (not offset + size) so a size near UINT32_MAX can't wrap.
+  const uint32_t dictFileSize = static_cast<uint32_t>(dict.fileSize());
+  if (hit.dictOffset > dictFileSize || hit.dictSize > dictFileSize - hit.dictOffset) {
+    LOG_ERR("DICT", "Definition out of range: off=%u size=%u file=%u", hit.dictOffset, hit.dictSize, dictFileSize);
+    dict.close();
+    return "";
+  }
+
   if (!dict.seekSet(hit.dictOffset)) {
     dict.close();
     return "";
@@ -1984,19 +2020,18 @@ std::vector<std::string> DictionaryStore::findSuggestions(const DictionaryEntry&
     }
   };
 
-  for (const std::string& fallback : fallbackForms) {
-    IndexHit hit;
-    std::string canonical;
-    if (findIndexHit(entry, fallback, hit)) {
-      const std::string scoreKey = suggestionScoreKey(hit.headword);
-      addCandidate(hit.headword, 0, commonPrefixLength(scoreKey, scoreWord),
-                   std::abs(static_cast<int>(scoreKey.size()) - static_cast<int>(scoreWord.size())));
-    } else if (lookupSynonym(entry, fallback, canonical) && findIndexHit(entry, canonical, hit)) {
-      const std::string scoreKey = suggestionScoreKey(hit.headword);
-      addCandidate(hit.headword, 0, commonPrefixLength(scoreKey, scoreWord),
-                   std::abs(static_cast<int>(scoreKey.size()) - static_cast<int>(scoreWord.size())));
-    }
-  }
+  // NOTE: there used to be an "exact-fallback pass" here that re-ran
+  // findIndexHit()/lookupSynonym() over fallbackForms to seed candidates. It was
+  // dead code: findSuggestions() has exactly one caller (lookup(), below the
+  // NotFound branch), and that caller has already tried every one of these same
+  // forms through the same two functions immediately beforehand -- if any had
+  // hit, lookup() would have returned early and never called us. getFallbackForms()
+  // is deterministic and nothing mutates `entry` in between, so the pass could
+  // only ever re-derive the same misses. For Arabic (up to ~12 fallback forms)
+  // that cost 12 full index scans plus 12 .syn binary searches on every
+  // not-found lookup -- roughly a second of guaranteed-useless SD I/O.
+  // fallbackForms itself is still load-bearing: anchorWord (above) is derived
+  // from it and steers the neighborhood scan below.
 
   for (uint32_t i = 0; i < totalToScan; ++i) {
     const std::string key = readIndexWord(idx);
