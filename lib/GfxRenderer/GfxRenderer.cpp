@@ -10,6 +10,7 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <string_view>
 
 #include "FontCacheManager.h"
 
@@ -878,6 +879,59 @@ void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* te
                                    const EpdFontFamily::Style style, const BidiUtils::BidiBaseDir baseDir) const {
   const int x = (getScreenWidth() - getTextWidth(fontId, text, style, baseDir)) / 2;
   drawText(fontId, x, y, text, black, style, baseDir);
+}
+
+int GfxRenderer::drawCenteredTextWrapped(const int fontId, const int y, const int maxWidth, const char* text,
+                                         const int maxLines, const bool black, const EpdFontFamily::Style style) const {
+  if (text == nullptr || *text == '\0' || maxWidth <= 0 || maxLines <= 0) return 0;
+
+  const int lineHeight = getLineHeight(fontId);
+  std::string_view remaining{text};
+  // Reused across every line so a wrapped message costs one buffer, not one per row.
+  std::string line;
+  int linesDrawn = 0;
+
+  while (linesDrawn < maxLines) {
+    const auto firstNonSpace = remaining.find_first_not_of(' ');
+    if (firstNonSpace == std::string_view::npos) break;  // only trailing spaces left
+    remaining.remove_prefix(firstNonSpace);
+
+    // Final permitted row: hand the whole remainder to truncatedText, which either fits it
+    // or ellipsizes. Keeps "there is more text" visible rather than dropping it silently.
+    if (linesDrawn == maxLines - 1) {
+      line = truncatedText(fontId, std::string(remaining).c_str(), maxWidth, style);
+      drawCenteredText(fontId, y + linesDrawn * lineHeight, line.c_str(), black, style);
+      return ++linesDrawn * lineHeight;
+    }
+
+    // Extend one word at a time and keep the longest prefix that still fits.
+    size_t bestEnd = 0;
+    size_t scan = 0;
+    while (true) {
+      const size_t nextSpace = remaining.find(' ', scan);
+      const size_t end = nextSpace == std::string_view::npos ? remaining.size() : nextSpace;
+      line.assign(remaining.substr(0, end));
+      if (getTextWidth(fontId, line.c_str(), style) > maxWidth) break;
+      bestEnd = end;
+      if (nextSpace == std::string_view::npos) break;
+      scan = nextSpace + 1;
+    }
+
+    if (bestEnd == 0) {
+      // First word alone overruns the width -- ellipsize it so the row is still legible.
+      const size_t firstSpace = remaining.find(' ');
+      bestEnd = firstSpace == std::string_view::npos ? remaining.size() : firstSpace;
+      line = truncatedText(fontId, std::string(remaining.substr(0, bestEnd)).c_str(), maxWidth, style);
+    } else {
+      line.assign(remaining.substr(0, bestEnd));
+    }
+
+    drawCenteredText(fontId, y + linesDrawn * lineHeight, line.c_str(), black, style);
+    ++linesDrawn;
+    remaining.remove_prefix(bestEnd);
+  }
+
+  return linesDrawn * lineHeight;
 }
 
 void GfxRenderer::drawTextInWidth(const int fontId, const int x, const int y, const int width, const char* text,
