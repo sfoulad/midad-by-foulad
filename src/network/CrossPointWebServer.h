@@ -143,8 +143,8 @@ class CrossPointWebServer {
     // a time, so a single write buffer is shared across them.
     static constexpr int MAX_STYLE_FILES = 4;
     static constexpr const char* PART_NAMES[MAX_STYLE_FILES] = {"font", "font_bold", "font_italic", "font_bolditalic"};
-    HalFile file;         // the part currently streaming
-    int currentSlot = -1;  // index into PART_NAMES for the streaming part
+    HalFile file;                            // the part currently streaming
+    int currentSlot = -1;                    // index into PART_NAMES for the streaming part
     std::string filePaths[MAX_STYLE_FILES];  // temp SD path per saved part ("" = absent)
     int partsSeen = 0;
     // family/language are NOT stored here: they're read straight from

@@ -368,8 +368,7 @@ void DictionaryDownloadActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight},
-                 tr(STR_DOWNLOAD_DICTIONARIES));
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_DOWNLOAD_DICTIONARIES));
 
   const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
   const auto contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
@@ -392,13 +391,12 @@ void DictionaryDownloadActivity::render(RenderLock&&) {
           [this](int index) { return dicts_[index].installed ? std::string(tr(STR_INSTALLED)) : std::string(); }, true,
           [this](int index) { return dicts_[index].installed; });
 
-      const auto labels =
-          mappedInput.mapLabels(tr(STR_BACK),
-                                (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(dicts_.size()) &&
-                                 dicts_[selectedIndex_].installed)
-                                    ? tr(STR_DELETE)
-                                    : tr(STR_DOWNLOAD),
-                                tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+      const auto labels = mappedInput.mapLabels(
+          tr(STR_BACK),
+          (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(dicts_.size()) && dicts_[selectedIndex_].installed)
+              ? tr(STR_DELETE)
+              : tr(STR_DOWNLOAD),
+          tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     }
   } else if (state_ == DOWNLOADING) {

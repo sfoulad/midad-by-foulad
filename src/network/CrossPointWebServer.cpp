@@ -2078,8 +2078,7 @@ void CrossPointWebServer::handleFontConvertUploadData() {
       esp_task_wdt_reset();
 
       if (fontConvertUpload.bytesWritten + upload.currentSize > FontConvertUploadState::MAX_SIZE) {
-        LOG_ERR("WEB", "Convert-font upload exceeds size cap (%zu bytes)",
-                (size_t)FontConvertUploadState::MAX_SIZE);
+        LOG_ERR("WEB", "Convert-font upload exceeds size cap (%zu bytes)", (size_t)FontConvertUploadState::MAX_SIZE);
         fontConvertUpload.rejectReason = "Font file is too large (max 10 MB).";
         fontConvertUpload.valid = false;
         break;
@@ -2162,8 +2161,8 @@ void CrossPointWebServer::handleFontConvert() {
   if (!fontConvertUpload.valid || !haveRegular) {
     JsonDocument errDoc;
     errDoc["error"] = !fontConvertUpload.rejectReason.empty() ? fontConvertUpload.rejectReason.c_str()
-                      : !haveRegular ? "The regular font file is missing."
-                                     : "Invalid font file, family name, or language.";
+                      : !haveRegular                          ? "The regular font file is missing."
+                                                              : "Invalid font file, family name, or language.";
     String json;
     serializeJson(errDoc, json);
     cleanupTemp();

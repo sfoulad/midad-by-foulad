@@ -90,10 +90,10 @@ std::string flattenedTitle(const std::string& title) {
 }  // namespace
 
 EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, Epub* epub,
-                                               const int currentSpineIndex, const int currentPage,
-                                               const int totalPages, const int bookProgressPercent,
-                                               const uint8_t currentOrientation, const bool hasFootnotes,
-                                               const bool hasBookmarks, const bool isArabicBook)
+                                               const int currentSpineIndex, const int currentPage, const int totalPages,
+                                               const int bookProgressPercent, const uint8_t currentOrientation,
+                                               const bool hasFootnotes, const bool hasBookmarks,
+                                               const bool isArabicBook)
     : Activity("EpubReaderMenu", renderer, mappedInput),
       epub(epub),
       currentSpineIndex(currentSpineIndex),
@@ -110,8 +110,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 
 // Most-used first: chapters, bookmarking, then the per-book reading settings,
 // then orientation; everything else lives in the Settings tab.
-std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadingItems(
-    const bool hasBookmarks) const {
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadingItems(const bool hasBookmarks) const {
   std::vector<MenuItem> items;
   items.reserve(8);
   // Only offered once a dictionary is actually installed -- otherwise the row
@@ -185,7 +184,8 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       const uint8_t book = isArabicBook ? SETTINGS.bookArabicFontSize : SETTINGS.bookFontSize;
       const uint8_t global = isArabicBook ? SETTINGS.arabicFontSize : SETTINGS.fontSize;
       return book == CrossPointSettings::BOOK_NO_OVERRIDE
-                 ? globalLabel(I18N.get(kSizeLabels[std::min<uint8_t>(global, CrossPointSettings::FONT_SIZE_COUNT - 1)]))
+                 ? globalLabel(
+                       I18N.get(kSizeLabels[std::min<uint8_t>(global, CrossPointSettings::FONT_SIZE_COUNT - 1)]))
                  : I18N.get(kSizeLabels[book]);
     }
     case MenuAction::FONT_NAME: {
@@ -205,9 +205,8 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       const char* global = SETTINGS.sdFontFamilyName;
       if (book[0] == '\0') {
         return globalLabel(
-            global[0] != '\0'
-                ? global
-                : I18N.get(kSelectableLatinFonts[displayIndexForLatinFamily(SETTINGS.fontFamily)].first));
+            global[0] != '\0' ? global
+                              : I18N.get(kSelectableLatinFonts[displayIndexForLatinFamily(SETTINGS.fontFamily)].first));
       }
       if (book[0] == CrossPointSettings::BOOK_FORCE_BUILTIN_FAMILY[0]) {
         return I18N.get(kSelectableLatinFonts[displayIndexForLatinFamily(SETTINGS.effFontFamily())].first);
@@ -553,7 +552,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // Must match BookIcon/Settings2Icon's actual bitmap size exactly -- drawIcon
   // has no scaling; it reads the bitmap assuming size x size packed rows.
   constexpr int kTabIconSize = 32;
-  constexpr int kTabPadding = 10;    // around the icon inside the focused-row pill
+  constexpr int kTabPadding = 10;  // around the icon inside the focused-row pill
   constexpr int kTabUnderlineGap = 4;
   constexpr int kTabUnderlineHeight = 2;
   // Reserve room for the taller of the two states (the focused pill) so the
@@ -594,7 +593,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
 
   const int itemCount = activeItemCount();
   const int index = view == View::SETTINGS_TAB ? settingsSelectedIndex
-                                                : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
+                                               : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
   // The chapter list draws Arabic surah titles through the same compressed-font path
   // as the reader page, but -- unlike renderContents() -- never prewarmed them, so
   // every row hit FontDecompressor's slow per-glyph hot-group fallback on every

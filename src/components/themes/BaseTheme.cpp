@@ -342,10 +342,9 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     // device still shows Arabic book chapter lists (e.g. the Quran's surah
     // list) with the title anchored right and the value left (user report).
     const bool rowRtl = rtl || ScriptDetector::containsArabic(item.c_str());
-    const int titleX =
-        rowRtl
-            ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding - renderer.getTextWidth(font, item.c_str())
-            : rect.x + BaseMetrics::values.contentSidePadding;
+    const int titleX = rowRtl ? rect.x + contentWidth - BaseMetrics::values.contentSidePadding -
+                                    renderer.getTextWidth(font, item.c_str())
+                              : rect.x + BaseMetrics::values.contentSidePadding;
     renderer.drawText(font, titleX, itemY, item.c_str(), i != selectedIndex);
 
     // Apply checkerboard dither to create gray text effect for dimmed items

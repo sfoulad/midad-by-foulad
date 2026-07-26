@@ -1,8 +1,8 @@
 #include "SettingsActivity.h"
 
 #include <GfxRenderer.h>
-#include <WiFi.h>
 #include <Logging.h>
+#include <WiFi.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -13,7 +13,6 @@
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
 #include "CrossPointSettings.h"
-#include "QuranBook.h"
 #include "FontDownloadActivity.h"
 #include "FontSelectionActivity.h"
 #include "FouladEbooksConfig.h"
@@ -22,12 +21,13 @@
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
 #include "OpdsServerStore.h"
+#include "QuranBook.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
-#include "activities/apps/DictionaryActivity.h"
 #include "SettingsList.h"
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
+#include "activities/apps/DictionaryActivity.h"
 #include "activities/browser/FouladEbooksSetupActivity.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -36,9 +36,8 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
-const StrId SettingsActivity::categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
-                                                              StrId::STR_CAT_CONTROLS, StrId::STR_CAT_APPS,
-                                                              StrId::STR_CAT_SYSTEM};
+const StrId SettingsActivity::categoryNames[categoryCount] = {
+    StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER, StrId::STR_CAT_CONTROLS, StrId::STR_CAT_APPS, StrId::STR_CAT_SYSTEM};
 
 void SettingsActivity::rebuildSettingsLists() {
   displaySettings.clear();
@@ -80,9 +79,8 @@ void SettingsActivity::rebuildSettingsLists() {
   // and src/util/DebugLogging.h for the full list and rationale. Appended here
   // directly (not in the static getSettingsList() table above) specifically so it
   // always lands after KOReader Sync, which is itself appended the same way.
-  appsSettings.push_back(
-      SettingInfo::Toggle(StrId::STR_DEBUG_LOGGING, &CrossPointSettings::debugLoggingEnabled, "debugLoggingEnabled",
-                          StrId::STR_CAT_APPS));
+  appsSettings.push_back(SettingInfo::Toggle(StrId::STR_DEBUG_LOGGING, &CrossPointSettings::debugLoggingEnabled,
+                                             "debugLoggingEnabled", StrId::STR_CAT_APPS));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
@@ -568,7 +566,8 @@ void SettingsActivity::render(RenderLock&&) {
                  ? tr(STR_SELECT)
                  : tr(STR_TOGGLE));
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+  const auto labels =
+      mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   // Always use standard refresh for settings screen

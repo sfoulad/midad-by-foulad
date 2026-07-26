@@ -191,8 +191,8 @@ int computeJustifyExtra(const int spareSpace, const size_t gapCount) {
 // A justified line's spare width, split between kashida (stretching Arabic words
 // from within, at their own legal letter-joining points) and inter-word gaps.
 struct JustifyPlan {
-  int gapExtra = 0;                             // per-gap stretch, same contract as computeJustifyExtra's return
-  std::vector<uint16_t> kashidaExtraPerWord;    // sized to lineWordsInOrder; 0 = word gets no kashida
+  int gapExtra = 0;                           // per-gap stretch, same contract as computeJustifyExtra's return
+  std::vector<uint16_t> kashidaExtraPerWord;  // sized to lineWordsInOrder; 0 = word gets no kashida
 };
 
 // Real Mushaf-style Arabic typesetting stretches almost entirely via kashida and
@@ -1000,9 +1000,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
   // by wordIdx -- an empty vector there is an out-of-bounds read, not a harmless no-op.
   // Passing 0 in place of spareSpace when the line isn't eligible reaches the same "all
   // zero, correctly sized" result via computeJustifyPlan's own spareSpace <= 0 early-out.
-  const JustifyPlan justifyPlan =
-      computeJustifyPlan(renderer, fontId, (effectiveAlignment == CssTextAlign::Justify && !isLastLine) ? spareSpace : 0,
-                         actualGapCount, lineWords, lineWordStyles);
+  const JustifyPlan justifyPlan = computeJustifyPlan(
+      renderer, fontId, (effectiveAlignment == CssTextAlign::Justify && !isLastLine) ? spareSpace : 0, actualGapCount,
+      lineWords, lineWordStyles);
   const int justifyExtra = justifyPlan.gapExtra;
   std::vector<uint16_t> kashidaExtraPxFinal = justifyPlan.kashidaExtraPerWord;
 
@@ -1096,10 +1096,10 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     int reorderedKashidaTotal = 0;
     for (const uint16_t v : reorderedPlan.kashidaExtraPerWord) reorderedKashidaTotal += v;
 
-    const int justifyContribution = (effectiveAlignment == CssTextAlign::Justify && !isLastLine)
-                                        ? reorderedJustifyExtra * static_cast<int>(reorderedGapCount) +
-                                              reorderedKashidaTotal
-                                        : 0;
+    const int justifyContribution =
+        (effectiveAlignment == CssTextAlign::Justify && !isLastLine)
+            ? reorderedJustifyExtra * static_cast<int>(reorderedGapCount) + reorderedKashidaTotal
+            : 0;
     const int contentWidth = reorderedWordWidthSum + reorderedNaturalGaps + justifyContribution;
 
     int xpos = 0;
@@ -1261,8 +1261,8 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     // and pay arena RAM for it on every line, including the vast majority that are
     // never justified via kashida at all (non-Arabic paragraphs, lines whose spare
     // space went entirely to gaps).
-    const bool hasAnyKashida = std::any_of(kashidaExtraPxFinal.begin(), kashidaExtraPxFinal.end(),
-                                           [](const uint16_t v) { return v != 0; });
+    const bool hasAnyKashida =
+        std::any_of(kashidaExtraPxFinal.begin(), kashidaExtraPxFinal.end(), [](const uint16_t v) { return v != 0; });
     // TextBlock flattens the vectors into its arena; they stay owned here and die at return.
     auto block = std::make_shared<TextBlock>(lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{},
                                              std::vector<uint16_t>{}, blockStyle,
@@ -1325,8 +1325,8 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     }
   }
 
-  const bool hasAnyKashida = std::any_of(outKashidaExtraPx.begin(), outKashidaExtraPx.end(),
-                                         [](const uint16_t v) { return v != 0; });
+  const bool hasAnyKashida =
+      std::any_of(outKashidaExtraPx.begin(), outKashidaExtraPx.end(), [](const uint16_t v) { return v != 0; });
   auto block = std::make_shared<TextBlock>(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle,
                                            hasAnyKashida ? outKashidaExtraPx : std::vector<uint16_t>{});
   if (!block->valid()) {

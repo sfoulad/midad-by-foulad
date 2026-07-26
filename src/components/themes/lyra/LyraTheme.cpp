@@ -1,12 +1,11 @@
 #include "LyraTheme.h"
 
-#include <ScriptDetector.h>
-
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 
 #include <cstdint>
 #include <string>
@@ -123,9 +122,9 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
   if (rtl) {
-    drawBatteryLeft(
-        renderer, Rect{rect.x + 12, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
-        showBatteryPercentage);
+    drawBatteryLeft(renderer,
+                    Rect{rect.x + 12, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
+                    showBatteryPercentage);
   } else {
     // Position icon at right edge, drawBatteryRight will place text to the left
     const int batteryX = rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth;
@@ -160,9 +159,9 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title, maxTitleWidth, EpdFontFamily::BOLD);
     const int titleWidth = renderer.getTextWidth(UI_12_FONT_ID, truncatedTitle.c_str(), EpdFontFamily::BOLD);
     const int titleX = rtl ? rect.x + rect.width - LyraMetrics::values.contentSidePadding - titleWidth
-                          : rect.x + LyraMetrics::values.contentSidePadding;
-    renderer.drawText(UI_12_FONT_ID, titleX, rect.y + LyraMetrics::values.batteryBarHeight + 3,
-                      truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
+                           : rect.x + LyraMetrics::values.contentSidePadding;
+    renderer.drawText(UI_12_FONT_ID, titleX, rect.y + LyraMetrics::values.batteryBarHeight + 3, truncatedTitle.c_str(),
+                      true, EpdFontFamily::BOLD);
     renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
   }
 
@@ -170,7 +169,7 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     auto truncatedSubtitle = renderer.truncatedText(SMALL_FONT_ID, subtitle, maxSubtitleWidth, EpdFontFamily::REGULAR);
     int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
     const int subtitleX = rtl ? rect.x + LyraMetrics::values.contentSidePadding
-                             : rect.x + rect.width - LyraMetrics::values.contentSidePadding - truncatedSubtitleWidth;
+                              : rect.x + rect.width - LyraMetrics::values.contentSidePadding - truncatedSubtitleWidth;
     renderer.drawText(SMALL_FONT_ID, subtitleX, rect.y + 50, truncatedSubtitle.c_str(), true);
   }
 }

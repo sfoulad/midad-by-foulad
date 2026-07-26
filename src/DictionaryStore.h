@@ -46,11 +46,7 @@ class DictionaryStore {
  public:
   // Public: the download store (DictionaryDownloadActivity) installs sets here.
   static constexpr const char* DICTIONARY_ROOT = "/dictionaries";
-  enum DefinitionTextSize : uint8_t {
-    DEF_TEXT_SMALL = 0,
-    DEF_TEXT_LARGE = 1,
-    DEF_TEXT_SIZE_COUNT
-  };
+  enum DefinitionTextSize : uint8_t { DEF_TEXT_SMALL = 0, DEF_TEXT_LARGE = 1, DEF_TEXT_SIZE_COUNT };
 
   static DictionaryStore& getInstance();
 

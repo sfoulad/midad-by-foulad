@@ -122,15 +122,13 @@ void DictionaryDefinitionActivity::wrapText() {
 
   auto continuationPrefixFor = [](const std::string& line, const std::string& prefix) {
     size_t pos = prefix.size();
-    if (pos + 1 < line.size() && (line[pos] == '-' || line[pos] == '*' || line[pos] == '+') &&
-        line[pos + 1] == ' ') {
+    if (pos + 1 < line.size() && (line[pos] == '-' || line[pos] == '*' || line[pos] == '+') && line[pos + 1] == ' ') {
       return prefix + "  ";
     }
 
     const size_t numberStart = pos;
     while (pos < line.size() && std::isdigit(static_cast<unsigned char>(line[pos]))) ++pos;
-    if (pos > numberStart && pos + 1 < line.size() && (line[pos] == '.' || line[pos] == ')') &&
-        line[pos + 1] == ' ') {
+    if (pos > numberStart && pos + 1 < line.size() && (line[pos] == '.' || line[pos] == ')') && line[pos + 1] == ' ') {
       return prefix + std::string(pos + 2 - prefix.size(), ' ');
     }
     return prefix;
@@ -306,8 +304,7 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   const int startLine = currentPage * linesPerPage;
   prewarmVisibleDefinitionText();
   for (int i = 0; i < linesPerPage && startLine + i < static_cast<int>(wrappedLines.size()); ++i) {
-    renderer.drawText(definitionFontId, rect.x + padding, bodyY + i * lineHeight,
-                      wrappedLines[startLine + i].c_str());
+    renderer.drawText(definitionFontId, rect.x + padding, bodyY + i * lineHeight, wrappedLines[startLine + i].c_str());
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));

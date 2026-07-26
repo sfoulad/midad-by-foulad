@@ -75,8 +75,8 @@ void DictionarySuggestionsActivity::render(RenderLock&&) {
   if (page) {
     if (auto* fcm = renderer.getFontCacheManager()) {
       pageFontPrewarm.emplace(*fcm);
-        // Our fork records fonts via the scan pass (render during an active
-        // PrewarmScope), not vcodex's recordFontUsage/bionic params.
+      // Our fork records fonts via the scan pass (render during an active
+      // PrewarmScope), not vcodex's recordFontUsage/bionic params.
       page->render(renderer, readerFontId, marginLeft, marginTop);
       pageFontPrewarm->endScanAndPrewarm();
     }

@@ -517,7 +517,8 @@ void MazeActivity::render(RenderLock&&) {
     // alternate path to the side Up/Down buttons -- label them "Up"/"Down"
     // to match what they actually do here, same convention GamesMenuActivity
     // uses for its own list.
-    auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_GENERATE), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+    auto labels =
+        mappedInput.mapLabels(tr(STR_BACK), tr(STR_GENERATE), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     renderer.displayBuffer();
     return;

@@ -45,8 +45,7 @@ static const ArabicFormEntry* findFormEntry(uint32_t cp) {
   return nullptr;
 }
 
-uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins,
-                           const std::function<bool(uint32_t)>& hasGlyph) {
+uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins, const std::function<bool(uint32_t)>& hasGlyph) {
   const ArabicFormEntry* entry = findFormEntry(cp);
   if (!entry) return cp;
 
@@ -229,7 +228,7 @@ static std::vector<uint32_t> resolveLigatures(const char* text, const std::funct
 // contextual-form row, so it passes through unchanged in every position, which is
 // exactly the correct visual behavior for a straight joining stroke).
 static std::vector<uint32_t> applyContextualForms(const std::vector<uint32_t>& afterLigatures,
-                                                   const std::function<bool(uint32_t)>& hasGlyph) {
+                                                  const std::function<bool(uint32_t)>& hasGlyph) {
   std::vector<uint32_t> shaped;
   shaped.reserve(afterLigatures.size());
 
@@ -467,7 +466,7 @@ bool hasKashidaPoint(const char* text, const std::function<bool(uint32_t)>& hasG
 }
 
 std::vector<uint32_t> shapeTextWithKashida(const char* text, int extraWidthPx, int tatweelAdvancePx,
-                                            const std::function<bool(uint32_t)>& hasGlyph) {
+                                           const std::function<bool(uint32_t)>& hasGlyph) {
   if (extraWidthPx <= 0 || tatweelAdvancePx <= 0 || (hasGlyph && !hasGlyph(0x0640))) {
     return shapeText(text, hasGlyph);
   }

@@ -8,7 +8,7 @@
 namespace {
 
 static uint8_t fontSizeEnumFromSettings() {
-  uint8_t e = SETTINGS.effFontSize();  // per-book override wins when set
+  uint8_t e = SETTINGS.effFontSize();                   // per-book override wins when set
   if (e >= CrossPointSettings::FONT_SIZE_COUNT) e = 1;  // default to MEDIUM
   return e;
 }

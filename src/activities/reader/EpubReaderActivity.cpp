@@ -22,11 +22,11 @@
 
 #include "ArabicFontSystem.h"
 #include "BookmarkEntry.h"
-#include "DictionaryStore.h"
-#include "DictionaryHistoryActivity.h"
-#include "DictionaryWordSelectActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DictionaryHistoryActivity.h"
+#include "DictionaryStore.h"
+#include "DictionaryWordSelectActivity.h"
 #include "EpubReaderBookmarksActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
@@ -268,15 +268,14 @@ void EpubReaderActivity::onExit() {
                                        [this](const RecentBook& b) { return b.path == epub->getPath(); });
     if (recentIt != recentBooksForStats.end() && !recentIt->fouladBookId.empty()) {
       const auto& servers = OPDS_STORE.getServers();
-      const auto serverIt = std::find_if(servers.begin(), servers.end(),
-                                         [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+      const auto serverIt =
+          std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
       if (serverIt != servers.end()) {
         char positionBuf[64];
         snprintf(positionBuf, sizeof(positionBuf), "spine=%d;page=%d", currentSpineIndex,
                  section ? section->currentPage : 0);
         const auto* bookStats = READING_STATS.findBook(epub->getPath());
-        const uint32_t secondsRead =
-            bookStats ? static_cast<uint32_t>(bookStats->totalReadingMs / 1000) : 0;
+        const uint32_t secondsRead = bookStats ? static_cast<uint32_t>(bookStats->totalReadingMs / 1000) : 0;
         FouladDeviceTracking::reportReadingStats(serverIt->username, serverIt->password, recentIt->fouladBookId,
                                                  progressPercent, positionBuf, secondsRead);
       }
@@ -392,15 +391,15 @@ void EpubReaderActivity::loop() {
   // to queue each turn behind layout work (user report: Quran page flips
   // "very slow").
   bool anyButtonEvent = mappedInput.isPressed(MappedInputManager::Button::Confirm);
-  for (const auto b : {MappedInputManager::Button::Back, MappedInputManager::Button::Confirm,
-                       MappedInputManager::Button::Left, MappedInputManager::Button::Right,
-                       MappedInputManager::Button::Up, MappedInputManager::Button::Down,
-                       MappedInputManager::Button::PageBack, MappedInputManager::Button::PageForward,
-                       MappedInputManager::Button::NavNext, MappedInputManager::Button::NavPrevious}) {
+  for (const auto b :
+       {MappedInputManager::Button::Back, MappedInputManager::Button::Confirm, MappedInputManager::Button::Left,
+        MappedInputManager::Button::Right, MappedInputManager::Button::Up, MappedInputManager::Button::Down,
+        MappedInputManager::Button::PageBack, MappedInputManager::Button::PageForward,
+        MappedInputManager::Button::NavNext, MappedInputManager::Button::NavPrevious}) {
     // isPressed too (not just edges): a HELD button must never wait behind a
     // build chunk -- auto-repeat page turns and long-presses stay responsive.
-    anyButtonEvent = anyButtonEvent || mappedInput.wasPressed(b) || mappedInput.wasReleased(b) ||
-                     mappedInput.isPressed(b);
+    anyButtonEvent =
+        anyButtonEvent || mappedInput.wasPressed(b) || mappedInput.wasReleased(b) || mappedInput.isPressed(b);
   }
   if (!anyButtonEvent) {
     // Drive any in-progress incremental section build forward, off the page-turn critical path,
@@ -432,9 +431,9 @@ void EpubReaderActivity::loop() {
           // logged here means one parseStep (a single paragraph/image) overshot
           // the budget by itself -- worth seeing in a device log.
           char buf[144];
-          snprintf(buf, sizeof(buf), "%lu bg_chunk=%lums spine=%d pages=%u heap=%u max=%u cpu=%u", millis(),
-                   bgChunkMs, currentSpineIndex, section ? (unsigned)section->pageCount : 0u,
-                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow());
+          snprintf(buf, sizeof(buf), "%lu bg_chunk=%lums spine=%d pages=%u heap=%u max=%u cpu=%u", millis(), bgChunkMs,
+                   currentSpineIndex, section ? (unsigned)section->pageCount : 0u, (unsigned)ESP.getFreeHeap(),
+                   (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow());
           ReaderPerfLog::append(buf);
         }
         if (section && section->isBuildComplete() && applyDeferredReposition()) {
@@ -922,10 +921,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     case EpubReaderMenuActivity::MenuAction::LOOKUP_WORD: {
       int marginLeft = 0, marginTop = 0;
       if (auto page = loadCurrentPageForLookup(marginLeft, marginTop)) {
-        startActivityForResult(std::make_unique<DictionaryWordSelectActivity>(
-                                   renderer, mappedInput, std::move(page), SETTINGS.getReaderFontId(), marginLeft,
-                                   marginTop),
-                               [this](const ActivityResult&) { requestUpdate(); });
+        startActivityForResult(
+            std::make_unique<DictionaryWordSelectActivity>(renderer, mappedInput, std::move(page),
+                                                           SETTINGS.getReaderFontId(), marginLeft, marginTop),
+            [this](const ActivityResult&) { requestUpdate(); });
       } else {
         requestUpdate();
       }
@@ -937,10 +936,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       // (for images-in-background etc.); nullptr is acceptable if the page
       // fails to load -- history/definitions still work without it.
       auto page = loadCurrentPageForLookup(marginLeft, marginTop);
-      startActivityForResult(std::make_unique<DictionaryHistoryActivity>(renderer, mappedInput, std::move(page),
-                                                                         SETTINGS.getReaderFontId(), marginLeft,
-                                                                         marginTop),
-                             [this](const ActivityResult&) { requestUpdate(); });
+      startActivityForResult(
+          std::make_unique<DictionaryHistoryActivity>(renderer, mappedInput, std::move(page),
+                                                      SETTINGS.getReaderFontId(), marginLeft, marginTop),
+          [this](const ActivityResult&) { requestUpdate(); });
       break;
     }
     default:
@@ -1263,8 +1262,8 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // pages are deterministic) and finalizes, so the partial machinery retires itself.
     const bool cacheLoaded = section->loadSectionFile(
         SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(), SETTINGS.extraParagraphSpacing,
-        SETTINGS.effParagraphAlignment(), viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
-        SETTINGS.imageRendering, SETTINGS.focusReadingEnabled);
+        SETTINGS.effParagraphAlignment(), viewportWidth, viewportHeight, SETTINGS.hyphenationEnabled,
+        SETTINGS.embeddedStyle, SETTINGS.imageRendering, SETTINGS.focusReadingEnabled);
     if (cacheLoaded) {
       // Matching render params means identical pagination, so the saved page number is valid
       // as-is: consume any pending settings-change reposition. Without this, a chapter total
@@ -1388,8 +1387,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
       char buf[320] = "";
       snprintf(buf, sizeof(buf), "%lu spine=%d %s elapsed=%lums heap=%u max=%u cpu=%u pages=%u", millis(),
                currentSpineIndex, cacheComplete ? "cache" : "built", millis() - chapterLoadStartMs,
-               (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow(),
-               (unsigned)section->pageCount);
+               (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow(), (unsigned)section->pageCount);
       // SD-card font read/seek stats accumulated during THIS build (see the
       // resetStats() call above) -- a "built" line's elapsed time is dominated
       // by SD I/O when a custom SD-card font (esp. a separately-configured
@@ -1476,9 +1474,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // Start a build to extend a partial toward the requested page.
     if (!section->isBuilding() &&
         !section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                             SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth, viewportHeight,
-                             SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle, SETTINGS.imageRendering,
-                             SETTINGS.focusReadingEnabled)) {
+                             SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
+                             viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
+                             SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
       LOG_ERR("ERS", "Failed to start partial extension build");
       section.reset();
       showBuildError();
@@ -1700,8 +1698,8 @@ void logSlowPageTurn(unsigned long t0, unsigned long tScanRender, unsigned long 
                "bitmap_fail=%lu fail_bytes=%lu",
                (unsigned long)s.cacheHits, (unsigned long)s.cacheMisses, (unsigned long)s.decompressTimeMs,
                (unsigned long)s.getBitmapCalls, (unsigned long)(s.pageGlyphsBytes / 12),
-               (unsigned long)s.pageBufferBytes, (unsigned)s.uniqueGroupsAccessed,
-               (unsigned long)s.bitmapAllocFailures, (unsigned long)s.firstFailedAllocBytes);
+               (unsigned long)s.pageBufferBytes, (unsigned)s.uniqueGroupsAccessed, (unsigned long)s.bitmapAllocFailures,
+               (unsigned long)s.firstFailedAllocBytes);
     }
     const char* pathStr = "?";
     switch (fcm->getLastArabicPrewarmPath()) {
@@ -1767,9 +1765,9 @@ void logSlowPageTurn(unsigned long t0, unsigned long tScanRender, unsigned long 
   snprintf(buf, sizeof(buf),
            "%lu turn spine=%d scan=%lums prewarm=%lums bw_render=%lums display=%lums rest=%lums total=%lums "
            "heap=%u max=%u cpu=%u%s \"%s\"",
-           millis(), spineIndex, tScanRender - t0, tPrewarm - tScanRender, tBwRender - tPrewarm,
-           tDisplay - tBwRender, tEnd - tDisplay, total, (unsigned)ESP.getFreeHeap(),
-           (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow(), statsPart, title.c_str());
+           millis(), spineIndex, tScanRender - t0, tPrewarm - tScanRender, tBwRender - tPrewarm, tDisplay - tBwRender,
+           tEnd - tDisplay, total, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(), cpuMhzNow(), statsPart,
+           title.c_str());
   ReaderPerfLog::append(buf);
 }
 }  // namespace
@@ -1974,8 +1972,8 @@ namespace {
 // other book's TOC titles, which won't start with this exact byte pattern.
 std::string stripLeadingArabicIndicIndex(const std::string& title) {
   size_t i = 0;
-  while (i + 1 < title.size() && static_cast<uint8_t>(title[i]) == 0xD9 &&
-         static_cast<uint8_t>(title[i + 1]) >= 0xA0 && static_cast<uint8_t>(title[i + 1]) <= 0xA9) {
+  while (i + 1 < title.size() && static_cast<uint8_t>(title[i]) == 0xD9 && static_cast<uint8_t>(title[i + 1]) >= 0xA0 &&
+         static_cast<uint8_t>(title[i + 1]) <= 0xA9) {
     i += 2;
   }
   if (i == 0 || i + 3 > title.size() || title[i] != ' ' || title[i + 1] != '-' || title[i + 2] != ' ') {

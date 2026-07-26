@@ -5,8 +5,8 @@
 
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
-#include "SilentRestart.h"
 #include "OpdsServerStore.h"
+#include "SilentRestart.h"
 #include "activities/ActivityManager.h"
 #include "activities/browser/FouladQrLoginActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"

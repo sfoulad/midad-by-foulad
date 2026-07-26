@@ -79,9 +79,7 @@ class EpubReaderMenuActivity final : public Activity {
   void finishWithAction(int action, bool cancelled);
   void handleListConfirm();
 
-  const std::vector<MenuItem>& activeItems() const {
-    return view == View::SETTINGS_TAB ? settingsItems : readingItems;
-  }
+  const std::vector<MenuItem>& activeItems() const { return view == View::SETTINGS_TAB ? settingsItems : readingItems; }
   int& activeIndex() {
     switch (view) {
       case View::SETTINGS_TAB:

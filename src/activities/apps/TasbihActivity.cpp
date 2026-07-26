@@ -52,14 +52,13 @@ void TasbihActivity::loop() {
   // by hand). Confirmed via a popup, not a bare press/long-press, since this
   // discards today's progress.
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    startActivityForResult(
-        std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_TASBIH_RESET_TITLE),
-                                               tr(STR_TASBIH_RESET_BODY)),
-        [this](const ActivityResult& result) {
-          if (result.isCancelled) return;
-          TASBIH.resetToday();
-          requestUpdate();
-        });
+    startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_TASBIH_RESET_TITLE),
+                                                                  tr(STR_TASBIH_RESET_BODY)),
+                           [this](const ActivityResult& result) {
+                             if (result.isCancelled) return;
+                             TASBIH.resetToday();
+                             requestUpdate();
+                           });
     return;
   }
 

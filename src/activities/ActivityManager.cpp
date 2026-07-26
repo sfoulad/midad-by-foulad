@@ -185,9 +185,7 @@ void ActivityManager::goToSettings() { replaceActivity(std::make_unique<Settings
 
 void ActivityManager::goToGym() { replaceActivity(std::make_unique<GymActivity>(renderer, mappedInput)); }
 
-void ActivityManager::goToDictionary() {
-  replaceActivity(std::make_unique<DictionaryActivity>(renderer, mappedInput));
-}
+void ActivityManager::goToDictionary() { replaceActivity(std::make_unique<DictionaryActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToFileBrowser(std::string path) {
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
@@ -361,8 +359,9 @@ void ActivityManager::requestUpdateAndWait() {
     // update instead of deadlocking the caller -- almost always the single foreground
     // task that also processes button input, so a deadlock here reads as the whole
     // device being frozen with no recovery short of a battery pull.
-    LOG_ERR("ACT", "requestUpdateAndWait: not registered as waiter (alreadyWaiting=%d isRenderTask=%d "
-                   "holdingRenderLock=%d), falling back to requestUpdate()",
+    LOG_ERR("ACT",
+            "requestUpdateAndWait: not registered as waiter (alreadyWaiting=%d isRenderTask=%d "
+            "holdingRenderLock=%d), falling back to requestUpdate()",
             alreadyWaiting, isRenderTask, holdingRenderLock);
     requestUpdate(/*immediate=*/true);
     return;

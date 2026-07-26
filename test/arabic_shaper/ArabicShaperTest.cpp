@@ -96,15 +96,11 @@ TEST(ArabicShaper, MissingFinalAndIsolatedFormsFallBackToBaseCodepoint) {
 
 // "كتب" (Kaf-Teh-Beh): every letter is DUAL_JOINING, so both internal junctions
 // (Kaf->Teh, Teh->Beh) are legal kashida points.
-TEST(ArabicShaper, KashidaPointBetweenDualJoiningLetters) {
-  EXPECT_TRUE(ArabicShaper::hasKashidaPoint("كتب"));
-}
+TEST(ArabicShaper, KashidaPointBetweenDualJoiningLetters) { EXPECT_TRUE(ArabicShaper::hasKashidaPoint("كتب")); }
 
 // "ودر" (Waw-Dal-Ra): all three are RIGHT_JOINING-only -- none of them extend a
 // connection forward into the next letter, so no kashida point exists anywhere.
-TEST(ArabicShaper, NoKashidaPointForRightJoiningChain) {
-  EXPECT_FALSE(ArabicShaper::hasKashidaPoint("ودر"));
-}
+TEST(ArabicShaper, NoKashidaPointForRightJoiningChain) { EXPECT_FALSE(ArabicShaper::hasKashidaPoint("ودر")); }
 
 TEST(ArabicShaper, NoKashidaPointForSingleLetterWord) { EXPECT_FALSE(ArabicShaper::hasKashidaPoint("ب")); }
 
