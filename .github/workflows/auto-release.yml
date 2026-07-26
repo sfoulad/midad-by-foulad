@@ -28,6 +28,23 @@ name: Auto Release Candidate
 on:
   push:
     branches: [develop]
+    # A release is only meaningful when the firmware binary can differ. These paths
+    # cannot change it, so cutting an RC for them burns ~6 minutes of CI to publish a
+    # build identical in behaviour to the one before it, and pushes a pointless update
+    # at every device with the Pre-release channel enabled.
+    #
+    # Dependabot is what makes this matter rather than a nicety: it opens a steady
+    # stream of PRs that touch only .github/ or requirements.txt, and with auto-merge
+    # on, each one would otherwise mint its own version number.
+    #
+    # Note platformio.ini is deliberately NOT here -- build flags, partition layout and
+    # the version floor all live in it and all reach the binary.
+    paths-ignore:
+      - '.github/**'
+      - '.skills/**'
+      - 'docs/**'
+      - '**.md'
+      - 'requirements.txt'
 
 permissions:
   contents: read
