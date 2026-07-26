@@ -44,6 +44,13 @@ on:
       - '.skills/**'
       - 'docs/**'
       - '**.md'
+      # Three of these exist -- ./requirements.txt, ./scripts/requirements.txt and
+      # ./lib/EpdFont/scripts/requirements.txt -- and GitHub matches path filters against
+      # the full path from the repo root, so a bare 'requirements.txt' silently covers
+      # only the first. The two nested ones each cut a needless RC before this was
+      # widened. Glob rather than a list of the three, so a fourth is covered on the day
+      # it appears.
+      - '**/requirements.txt'
       - 'requirements.txt'
 
 permissions:
