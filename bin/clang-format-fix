@@ -37,10 +37,20 @@ fi
 # Use 'git ls-files' to get a list of all files tracked by git:
 # --modified: files tracked by git that have been modified (staged or unstaged)
 # --exclude-standard: ignores files in .gitignore
+# --cached --others: tracked files PLUS untracked ones. Without --others this lists
+#   only tracked files, so a brand new source file -- exactly the kind most likely to
+#   need formatting -- is skipped silently and the script still reports success. That
+#   is not hypothetical: four new files went through here untouched, were committed
+#   unformatted, and were caught by CI instead. --exclude-standard still keeps
+#   .gitignore'd files out, so build output is not pulled in.
+#   Not applied with -g, where --modified already implies tracked-only by design.
 # Additionally exclude files in 'lib/EpdFont/builtinFonts/' as they are script-generated.
 # Also exclude files in 'lib/Epub/Epub/hyphenation/generated/' as they are script-generated.
 # Keep the no-match case non-fatal: grep returns 1 when no files match,
 # which is expected when there are no modified C/C++ files.
+if [[ -z "${GIT_LS_FILES_FLAGS}" ]]; then
+  GIT_LS_FILES_FLAGS="--cached --others"
+fi
 set +o pipefail
 git ls-files  --exclude-standard ${GIT_LS_FILES_FLAGS} \
     | grep -E '\.(c|cpp|h|hpp)$' \
