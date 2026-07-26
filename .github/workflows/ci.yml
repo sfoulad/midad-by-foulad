@@ -2,7 +2,14 @@ name: CI (build)
 
 on:
   push:
-    branches: [master]
+    # `develop` is this repo's default branch and where work actually lands, so
+    # it has to be listed here or these checks never gate anything. They didn't:
+    # with only `master` (effectively dormant) plus pull_request, and commits
+    # going straight to develop rather than through PRs, the clang-format and
+    # build jobs had never run on the mainline -- which is how 56 files of
+    # formatting drift accumulated unnoticed. `master` is kept so any remaining
+    # work on that branch still gets checked.
+    branches: [develop, master]
   pull_request:
 
 permissions:
