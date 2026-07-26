@@ -339,6 +339,22 @@ class GfxRenderer {
   void drawCenteredText(int fontId, int y, const char* text, bool black = true,
                         EpdFontFamily::Style style = EpdFontFamily::REGULAR,
                         BidiUtils::BidiBaseDir baseDir = BidiUtils::BidiBaseDir::AUTO) const;
+  /// Greedy word-wrap of `text` to `maxWidth`, drawn centered, one line per row from `y`
+  /// down. Returns the total height consumed, so a caller can lay out whatever follows
+  /// without assuming a line count.
+  ///
+  /// The wrapping counterpart to truncatedText(): use that when a label must stay on one
+  /// row (list rows, grid captions), this when losing the tail would lose meaning -- a
+  /// sentence telling the user what went wrong and what to do about it. drawCenteredText()
+  /// alone does neither and simply overruns the panel, which clips the text at *both*
+  /// edges once it is wider than the screen, since the draw is centered.
+  ///
+  /// Breaks on ASCII spaces only, so it can never split a UTF-8 sequence. A single word
+  /// too wide to fit is ellipsized via truncatedText() rather than dropped. On reaching
+  /// `maxLines` the remaining text is ellipsized into the final line, so overflow is
+  /// always visible as "..." instead of silently vanishing.
+  int drawCenteredTextWrapped(int fontId, int y, int maxWidth, const char* text, int maxLines, bool black = true,
+                              EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// kashidaExtraPx: extra width (already floored to a whole tatweel-glyph multiple by
   /// the caller) to insert via kashida when this call ends up on the Arabic path --
   /// see ParsedText::computeJustifyPlan. Ignored on the non-Arabic path; Latin

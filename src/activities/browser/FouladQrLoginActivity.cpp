@@ -150,19 +150,29 @@ void FouladQrLoginActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FOULAD_EBOOKS));
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  // Every message on this screen is a full sentence, and the two failure ones are wider
+  // than the panel at UI_12. drawCenteredText would overrun and, because it centers,
+  // clip them at *both* edges -- the middle of the sentence survives and the start and
+  // end are lost. So they wrap instead. See GfxRenderer::drawCenteredTextWrapped.
+  const int textWidth = pageWidth - metrics.contentSidePadding * 2;
 
   switch (state) {
     case State::ConnectingWifi:
     case State::Starting:
-      renderer.drawCenteredText(UI_12_FONT_ID, contentTop + 40, tr(STR_QR_LOGIN_PREPARING), true);
+      renderer.drawCenteredTextWrapped(UI_12_FONT_ID, contentTop + 40, textWidth, tr(STR_QR_LOGIN_PREPARING),
+                                       /*maxLines=*/3);
       break;
 
     case State::ShowingQr: {
-      renderer.drawCenteredText(UI_10_FONT_ID, contentTop, tr(STR_QR_LOGIN_SCAN_HINT), true);
+      // Height is measured rather than assumed: the hint fits one line in English but
+      // wraps in longer translations, and the QR has to start below wherever it ends.
+      const int hintHeight =
+          renderer.drawCenteredTextWrapped(UI_10_FONT_ID, contentTop, textWidth, tr(STR_QR_LOGIN_SCAN_HINT),
+                                           /*maxLines=*/2);
 
       // Leave room under the QR for the pairing code and its caption.
       const int codeBlockHeight = renderer.getLineHeight(UI_12_FONT_ID) + renderer.getLineHeight(UI_10_FONT_ID) + 24;
-      const int qrTop = contentTop + renderer.getLineHeight(UI_10_FONT_ID) + metrics.verticalSpacing;
+      const int qrTop = contentTop + hintHeight + metrics.verticalSpacing;
       const int qrHeight = pageHeight - qrTop - codeBlockHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
       const int qrWidth = pageWidth - 40;
       if (qrHeight > 40) {
@@ -183,11 +193,13 @@ void FouladQrLoginActivity::render(RenderLock&&) {
     }
 
     case State::Denied:
-      renderer.drawCenteredText(UI_12_FONT_ID, contentTop + 40, tr(STR_QR_LOGIN_DENIED), true);
+      renderer.drawCenteredTextWrapped(UI_12_FONT_ID, contentTop + 40, textWidth, tr(STR_QR_LOGIN_DENIED),
+                                       /*maxLines=*/4);
       break;
 
     case State::Failed:
-      renderer.drawCenteredText(UI_12_FONT_ID, contentTop + 40, tr(STR_QR_LOGIN_FAILED), true);
+      renderer.drawCenteredTextWrapped(UI_12_FONT_ID, contentTop + 40, textWidth, tr(STR_QR_LOGIN_FAILED),
+                                       /*maxLines=*/4);
       break;
   }
 
