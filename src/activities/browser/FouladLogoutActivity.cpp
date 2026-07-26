@@ -7,21 +7,45 @@
 
 #include "FouladDeviceLogout.h"
 #include "MappedInputManager.h"
+#include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
 void FouladLogoutActivity::onEnter() {
   Activity::onEnter();
 
-  // Refused rather than degraded: without a network there is no way to tell the
-  // server to drop this device, and clearing the credential anyway would leave the
-  // unit listed under "My Devices" forever with no way back to it from here.
+  // Bring WiFi up rather than telling the user to go and do it. Signing out needs the
+  // network -- the credential is only cleared once the server confirms the removal --
+  // so a "connect to WiFi first" message just dead-ends them on a screen whose only
+  // button is Back. Same handoff QR sign-in uses (FouladQrLoginActivity::onEnter).
+  //
+  // This does not weaken the rule that no confirmation means no sign-out: if the user
+  // backs out of network selection, or it fails to associate, onWifiSelectionComplete
+  // still refuses and the credential stays put.
   if (WiFi.status() != WL_CONNECTED) {
+    WiFi.mode(WIFI_STA);
+    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                           [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
+    return;
+  }
+
+  performSignOut();
+}
+
+void FouladLogoutActivity::onWifiSelectionComplete(const bool success) {
+  // Re-check the radio rather than trusting the result alone: the picker can return
+  // "not cancelled" on a network that then fails to associate, and signing out against
+  // no network would report a transport failure the user cannot act on.
+  if (!success || WiFi.status() != WL_CONNECTED) {
     state = State::NoWifi;
     requestUpdate();
     return;
   }
 
+  performSignOut();
+}
+
+void FouladLogoutActivity::performSignOut() {
   // Paint "Signing out..." and wait for it to land BEFORE the blocking calls start.
   // A plain requestUpdate() would only be serviced after this function returns, by
   // which time the work is already done and the user has stared at the previous

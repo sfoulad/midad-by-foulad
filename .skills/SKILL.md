@@ -832,7 +832,15 @@ build_flags =
       renders these fine. Patch `simulator/src/HalStorage.cpp`:
       `O_WRONLY | O_CREAT | O_TRUNC` → `O_RDWR | O_CREAT | O_TRUNC`.
 
-   c. **Not a bug — the QR code is always blank.** The simulator ships stub QR functions
+   c. **Build blocker — no `HTTP_METHOD_DELETE`.** The simulator's `esp_http_client.h`
+      enum stops at `HTTP_METHOD_PUT`, so `HttpDownloader`'s DELETE path (added for
+      device sign-out) does not compile and the whole simulator build fails. Add
+      `HTTP_METHOD_DELETE` to the enum in `simulator/src/esp_http_client.h` and a
+      `case` returning `"DELETE"` to `methodName()`. Note the sim performs the whole
+      request inside `esp_http_client_open()`, which suits DELETE (no request body)
+      better than it suits POST.
+
+   d. **Not a bug — the QR code is always blank.** The simulator ships stub QR functions
       (`simulator/src/qrcode.cpp`) whose `qrcode_getModule()` returns 0 unconditionally, so
       `QrUtils::drawQrCode` faithfully draws nothing. The encoder and draw path are fine on
       device. Do not chase this; verify QR rendering on hardware, or by encoding the payload

@@ -33,4 +33,9 @@ class FouladLogoutActivity final : public Activity {
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
+
+ private:
+  void onWifiSelectionComplete(bool success);
+  // Paints the progress screen, then runs the (blocking) sign-out and finishes.
+  void performSignOut();
 };
