@@ -50,7 +50,7 @@ class SnakeActivity final : public Activity {
   int nextDirX = 1, nextDirY = 0;  // buffered next direction
 
   // Food
-  Point food;
+  Point food{};
 
   // Timing. Classic Snake rule: the snake speeds up as it grows (each food
   // eaten shortens the step interval), not a fixed cadence for the whole run.

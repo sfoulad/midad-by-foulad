@@ -85,6 +85,12 @@ const uint8_t* data(size_t& size) {
   size = hostData.size();
   return hostData.empty() ? nullptr : hostData.data();
 #else
+  // cppcheck-suppress comparePointers // linker-provided bounds of one blob, see below
+  // False positive: cppcheck sees two unrelated extern symbols. They are the
+  // start/end markers the linker emits around a single embedded blob
+  // (board_build.embed_files = data/quran.epub in platformio.ini), so they do
+  // point into the same object and this subtraction is the standard ESP-IDF
+  // idiom for its length.
   size = static_cast<size_t>(_binary_data_quran_epub_end - _binary_data_quran_epub_start);
   return _binary_data_quran_epub_start;
 #endif

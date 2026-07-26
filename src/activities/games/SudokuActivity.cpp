@@ -10,7 +10,7 @@
 #include "fontIds.h"
 
 // 25% gray (light) — every other pixel in checkerboard on even rows only
-static void fillDithered25(GfxRenderer& r, int x, int y, int w, int h) {
+static void fillDithered25(const GfxRenderer& r, int x, int y, int w, int h) {
   for (int dy = 0; dy < h; dy += 2)
     for (int dx = ((dy / 2) % 2); dx < w; dx += 2) r.drawPixel(x + dx, y + dy, true);
 }
@@ -221,7 +221,7 @@ void SudokuActivity::render(RenderLock&&) {
       }
 
       if (board[r][c] > 0) {
-        char num[2] = {static_cast<char>('0' + board[r][c]), 0};
+        const char num[2] = {static_cast<char>('0' + board[r][c]), 0};
         EpdFontFamily::Style style = fixed_[r][c] ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
         int tw = renderer.getTextWidth(SMALL_FONT_ID, num, style);
         renderer.drawText(SMALL_FONT_ID, px + (cellSize - tw) / 2, py + (cellSize - fontH) / 2, num, true, style);
