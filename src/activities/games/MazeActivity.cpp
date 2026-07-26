@@ -30,7 +30,7 @@ static const uint8_t DIR_OPP_WALL[4] = {WALL_S, WALL_W, WALL_N, WALL_E};
 
 // ---- Helpers ----
 
-void MazeActivity::fillDithered50(GfxRenderer& r, int x, int y, int w, int h) {
+void MazeActivity::fillDithered50(const GfxRenderer& r, int x, int y, int w, int h) {
   for (int dy = 0; dy < h; dy++)
     for (int dx = (dy % 2); dx < w; dx += 2) r.drawPixel(x + dx, y + dy, true);
 }
@@ -293,7 +293,7 @@ void MazeActivity::drawMaze() {
   }
 }
 
-static void drawFilledCircle(GfxRenderer& r, int cx, int cy, int radius) {
+static void drawFilledCircle(const GfxRenderer& r, int cx, int cy, int radius) {
   for (int dy = -radius; dy <= radius; dy++) {
     int dx = 0;
     while ((dx + 1) * (dx + 1) + dy * dy <= radius * radius) dx++;

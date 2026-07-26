@@ -135,8 +135,10 @@ void DictionaryWordSelectActivity::mergeHyphenatedWords() {
     }
     if (!hyphenated) continue;
 
+    // `raw` is non-empty on every path that reaches here: `hyphenated` is only
+    // set by a trailing '-' or a trailing U+00AD, both of which require content.
     std::string first = raw;
-    if (!first.empty() && first.back() == '-') {
+    if (first.back() == '-') {
       first.pop_back();
     } else if (first.size() >= 2) {
       first.erase(first.size() - 2);

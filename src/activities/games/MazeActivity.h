@@ -78,5 +78,5 @@ class MazeActivity final : public Activity {
   void calculateLayout();
   int infoBarBottom() const;
 
-  static void fillDithered50(GfxRenderer& r, int x, int y, int w, int h);
+  static void fillDithered50(const GfxRenderer& r, int x, int y, int w, int h);
 };
