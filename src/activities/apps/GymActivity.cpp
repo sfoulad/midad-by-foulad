@@ -35,10 +35,9 @@ std::string capitalize(const std::string& s) {
 // fixed slot easier to refer to than "Day N"; it isn't a claim that Day 1
 // falls on an actual Sunday.
 const char* weekdayFullName(const int dayIndex) {
-  static constexpr StrId kNames[7] = {StrId::STR_WEEKDAY_SUNDAY,   StrId::STR_WEEKDAY_MONDAY,
-                                      StrId::STR_WEEKDAY_TUESDAY,  StrId::STR_WEEKDAY_WEDNESDAY,
-                                      StrId::STR_WEEKDAY_THURSDAY, StrId::STR_WEEKDAY_FRIDAY,
-                                      StrId::STR_WEEKDAY_SATURDAY};
+  static constexpr StrId kNames[7] = {
+      StrId::STR_WEEKDAY_SUNDAY,   StrId::STR_WEEKDAY_MONDAY, StrId::STR_WEEKDAY_TUESDAY, StrId::STR_WEEKDAY_WEDNESDAY,
+      StrId::STR_WEEKDAY_THURSDAY, StrId::STR_WEEKDAY_FRIDAY, StrId::STR_WEEKDAY_SATURDAY};
   return I18N.get(kNames[dayIndex % 7]);
 }
 
@@ -85,10 +84,11 @@ void GymActivity::onEnter() {
 void GymActivity::refreshCatalogStatus() { hasCatalog_ = Storage.exists(GymCatalog::CATALOG_PATH); }
 
 void GymActivity::launchCatalogSync() {
-  startActivityForResult(std::make_unique<GymCatalogSyncActivity>(renderer, mappedInput), [this](const ActivityResult&) {
-    refreshCatalogStatus();
-    requestUpdate();
-  });
+  startActivityForResult(std::make_unique<GymCatalogSyncActivity>(renderer, mappedInput),
+                         [this](const ActivityResult&) {
+                           refreshCatalogStatus();
+                           requestUpdate();
+                         });
 }
 
 void GymActivity::openSelectedDay() {

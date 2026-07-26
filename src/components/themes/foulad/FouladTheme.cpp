@@ -245,9 +245,8 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   const char* dividerLabelText = tr(STR_RECENTS);
   const bool arabicDividerLabel = ScriptDetector::containsArabic(dividerLabelText);
   const int latinUi12LineHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  const int dividerLabelH = arabicDividerLabel
-                                ? renderer.getLineHeight(renderer.getResolvedArabicFontId(UI_12_FONT_ID))
-                                : latinUi12LineHeight;
+  const int dividerLabelH = arabicDividerLabel ? renderer.getLineHeight(renderer.getResolvedArabicFontId(UI_12_FONT_ID))
+                                               : latinUi12LineHeight;
   const int dividerSep = kDividerHalfSeparation + (arabicDividerLabel ? 5 : 0);
   const int dividerBottomRuleY = dividerLabelY + dividerLabelH / 2 + dividerSep;
   // Gap tuned against the original Latin-only formula (dividerLabelY +

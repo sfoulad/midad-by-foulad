@@ -174,8 +174,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             coverRendered = false;
             requestUpdate();
           }
-          CoverThumbs::diagLog(std::string("HOME epub load=") + (loaded ? "1" : "0") + " built=" +
-                               (built ? "1" : "0") + " gen=" + (generated ? "1" : "0") + " " + book.path);
+          CoverThumbs::diagLog(std::string("HOME epub load=") + (loaded ? "1" : "0") + " built=" + (built ? "1" : "0") +
+                               " gen=" + (generated ? "1" : "0") + " " + book.path);
         } else if (FsHelpers::hasXtcExtension(book.path)) {
           // Handle XTC file
           Xtc xtc(book.path, "/.crosspoint");

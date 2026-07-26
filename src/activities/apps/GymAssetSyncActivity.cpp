@@ -147,10 +147,10 @@ void GymAssetSyncActivity::render(RenderLock&&) {
 
   if (state_ == SYNCING) {
     renderer.drawCenteredText(UI_10_FONT_ID, centerY - lineHeight - metrics.verticalSpacing, tr(STR_LOADING));
-    GUI.drawProgressBar(
-        renderer,
-        Rect{metrics.contentSidePadding, centerY, pageWidth - metrics.contentSidePadding * 2, metrics.progressBarHeight},
-        static_cast<size_t>(downloadedCount_), static_cast<size_t>(std::max(totalMissing_, 1)));
+    GUI.drawProgressBar(renderer,
+                        Rect{metrics.contentSidePadding, centerY, pageWidth - metrics.contentSidePadding * 2,
+                             metrics.progressBarHeight},
+                        static_cast<size_t>(downloadedCount_), static_cast<size_t>(std::max(totalMissing_, 1)));
   } else if (state_ == COMPLETE) {
     char buf[48];
     snprintf(buf, sizeof(buf), "%s (%d)", tr(STR_GYM_ASSETS_READY), downloadedCount_);

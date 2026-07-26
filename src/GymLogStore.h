@@ -31,7 +31,7 @@ class GymLogStore : public PersistableStore<GymLogStore> {
  private:
   // Newest-touched first, like ReadingStatsStore::books.
   std::vector<ExercisePerformance> performances;
-  uint32_t lifetimeSetsLogged = 0;        // persisted, never decremented
+  uint32_t lifetimeSetsLogged = 0;         // persisted, never decremented
   uint32_t lifetimeSessionsCompleted = 0;  // persisted, never decremented
 
   GymLogStore() = default;

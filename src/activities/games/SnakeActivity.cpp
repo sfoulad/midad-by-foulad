@@ -14,8 +14,7 @@
 // 25% gray (light) — every other pixel in checkerboard on even rows only
 static void fillDithered25(GfxRenderer& r, int x, int y, int w, int h) {
   for (int dy = 0; dy < h; dy += 2)
-    for (int dx = ((dy / 2) % 2); dx < w; dx += 2)
-      r.drawPixel(x + dx, y + dy, true);
+    for (int dx = ((dy / 2) % 2); dx < w; dx += 2) r.drawPixel(x + dx, y + dy, true);
 }
 
 void SnakeActivity::onEnter() {
@@ -298,14 +297,13 @@ void SnakeActivity::renderPlaying() const {
 
   // Header (score/length live here, in the reserved top band, so the bottom
   // button-hints bar never overlaps or covers them).
-  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, metrics.topPadding, "SNAKE", true,
-                     EpdFontFamily::BOLD);
+  renderer.drawText(UI_10_FONT_ID, metrics.contentSidePadding, metrics.topPadding, "SNAKE", true, EpdFontFamily::BOLD);
   char scoreBuf[64];
   snprintf(scoreBuf, sizeof(scoreBuf), "Score: %d  Length: %d  Best: %u", score, (int)snake.size(),
            GAME_SCORES.getSnakeHighScore());
   int scoreW = renderer.getTextWidth(UI_10_FONT_ID, scoreBuf, EpdFontFamily::BOLD);
-  renderer.drawText(UI_10_FONT_ID, screenW - metrics.contentSidePadding - scoreW, metrics.topPadding, scoreBuf,
-                     true, EpdFontFamily::BOLD);
+  renderer.drawText(UI_10_FONT_ID, screenW - metrics.contentSidePadding - scoreW, metrics.topPadding, scoreBuf, true,
+                    EpdFontFamily::BOLD);
 
   // Double-line border
   renderer.drawRect(offsetX - 1, offsetY - 1, gridW * CELL_SIZE + 2, gridH * CELL_SIZE + 2);

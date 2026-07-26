@@ -221,8 +221,8 @@ void DictionaryWordSelectActivity::prewarmCurrentSelectionText() const {
 
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
   std::string text = words[wordIndex].text;
-  const int linkedIndex = words[wordIndex].continuationOf >= 0 ? words[wordIndex].continuationOf
-                                                               : words[wordIndex].continuationIndex;
+  const int linkedIndex =
+      words[wordIndex].continuationOf >= 0 ? words[wordIndex].continuationOf : words[wordIndex].continuationIndex;
   if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
     text.push_back(' ');
     text += words[linkedIndex].text;
@@ -249,18 +249,17 @@ size_t DictionaryWordSelectActivity::collectSelectionRects(SelectionRect* rects,
   auto addRect = [&](const WordInfo& selectedWord, size_t& count) {
     if (count >= maxRects) return;
     const int lineHeight = lineHeightForWord(selectedWord);
-    rects[count++] = SelectionRect{selectedWord.screenX - HIGHLIGHT_PADDING_X,
-                                   selectedWord.screenY - HIGHLIGHT_PADDING_Y,
-                                   selectedWord.width + HIGHLIGHT_PADDING_X * 2,
-                                   lineHeight + HIGHLIGHT_PADDING_Y * 2};
+    rects[count++] =
+        SelectionRect{selectedWord.screenX - HIGHLIGHT_PADDING_X, selectedWord.screenY - HIGHLIGHT_PADDING_Y,
+                      selectedWord.width + HIGHLIGHT_PADDING_X * 2, lineHeight + HIGHLIGHT_PADDING_Y * 2};
   };
 
   size_t count = 0;
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
   addRect(words[wordIndex], count);
 
-  const int linkedIndex = words[wordIndex].continuationOf >= 0 ? words[wordIndex].continuationOf
-                                                               : words[wordIndex].continuationIndex;
+  const int linkedIndex =
+      words[wordIndex].continuationOf >= 0 ? words[wordIndex].continuationOf : words[wordIndex].continuationIndex;
   if (linkedIndex >= 0 && linkedIndex != wordIndex && linkedIndex < static_cast<int>(words.size())) {
     addRect(words[linkedIndex], count);
   }
@@ -314,8 +313,8 @@ bool DictionaryWordSelectActivity::restoreSelectionBaseRegions() const {
   for (size_t i = 0; i < selectionRegionCount; ++i) {
     const SelectionRegionCache& region = selectionRegions[i];
     if (!region.stored || !region.buffer || region.size == 0) return false;
-    if (!renderer.copyBufferToRegion(region.rect.x, region.rect.y, region.rect.width, region.rect.height,
-                                     region.buffer, region.size)) {
+    if (!renderer.copyBufferToRegion(region.rect.x, region.rect.y, region.rect.width, region.rect.height, region.buffer,
+                                     region.size)) {
       return false;
     }
   }
@@ -421,22 +420,23 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
   }
 
   if (!lookup.suggestions.empty()) {
-    startActivityForResult(std::make_unique<DictionarySuggestionsActivity>(
-                               renderer, mappedInput, page, query, lookup.suggestions, readerFontId, marginLeft,
-                               marginTop),
-                           [this](const ActivityResult& result) {
-                             if (!result.isCancelled) {
-                               setResult(ActivityResult{});
-                               finish();
-                               return;
-                             }
-                             requestUpdate();
-                           });
+    startActivityForResult(
+        std::make_unique<DictionarySuggestionsActivity>(renderer, mappedInput, page, query, lookup.suggestions,
+                                                        readerFontId, marginLeft, marginTop),
+        [this](const ActivityResult& result) {
+          if (!result.isCancelled) {
+            setResult(ActivityResult{});
+            finish();
+            return;
+          }
+          requestUpdate();
+        });
     return;
   }
 
-  GUI.drawPopup(renderer, lookup.status == DictionaryLookupResult::Status::NoDictionary ? tr(STR_DICTIONARY_NONE_SELECTED)
-                                                                                        : tr(STR_DEFINITION_NOT_FOUND));
+  GUI.drawPopup(renderer, lookup.status == DictionaryLookupResult::Status::NoDictionary
+                              ? tr(STR_DICTIONARY_NONE_SELECTED)
+                              : tr(STR_DEFINITION_NOT_FOUND));
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   delay(900);
   requestUpdate();
@@ -500,8 +500,8 @@ void DictionaryWordSelectActivity::render(RenderLock&&) {
                       sideBackgroundHeight / 2, false);
   } else {
     const int sideY = std::min(341, std::max(0, renderer.getScreenHeight() - sideBackgroundHeight - 4));
-    renderer.fillRect(renderer.getScreenWidth() - sideBackgroundWidth, sideY, sideBackgroundWidth,
-                      sideBackgroundHeight, false);
+    renderer.fillRect(renderer.getScreenWidth() - sideBackgroundWidth, sideY, sideBackgroundWidth, sideBackgroundHeight,
+                      false);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));

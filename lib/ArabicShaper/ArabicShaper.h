@@ -39,7 +39,7 @@ std::vector<uint32_t> shapeText(const char* text, const std::function<bool(uint3
 // falls through to the next tier and ultimately to the bare base codepoint `cp`,
 // which every Arabic font in this codebase does have.
 uint32_t getContextualForm(uint32_t cp, bool prevJoins, bool nextJoins,
-                            const std::function<bool(uint32_t)>& hasGlyph = nullptr);
+                           const std::function<bool(uint32_t)>& hasGlyph = nullptr);
 
 // Check for Lam-Alef ligature. Returns ligature codepoint or 0 if not a ligature pair.
 // prevJoins: whether the character before Lam can join
@@ -64,6 +64,6 @@ bool hasKashidaPoint(const char* text, const std::function<bool(uint32_t)>& hasG
 // output when the word has no valid point, `extraWidthPx` is smaller than one
 // glyph's width, or `hasGlyph` reports the font has no U+0640 glyph.
 std::vector<uint32_t> shapeTextWithKashida(const char* text, int extraWidthPx, int tatweelAdvancePx,
-                                            const std::function<bool(uint32_t)>& hasGlyph = nullptr);
+                                           const std::function<bool(uint32_t)>& hasGlyph = nullptr);
 
 }  // namespace ArabicShaper

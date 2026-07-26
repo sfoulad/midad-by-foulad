@@ -660,8 +660,7 @@ constexpr uint32_t SURAH_BANNER_ORNAMENT_CP = 0xE010 + 114;  // 0xE082
 // cartouche marker passing the surah NAME through verbatim instead of hardcoding
 // it. Unlike the fixed-digit markers above, the label payloads are
 // arbitrary-length, so this returns UTF-8 slices rather than parsed digits.
-bool parseSurahBannerMarker(const char* text, uint32_t& nameGlyphCp, std::string& rightLabel,
-                            std::string& leftLabel) {
+bool parseSurahBannerMarker(const char* text, uint32_t& nameGlyphCp, std::string& rightLabel, std::string& leftLabel) {
   // U+E007 = EE 80 87, U+E009 = EE 80 89, U+E008 = EE 80 88.
   const auto* p = reinterpret_cast<const uint8_t*>(text);
   if (p[0] != 0xEE || p[1] != 0x80 || p[2] != 0x87) return false;
@@ -764,8 +763,8 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     if (parseCartoucheMarker(text, inner)) {
       const int ascender = getFontAscenderSize(resolveArabicFontId(fontId));
       int innerWidth = 0;
-      for (const uint32_t cp : ArabicShaper::shapeText(
-               inner.c_str(), [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; })) {
+      for (const uint32_t cp :
+           ArabicShaper::shapeText(inner.c_str(), [&](uint32_t c) { return font.getGlyph(c, style) != nullptr; })) {
         if (cp == CARTOUCHE_SPACE_CP) {
           innerWidth += cartoucheSpaceWidth(ascender);
           continue;
@@ -830,7 +829,7 @@ int GfxRenderer::getArabicTextWidth(const int fontId, const char* text, const Ep
     if (const EpdGlyph* tatweel = font.getGlyph(0x0640, style)) tatweelPx = fp4::toPixel(tatweel->advanceX);
   }
   const auto cps = tatweelPx > 0 ? ArabicShaper::shapeTextWithKashida(text, kashidaExtraPx, tatweelPx, hasGlyphFn)
-                                  : ArabicShaper::shapeText(text, hasGlyphFn);
+                                 : ArabicShaper::shapeText(text, hasGlyphFn);
   if (sdFont) {
     // The advance table is prebuilt from RAW text codepoints, but this loop looks
     // up SHAPED presentation forms (U+FExx contextual variants) -- which the
@@ -1008,14 +1007,11 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
       for (int i = 0; i < digitCount; i++) appendUtf8(shaped, digits[i]);
     } else if (parseCartoucheMarker(text, cartoucheInner)) {
-      for (const uint32_t cp : ArabicShaper::shapeText(
-               cartoucheInner.c_str(), fontHasGlyph)) {
+      for (const uint32_t cp : ArabicShaper::shapeText(cartoucheInner.c_str(), fontHasGlyph)) {
         if (cp != CARTOUCHE_SPACE_CP) appendUtf8(shaped, cp);
       }
     } else {
-      for (const uint32_t cp :
-           ArabicShaper::shapeText(text, fontHasGlyph))
-        appendUtf8(shaped, cp);
+      for (const uint32_t cp : ArabicShaper::shapeText(text, fontHasGlyph)) appendUtf8(shaped, cp);
     }
     fontCacheManager_->recordArabicText(shaped.c_str(), resolvedArabicFontId);
     return;
@@ -1065,7 +1061,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
           if (!d) continue;
           const int digitCenter = (d->top - d->height / 2) / 2;
           renderCharScaled(*this, renderMode, digitFont, digits[i], dx, yPos - rosetteCenter + digitCenter, black,
-                            style);
+                           style);
           dx += fp4::toPixel(d->advanceX) / 2;
         }
         return;
@@ -1271,7 +1267,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
       renderCharImpl<TextRotation::None>(*this, renderMode, bannerFont, nameGlyphCp, cursorX, yPos, black, style);
       cursorX += fp4::toPixel(nameGlyph->advanceX);
       renderCharImpl<TextRotation::None>(*this, renderMode, bannerFont, SURAH_BANNER_ORNAMENT_CP, cursorX, yPos, black,
-                                        style);
+                                         style);
       return;
     }
   }
@@ -1298,7 +1294,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
       if (const EpdGlyph* tatweel = font.getGlyph(0x0640, style)) tatweelPx = fp4::toPixel(tatweel->advanceX);
     }
     const auto cps = tatweelPx > 0 ? ArabicShaper::shapeTextWithKashida(text, kashidaExtraPx, tatweelPx, hasGlyphFn)
-                                    : ArabicShaper::shapeText(text, hasGlyphFn);
+                                   : ArabicShaper::shapeText(text, hasGlyphFn);
     int cursorX = x;
     // Tracks the most recently drawn NON-mark glyph, as a fallback anchor for a
     // diacritic whose forward lookahead (below) finds no base -- e.g. a mark that
@@ -1338,8 +1334,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
           // No base found ahead (this mark is the last glyph in the call) -- fall
           // back to centering over the last-drawn base instead of the default,
           // uncentered cursorX.
-          drawX =
-              combiningMark::centerOver(lastBaseCursorX, lastBaseLeft, lastBaseWidth, glyph->left, glyph->width);
+          drawX = combiningMark::centerOver(lastBaseCursorX, lastBaseLeft, lastBaseWidth, glyph->left, glyph->width);
         }
       }
 

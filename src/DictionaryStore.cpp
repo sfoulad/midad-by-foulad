@@ -28,9 +28,7 @@ constexpr size_t MAX_EDIT_DISTANCE_BYTES = 64;
 constexpr uint32_t HEAP_SCAN_GUARD_BYTES = 32 * 1024;
 constexpr uint32_t HEAP_SMALL_GUARD_BYTES = 16 * 1024;
 
-uint32_t largestFreeBlock() {
-  return ESP.getMaxAllocHeap();
-}
+uint32_t largestFreeBlock() { return ESP.getMaxAllocHeap(); }
 
 bool hasHeapHeadroom(const size_t bytes, const uint32_t guardBytes = HEAP_SMALL_GUARD_BYTES) {
   const uint32_t freeHeap = ESP.getFreeHeap();
@@ -261,9 +259,7 @@ std::string lowercaseLatinUtf8(const std::string& input) {
   return out;
 }
 
-bool isAsciiTrimChar(unsigned char c) {
-  return c < 0x80 && !std::isalnum(c);
-}
+bool isAsciiTrimChar(unsigned char c) { return c < 0x80 && !std::isalnum(c); }
 
 bool matchTokenAt(const std::string& text, const size_t pos, const char* token) {
   const size_t len = strlen(token);
@@ -302,8 +298,8 @@ void appendWithSeparator(std::string& out, const char* data, size_t len) {
     ++data;
     --len;
   }
-  while (len > 0 && (data[len - 1] == '\0' || data[len - 1] == '\r' || data[len - 1] == '\n' ||
-                     data[len - 1] == ' ' || data[len - 1] == '\t')) {
+  while (len > 0 && (data[len - 1] == '\0' || data[len - 1] == '\r' || data[len - 1] == '\n' || data[len - 1] == ' ' ||
+                     data[len - 1] == '\t')) {
     --len;
   }
   if (len == 0) return;
@@ -388,44 +384,25 @@ bool appendReplacementForUtf8Token(const std::string& input, const size_t pos, s
 
   static constexpr Replacement REPLACEMENTS[] = {
       {"\xEF\xBF\xBD", ""},    // Unicode replacement char.
-      {"\xE2\x80\xA3", "- "},   // Triangular bullet.
-      {"\xE2\x81\x83", "- "},   // Hyphen bullet.
-      {"\xE2\x96\xA0", "- "},   // Black square.
-      {"\xE2\x96\xBA", "- "},   // Black right pointer.
-      {"\xE2\x96\xB8", "- "},   // Small right triangle.
-      {"\xE2\x97\x86", "- "},   // Black diamond.
-      {"\xE2\x97\x87", "- "},   // White diamond.
-      {"\xE2\x97\x8B", "- "},   // White circle.
-      {"\xE2\x97\x8F", "- "},   // Black circle.
-      {"\xE2\x99\xA6", "- "},   // Diamond suit.
+      {"\xE2\x80\xA3", "- "},  // Triangular bullet.
+      {"\xE2\x81\x83", "- "},  // Hyphen bullet.
+      {"\xE2\x96\xA0", "- "},  // Black square.
+      {"\xE2\x96\xBA", "- "},  // Black right pointer.
+      {"\xE2\x96\xB8", "- "},  // Small right triangle.
+      {"\xE2\x97\x86", "- "},  // Black diamond.
+      {"\xE2\x97\x87", "- "},  // White diamond.
+      {"\xE2\x97\x8B", "- "},  // White circle.
+      {"\xE2\x97\x8F", "- "},  // Black circle.
+      {"\xE2\x99\xA6", "- "},  // Diamond suit.
       {"\xCB\x88", ""},        // IPA primary stress.
       {"\xCB\x8C", ""},        // IPA secondary stress.
       {"\xCB\x90", ":"},       // IPA length mark.
       {"\xCB\x91", ":"},       // IPA half-length mark.
-      {"\xC9\xA3", "g"},
-      {"\xC9\xBE", "r"},
-      {"\xCA\x9D", "y"},
-      {"\xCA\x8E", "ll"},
-      {"\xC9\xB2", "n"},
-      {"\xCE\xB2", "b"},
-      {"\xC3\xB0", "d"},
-      {"\xCE\xB8", "z"},
-      {"\xCA\x83", "sh"},
-      {"\xCA\x92", "zh"},
-      {"\xC9\x9F", "y"},
-      {"\xC9\xAB", "l"},
-      {"\xC9\xB1", "m"},
-      {"\xC9\xB0", "g"},
-      {"\xC9\xB8", "f"},
-      {"\xC9\x9B", "e"},
-      {"\xC9\x99", "e"},
-      {"\xC3\xA6", "ae"},
-      {"\xC5\x8B", "ng"},
-      {"\xC9\xAA", "i"},
-      {"\xCA\x8A", "u"},
-      {"\xC9\x94", "o"},
-      {"\xC9\x91", "a"},
-      {"\xCA\x8C", "a"},
+      {"\xC9\xA3", "g"},      {"\xC9\xBE", "r"}, {"\xCA\x9D", "y"},  {"\xCA\x8E", "ll"}, {"\xC9\xB2", "n"},
+      {"\xCE\xB2", "b"},      {"\xC3\xB0", "d"}, {"\xCE\xB8", "z"},  {"\xCA\x83", "sh"}, {"\xCA\x92", "zh"},
+      {"\xC9\x9F", "y"},      {"\xC9\xAB", "l"}, {"\xC9\xB1", "m"},  {"\xC9\xB0", "g"},  {"\xC9\xB8", "f"},
+      {"\xC9\x9B", "e"},      {"\xC9\x99", "e"}, {"\xC3\xA6", "ae"}, {"\xC5\x8B", "ng"}, {"\xC9\xAA", "i"},
+      {"\xCA\x8A", "u"},      {"\xC9\x94", "o"}, {"\xC9\x91", "a"},  {"\xCA\x8C", "a"},
   };
 
   for (const auto& replacement : REPLACEMENTS) {
@@ -677,11 +654,10 @@ bool isGrammarHeadingLine(const std::string& line) {
   if (folded.empty() || folded.size() > 48) return false;
 
   static constexpr const char* HEADINGS[] = {
-      "adjetivo",    "adverbio",     "pronombre",   "conjuncion", "sustantivo", "nombre",
-      "verbo",       "articulo",     "preposicion", "interjeccion", "locucion", "prefijo",
-      "sufijo",      "determinante", "contraccion", "abreviatura", "participio", "gerundio",
-      "noun",        "verb",         "adjective",   "adverb",      "pronoun",   "conjunction",
-      "preposition", "interjection", "article",
+      "adjetivo",    "adverbio",    "pronombre",    "conjuncion",  "sustantivo",   "nombre",  "verbo",
+      "articulo",    "preposicion", "interjeccion", "locucion",    "prefijo",      "sufijo",  "determinante",
+      "contraccion", "abreviatura", "participio",   "gerundio",    "noun",         "verb",    "adjective",
+      "adverb",      "pronoun",     "conjunction",  "preposition", "interjection", "article",
   };
 
   for (const char* heading : HEADINGS) {
@@ -1114,14 +1090,11 @@ void DictionaryStore::loadConfig() {
   const int storedSize = doc["definitionTextSize"] | static_cast<int>(definitionTextSize);
   const uint8_t sizeVersion = doc["definitionTextSizeVersion"] | static_cast<uint8_t>(0);
   if (sizeVersion == 0) {
-    definitionTextSize = storedSize == 2 ? static_cast<uint8_t>(DEF_TEXT_LARGE)
-                                         : static_cast<uint8_t>(DEF_TEXT_SMALL);
+    definitionTextSize = storedSize == 2 ? static_cast<uint8_t>(DEF_TEXT_LARGE) : static_cast<uint8_t>(DEF_TEXT_SMALL);
   } else if (sizeVersion == 1) {
-    definitionTextSize = storedSize == 2 ? static_cast<uint8_t>(DEF_TEXT_LARGE)
-                                         : static_cast<uint8_t>(DEF_TEXT_SMALL);
+    definitionTextSize = storedSize == 2 ? static_cast<uint8_t>(DEF_TEXT_LARGE) : static_cast<uint8_t>(DEF_TEXT_SMALL);
   } else if (sizeVersion < DEFINITION_TEXT_SIZE_CONFIG_VERSION) {
-    definitionTextSize = storedSize >= 3 ? static_cast<uint8_t>(DEF_TEXT_LARGE)
-                                         : static_cast<uint8_t>(DEF_TEXT_SMALL);
+    definitionTextSize = storedSize >= 3 ? static_cast<uint8_t>(DEF_TEXT_LARGE) : static_cast<uint8_t>(DEF_TEXT_SMALL);
   } else if (storedSize >= 0 && storedSize < DEF_TEXT_SIZE_COUNT) {
     definitionTextSize = static_cast<uint8_t>(storedSize);
   }
@@ -1232,9 +1205,8 @@ void DictionaryStore::scan() {
 
   bool scanLimitReached = false;
   auto containsIfo = [this](const std::string& ifoPath) {
-    return std::find_if(entries.begin(), entries.end(), [&ifoPath](const DictionaryEntry& entry) {
-             return entry.ifoPath == ifoPath;
-           }) != entries.end();
+    return std::find_if(entries.begin(), entries.end(),
+                        [&ifoPath](const DictionaryEntry& entry) { return entry.ifoPath == ifoPath; }) != entries.end();
   };
 
   auto ensureEntryCapacity = [this](const size_t desiredSize) {
@@ -1737,7 +1709,8 @@ std::string DictionaryStore::headwordAtOrdinal(const DictionaryEntry& entry, uin
   return headword;
 }
 
-bool DictionaryStore::lookupSynonym(const DictionaryEntry& entry, const std::string& word, std::string& canonical) const {
+bool DictionaryStore::lookupSynonym(const DictionaryEntry& entry, const std::string& word,
+                                    std::string& canonical) const {
   if (entry.synPath.empty()) return false;
   HalFile syn;
   if (!Storage.openFileForRead("DICT", entry.synPath, syn)) return false;
@@ -1852,7 +1825,8 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
   return stripHtmlAndEntities(decoded);
 }
 
-std::vector<std::string> DictionaryStore::getFallbackForms(const DictionaryEntry& entry, const std::string& word) const {
+std::vector<std::string> DictionaryStore::getFallbackForms(const DictionaryEntry& entry,
+                                                           const std::string& word) const {
   std::vector<std::string> forms;
   const std::string lower = lowercaseLatinUtf8(word);
   if (lower != word) forms.push_back(lower);
@@ -1912,9 +1886,8 @@ std::vector<std::string> DictionaryStore::getFallbackForms(const DictionaryEntry
     };
 
     static constexpr SpanishInfinitivePronoun PRONOUNS[] = {
-        {"arme", 2},  {"arte", 2},  {"arse", 2},  {"arnos", 3}, {"aros", 2},
-        {"erme", 2},  {"erte", 2},  {"erse", 2},  {"ernos", 3}, {"eros", 2},
-        {"irme", 2},  {"irte", 2},  {"irse", 2},  {"irnos", 3}, {"iros", 2},
+        {"arme", 2},  {"arte", 2}, {"arse", 2}, {"arnos", 3}, {"aros", 2}, {"erme", 2},  {"erte", 2}, {"erse", 2},
+        {"ernos", 3}, {"eros", 2}, {"irme", 2}, {"irte", 2},  {"irse", 2}, {"irnos", 3}, {"iros", 2},
     };
 
     for (const auto& form : PRONOUNS) {

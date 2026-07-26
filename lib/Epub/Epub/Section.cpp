@@ -2,9 +2,9 @@
 
 #include <GfxRenderer.h>
 #include <HalStorage.h>
-#include <ScriptDetector.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <ScriptDetector.h>
 #include <Serialization.h>
 
 #include "Epub/css/CssParser.h"

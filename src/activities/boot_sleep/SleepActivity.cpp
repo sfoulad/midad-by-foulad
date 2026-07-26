@@ -46,8 +46,7 @@ void drawGoalRing(const GfxRenderer& renderer, int cx, int cy, int outerRadius, 
       }
     }
     renderer.drawLine(cx - outerRadius / 2, cy, cx - outerRadius / 6, cy + outerRadius / 2, 2, false);
-    renderer.drawLine(cx - outerRadius / 6, cy + outerRadius / 2, cx + outerRadius / 2, cy - outerRadius / 3, 2,
-                      false);
+    renderer.drawLine(cx - outerRadius / 6, cy + outerRadius / 2, cx + outerRadius / 2, cy - outerRadius / 3, 2, false);
     return;
   }
 
@@ -607,14 +606,13 @@ void SleepActivity::renderDashboardSleepScreen() const {
   char streakBuf[16];
   snprintf(streakBuf, sizeof(streakBuf), "%lu", static_cast<unsigned long>(READING_STATS.getCurrentStreakDays()));
   char totalBuf[24];
-  formatReadingDuration(static_cast<uint32_t>(READING_STATS.getTotalReadingMs() / 1000ULL), totalBuf,
-                       sizeof(totalBuf));
+  formatReadingDuration(static_cast<uint32_t>(READING_STATS.getTotalReadingMs() / 1000ULL), totalBuf, sizeof(totalBuf));
   char finishedBuf[16];
   snprintf(finishedBuf, sizeof(finishedBuf), "%lu", static_cast<unsigned long>(READING_STATS.getBooksFinishedCount()));
 
   const auto cardRect = [&](const int row, const int col) {
     return Rect{sidePadding + col * (cardWidth + kCardGap), gridTop + row * (kCardHeight + kCardGap), cardWidth,
-               kCardHeight};
+                kCardHeight};
   };
   const auto cardAt = [&](const int row, const int col, const char* label, const char* value) {
     AppMetricCard::draw(renderer, cardRect(row, col), label, value);
@@ -634,8 +632,7 @@ void SleepActivity::renderDashboardSleepScreen() const {
     const int ringCx = streakRect.x + streakRect.width - kRingRadius - 12;
     const int ringCy = streakRect.y + streakRect.height / 2;
     const uint64_t goalMs = SETTINGS.getDailyGoalMs();
-    const int goalPercent =
-        goalMs > 0 ? static_cast<int>(READING_STATS.getTodayReadingMs() * 100ULL / goalMs) : 0;
+    const int goalPercent = goalMs > 0 ? static_cast<int>(READING_STATS.getTodayReadingMs() * 100ULL / goalMs) : 0;
     drawGoalRing(renderer, ringCx, ringCy, kRingRadius, goalPercent);
   }
 

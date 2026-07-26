@@ -35,7 +35,7 @@ void GymExerciseBrowserActivity::onEnter() {
   std::vector<GymBodyPartCount> summary;
   GymCatalog::loadBodyPartCounts(summary);
   std::sort(summary.begin(), summary.end(),
-           [](const GymBodyPartCount& a, const GymBodyPartCount& b) { return a.bodyPart < b.bodyPart; });
+            [](const GymBodyPartCount& a, const GymBodyPartCount& b) { return a.bodyPart < b.bodyPart; });
 
   bodyParts_.clear();
   bodyPartCounts_.clear();
@@ -176,8 +176,8 @@ void GymExerciseBrowserActivity::render(RenderLock&&) {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
 
-  const std::string header =
-      state_ == BODY_PART_LIST ? std::string(tr(STR_ADD_EXERCISE)) : capitalize(bodyParts_[static_cast<size_t>(bodyPartIndex_)]);
+  const std::string header = state_ == BODY_PART_LIST ? std::string(tr(STR_ADD_EXERCISE))
+                                                      : capitalize(bodyParts_[static_cast<size_t>(bodyPartIndex_)]);
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, header.c_str());
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
@@ -198,11 +198,9 @@ void GymExerciseBrowserActivity::render(RenderLock&&) {
     renderer.drawText(UI_10_FONT_ID, (pageWidth - msgWidth) / 2, contentTop + 40, tr(STR_NO_EXERCISES_FOR_BODY_PART));
   } else {
     GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight},
-        static_cast<int>(currentBodyPartExercises_.size()), exerciseIndex_,
-        [this](int i) { return currentBodyPartExercises_[static_cast<size_t>(i)].name; },
-        [this](int i) { return currentBodyPartExercises_[static_cast<size_t>(i)].equipment; }, nullptr, nullptr,
-        false);
+        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(currentBodyPartExercises_.size()),
+        exerciseIndex_, [this](int i) { return currentBodyPartExercises_[static_cast<size_t>(i)].name; },
+        [this](int i) { return currentBodyPartExercises_[static_cast<size_t>(i)].equipment; }, nullptr, nullptr, false);
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN),

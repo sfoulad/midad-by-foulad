@@ -40,12 +40,11 @@ void DictionaryActivity::lookupTypedWord(const std::string& word) {
   const int readerFontId = SETTINGS.getReaderFontId();
   if (lookup.status == DictionaryLookupResult::Status::Found) {
     // No page/background: this is the standalone app, not the reader overlay.
-    startActivityForResult(
-        std::make_unique<DictionaryDefinitionActivity>(renderer, mappedInput, nullptr, lookup.headword,
-                                                       lookup.definition, lookup.truncated, readerFontId,
-                                                       DICTIONARIES.getDefinitionFontId(readerFontId), 0, 0,
-                                                       /*renderPageBackground=*/false),
-        [this](const ActivityResult&) { requestUpdate(); });
+    startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(
+                               renderer, mappedInput, nullptr, lookup.headword, lookup.definition, lookup.truncated,
+                               readerFontId, DICTIONARIES.getDefinitionFontId(readerFontId), 0, 0,
+                               /*renderPageBackground=*/false),
+                           [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
   if (lookup.status == DictionaryLookupResult::Status::NotFound && !lookup.suggestions.empty()) {
@@ -82,9 +81,9 @@ void DictionaryActivity::selectCurrent() {
     return;
   }
   if (selectedIndex == ACTION_LOOKUP_HISTORY) {
-    startActivityForResult(std::make_unique<DictionaryHistoryActivity>(renderer, mappedInput, nullptr,
-                                                                       SETTINGS.getReaderFontId(), 0, 0),
-                           [this](const ActivityResult&) { requestUpdate(); });
+    startActivityForResult(
+        std::make_unique<DictionaryHistoryActivity>(renderer, mappedInput, nullptr, SETTINGS.getReaderFontId(), 0, 0),
+        [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
   if (selectedIndex == ACTION_DOWNLOAD_DICTS) {

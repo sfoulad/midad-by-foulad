@@ -117,20 +117,21 @@ void GymWorkoutActivity::finishWorkoutComplete() {
 }
 
 void GymWorkoutActivity::promptEndWorkout() {
-  startActivityForResult(
-      std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_END_WORKOUT_TITLE), tr(STR_END_WORKOUT_BODY)),
-      [this](const ActivityResult& result) {
-        if (!result.isCancelled) {
-          GYM_LOG.saveToFile();
-          char buf[96];
-          snprintf(buf, sizeof(buf), "%lu gym workout_ended_early day=%d sets=%d elapsed=%lums", millis(),
-                   static_cast<int>(dayIndex_) + 1, setsLoggedThisSession_, millis() - sessionStartMs_);
-          GymDiagLog::append(buf);
-          finish();
-          return;
-        }
-        requestUpdate();
-      });
+  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_END_WORKOUT_TITLE),
+                                                                tr(STR_END_WORKOUT_BODY)),
+                         [this](const ActivityResult& result) {
+                           if (!result.isCancelled) {
+                             GYM_LOG.saveToFile();
+                             char buf[96];
+                             snprintf(buf, sizeof(buf), "%lu gym workout_ended_early day=%d sets=%d elapsed=%lums",
+                                      millis(), static_cast<int>(dayIndex_) + 1, setsLoggedThisSession_,
+                                      millis() - sessionStartMs_);
+                             GymDiagLog::append(buf);
+                             finish();
+                             return;
+                           }
+                           requestUpdate();
+                         });
 }
 
 void GymWorkoutActivity::loop() {
