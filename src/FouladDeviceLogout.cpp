@@ -21,7 +21,7 @@ constexpr size_t DEVICE_LIST_DOC_BYTES = 4096;
 }  // namespace
 
 FouladDeviceLogout::Result FouladDeviceLogout::removeThisDevice(const std::string& username,
-                                                               const std::string& password) {
+                                                                const std::string& password) {
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("LOGOUT", "no WiFi; refusing to sign out");
     return Result::Failed;
