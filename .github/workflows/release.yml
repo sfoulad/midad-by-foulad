@@ -49,7 +49,7 @@ jobs:
             .pio/build/gh_release/partitions.bin
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # OtaUpdater.cpp looks up releases/latest and matches an asset named
           # exactly "firmware.bin" (ReleaseJsonParser.cpp:47) — devices only see

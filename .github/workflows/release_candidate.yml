@@ -57,7 +57,7 @@ jobs:
             .pio/build/gh_release_rc/partitions.bin
 
       - name: Publish GitHub Pre-release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Settings -> System -> Pre-release opts a device into checking GitHub's
           # full /releases list (includes pre-releases) instead of /releases/latest,
