@@ -809,15 +809,46 @@ build_flags =
    `fs_/.crosspoint/` (e.g. section `.bin` version bytes). OPDS flows reach real servers via
    host curl — **always use the Foulad eBooks TEST account for simulator/testing logins:
    username `11`, password `11`** (never a real account).
-   **Known simulator fidelity gap**: the simulator lib's `HalStorage::openFileForWrite`
-   opens `O_WRONLY` while the device's SDCardManager opens `O_RDWR`. Section's
-   `loadPageDuringBuild()` reads pages back through the build's write handle, so in an
-   unpatched simulator every page rendered while a section build is still in progress
-   deserializes as EMPTY (blank page, `bw_render≈1ms`, zero glyph prewarm) — the device
-   renders these fine. If reader pages come up blank mid-build in the sim, re-apply the
-   one-line patch in `.pio/libdeps/simulator/simulator/src/HalStorage.cpp`
-   (`O_WRONLY | O_CREAT | O_TRUNC` → `O_RDWR | O_CREAT | O_TRUNC`); `pio clean` or a
-   libdeps re-fetch reverts it (upstream fix candidate: crosspoint-simulator repo).
+   **Local simulator patches.** `crosspoint-simulator` is fetched from git HEAD and lags
+   this firmware, so `.pio/libdeps/simulator/` needs local edits. All of them live in a
+   gitignored directory: `pio clean` or a libdeps re-fetch silently reverts every one.
+   If the simulator misbehaves, check this list before debugging anything else. All three
+   are upstream fix candidates in the crosspoint-simulator repo.
+
+   a. **Build blocker — `displayBuffer` arity.** The firmware's `HalDisplay::displayBuffer`
+      takes three arguments (`mode, turnOffScreen, forceCleanBaseOnHalf`); the simulator's
+      still takes two, so `GfxRenderer.cpp` fails to compile and the simulator **cannot be
+      built at all** until patched. Add the third parameter to both
+      `simulator/src/HalDisplay.h` and `HalDisplay.cpp` and ignore it — the simulator has no
+      e-ink half-refresh base to keep clean, so discarding it is the correct behaviour.
+      This is the HAL stub rule from the simulator's own CLAUDE.md: when the firmware
+      changes a HAL signature, the simulator must match it or nothing links.
+
+   b. **Fidelity gap — `O_WRONLY` vs `O_RDWR`.** The simulator's
+      `HalStorage::openFileForWrite` opens `O_WRONLY` while the device's SDCardManager opens
+      `O_RDWR`. Section's `loadPageDuringBuild()` reads pages back through the build's write
+      handle, so unpatched, every page rendered while a section build is still in progress
+      deserializes as EMPTY (blank page, `bw_render≈1ms`, zero glyph prewarm) — the device
+      renders these fine. Patch `simulator/src/HalStorage.cpp`:
+      `O_WRONLY | O_CREAT | O_TRUNC` → `O_RDWR | O_CREAT | O_TRUNC`.
+
+   c. **Not a bug — the QR code is always blank.** The simulator ships stub QR functions
+      (`simulator/src/qrcode.cpp`) whose `qrcode_getModule()` returns 0 unconditionally, so
+      `QrUtils::drawQrCode` faithfully draws nothing. The encoder and draw path are fine on
+      device. Do not chase this; verify QR rendering on hardware, or by encoding the payload
+      against the real `ricmoo/QRCode` in a standalone host program.
+
+   **Seeing the screen without a GUI.** SDL windows are not always exposed to the macOS
+   Accessibility API, and when they aren't, `osascript` keystrokes silently go nowhere and
+   the simulator cannot be driven at all (System Events reports "no windows"). Two
+   workarounds, both more reliable than keystrokes: dump each frame by adding a
+   `getenv("SIM_FB_DUMP")` PBM write at the top of `HalDisplay::refreshDisplay` (the
+   framebuffer is 1bpp with 1=white, so invert for PBM's 1=black) and convert with
+   `sips -s format png`; and reach a specific activity by temporarily `replaceActivity`-ing
+   into it from `main.cpp` behind a `-D` flag rather than navigating there. Note that an
+   activity forced into a state this way still runs its own `loop()`, which can transition
+   it out from under you — a half-populated struct will send it down an error path within a
+   poll interval or two, so populate enough of the state to make it sit still.
 
 **Human tester scope** (flag these for the user):
 7. 🔲 **Device**: Test on hardware
