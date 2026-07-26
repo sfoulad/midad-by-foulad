@@ -110,4 +110,17 @@ class HttpDownloader {
    */
   static DownloadError postJson(const std::string& url, const std::string& jsonBody, const std::string& username,
                                 const std::string& password, std::string& outResponse, int timeoutMs = 15000);
+
+  /**
+   * HTTP DELETE with optional Basic Auth, buffering any (expected-small) response
+   * body into outResponse.
+   *
+   * Deliberately does not interpret the status beyond "2xx succeeded": a 404 means
+   * different things to different callers (already gone and therefore fine, versus a
+   * genuinely wrong URL), so that judgement stays with the caller. Same convention as
+   * postJson -- check getLastFailure() after a non-OK result, where FailStage::STATUS
+   * carries the raw HTTP status code.
+   */
+  static DownloadError deleteRequest(const std::string& url, const std::string& username, const std::string& password,
+                                     std::string& outResponse, int timeoutMs = 15000);
 };

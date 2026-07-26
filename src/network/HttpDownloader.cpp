@@ -495,6 +495,94 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
 // open/write/fetch_headers/read structure but skips the multipart framing
 // and the size-everything-up-front pass multipart needs, since the whole
 // body is already a single in-memory std::string.
+// DELETE with no request body. Same open/fetch/read shape as runPostJson below, minus
+// the write phase -- which also means it needs none of the SIMULATOR httpClientWrite
+// handling, so this path works in the simulator as well as on device.
+HttpDownloader::DownloadError runDelete(const std::string& url, const std::string& username,
+                                        const std::string& password, std::string& outResponse, int timeoutMs) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
+  outResponse.clear();
+  WifiPowerSaveGuard psGuard;
+
+  auto buf = makeUniqueNoThrow<char[]>(READ_CHUNK);
+  if (!buf) {
+    LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)READ_CHUNK, ESP.getFreeHeap());
+    setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.method = HTTP_METHOD_DELETE;
+  config.buffer_size = HTTP_RX_BUF;
+  config.buffer_size_tx = HTTP_TX_BUF;
+  config.timeout_ms = timeoutMs;
+  config.crt_bundle_attach = esp_crt_bundle_attach;
+  config.keep_alive_enable = true;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (!client) {
+    LOG_ERR("HTTP", "client init failed");
+    setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  setDeviceSerialHeader(client, url);
+  if (!username.empty() && !password.empty()) {
+    // Preemptive Basic auth, same convention as runGet -- don't wait for a 401.
+    const std::string credentials = username + ":" + password;
+    const String header = "Basic " + base64::encode(credentials.c_str());
+    esp_http_client_set_header(client, "Authorization", header.c_str());
+  }
+
+  // write_len 0: no request body.
+  const esp_err_t err = esp_http_client_open(client, 0);
+  if (err != ESP_OK) {
+    LOG_ERR("HTTP", "delete open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
+            getHttpClientErrno(client), ESP.getFreeHeap());
+    logTlsError(client);
+    setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_fetch_headers(client);
+  const int status = esp_http_client_get_status_code(client);
+  // Any 2xx: a delete legitimately answers 204 No Content as well as 200, and this
+  // returns before reading the body, so a bare 200 check would discard a successful
+  // response (same trap as the 201 from /api/device-login/start -- see runPostJson).
+  // 404 is left to the caller: "already gone" and "wrong URL" are the same status.
+  if (status < 200 || status > 299) {
+    LOG_DBG("HTTP", "delete non-2xx status: %d", status);
+    setLastFailure(HttpDownloader::FailStage::STATUS, status);
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  while (true) {
+    const int read = esp_http_client_read(client, buf.get(), READ_CHUNK);
+    if (read < 0) {
+      LOG_ERR("HTTP", "delete read error after %zu bytes", outResponse.size());
+      setLastFailure(HttpDownloader::FailStage::READ,
+                     static_cast<int>(std::min<size_t>(outResponse.size(), INT32_MAX)));
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (read == 0) break;
+    outResponse.append(buf.get(), static_cast<size_t>(read));
+    if (outResponse.size() > 16384) {
+      LOG_ERR("HTTP", "delete response too large, aborting");
+      setLastFailure(HttpDownloader::FailStage::INCOMPLETE, static_cast<int>(outResponse.size()));
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+  }
+
+  esp_http_client_cleanup(client);
+  return HttpDownloader::OK;
+}
+
 HttpDownloader::DownloadError runPostJson(const std::string& url, const std::string& jsonBody,
                                           const std::string& username, const std::string& password,
                                           std::string& outResponse, int timeoutMs) {
@@ -697,4 +785,11 @@ HttpDownloader::DownloadError HttpDownloader::postJson(const std::string& url, c
                                                        std::string& outResponse, int timeoutMs) {
   LOG_DBG("HTTP", "Posting JSON: %s", url.c_str());
   return runPostJson(url, jsonBody, username, password, outResponse, timeoutMs);
+}
+
+HttpDownloader::DownloadError HttpDownloader::deleteRequest(const std::string& url, const std::string& username,
+                                                            const std::string& password, std::string& outResponse,
+                                                            int timeoutMs) {
+  LOG_DBG("HTTP", "DELETE: %s", url.c_str());
+  return runDelete(url, username, password, outResponse, timeoutMs);
 }
