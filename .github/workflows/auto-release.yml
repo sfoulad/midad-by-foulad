@@ -109,7 +109,7 @@ jobs:
           sed -i "s/^version = .*/version = ${{ steps.version.outputs.next }}/" platformio.ini
           grep -m1 '^version = ' platformio.ini
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
 
