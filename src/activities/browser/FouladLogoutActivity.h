@@ -28,9 +28,7 @@ class FouladLogoutActivity final : public Activity {
  public:
   explicit FouladLogoutActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string username,
                                 std::string password)
-      : Activity("FouladLogout", renderer, mappedInput),
-        username(std::move(username)),
-        password(std::move(password)) {}
+      : Activity("FouladLogout", renderer, mappedInput), username(std::move(username)), password(std::move(password)) {}
 
   void onEnter() override;
   void loop() override;
