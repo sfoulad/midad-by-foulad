@@ -1,0 +1,56 @@
+version: 2
+
+# Scope note: PlatformIO's `lib_deps` in platformio.ini is NOT a Dependabot
+# ecosystem, so the firmware's own C/C++ libraries (ArduinoJson, PNGdec, QRCode,
+# JPEGDEC, WebSockets) are deliberately not covered here and still need bumping
+# by hand. What this file does cover is the CI supply chain and the build
+# tooling -- the parts that run with repository credentials.
+
+updates:
+  # The CI supply chain. Highest value of the three: these actions execute in a
+  # workflow that holds `contents: write` (release_candidate.yml publishes
+  # releases), so a stale or compromised action matters more here than a stale
+  # library that only ever runs on-device.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # One PR for the routine bumps instead of six. Majors stay separate, since
+    # those are the ones that actually change behaviour and deserve a real read.
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "ci"
+    open-pull-requests-limit: 5
+
+  # Build/codegen scripts (scripts/gen_i18n.py, build_html.py, git_branch.py and
+  # the rest run on every `pio run`, locally and in CI).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 3
+
+  # freeink-sdk, pinned as a submodule. Left ungrouped and deliberately low
+  # volume: an SDK bump moves the display/input/storage layer under the whole
+  # firmware, so each one wants reading on its own and testing on hardware
+  # before it goes anywhere near a release branch.
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "sdk"
+    open-pull-requests-limit: 2
