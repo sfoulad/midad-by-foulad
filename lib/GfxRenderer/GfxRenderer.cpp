@@ -883,12 +883,24 @@ void GfxRenderer::drawCenteredText(const int fontId, const int y, const char* te
 
 int GfxRenderer::drawCenteredTextWrapped(const int fontId, const int y, const int maxWidth, const char* text,
                                          const int maxLines, const bool black, const EpdFontFamily::Style style) const {
+  return layoutCenteredTextWrapped(fontId, y, maxWidth, text, maxLines, black, style, /*draw=*/true);
+}
+
+int GfxRenderer::measureWrappedTextHeight(const int fontId, const int maxWidth, const char* text, const int maxLines,
+                                          const EpdFontFamily::Style style) const {
+  return layoutCenteredTextWrapped(fontId, /*y=*/0, maxWidth, text, maxLines, /*black=*/true, style, /*draw=*/false);
+}
+
+int GfxRenderer::layoutCenteredTextWrapped(const int fontId, const int y, const int maxWidth, const char* text,
+                                           const int maxLines, const bool black, const EpdFontFamily::Style style,
+                                           const bool draw) const {
   if (text == nullptr || *text == '\0' || maxWidth <= 0 || maxLines <= 0) return 0;
 
   const int lineHeight = getLineHeight(fontId);
   std::string_view remaining{text};
   // Reused across every line so a wrapped message costs one buffer, not one per row.
   std::string line;
+  // Counts laid-out rows, painted or not -- the measure path walks the same loop.
   int linesDrawn = 0;
 
   while (linesDrawn < maxLines) {
@@ -900,7 +912,7 @@ int GfxRenderer::drawCenteredTextWrapped(const int fontId, const int y, const in
     // or ellipsizes. Keeps "there is more text" visible rather than dropping it silently.
     if (linesDrawn == maxLines - 1) {
       line = truncatedText(fontId, std::string(remaining).c_str(), maxWidth, style);
-      drawCenteredText(fontId, y + linesDrawn * lineHeight, line.c_str(), black, style);
+      if (draw) drawCenteredText(fontId, y + linesDrawn * lineHeight, line.c_str(), black, style);
       return ++linesDrawn * lineHeight;
     }
 
@@ -926,7 +938,7 @@ int GfxRenderer::drawCenteredTextWrapped(const int fontId, const int y, const in
       line.assign(remaining.substr(0, bestEnd));
     }
 
-    drawCenteredText(fontId, y + linesDrawn * lineHeight, line.c_str(), black, style);
+    if (draw) drawCenteredText(fontId, y + linesDrawn * lineHeight, line.c_str(), black, style);
     ++linesDrawn;
     remaining.remove_prefix(bestEnd);
   }

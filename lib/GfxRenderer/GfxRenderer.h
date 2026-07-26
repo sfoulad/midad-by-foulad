@@ -138,6 +138,11 @@ class GfxRenderer {
   mutable int _stripRows = 0;
   mutable bool _stripActive = false;
 
+  // Shared implementation of drawCenteredTextWrapped() and measureWrappedTextHeight():
+  // one greedy word-wrap loop, with drawing switched off for the measuring caller, so the
+  // measured height and the drawn height cannot drift apart.
+  int layoutCenteredTextWrapped(int fontId, int y, int maxWidth, const char* text, int maxLines, bool black,
+                                EpdFontFamily::Style style, bool draw) const;
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
   // Arabic font to actually use for a caller-requested fontId: the specific
@@ -355,6 +360,14 @@ class GfxRenderer {
   /// always visible as "..." instead of silently vanishing.
   int drawCenteredTextWrapped(int fontId, int y, int maxWidth, const char* text, int maxLines, bool black = true,
                               EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  /// The height drawCenteredTextWrapped() would consume, without drawing anything. For
+  /// callers that must vertically center a wrapped block: the block's height is not known
+  /// until the wrap is computed, so the alternative is drawing it twice.
+  ///
+  /// Shares the wrap loop with the draw path, so the two can never disagree about where
+  /// the line breaks fall.
+  int measureWrappedTextHeight(int fontId, int maxWidth, const char* text, int maxLines,
+                               EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   /// kashidaExtraPx: extra width (already floored to a whole tatweel-glyph multiple by
   /// the caller) to insert via kashida when this call ends up on the Arabic path --
   /// see ParsedText::computeJustifyPlan. Ignored on the non-Arabic path; Latin
