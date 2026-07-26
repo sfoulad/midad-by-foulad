@@ -29,6 +29,7 @@
 #include "StatusBarSettingsActivity.h"
 #include "activities/apps/DictionaryActivity.h"
 #include "activities/browser/FouladEbooksSetupActivity.h"
+#include "activities/browser/FouladLogoutActivity.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -413,8 +414,12 @@ void SettingsActivity::toggleCurrentSetting() {
         silentRestartToFileTransfer();
         break;
       case SettingAction::FouladEbooksLogout: {
-        auto logoutHandler = [this](const ActivityResult& result) {
-          if (!result.isCancelled) {
+        // Two stages: confirm, then have the server actually drop this device. The
+        // credential is only cleared once the server says so -- previously this was
+        // local-only, so signing out left the unit listed under "My Devices" with a
+        // token that still authenticated.
+        auto removedHandler = [this](const ActivityResult& logoutResult) {
+          if (!logoutResult.isCancelled) {
             auto& servers = OPDS_STORE.getServers();
             for (size_t i = 0; i < servers.size(); i++) {
               if (servers[i].url == FOULAD_EBOOKS_URL) {
@@ -425,6 +430,28 @@ void SettingsActivity::toggleCurrentSetting() {
           }
           rebuildSettingsLists();
           selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+        };
+
+        auto logoutHandler = [this, removedHandler](const ActivityResult& result) {
+          if (result.isCancelled) {
+            rebuildSettingsLists();
+            selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
+            return;
+          }
+          // Credentials are read here rather than inside the activity so it stays a
+          // pure "remove this device" step with no knowledge of OpdsServerStore.
+          std::string username;
+          std::string password;
+          for (const auto& server : OPDS_STORE.getServers()) {
+            if (server.url == FOULAD_EBOOKS_URL) {
+              username = server.username;
+              password = server.password;
+              break;
+            }
+          }
+          startActivityForResult(
+              std::make_unique<FouladLogoutActivity>(renderer, mappedInput, std::move(username), std::move(password)),
+              removedHandler);
         };
         startActivityForResult(
             std::make_unique<ConfirmationActivity>(renderer, mappedInput, tr(STR_FOULAD_EBOOKS_LOGOUT_CONFIRM), ""),

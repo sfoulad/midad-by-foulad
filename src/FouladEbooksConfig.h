@@ -37,6 +37,16 @@ constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://foulad.one/api/fonts/c
 constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://foulad.one/api/device-login/start";
 constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://foulad.one/api/device-login/poll";
 
+// Foulad One's app JSON API, used by signing out to remove this device from the
+// account (see FouladDeviceLogout). Behind the SAME opds.auth Basic-Auth middleware
+// as the OPDS routes above, so the credential already stored for Foulad eBooks
+// authenticates here unchanged -- no separate login, and no new server endpoint was
+// needed for the device to remove itself.
+//
+// GET  <base>       -> this account's devices, each carrying id and serial_number
+// DELETE <base>/{id} -> remove one
+constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://foulad.one/api/app/devices";
+
 // The one host every URL above points at. Matched on the host rather than on a
 // URL prefix because the requests that must carry the device serial header are
 // spread across several path roots -- /opds/*, /books/{id}/download, /xtc, cover
