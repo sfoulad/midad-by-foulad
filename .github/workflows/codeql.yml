@@ -1,0 +1,78 @@
+name: CodeQL
+
+# Free on this repository because it is public. Targets the failure classes this
+# codebase is most exposed to on a 380KB-RAM ESP32-C3 -- use-after-free (an
+# activity deleted while its FreeRTOS task still runs), buffer overruns, and
+# uninitialised reads -- which cppcheck only partly covers.
+#
+# Deliberately NOT wired into ci.yml's `Test Status` aggregate, so it is not a
+# required check. Reason: the C/C++ extractor has to trace a riscv32-esp-elf
+# cross-compile, which is a less-travelled path than a host build. If that ever
+# breaks, this workflow should go red on its own without blocking merges. Promote
+# it to a required check only once it has proven stable over a few weeks.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+  schedule:
+    # Weekly, so newly published queries get run against code that has not
+    # changed -- the reason a scheduled CodeQL run exists at all.
+    - cron: '27 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze C/C++
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload the SARIF results to the Security tab.
+      security-events: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: false
+
+      - name: Install PlatformIO Core
+        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      # build-mode: manual is required here. Autobuild inspects the repo for a
+      # recognisable build system (make/cmake/configure) and finds none -- this
+      # project builds through PlatformIO, which then downloads and drives the
+      # ESP32 toolchain itself.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual
+
+      # The real firmware build, so the extractor observes exactly the
+      # translation units that ship -- same environment as ci.yml's build job.
+      - name: Build CrossPoint firmware
+        run: pio run -e default
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"
