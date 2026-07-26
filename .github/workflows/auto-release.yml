@@ -15,6 +15,10 @@ name: Auto Release Candidate
 # protection; instead the version is computed from tags and written into the
 # working tree for the build only.
 #
+# Opt-out: put the marker (see the `gate` job) in a commit *subject*. It is
+# matched against the subject line alone, deliberately -- see the note on that
+# job for why the body must not count.
+#
 # Scope: pre-releases only. Promoting one to a stable release stays deliberate --
 # it means pushing a plain vX.Y.Z tag, which release.yml already handles. That
 # boundary is intentional: an RC exists to be tested on hardware, and CI cannot
@@ -35,11 +39,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Separate job purely so the opt-out is judged on the commit *subject*.
+  # github.event.head_commit.message is the full message, so a `contains()` on it
+  # also matches the body -- which is not a hypothetical: the commit that
+  # introduced this workflow described the opt-out in its own body and thereby
+  # skipped its own first release. The marker has to stay a marker, so the check
+  # reads the subject line and nothing else.
+  gate:
+    name: Check for opt-out
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read commit subject
+        id: check
+        run: |
+          set -euo pipefail
+          SUBJECT=$(git log -1 --format=%s)
+          echo "Subject: $SUBJECT"
+          # -F: the marker contains regex metacharacters ([ and ]).
+          if printf '%s' "$SUBJECT" | grep -qF '[skip release]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Opt-out marker present in subject -- no RC will be published." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
     name: Build and publish RC
-    # `[skip release]` anywhere in the commit subject opts a change out, for
-    # doc-only or workflow-only pushes that do not warrant a firmware build.
-    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    needs: gate
+    if: ${{ needs.gate.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
