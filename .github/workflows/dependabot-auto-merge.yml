@@ -1,0 +1,51 @@
+name: Dependabot auto-merge
+
+# Dependabot opens the PR, CI proves it builds, and this merges it -- so routine
+# dependency traffic never needs a human. Branch protection still applies: the
+# merge is queued via GitHub's auto-merge and only completes once the required
+# `Test Status` check passes, so a bump that breaks the build stays open.
+#
+# Deliberately limited to minor and patch. A major bump changes behaviour by
+# definition and gets left for a person to read -- that is exactly the class of
+# change that should not land unattended on the branch releases are cut from.
+# The SDK submodule is excluded outright for the same reason, only stronger: it
+# moves the display/input/storage layer under the whole firmware and needs
+# testing on real hardware, which no CI job here can do.
+
+on: pull_request_target
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for minor and patch updates
+        if: >-
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+           steps.meta.outputs.update-type == 'version-update:semver-patch') &&
+          steps.meta.outputs.package-ecosystem != 'submodules'
+        run: gh pr merge --auto --rebase "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Explain why a major update was left alone
+        if: ${{ steps.meta.outputs.update-type == 'version-update:semver-major' }}
+        run: |
+          gh pr comment "$PR_URL" --body \
+            "Left for manual review: major version bump (\`${{ steps.meta.outputs.dependency-names }}\` to ${{ steps.meta.outputs.new-version }}). Auto-merge covers minor and patch only."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
