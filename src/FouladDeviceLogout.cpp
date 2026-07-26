@@ -10,13 +10,36 @@
 
 namespace {
 
-// The device list is the fattest response this firmware asks for: the server sends
-// every device with its full settings and reading-stats blobs (six devices on the
-// test account came to well over a KB each). Deserializing all of that on a 380KB
-// part to read two fields would be reckless, so ArduinoJson is given a filter and
-// keeps only id and serial_number -- everything else is skipped while streaming and
-// never allocated.
-constexpr size_t DEVICE_LIST_DOC_BYTES = 4096;
+// "Remove me", by serial. The only path a QR-paired device can use: the app API that
+// the fallback in removeThisDevice() calls sits behind RejectDeviceTokenAuth and
+// answers a device token 403, so for every QR install -- the primary sign-in path --
+// that fallback can never succeed.
+//
+// Returns Failed on a 404 so the caller can fall back, since a 404 here means the
+// endpoint is not deployed yet rather than "no such device". The two are told apart by
+// the caller: see removeThisDevice().
+FouladDeviceLogout::Result signOutViaDeviceEndpoint(const std::string& username, const std::string& password,
+                                                    const std::string& serial, int& outStatus) {
+  outStatus = 0;
+
+  JsonDocument requestDoc;
+  requestDoc["serial_number"] = serial;
+  std::string body;
+  serializeJson(requestDoc, body);
+
+  std::string response;
+  const auto err = HttpDownloader::postJson(FOULAD_EBOOKS_DEVICE_SIGNOUT_URL, body, username, password, response);
+  if (err == HttpDownloader::OK) {
+    LOG_INF("LOGOUT", "signed out via /opds/device/signout");
+    return FouladDeviceLogout::Result::Removed;
+  }
+
+  const auto failure = HttpDownloader::getLastFailure();
+  if (failure.stage == HttpDownloader::FailStage::STATUS) {
+    outStatus = failure.detail;
+  }
+  return FouladDeviceLogout::Result::Failed;
+}
 
 }  // namespace
 
@@ -31,6 +54,31 @@ FouladDeviceLogout::Result FouladDeviceLogout::removeThisDevice(const std::strin
     return Result::Failed;
   }
 
+  const std::string ownSerial = FouladDeviceTracking::getSerialNumber();
+
+  // Preferred path. Tried first because it is the only one a device token can use.
+  int status = 0;
+  if (signOutViaDeviceEndpoint(username, password, ownSerial, status) == Result::Removed) {
+    return Result::Removed;
+  }
+  if (status == 404) {
+    // Two different 404s share this status: the endpoint not being deployed yet, and the
+    // device already being absent. Falling back distinguishes them without guessing --
+    // the list below will simply not contain this serial in the second case, which the
+    // caller already treats as success.
+    LOG_DBG("LOGOUT", "signout endpoint unavailable; falling back to the app API");
+  } else if (status != 0) {
+    // A real refusal (401 bad credential, 403 serial mismatch). The fallback authenticates
+    // identically, so retrying it would only repeat the rejection.
+    LOG_ERR("LOGOUT", "signout refused with status %d", status);
+    return Result::Failed;
+  } else {
+    LOG_ERR("LOGOUT", "signout transport failure");
+    return Result::Failed;
+  }
+
+  // FALLBACK -- removable once every install is past the release that added the endpoint
+  // above. Only reachable for account-password logins; a device token gets 403 here.
   std::string response;
   if (!HttpDownloader::fetchUrl(FOULAD_EBOOKS_APP_DEVICES_URL, response, username, password)) {
     const auto failure = HttpDownloader::getLastFailure();
@@ -53,10 +101,9 @@ FouladDeviceLogout::Result FouladDeviceLogout::removeThisDevice(const std::strin
   response.clear();
   response.shrink_to_fit();
 
-  const std::string serial = FouladDeviceTracking::getSerialNumber();
   long deviceId = -1;
   for (JsonObject device : doc["data"].as<JsonArray>()) {
-    if (serial == device["serial_number"].as<std::string>()) {
+    if (ownSerial == device["serial_number"].as<std::string>()) {
       deviceId = device["id"] | -1L;
       break;
     }
@@ -65,7 +112,7 @@ FouladDeviceLogout::Result FouladDeviceLogout::removeThisDevice(const std::strin
   if (deviceId < 0) {
     // Already removed elsewhere (phone app, web). The end state the caller wants
     // already holds, so this is success, not an error.
-    LOG_INF("LOGOUT", "serial %s not listed on the account; nothing to remove", serial.c_str());
+    LOG_INF("LOGOUT", "serial %s not listed on the account; nothing to remove", ownSerial.c_str());
     return Result::NotFound;
   }
 
@@ -73,7 +120,7 @@ FouladDeviceLogout::Result FouladDeviceLogout::removeThisDevice(const std::strin
   snprintf(url, sizeof(url), "%s/%ld", FOULAD_EBOOKS_APP_DEVICES_URL, deviceId);
 
   if (HttpDownloader::deleteRequest(url, username, password, response) == HttpDownloader::OK) {
-    LOG_INF("LOGOUT", "device %ld (%s) removed from the account", deviceId, serial.c_str());
+    LOG_INF("LOGOUT", "device %ld (%s) removed from the account", deviceId, ownSerial.c_str());
     return Result::Removed;
   }
 

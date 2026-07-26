@@ -37,6 +37,14 @@ constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://foulad.one/api/fonts/c
 constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://foulad.one/api/device-login/start";
 constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://foulad.one/api/device-login/poll";
 
+// Device-facing sign-out: "remove me", identified by this device's own serial.
+// On the OPDS surface rather than the app API below, because that one sits behind
+// RejectDeviceTokenAuth and answers a QR-issued device token 403 -- deliberately, since
+// it can delete any device, change settings and manage fonts. Removing only itself is a
+// far narrower capability, so a token may reach this. Contract:
+// docs/ebooks-device-signout-endpoint.md.
+constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://foulad.one/opds/device/signout";
+
 // Foulad One's app JSON API, used by signing out to remove this device from the
 // account (see FouladDeviceLogout). Behind the SAME opds.auth Basic-Auth middleware
 // as the OPDS routes above, so the credential already stored for Foulad eBooks
