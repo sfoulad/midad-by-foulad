@@ -44,8 +44,10 @@ void WifiSelectionActivity::onEnter() {
            mac[3], mac[4], mac[5]);
   cachedMacAddress = std::string(macStr);
 
-  // Trigger first update to show scanning message
-  requestUpdate();
+  // No requestUpdate() here: it only sets a flag that ActivityManager::loop() acts on
+  // after onEnter() returns, so the paint landed *after* whichever blocking radio path
+  // below ran, not before it. Both attemptConnection() and startWifiScan() now paint
+  // their own screen ahead of their blocking work instead.
 
   // Attempt to auto-connect to the last network
   if (allowAutoConnect) {
@@ -59,8 +61,7 @@ void WifiSelectionActivity::onEnter() {
         selectedRequiresPassword = !cred->password.empty();
         usedSavedPassword = true;
         autoConnecting = true;
-        attemptConnection();
-        requestUpdate();
+        attemptConnection();  // paints "Connecting to <ssid>" itself, before the radio work
         return;
       }
     }
@@ -91,7 +92,11 @@ void WifiSelectionActivity::startWifiScan() {
   autoConnecting = false;
   state = WifiSelectionState::SCANNING;
   networks.clear();
-  requestUpdate();
+  // Blocking paint, not requestUpdate(): everything below stalls the calling task for
+  // roughly a second (WiFi stack bring-up on a cold radio, plus the explicit delay), and
+  // a deferred update wouldn't reach the panel until after that, leaving the previous
+  // screen up with no sign the scan had started.
+  requestUpdateAndWait();
 
   // Set WiFi mode to station
   WiFi.mode(WIFI_STA);
@@ -209,7 +214,13 @@ void WifiSelectionActivity::attemptConnection() {
   connectionStartTime = millis();
   connectedIP.clear();
   connectionError.clear();
-  requestUpdate();
+  // Paint "Connecting to <ssid>" before the radio work below, not after. requestUpdate()
+  // only sets a flag consumed once ActivityManager::loop() regains control, so with
+  // WiFi.mode() + disconnect + delay(100) + WiFi.begin() in between, the panel kept
+  // showing the previous screen for the whole bring-up. Worst on the OTA path, where
+  // this is the first paint after a reboot and the user has already been staring at a
+  // static frame since pressing the menu item.
+  requestUpdateAndWait();
 
   WiFi.persistent(false);  // Credentials are managed by WifiCredentialStore; suppress SDK NVS auto-connect
   WiFi.mode(WIFI_STA);

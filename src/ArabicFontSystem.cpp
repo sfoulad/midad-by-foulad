@@ -92,6 +92,17 @@ void ArabicFontSystem::begin(GfxRenderer& renderer) {
   LOG_DBG("ARFS", "Arabic font system ready (%d families discovered)", registry_.getFamilyCount());
 }
 
+void ArabicFontSystem::beginUiOnly(GfxRenderer& renderer) {
+  // Built-in reading font as the fallthrough default, exactly as ensureLoaded's
+  // no-SD-override branch does -- an SD override can't be honoured without the
+  // registry scan this path exists to avoid, and nothing on an OTA boot draws
+  // reading text anyway. The UI tiers (SMALL/UI_10/UI_12 -> Tajawal) are the part
+  // that matters here: without them an Arabic-language interface renders no glyphs.
+  applyArabicMappings(renderer,
+                      resolveBuiltinReadingFontId(SETTINGS.effArabicFontFamily(), SETTINGS.effArabicFontSize()));
+  LOG_DBG("ARFS", "Arabic UI mappings applied (SD registry scan skipped)");
+}
+
 void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
   if (registryDirty_) {
     registryDirty_ = false;
