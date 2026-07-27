@@ -23,6 +23,13 @@ class ArabicFontSystem {
   /// Call once during setup.
   void begin(GfxRenderer& renderer);
 
+  /// Apply only the built-in Arabic UI mappings (the 8/10/12pt tiers plus a built-in
+  /// reading default), skipping the SD-card registry scan and any SD family load.
+  /// For boot paths that only ever paint firmware UI and then reboot -- the OTA
+  /// screens -- where the reading font can never be used but Arabic UI text still
+  /// has to render. Not a substitute for begin() on any path that reaches the reader.
+  void beginUiOnly(GfxRenderer& renderer);
+
   /// Re-apply after CrossPointSettings::sdArabicFontFamilyName changes (e.g. from the
   /// Settings UI) or the SD font registry changes.
   void ensureLoaded(GfxRenderer& renderer);

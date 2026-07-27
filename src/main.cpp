@@ -277,7 +277,11 @@ void silentRestartToOtaCheck() {
   silentRebootTarget = SILENT_REBOOT_TARGET_OTA_CHECK;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=ota_check)");
-  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  // Names the operation rather than showing the generic "Loading" popup: this frame is
+  // what the panel retains for the whole reboot + WiFi + GitHub TLS wait, which is by
+  // far the longest of the silent-restart targets. "Loading" for that long reads as a
+  // hang; "Checking for update..." reads as progress.
+  GUI.drawPopup(renderer, tr(STR_CHECKING_UPDATE));
   delay(50);
   ESP.restart();
 }
@@ -456,7 +460,12 @@ void enterDeepSleep(bool fromTimeout = false) {
   powerManager.startDeepSleep(gpio);
 }
 
-void setupDisplayAndFonts(bool seamless = false) {
+// uiOnlyFonts: skip the SD-card reading-font discovery and the Quran self-heal, keeping
+// only what firmware UI needs to paint. For boot paths whose target activity can never
+// show book text and always ends in another reboot (the OTA screens) -- see setup()'s
+// otaBoot. Everything skipped here is reachable on demand later (ensureLoaded /
+// ensureExtracted), so this is a latency trade, not a functional one.
+void setupDisplayAndFonts(bool seamless = false, bool uiOnlyFonts = false) {
   display.begin(seamless);
   renderer.begin();
   activityManager.begin();
@@ -503,6 +512,15 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(TAJAWAL_18_FONT_ID, tajawal18FontFamily);
   renderer.insertFont(QURANCOMMON_18_FONT_ID, quranCommon18FontFamily);
   renderer.insertFont(SURAHBANNER_24_FONT_ID, surahBanner24FontFamily);
+
+  if (uiOnlyFonts) {
+    // Two SD directory walks (Latin + Arabic font roots) and a Quran integrity check
+    // stand between the reboot and the first OTA paint, for fonts that screen cannot
+    // draw. Arabic UI text still needs its mappings, so that much is kept.
+    arabicFontSystem.beginUiOnly(renderer);
+    LOG_DBG("MAIN", "UI-only font setup (SD font discovery and Quran self-heal skipped)");
+    return;
+  }
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);
@@ -632,7 +650,18 @@ void setup() {
                             : !APP_STATE.showBootScreen ? BootResume::QuickResume
                                                         : BootResume::Splash;
 
-  setupDisplayAndFonts(resume != BootResume::Splash);
+  // The OTA boot targets only ever paint the update screen and then restart again --
+  // every exit path out of OtaUpdateActivity ends in a reboot (success restarts into
+  // the new firmware, back-out goes through onExit's silentRestart) -- so no reader
+  // font loaded on this boot could ever be used. Skip that work to shorten the wait
+  // between pressing "Check for updates" and the first OTA paint. Guarded on the two
+  // routing conditions checked ahead of the OTA branch below, so a panic reboot or a
+  // recovery-mode boot that happens to carry an OTA target still gets full fonts.
+  const bool otaBoot =
+      resume == BootResume::Silent && !recoveryFirmwareMode && !HalSystem::isRebootFromPanic() &&
+      (snapshotTarget == SILENT_REBOOT_TARGET_OTA_CHECK || snapshotTarget == SILENT_REBOOT_TARGET_OTA_INSTALL);
+
+  setupDisplayAndFonts(resume != BootResume::Splash, otaBoot);
 
   switch (resume) {
     case BootResume::Silent:
