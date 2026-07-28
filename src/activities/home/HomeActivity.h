@@ -35,17 +35,17 @@ class HomeActivity final : public Activity {
   const HomeMenuItem initialMenuItem;
 
   // Convert HomeMenuItem to menu index (used in onEnter). Order matches render()'s
-  // menuItems construction: Foulad eBooks, Recent Books, Check for Update, Settings
-  // ("Continue Reading" isn't a HomeMenuItem -- it's a prepended label tied to the
-  // recentBooks selection range, handled separately in loop()).
+  // menuItems construction: eBooks, Stats, Files, Settings ("Continue Reading" isn't
+  // a HomeMenuItem -- it's a prepended label tied to the recentBooks selection range,
+  // handled separately in loop()). Every slot is one fixed destination; the pair that
+  // used to swap on Foulad eBooks login state no longer does.
   static int menuItemToIndex(HomeMenuItem item) {
     int i = 0;
-    // Slot 0 shows eBooks (logged in) or Files (logged out) -- same index.
-    if (item == HomeMenuItem::FOULAD_EBOOKS || item == HomeMenuItem::FILE_BROWSER) return i;
+    if (item == HomeMenuItem::FOULAD_EBOOKS) return i;
     ++i;
     if (item == HomeMenuItem::STATS) return i;
     ++i;
-    if (item == HomeMenuItem::CHECK_UPDATE) return i;
+    if (item == HomeMenuItem::FILE_BROWSER) return i;
     ++i;
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
     return 0;
@@ -56,7 +56,7 @@ class HomeActivity final : public Activity {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FOULAD_EBOOKS;
     if (idx == i++) return HomeMenuItem::STATS;
-    if (idx == i++) return HomeMenuItem::CHECK_UPDATE;
+    if (idx == i++) return HomeMenuItem::FILE_BROWSER;
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
   }
@@ -65,7 +65,6 @@ class HomeActivity final : public Activity {
   void onStatsOpen();
   void onSettingsOpen();
   void onFouladEbooksOpen();
-  void onCheckUpdateOpen();
 
   int getMenuItemCount() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image

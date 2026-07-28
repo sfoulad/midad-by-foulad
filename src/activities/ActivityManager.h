@@ -17,8 +17,8 @@
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
 
-// FILE_BROWSER/FILE_TRANSFER are kept for source compatibility with any saved/serialized
-// state, but Home no longer renders or navigates to them directly (moved under Settings ->
+// FILE_TRANSFER and CHECK_UPDATE are kept for source compatibility with any saved/serialized
+// state, but Home no longer renders or navigates to them directly (both live under Settings ->
 // System); see HomeActivity's menuItemToIndex/indexToMenuItem.
 enum class HomeMenuItem {
   NONE,
