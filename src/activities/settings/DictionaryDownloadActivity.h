@@ -10,7 +10,7 @@
 // font store: plain http (see src/FouladEbooksConfig.h), version=1 schema,
 // per-file crc32 verification. Overridable for local testing.
 #ifndef FOULAD_DICTS_CATALOG_URL
-#define FOULAD_DICTS_CATALOG_URL "http://foulad.one/api/dicts/catalog"
+#define FOULAD_DICTS_CATALOG_URL "http://midad.one/api/dicts/catalog"
 #endif
 
 // Download store for StarDict dictionaries, modeled on FontDownloadActivity:

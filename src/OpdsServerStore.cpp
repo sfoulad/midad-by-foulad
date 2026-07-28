@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "FouladEbooksConfig.h"
+
 void OpdsServerStore::toJson(JsonDocument& doc) const {
   JsonArray arr = doc["servers"].to<JsonArray>();
   for (const auto& server : servers) {
@@ -38,6 +40,30 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
     // Absent on every file written before QR sign-in existed, which is exactly
     // right: those credentials are typed account passwords.
     server.isDeviceToken = obj["is_device_token"] | false;
+
+    // Midad rename migration. A device paired before the rename holds
+    // "http://foulad.one/opds" here, and this stored entry -- not the constant --
+    // is what every request uses, so without rewriting it the device would keep
+    // talking to the old host indefinitely. Worse, ActivityManager::goToFouladEbooks()
+    // decides "is this account set up?" by comparing this URL against
+    // FOULAD_EBOOKS_URL: left alone, the comparison fails after the rename and the
+    // device concludes it is signed out, throwing the user at a QR screen despite a
+    // perfectly good credential.
+    //
+    // Host swap only. The credential, its is_device_token flag and the account
+    // itself are untouched and stay valid -- the server is the same server under a
+    // new name. needsResave persists it, so this runs once, not on every boot.
+    if (!server.url.empty() && server.url.find(FOULAD_EBOOKS_LEGACY_HOST) != std::string::npos &&
+        isFouladEbooksUrl(server.url)) {
+      const size_t hostPos = server.url.find(FOULAD_EBOOKS_LEGACY_HOST);
+      server.url.replace(hostPos, std::strlen(FOULAD_EBOOKS_LEGACY_HOST), FOULAD_EBOOKS_HOST);
+      // The display name was "Foulad eBooks" on those entries; bring it along so the
+      // server list doesn't show the old brand next to a migrated URL.
+      server.name = FOULAD_EBOOKS_NAME;
+      needsResave = true;
+      LOG_INF("OPS", "Migrated stored catalog URL to %s", server.url.c_str());
+    }
+
     servers.push_back(std::move(server));
   }
 
