@@ -179,19 +179,39 @@ void OtaUpdateActivity::render(RenderLock&&) {
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == FAILED) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATE_FAILED), true, EpdFontFamily::BOLD);
+    // A 403 on the version check is GitHub's rate limit, essentially always: the API
+    // allows 60 unauthenticated requests an hour per public IP, shared with every
+    // other device and tool behind it. Worth naming, because it is the one failure
+    // here that is neither the device's fault nor fixed by retrying immediately --
+    // "code 2 heap 79608" sent a user hunting a memory bug that wasn't there. The
+    // conditional request in OtaUpdater::checkForUpdate should make reaching this
+    // rare; it cannot help once the budget is already spent.
+    const bool rateLimited =
+        failureHttpStage == static_cast<uint8_t>(HttpDownloader::FailStage::STATUS) && failureHttpDetail == 403;
+
+    int diagY = top + height + metrics.verticalSpacing;
+    if (rateLimited) {
+      // Wrapped, not single-line: it's a full sentence and overruns the panel at this
+      // width, and drawCenteredText would clip it at both ends (same reasoning as
+      // FouladQrLoginActivity's messages). Push the codes below however tall it lands.
+      diagY += renderer.drawCenteredTextWrapped(UI_10_FONT_ID, diagY, pageWidth - metrics.contentSidePadding * 2,
+                                                tr(STR_UPDATE_RATE_LIMITED), /*maxLines=*/3) +
+               metrics.verticalSpacing;
+    }
+
     // Diagnostic lines: error code + heap at failure, plus (when the failure came
     // from the HTTP version-check) which network stage failed and its detail code.
     // Not prose, so not translated; lets a failure be diagnosed without a USB
-    // serial capture.
+    // serial capture. Kept even when the friendly message above explains the cause --
+    // it is what gets read back over chat when a report comes in.
     char diag[64];
     snprintf(diag, sizeof(diag), "code %d  heap %u  block %u", lastErrorCode, static_cast<unsigned>(failureFreeHeap),
              static_cast<unsigned>(failureMaxBlock));
-    renderer.drawCenteredText(SMALL_FONT_ID, top + height + metrics.verticalSpacing, diag);
+    renderer.drawCenteredText(SMALL_FONT_ID, diagY, diag);
     if (failureHttpStage != 0) {
       char httpDiag[32];
       snprintf(httpDiag, sizeof(httpDiag), "http %u:%d", failureHttpStage, failureHttpDetail);
-      renderer.drawCenteredText(
-          SMALL_FONT_ID, top + height + metrics.verticalSpacing + renderer.getLineHeight(SMALL_FONT_ID) + 2, httpDiag);
+      renderer.drawCenteredText(SMALL_FONT_ID, diagY + renderer.getLineHeight(SMALL_FONT_ID) + 2, httpDiag);
     }
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

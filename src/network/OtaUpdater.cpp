@@ -14,8 +14,10 @@
 #include <esp_wifi.h>
 // clang-format on
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "CrossPointSettings.h"
 
@@ -32,6 +34,71 @@ constexpr char allReleasesUrl[] = "https://api.github.com/repos/sfoulad/foulad-e
 esp_err_t http_client_set_header_cb(esp_http_client_handle_t http_client) {
   return esp_http_client_set_header(http_client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 }
+
+// Survives the reboot the OTA flow performs on the way in (silentRestartToOtaCheck),
+// which rules out keeping any of this in RAM. Four lines: ETag, then the release the
+// ETag was read alongside, so a 304 can be answered without the body.
+constexpr char checkCachePath[] = "/.crosspoint/ota_check.txt";
+// Bumped if the line layout below changes; a mismatch just discards the cache and
+// costs one ordinary conditional-less fetch.
+constexpr char checkCacheVersion[] = "1";
+
+struct CheckCache {
+  std::string etag;
+  std::string tag;
+  std::string url;
+  size_t size = 0;
+  bool usable() const { return !etag.empty() && !tag.empty() && !url.empty(); }
+};
+
+CheckCache loadCheckCache(bool prerelease) {
+  CheckCache cache;
+  const String raw = Storage.readFile(checkCachePath);
+  if (raw.isEmpty()) return cache;
+
+  // version / channel / etag / tag / url / size, one per line.
+  std::string text(raw.c_str());
+  std::vector<std::string> lines;
+  size_t start = 0;
+  while (lines.size() < 6) {
+    const size_t nl = text.find('\n', start);
+    lines.push_back(text.substr(start, nl == std::string::npos ? std::string::npos : nl - start));
+    if (nl == std::string::npos) break;
+    start = nl + 1;
+  }
+  if (lines.size() < 6 || lines[0] != checkCacheVersion) return cache;
+  // The two channels return different documents from different URLs, so an ETag
+  // from one is meaningless against the other. Toggling Pre-release discards it.
+  if (lines[1] != (prerelease ? "pre" : "stable")) return cache;
+
+  cache.etag = lines[2];
+  cache.tag = lines[3];
+  cache.url = lines[4];
+  cache.size = static_cast<size_t>(strtoul(lines[5].c_str(), nullptr, 10));
+  return cache;
+}
+
+void saveCheckCache(bool prerelease, const std::string& etag, const std::string& tag, const std::string& url,
+                    size_t size) {
+  if (etag.empty()) return;  // nothing to condition on next time; don't write a half-cache
+  String out;
+  out += checkCacheVersion;
+  out += "\n";
+  out += prerelease ? "pre" : "stable";
+  out += "\n";
+  out += etag.c_str();
+  out += "\n";
+  out += tag.c_str();
+  out += "\n";
+  out += url.c_str();
+  out += "\n";
+  out += String(static_cast<uint32_t>(size));
+  out += "\n";
+  Storage.mkdir("/.crosspoint");
+  if (!Storage.writeFile(checkCachePath, out)) {
+    LOG_ERR("OTA", "Failed to write release check cache");
+  }
+}
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
@@ -47,14 +114,38 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   // the TLS session's heap during the fetch; with -fno-exceptions an OOM there
   // aborts. fetchUrl handles the verified-https GET, redirects, and User-Agent
   // (see HttpDownloader).
+  // Conditional GET. Unauthenticated GitHub API calls share a 60-per-hour budget
+  // with every other device and tool behind the same public IP, and exhausting it
+  // answers 403 -- reported from the field as "Update failed ... http 5:403",
+  // intermittent because the window resets hourly. A 304 does not count against
+  // that budget, so an unchanged release list makes repeat checks effectively free.
+  // Only condition when the cache can actually answer a 304 (see usable()),
+  // otherwise a 304 would leave nothing to report.
+  const CheckCache cache = loadCheckCache(prerelease);
+  HttpDownloader::ConditionalGet conditional;
+  if (cache.usable()) conditional.ifNoneMatch = cache.etag;
+
   ReleaseJsonParser releaseParser;
-  const bool ok = HttpDownloader::fetchUrl(url, [&releaseParser](const uint8_t* data, size_t len) {
-    releaseParser.feed(reinterpret_cast<const char*>(data), len);
-    return true;
-  });
+  const bool ok = HttpDownloader::fetchUrl(
+      url,
+      [&releaseParser](const uint8_t* data, size_t len) {
+        releaseParser.feed(reinterpret_cast<const char*>(data), len);
+        return true;
+      },
+      conditional);
   if (!ok) {
     LOG_ERR("OTA", "Release check fetch failed");
     return HTTP_ERROR;
+  }
+
+  if (conditional.notModified) {
+    LOG_DBG("OTA", "Release list unchanged (304), using cached result: tag=%s", cache.tag.c_str());
+    latestVersion = cache.tag;
+    otaUrl = cache.url;
+    otaSize = cache.size;
+    totalSize = otaSize;
+    updateAvailable = true;
+    return OK;
   }
 
   LOG_DBG("OTA", "Parser results: tag=%s firmware=%s", releaseParser.foundTag() ? "yes" : "no",
@@ -75,6 +166,10 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   otaSize = releaseParser.getFirmwareSize();
   totalSize = otaSize;
   updateAvailable = true;
+
+  // Store alongside the ETag so the next check can be conditional. Written only on
+  // a fully parsed response, so the cache never describes a release we couldn't read.
+  saveCheckCache(prerelease, conditional.etag, latestVersion, otaUrl, otaSize);
 
   LOG_DBG("OTA", "Found update: tag=%s size=%zu", latestVersion.c_str(), otaSize);
   LOG_DBG("OTA", "Firmware URL: %s", otaUrl.c_str());
