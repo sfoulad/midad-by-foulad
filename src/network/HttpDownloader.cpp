@@ -8,6 +8,7 @@
 #include <esp_http_client.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
+#include <strings.h>  // strcasecmp, for the case-insensitive response-header match
 
 #include <algorithm>
 #include <cstring>
@@ -152,8 +153,23 @@ struct WifiPowerSaveGuard {
 // the headroom to safely absorb that. Removed rather than risk another freeze; hosts
 // whose certificate chain the default bundle can't resolve will fail cleanly with
 // ESP_ERR_HTTP_CONNECT instead, same as unmodified upstream crosspoint-reader.
+// Response headers are only reachable through the event stream --
+// esp_http_client_get_header() reads back a REQUEST header, not the server's reply
+// (see its own doc comment in esp_http_client.h). Fires once per header line;
+// header_key is compared case-insensitively because the field name is not
+// case-sensitive and GitHub's is "ETag" while a CDN in front of it may differ.
+esp_err_t captureResponseEtag(esp_http_client_event_t* evt) {
+  if (evt->event_id != HTTP_EVENT_ON_HEADER || !evt->user_data) return ESP_OK;
+  if (!evt->header_key || !evt->header_value) return ESP_OK;
+  if (strcasecmp(evt->header_key, "ETag") != 0) return ESP_OK;
+  // Last one wins: a redirect hop reopens the client and replays its own headers,
+  // so the final response's ETag is the one still standing when runGet returns.
+  static_cast<HttpDownloader::ConditionalGet*>(evt->user_data)->etag = evt->header_value;
+  return ESP_OK;
+}
+
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
-                                     Sink& sink) {
+                                     Sink& sink, HttpDownloader::ConditionalGet* conditional = nullptr) {
   setLastFailure(HttpDownloader::FailStage::NONE, 0);
   WifiPowerSaveGuard psGuard;
 
@@ -185,6 +201,10 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // only because Arduino's ssl_client drives mbedtls directly.
   config.crt_bundle_attach = esp_crt_bundle_attach;
   config.keep_alive_enable = true;
+  if (conditional) {
+    config.event_handler = captureResponseEtag;
+    config.user_data = conditional;
+  }
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (!client) {
@@ -197,6 +217,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // Set on the handle, so it survives the manual redirect hops below (which
   // reopen the same client rather than building a new one).
   setDeviceSerialHeader(client, url);
+  if (conditional && !conditional->ifNoneMatch.empty()) {
+    esp_http_client_set_header(client, "If-None-Match", conditional->ifNoneMatch.c_str());
+  }
   if (!username.empty() && !password.empty()) {
     // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
     const std::string credentials = username + ":" + password;
@@ -236,6 +259,16 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     }
     contentLength = esp_http_client_fetch_headers(client);
     status = esp_http_client_get_status_code(client);
+  }
+
+  // 304 is a success, not a failure: the caller asked "has this changed?" and got a
+  // definitive no. There is no body to read, so return before the read loop and let
+  // the caller fall back to whatever it cached alongside the ETag.
+  if (conditional && status == 304) {
+    conditional->notModified = true;
+    LOG_DBG("HTTP", "304 Not Modified (cached copy still current)");
+    esp_http_client_cleanup(client);
+    return HttpDownloader::OK;
   }
 
   if (status != 200) {
@@ -723,6 +756,16 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
   Sink sink;
   sink.write = onData;
   return runGet(url, username, password, sink) == OK;
+}
+
+bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
+                              const std::string& username, const std::string& password) {
+  LOG_DBG("HTTP", "Fetching (conditional): %s", url.c_str());
+  conditional.notModified = false;
+  conditional.etag.clear();
+  Sink sink;
+  sink.write = onData;
+  return runGet(url, username, password, sink, &conditional) == OK;
 }
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,

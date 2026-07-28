@@ -49,6 +49,26 @@ class HttpDownloader {
   // immediately after that call returned an error.
   static LastFailure getLastFailure();
 
+  // Conditional-GET state, for a caller that re-fetches the same URL repeatedly and
+  // usually gets the same bytes back. Pass the ETag stored from last time in
+  // ifNoneMatch; if the resource is unchanged the server answers 304 and sends no
+  // body, so onData is never called and notModified comes back true -- the caller
+  // must then serve its own cached copy of whatever it parsed before.
+  //
+  // The point is not bandwidth. GitHub's REST API allows 60 requests per hour per
+  // IP unauthenticated, and documents 304 responses as NOT counting against that
+  // budget, so this is what keeps a device (and everything else behind the same
+  // public IP) from being rate-limited into a 403 by ordinary update checks --
+  // see OtaUpdater::checkForUpdate.
+  struct ConditionalGet {
+    std::string ifNoneMatch;   // in: ETag from the previous successful fetch, or empty to skip
+    std::string etag;          // out: ETag of this response, empty if the server sent none
+    bool notModified = false;  // out: server answered 304, no body was delivered
+  };
+
+  static bool fetchUrl(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
+                       const std::string& username = "", const std::string& password = "");
+
   /**
    * Fetch text content from a URL with optional credentials.
    */
