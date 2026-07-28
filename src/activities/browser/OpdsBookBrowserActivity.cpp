@@ -138,7 +138,7 @@ void OpdsBookBrowserActivity::onExit() {
     } else {
       // NOT silentRestartToFouladEbooks() here even when server.url ==
       // FOULAD_EBOOKS_URL: that call is how Foulad eBooks is *entered* (see
-      // HomeActivity::onFouladEbooksOpen(), FouladEbooksSetupActivity) --
+      // HomeActivity::onFouladEbooksOpen(), FouladQrLoginActivity) --
       // calling it from this activity's own onExit() rebooted straight back
       // into itself, so pressing Back to leave (no download in flight)
       // reconnected WiFi and relaunched the same browser with no way out.

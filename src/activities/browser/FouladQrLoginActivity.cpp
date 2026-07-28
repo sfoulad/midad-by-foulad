@@ -26,10 +26,12 @@ void FouladQrLoginActivity::onExit() { Activity::onExit(); }
 
 void FouladQrLoginActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
-    // No WiFi means no QR sign-in at all, but typing a password still works
-    // offline (it's only stored, not verified), so send the user there rather
-    // than dead-ending them.
-    finishWithManualRequest();
+    // QR sign-in is the only way in now, and it needs the network end to end --
+    // start the session, then poll until the phone approves it. Without WiFi
+    // there is nothing to fall back to, so say so on the failure screen rather
+    // than closing silently and leaving the user wondering what happened.
+    state = State::Failed;
+    requestUpdate();
     return;
   }
   state = State::Starting;
@@ -52,13 +54,6 @@ void FouladQrLoginActivity::beginSession() {
   consecutivePollErrors = 0;
   state = State::ShowingQr;
   requestUpdate();
-}
-
-void FouladQrLoginActivity::finishWithManualRequest() {
-  MenuResult menu;
-  menu.action = ACTION_MANUAL_LOGIN;
-  setResult(ActivityResult{std::move(menu)});
-  finish();
 }
 
 void FouladQrLoginActivity::pollOnce() {

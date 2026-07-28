@@ -13,7 +13,7 @@
 #include "apps/GymActivity.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
-#include "browser/FouladEbooksSetupActivity.h"
+#include "browser/FouladQrLoginActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
@@ -225,7 +225,7 @@ void ActivityManager::goToFouladEbooks() {
     return;
   }
   // First time on this device — collect username/password before browsing.
-  replaceActivity(std::make_unique<FouladEbooksSetupActivity>(renderer, mappedInput));
+  replaceActivity(std::make_unique<FouladQrLoginActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToReader(std::string path) {

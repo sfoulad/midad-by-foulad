@@ -3,7 +3,7 @@
 #include <string_view>
 
 // Non-secret catalog identity for the built-in "Foulad eBooks" home menu entry.
-// Username/password are entered on-device on first use (FouladEbooksSetupActivity)
+// Credentials are issued by QR sign-in on first use (FouladQrLoginActivity)
 // and stored via OpdsServerStore — never hardcoded here, since this repo is public.
 constexpr char FOULAD_EBOOKS_NAME[] = "Midad";
 // Temporarily http:// (was https://), during beta only: Let's Encrypt rotated
