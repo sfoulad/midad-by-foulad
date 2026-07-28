@@ -317,7 +317,7 @@ class CrossPointSettings {
   // (see GAMES_PSEUDO_PATH in RecentBooksActivity.cpp) that opens a picker for
   // the built-in Snake/Tetris activities. No SD extraction needed (unlike
   // Quran) -- the games are compiled into the firmware directly.
-  uint8_t gamesEnabled = 0;
+  uint8_t gamesEnabled = 1;
 
   // Settings -> Apps -> Tasbih: pins a synthetic "Tasbih" tile in My Books
   // (see TASBIH_PSEUDO_PATH in RecentBooksActivity.cpp), between Quran and
@@ -336,11 +336,9 @@ class CrossPointSettings {
   // StopwatchActivity with its Pomodoro mode preselected -- one activity, two
   // modes, so the timing and render scaffolding isn't duplicated.
   //
-  // Defaults ON, unlike every other app tile. Those default off to keep the My
-  // Books grid from filling itself; this one is exempt because a countdown timer
-  // is worthless if you can't find it, and a tile hidden behind a setting is
-  // exactly how the first attempt at this feature went unnoticed.
-  uint8_t pomodoroEnabled = 1;
+  // Off by default, like every app tile except Games -- a fresh device shows only
+  // Games in My Books, and anything else is opt-in from Settings -> Apps.
+  uint8_t pomodoroEnabled = 0;
 
   // Phase lengths in minutes. Read live at each phase change rather than cached
   // when the app opens, so an edit mid-cycle applies at the next phase instead
