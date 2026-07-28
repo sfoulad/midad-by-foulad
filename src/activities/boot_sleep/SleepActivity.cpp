@@ -25,7 +25,7 @@
 #include "components/UITheme.h"
 #include "components/icons/cover.h"
 #include "fontIds.h"
-#include "images/Logo120.h"
+#include "images/MidadLogo120.h"
 #include "images/MoonIcon.h"
 #include "reading/ReadingStatsStore.h"
 
@@ -250,8 +250,8 @@ void SleepActivity::renderDefaultSleepScreen() const {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  renderer.drawImage(Logo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
-  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
+  renderer.drawImage(MidadLogo120, (pageWidth - 120) / 2, (pageHeight - 120) / 2, 120, 120);
+  renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2 + 70, tr(STR_BRAND_MIDAD), true, EpdFontFamily::BOLD);
   renderer.drawCenteredText(SMALL_FONT_ID, pageHeight / 2 + 95, tr(STR_SLEEPING));
 
   // Make sleep screen dark unless light is selected in settings
