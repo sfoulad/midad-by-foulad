@@ -28,8 +28,8 @@
 #include "SilentRestart.h"
 #include "StatusBarSettingsActivity.h"
 #include "activities/apps/DictionaryActivity.h"
-#include "activities/browser/FouladEbooksSetupActivity.h"
 #include "activities/browser/FouladLogoutActivity.h"
+#include "activities/browser/FouladQrLoginActivity.h"
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -461,11 +461,11 @@ void SettingsActivity::toggleCurrentSetting() {
         break;
       }
       case SettingAction::FouladEbooksLogin:
-        // Same username/password flow as the first-run home entry. On success
-        // the setup activity silent-reboots into the catalog on a fresh heap
-        // (see FouladEbooksSetupActivity); on cancel we return here, so rebuild
-        // the list either way to flip this row between Login and Logout.
-        startActivityForResult(std::make_unique<FouladEbooksSetupActivity>(renderer, mappedInput),
+        // Same QR sign-in as the first-run home entry. On success it stores the
+        // issued token and silent-reboots into the catalog on a fresh heap; on
+        // cancel we return here, so rebuild the list either way to flip this row
+        // between Login and Logout.
+        startActivityForResult(std::make_unique<FouladQrLoginActivity>(renderer, mappedInput),
                                [this](const ActivityResult&) {
                                  rebuildSettingsLists();
                                  selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);

@@ -13,7 +13,7 @@
  * user approves it. On approval the issued per-device token is stored as the
  * OPDS password and the device silently restarts into the catalog -- the same
  * fresh-heap handoff the typed-password path uses (see
- * FouladEbooksSetupActivity / SilentRestart.h).
+ * SilentRestart.h).
  *
  * Requires WiFi, which the typed-password path does not: credentials there are
  * just stored for later, whereas this must talk to the server before it has any
@@ -29,7 +29,6 @@
 class FouladQrLoginActivity final : public Activity {
  public:
   // Reported via MenuResult::action when the user asks for manual entry.
-  static constexpr int ACTION_MANUAL_LOGIN = 1;
 
   explicit FouladQrLoginActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("FouladQrLogin", renderer, mappedInput) {}
@@ -60,5 +59,4 @@ class FouladQrLoginActivity final : public Activity {
   void onWifiSelectionComplete(bool success);
   void beginSession();
   void pollOnce();
-  void finishWithManualRequest();
 };

@@ -26,10 +26,12 @@ void FouladQrLoginActivity::onExit() { Activity::onExit(); }
 
 void FouladQrLoginActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
-    // No WiFi means no QR sign-in at all, but typing a password still works
-    // offline (it's only stored, not verified), so send the user there rather
-    // than dead-ending them.
-    finishWithManualRequest();
+    // QR sign-in is the only way in now, and it needs the network end to end --
+    // start the session, then poll until the phone approves it. Without WiFi
+    // there is nothing to fall back to, so say so on the failure screen rather
+    // than closing silently and leaving the user wondering what happened.
+    state = State::Failed;
+    requestUpdate();
     return;
   }
   state = State::Starting;
@@ -52,13 +54,6 @@ void FouladQrLoginActivity::beginSession() {
   consecutivePollErrors = 0;
   state = State::ShowingQr;
   requestUpdate();
-}
-
-void FouladQrLoginActivity::finishWithManualRequest() {
-  MenuResult menu;
-  menu.action = ACTION_MANUAL_LOGIN;
-  setResult(ActivityResult{std::move(menu)});
-  finish();
 }
 
 void FouladQrLoginActivity::pollOnce() {
@@ -125,10 +120,13 @@ void FouladQrLoginActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    finishWithManualRequest();
-    return;
-  }
+  // No Confirm binding: the typed-password route is no longer offered from this
+  // screen, and a live button with no footer label is worse than either choice --
+  // Confirm is the natural "I've scanned it" press, and it would have silently
+  // dropped the user into a username prompt instead. The route itself still
+  // exists for the one case that would otherwise dead-end: cancelling out of WiFi
+  // selection, where QR sign-in is impossible but a password can still be stored
+  // (see onWifiSelectionComplete).
 
   if (state != State::ShowingQr) return;
 
@@ -203,7 +201,7 @@ void FouladQrLoginActivity::render(RenderLock&&) {
       break;
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", tr(STR_QR_LOGIN_MANUAL));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

@@ -296,8 +296,8 @@ void HomeActivity::loop() {
       switch (indexToMenuItem(menuIndex)) {
         case HomeMenuItem::FOULAD_EBOOKS:
           // Signed out is not a separate destination: goToFouladEbooks() sends an
-          // unconfigured device to FouladEbooksSetupActivity, whose onEnter() opens
-          // the QR sign-in, and a configured one straight to the catalog.
+          // unconfigured device straight to FouladQrLoginActivity, and a configured
+          // one to the catalog.
           onFouladEbooksOpen();
           break;
         case HomeMenuItem::SETTINGS_MENU:
