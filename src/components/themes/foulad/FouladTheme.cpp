@@ -292,7 +292,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
         renderer.drawText(SMALL_FONT_ID, clockX, rect.y, timeBuf);
       }
     }
-    renderer.drawCenteredText(SMALL_FONT_ID, rect.y, tr(STR_CROSSPOINT), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(SMALL_FONT_ID, rect.y, tr(STR_BRAND_MIDAD), true, EpdFontFamily::BOLD);
     if (rtl) {
       drawBatteryLeft(renderer,
                       Rect{rect.x + kHeroPadding, rect.y - 5, FouladMetrics::values.batteryWidth,

@@ -88,17 +88,19 @@ void SettingsActivity::rebuildSettingsLists() {
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
-  // One slot, two states: Logout when an account is stored, Login when not --
-  // after logging out (which also swaps the home menu's eBooks slot to Files),
-  // this is the way back in.
+  // One slot, two states: Logout when an account is stored, Login when not.
+  // Top of Apps, not System (user request): signing in to Midad is how you reach
+  // your library, which is a thing you *use*, not a device setting -- and buried
+  // under System it was hard to find for exactly the people who had not signed in
+  // yet. insert() at begin() rather than push_back so it stays above Dictionary
+  // and KOReader Sync, which are appended above.
   const auto& opdsServers = OPDS_STORE.getServers();
   const bool hasFouladEbooksAccount = std::any_of(
       opdsServers.begin(), opdsServers.end(), [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
-  if (hasFouladEbooksAccount) {
-    systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGOUT, SettingAction::FouladEbooksLogout));
-  } else {
-    systemSettings.push_back(SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGIN, SettingAction::FouladEbooksLogin));
-  }
+  appsSettings.insert(appsSettings.begin(),
+                      hasFouladEbooksAccount
+                          ? SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGOUT, SettingAction::FouladEbooksLogout)
+                          : SettingInfo::Action(StrId::STR_FOULAD_EBOOKS_LOGIN, SettingAction::FouladEbooksLogin));
   // User request: Browse Files / File Transfer are the two most-used System
   // entries, so pin them to the very top regardless of everything else
   // appended above -- inserted last (not where they'd naturally fall in the
