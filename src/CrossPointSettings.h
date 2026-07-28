@@ -331,6 +331,29 @@ class CrossPointSettings {
   // No SD extraction or persisted state, same as Games.
   uint8_t stopwatchEnabled = 0;
 
+  // Settings -> Apps -> Pomodoro: pins a synthetic "Pomodoro" tile in My Books
+  // (see POMODORO_PSEUDO_PATH in RecentBooksActivity.cpp) that opens
+  // StopwatchActivity with its Pomodoro mode preselected -- one activity, two
+  // modes, so the timing and render scaffolding isn't duplicated.
+  //
+  // Defaults ON, unlike every other app tile. Those default off to keep the My
+  // Books grid from filling itself; this one is exempt because a countdown timer
+  // is worthless if you can't find it, and a tile hidden behind a setting is
+  // exactly how the first attempt at this feature went unnoticed.
+  uint8_t pomodoroEnabled = 1;
+
+  // Phase lengths in minutes. Read live at each phase change rather than cached
+  // when the app opens, so an edit mid-cycle applies at the next phase instead
+  // of needing a restart. Ranges in SettingsList exclude 0, but these persist to
+  // JSON that the bidirectional web settings sync could write anything into, so
+  // the activity clamps a 0 to 1 -- a zero-length phase would expire instantly
+  // and leave the end-of-phase flash firing in a loop.
+  uint8_t pomodoroFocusMin = 25;
+  uint8_t pomodoroShortBreakMin = 5;
+  uint8_t pomodoroLongBreakMin = 15;
+  // Focus phases completed before a long break replaces the short one.
+  static constexpr uint8_t POMODORO_CYCLES_BEFORE_LONG_BREAK = 4;
+
   // Settings -> Apps -> Gym: pins a synthetic "Gym" tile in My Books (see
   // GYM_PSEUDO_PATH in RecentBooksActivity.cpp), between Stop Watch and Games,
   // that opens the built-in 7-day workout planner. Unlike Games/Tasbih/Stop

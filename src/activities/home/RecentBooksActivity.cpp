@@ -42,6 +42,11 @@ constexpr const char* TASBIH_PSEUDO_PATH = "/Tasbih";
 // Same idea for the Stop Watch tile (see SETTINGS.stopwatchEnabled) -- opens
 // StopwatchActivity instead of the reader.
 constexpr const char* STOPWATCH_PSEUDO_PATH = "/StopWatch";
+// Pomodoro opens the SAME activity as Stop Watch, with its Pomodoro mode
+// preselected -- a separate tile purely for discoverability. Behind a Confirm
+// press inside something labelled "Stop Watch", nobody finds it; a user who
+// wants a Pomodoro timer looks for the word Pomodoro.
+constexpr const char* POMODORO_PSEUDO_PATH = "/Pomodoro";
 // Same idea for the Gym tile (see SETTINGS.gymEnabled) -- opens GymActivity
 // instead of the reader.
 constexpr const char* GYM_PSEUDO_PATH = "/Gym";
@@ -237,6 +242,18 @@ void RecentBooksActivity::loadRecentBooks() {
     recentBooks.insert(recentBooks.begin(), std::move(gym));
   }
 
+  // Pinned Pomodoro: synthetic tile, front-inserted just before Stop Watch so
+  // the two timer apps end up adjacent in the grid.
+  if (SETTINGS.pomodoroEnabled) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == POMODORO_PSEUDO_PATH; }),
+                      recentBooks.end());
+    RecentBook pomodoro;
+    pomodoro.path = POMODORO_PSEUDO_PATH;
+    pomodoro.title = tr(STR_POMODORO);
+    recentBooks.insert(recentBooks.begin(), std::move(pomodoro));
+  }
+
   // Pinned Stop Watch: synthetic tile (STOPWATCH_PSEUDO_PATH is never a real
   // SD file), shown between Tasbih and Gym -- opens StopwatchActivity
   // instead of the reader (see loop()'s special-case). Inserted at the front
@@ -323,7 +340,8 @@ void RecentBooksActivity::loop() {
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
       recentBooks[selectorIndex].path != QuranBook::PATH && recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH && recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != POMODORO_PSEUDO_PATH && recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -345,6 +363,12 @@ void RecentBooksActivity::loop() {
       if (recentBooks[selectorIndex].path == STOPWATCH_PSEUDO_PATH) {
         startActivityForResult(std::make_unique<StopwatchActivity>(renderer, mappedInput),
                                [](const ActivityResult&) {});
+        return;
+      }
+      if (recentBooks[selectorIndex].path == POMODORO_PSEUDO_PATH) {
+        startActivityForResult(
+            std::make_unique<StopwatchActivity>(renderer, mappedInput, StopwatchActivity::Mode::Pomodoro),
+            [](const ActivityResult&) {});
         return;
       }
       if (recentBooks[selectorIndex].path == GYM_PSEUDO_PATH) {
@@ -698,6 +722,8 @@ void RecentBooksActivity::render(RenderLock&&) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_TASBIH));
       } else if (!drawn && book.path == STOPWATCH_PSEUDO_PATH) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_STOPWATCH));
+      } else if (!drawn && book.path == POMODORO_PSEUDO_PATH) {
+        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_POMODORO));
       } else if (!drawn && book.path == GYM_PSEUDO_PATH) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GYM));
       } else if (!drawn) {
