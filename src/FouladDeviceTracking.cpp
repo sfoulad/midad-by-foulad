@@ -512,15 +512,24 @@ void uploadDebugLog(const std::string& username, const std::string& password) {
     }
   }
 
+  // Neither outcome is diagLog()'d, because diagLog() writes to DebugLog::PATH --
+  // the very file this function just uploaded (see diagLog's definition above).
+  //
+  // On failure that would get picked up on the next attempt, and a persistent
+  // failure (e.g. no signal) would spam a line into the log on every reconnect.
+  //
+  // On success it defeats server-side deduplication outright: the upload
+  // endpoint skips storing a body whose hash matches the last one it holds for
+  // this device, so an unchanged reader costs nothing to re-report. Appending
+  // "log upload -> ok" after each successful send made every subsequent body
+  // byte-different, so the hash never matched and every OPDS browse stored a
+  // fresh ~50KB copy (see foulad-ebooks EINK_DEVICE_LOG_TASKS.md 2.4/5.4).
+  //
+  // If a success marker is ever wanted, it has to live somewhere other than the
+  // file being uploaded.
   if (!ok) {
     LOG_ERR(TAG, "Debug log upload failed (status=%d)", HttpDownloader::getLastFailure().detail);
-    // Deliberately not diagLog()'d: appending a failure line to the very file
-    // that just failed to upload would just get picked up on next attempt,
-    // and a persistent failure (e.g. no signal) would otherwise spam a line
-    // into the log on every single reconnect.
-    return;
   }
-  diagLog("log upload -> ok");
 }
 
 bool uploadCrashReport(const std::string& username, const std::string& password) {
