@@ -5,7 +5,7 @@
 // Non-secret catalog identity for the built-in "Foulad eBooks" home menu entry.
 // Username/password are entered on-device on first use (FouladEbooksSetupActivity)
 // and stored via OpdsServerStore — never hardcoded here, since this repo is public.
-constexpr char FOULAD_EBOOKS_NAME[] = "Foulad eBooks";
+constexpr char FOULAD_EBOOKS_NAME[] = "Midad";
 // Temporarily http:// (was https://), during beta only: Let's Encrypt rotated
 // foulad.one onto a certificate hierarchy ("ISRG Root YE") that ESP-IDF's embedded
 // trust bundle doesn't recognize, and the on-device fallback that could otherwise
@@ -16,7 +16,7 @@ constexpr char FOULAD_EBOOKS_NAME[] = "Foulad eBooks";
 // updates its bundle. Basic Auth credentials travel in cleartext over this
 // connection as a result -- an accepted, explicit tradeoff for beta, not something
 // to carry into a production release without revisiting.
-constexpr char FOULAD_EBOOKS_URL[] = "http://foulad.one/opds";
+constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
 
 // Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
 // Convert a Font): the device uploads a raw TTF/OTF plus a language choice,
@@ -25,7 +25,7 @@ constexpr char FOULAD_EBOOKS_URL[] = "http://foulad.one/opds";
 // expected to rate-limit this server-side. Plain http:// for the same reason
 // as FOULAD_EBOOKS_URL above (foulad.one's current certificate chain isn't in
 // ESP-IDF's trust bundle); revisit alongside that fix.
-constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://foulad.one/api/fonts/convert";
+constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://midad.one/api/fonts/convert";
 
 // QR-code sign-in (see FouladDeviceLogin.h). Unauthenticated JSON POSTs, no
 // cookies/CSRF. Plain http:// is deliberate and expected here for the same
@@ -34,8 +34,8 @@ constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://foulad.one/api/fonts/c
 // Nothing secret is sent TO these endpoints; the token they return is what
 // replaces the account password on the wire, so this flow strictly reduces what
 // is exposed rather than adding to it.
-constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://foulad.one/api/device-login/start";
-constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://foulad.one/api/device-login/poll";
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://midad.one/api/device-login/start";
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://midad.one/api/device-login/poll";
 
 // Device-facing sign-out: "remove me", identified by this device's own serial.
 // On the OPDS surface rather than the app API below, because that one sits behind
@@ -43,7 +43,7 @@ constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://foulad.one/api/de
 // it can delete any device, change settings and manage fonts. Removing only itself is a
 // far narrower capability, so a token may reach this. Contract:
 // docs/ebooks-device-signout-endpoint.md.
-constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://foulad.one/opds/device/signout";
+constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://midad.one/opds/device/signout";
 
 // Foulad One's app JSON API, used by signing out to remove this device from the
 // account (see FouladDeviceLogout). Behind the SAME opds.auth Basic-Auth middleware
@@ -53,7 +53,7 @@ constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://foulad.one/opds/devi
 //
 // GET  <base>       -> this account's devices, each carrying id and serial_number
 // DELETE <base>/{id} -> remove one
-constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://foulad.one/api/app/devices";
+constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://midad.one/api/app/devices";
 
 // The one host every URL above points at. Matched on the host rather than on a
 // URL prefix because the requests that must carry the device serial header are
@@ -62,9 +62,31 @@ constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://foulad.one/api/app/devi
 // straight out of the feed (some carrying ?signature=), so no single prefix
 // covers them. Kept scheme-agnostic so this keeps working when the beta http://
 // above goes back to https:// (see FOULAD_EBOOKS_URL).
-constexpr char FOULAD_EBOOKS_HOST[] = "foulad.one";
+constexpr char FOULAD_EBOOKS_HOST[] = "midad.one";
 
-// True when `url` targets Foulad eBooks. Used to decide whether a request may
+// The pre-rename host. Every device paired before Midad has "http://foulad.one/opds"
+// written into its own OpdsServerStore entry, and that entry -- not the constant above
+// -- is what its requests actually use until the migration in OpdsServerStore::fromJson
+// rewrites it. Between an update landing and that rewrite (and for any absolute feed
+// link still carrying the old host), requests must keep being recognised as ours, or
+// they silently lose the device-serial header and remote removal stops working for
+// them. foulad.one redirects to midad.one server-side, so both resolve.
+//
+// Removable once no device in the field predates the rename -- not before.
+constexpr char FOULAD_EBOOKS_LEGACY_HOST[] = "foulad.one";
+
+// Case-insensitive hostname compare, per RFC 3986.
+constexpr bool hostEquals(std::string_view host, std::string_view expected) {
+  if (host.size() != expected.size()) return false;
+  for (size_t i = 0; i < host.size(); ++i) {
+    const char c = host[i] >= 'A' && host[i] <= 'Z' ? static_cast<char>(host[i] - 'A' + 'a') : host[i];
+    if (c != expected[i]) return false;
+  }
+  return true;
+}
+
+// True when `url` targets Midad, under either its current or pre-rename host. Used
+// to decide whether a request may
 // carry this device's serial: a third-party OPDS server the user added must
 // never receive it, so anything that is not this host is excluded by default.
 //
@@ -88,11 +110,5 @@ constexpr bool isFouladEbooksUrl(std::string_view url) {
   // Hostnames are case-insensitive per RFC 3986; ours are lowercase in practice,
   // but a mismatch here would silently disable revocation rather than fail
   // loudly, so don't rely on that.
-  const std::string_view expected{FOULAD_EBOOKS_HOST};
-  if (host.size() != expected.size()) return false;
-  for (size_t i = 0; i < host.size(); ++i) {
-    const char c = host[i] >= 'A' && host[i] <= 'Z' ? static_cast<char>(host[i] - 'A' + 'a') : host[i];
-    if (c != expected[i]) return false;
-  }
-  return true;
+  return hostEquals(host, FOULAD_EBOOKS_HOST) || hostEquals(host, FOULAD_EBOOKS_LEGACY_HOST);
 }

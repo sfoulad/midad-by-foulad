@@ -8,7 +8,7 @@
 // for the server contract). Overridable for local testing, same convention as
 // FOULAD_DICTS_CATALOG_URL/FOULAD_FONTS_CATALOG_URL.
 #ifndef FOULAD_GYM_CATALOG_URL
-#define FOULAD_GYM_CATALOG_URL "http://foulad.one/api/gym/catalog"
+#define FOULAD_GYM_CATALOG_URL "http://midad.one/api/gym/catalog"
 #endif
 
 // Downloads the full exercise catalog (metadata only, no images/instructions

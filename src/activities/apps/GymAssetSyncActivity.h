@@ -12,10 +12,10 @@
 // at add-exercise or mid-workout time would be a disruptive interruption; the
 // user syncs assets deliberately, same as Font/Dictionary "Manage" screens.
 #ifndef FOULAD_GYM_IMAGE_BASE_URL
-#define FOULAD_GYM_IMAGE_BASE_URL "http://foulad.one/api/gym/image/"
+#define FOULAD_GYM_IMAGE_BASE_URL "http://midad.one/api/gym/image/"
 #endif
 #ifndef FOULAD_GYM_EXERCISE_BASE_URL
-#define FOULAD_GYM_EXERCISE_BASE_URL "http://foulad.one/api/gym/exercise/"
+#define FOULAD_GYM_EXERCISE_BASE_URL "http://midad.one/api/gym/exercise/"
 #endif
 
 class GymAssetSyncActivity final : public Activity {
