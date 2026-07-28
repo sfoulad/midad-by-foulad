@@ -330,6 +330,19 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // built-in stopwatch. No extraction step needed, same as Games.
     v.push_back(SettingInfo::Toggle(StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled, "stopwatchEnabled",
                                     StrId::STR_CAT_APPS));
+    // Pomodoro toggle: pins a "Pomodoro" tile in My Books (see
+    // POMODORO_PSEUDO_PATH) opening StopwatchActivity in Pomodoro mode. The three
+    // durations below sit directly under it so the group reads as one feature.
+    // Ranges cover the common variants -- 25/5/15 classic, 52/17, 90-minute deep
+    // work -- and start above 0, since a zero-length phase would expire instantly.
+    v.push_back(SettingInfo::Toggle(StrId::STR_POMODORO, &CrossPointSettings::pomodoroEnabled, "pomodoroEnabled",
+                                    StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_FOCUS_MIN, &CrossPointSettings::pomodoroFocusMin, {5, 90, 5},
+                                   "pomodoroFocusMin", StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_SHORT_BREAK_MIN, &CrossPointSettings::pomodoroShortBreakMin,
+                                   {1, 30, 1}, "pomodoroShortBreakMin", StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_LONG_BREAK_MIN, &CrossPointSettings::pomodoroLongBreakMin,
+                                   {5, 60, 5}, "pomodoroLongBreakMin", StrId::STR_CAT_APPS));
     // Gym toggle: pins a "Gym" tile in My Books (see GYM_PSEUDO_PATH in
     // RecentBooksActivity.cpp) that opens the built-in workout planner.
     v.push_back(
