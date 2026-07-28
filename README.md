@@ -1,7 +1,11 @@
-<h1 align="center">📖 Foulad eInk</h1>
+<p align="center">
+  <img src="./docs/images/midad-logo.png" width="96" alt="Midad logo">
+</p>
+<h1 align="center">Midad</h1>
+<p align="center"><sub>by Foulad eInk</sub></p>
 <p align="center"><b>An e-reader built around Arabic.</b></p>
 <p align="center">
-  Foulad eInk is a free, open-source firmware for Xteink e-ink readers — a fork of
+  Midad — مداد, Arabic for <i>ink</i> — is a free, open-source firmware for Xteink e-ink readers, a fork of
   <a href="https://github.com/crosspoint-reader/crosspoint-reader">CrossPoint Reader</a>, rebuilt so Arabic, and the
   languages that share its script, read the way they're supposed to. It updates itself over the air, straight from
   this repository.
@@ -12,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sfoulad/foulad-eink/releases"><img src="https://img.shields.io/github/v/release/sfoulad/foulad-eink?label=release&color=blue&style=flat-square" alt="Latest release"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/foulad-eink?color=brightgreen&style=flat-square" alt="License"></a>
+  <a href="https://github.com/sfoulad/midad-by-foulad/releases"><img src="https://img.shields.io/github/v/release/sfoulad/midad-by-foulad?label=release&color=blue&style=flat-square" alt="Latest release"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/midad-by-foulad?color=brightgreen&style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/Arabic-100%25-orange?style=flat-square" alt="Arabic support">
   <img src="https://img.shields.io/badge/updates-over--the--air-blueviolet?style=flat-square" alt="OTA updates">
 </p>
@@ -31,7 +35,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/home.png" width="380" alt="Foulad eInk home screen">
+  <img src="./docs/images/home.png" width="380" alt="Midad home screen">
 </p>
 <h3 align="center">🏠 Everything, from one screen.</h3>
 <p align="center">
@@ -42,7 +46,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/reading.png" width="380" alt="Reading the Quran on Foulad eInk">
+  <img src="./docs/images/reading.png" width="380" alt="Reading the Quran on Midad">
 </p>
 <h3 align="center">🕌 Reads Arabic like it was made for it.</h3>
 <p align="center">
@@ -53,7 +57,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/fonts/font-browser.png" width="380" alt="Font Browser on Foulad eInk">
+  <img src="./docs/images/fonts/font-browser.png" width="380" alt="Font Browser on Midad">
 </p>
 <h3 align="center">🔤 Download fonts, Arabic and English, on the go.</h3>
 <p align="center">
@@ -63,7 +67,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/stats.png" width="380" alt="Reading statistics on Foulad eInk">
+  <img src="./docs/images/stats.png" width="380" alt="Reading statistics on Midad">
 </p>
 <h3 align="center">📊 See your reading, at a glance.</h3>
 <p align="center">
@@ -73,7 +77,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/books-apps/books-apps.png" width="380" alt="My Books & Apps grid on Foulad eInk">
+  <img src="./docs/images/books-apps/books-apps.png" width="380" alt="My Books & Apps grid on Midad">
 </p>
 <h3 align="center">📚 Books and apps, in one place.</h3>
 <p align="center">
@@ -83,7 +87,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/settings-apps/settings-apps.png" width="380" alt="Settings — Apps tab on Foulad eInk">
+  <img src="./docs/images/settings-apps/settings-apps.png" width="380" alt="Settings — Apps tab on Midad">
 </p>
 <h3 align="center">🎛️ Enable and disable apps, to taste.</h3>
 <p align="center">
@@ -93,7 +97,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/games/games-slideshow-v2.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Foulad eInk">
+  <img src="./docs/images/games/games-slideshow-v2.gif" width="380" alt="Snake, Tetris, Sudoku, and Maze on Midad">
 </p>
 <h3 align="center">🎮 Four games, zero downloads.</h3>
 <p align="center">
@@ -104,7 +108,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/gym/gym-slideshow.gif" width="380" alt="Gym workout planner on Foulad eInk">
+  <img src="./docs/images/gym/gym-slideshow.gif" width="380" alt="Gym workout planner on Midad">
 </p>
 <h3 align="center">🏋️ Plan your week, log every set.</h3>
 <p align="center">
@@ -115,7 +119,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/stopwatch/stopwatch.png" width="380" alt="Stop Watch on Foulad eInk">
+  <img src="./docs/images/stopwatch/stopwatch.png" width="380" alt="Stop Watch on Midad">
 </p>
 <h3 align="center">⏱️ Every second, on the dot.</h3>
 <p align="center">
@@ -125,7 +129,7 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/tasbih/tasbih.png" width="380" alt="Tasbih dhikr counter on Foulad eInk">
+  <img src="./docs/images/tasbih/tasbih.png" width="380" alt="Tasbih dhikr counter on Midad">
 </p>
 <h3 align="center">📿 Count your dhikr, track your best day.</h3>
 <p align="center">
@@ -136,11 +140,11 @@
 <br>
 
 <p align="center">
-  <img src="./docs/images/devices.png" width="700" alt="Foulad eInk running on Xteink X4 and X3">
+  <img src="./docs/images/devices.png" width="700" alt="Midad running on Xteink X4 and X3">
 </p>
 <h3 align="center">📱 One firmware, both devices.</h3>
 <p align="center">
-  Foulad eInk runs natively on the Xteink X4 and X3, adapting to each device's screen and buttons automatically.
+  Midad runs natively on the Xteink X4 and X3, adapting to each device's screen and buttons automatically.
 </p>
 
 <br>
@@ -152,7 +156,7 @@
 - 🕌 **A fully Arabic interface** — mirrored, translated, and with page-turn buttons that swap direction automatically so "forward" is always where your thumb expects it.
 - 🌍 **Reads Arabic, Persian, Ottoman Turkish, and Kurdish correctly** — proper letter shaping and right-to-left text, everywhere it shows up.
 - 📖 **A bundled Quran** — Uthmani script, ayah and surah markers, and justified lines that stretch the way a real mushaf does.
-- ☁️ **Foulad eBooks** — connect to a self-hosted library and browse it as a cover grid, right from the home screen.
+- ☁️ **Midad library** — connect to a self-hosted catalogue and browse it as a cover grid, right from the home screen.
 - 📊 **Reading stats** — streaks, a monthly heatmap, and per-book progress.
 - 🎮 **Four built-in games** — Snake, Tetris, Sudoku, and Maze.
 - 🏋️ **Gym workout planner** — a 7-day split, per-set weight/reps logging, and exercise photos, synced from a shared catalog.
@@ -194,7 +198,7 @@
 - **Tasbih**: a dhikr counter with a top-count leaderboard and daily/yearly totals.
 - **Stop Watch**: start/pause, lap tracking, and a MM:SS:CS Casio-style display.
 
-**☁️ Foulad eBooks**
+**☁️ Midad library**
 
 - A dedicated home-screen entry that opens a self-hosted OPDS catalog directly — cover-grid browsing, search, pagination, and one-tap downloads that keep the catalog's cover art. No manual server setup beyond a one-time username/password prompt on first use.
 
@@ -248,7 +252,7 @@ maintained by the upstream CrossPoint project, not this fork.
 ### 🌐 Easiest: web installer
 
 1. Connect your device via USB-C and wake it up.
-2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/foulad-eink/releases) page.
+2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/midad-by-foulad/releases) page.
 3. Open the [web flasher](https://crosspointreader.com/#flash-tools), pick your device (X3 or X4), choose **Custom
    .bin**, and upload the file. That's it.
 
@@ -267,7 +271,7 @@ maintained by the upstream CrossPoint project, not this fork.
    pip install esptool
    ```
 
-2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/foulad-eink/releases) page.
+2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/midad-by-foulad/releases) page.
 3. Connect your device via USB-C.
 4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
 
@@ -371,8 +375,8 @@ Prefer a different Arabic look? You can swap in your own font too:
 ### Setup
 
 ```bash
-git clone --recursive https://github.com/sfoulad/foulad-eink
-cd foulad-eink
+git clone --recursive https://github.com/sfoulad/midad-by-foulad
+cd midad-by-foulad
 
 # if cloned without --recursive:
 git submodule update --init --recursive
