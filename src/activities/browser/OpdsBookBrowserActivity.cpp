@@ -755,6 +755,31 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     }
     state = BrowserState::ERROR;
     errorMessage = tr(STR_OPDS_SIGNED_OUT);
+
+    if (server.url == FOULAD_EBOOKS_URL) {
+      // Removing this device from the Foulad One app revokes its credential, so the
+      // next fetch 401s and arrives here. Ending on the message alone left the user
+      // to work out for themselves that signing in again meant backing out to Home
+      // and re-entering Foulad eBooks -- reported as the device looking broken after
+      // a removal that was deliberate. Take them to the QR sign-in instead.
+      //
+      // The message is painted first, and held long enough to read, so the sign-in
+      // prompt doesn't simply appear with no explanation of what happened.
+      //
+      // Restart rather than a direct transition, for the same reason
+      // ActivityManager::goToFouladEbooks() restarts on the way in: the QR flow runs
+      // WiFi, TLS and polling, and this session's heap has already been fragmented by
+      // a browse. removeServer() above persists immediately, so the reboot cannot
+      // bring back the credential just dropped and loop straight back here.
+      //
+      // Only for Foulad eBooks. A user-added OPDS server has no QR flow to send
+      // anyone to, so it keeps the plain message.
+      requestUpdateAndWait();
+      delay(1500);
+      silentRestartToFouladEbooks();  // does not return
+      return;
+    }
+
     requestUpdate();
     return;
   }
