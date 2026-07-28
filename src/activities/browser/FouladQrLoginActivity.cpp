@@ -125,10 +125,13 @@ void FouladQrLoginActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    finishWithManualRequest();
-    return;
-  }
+  // No Confirm binding: the typed-password route is no longer offered from this
+  // screen, and a live button with no footer label is worse than either choice --
+  // Confirm is the natural "I've scanned it" press, and it would have silently
+  // dropped the user into a username prompt instead. The route itself still
+  // exists for the one case that would otherwise dead-end: cancelling out of WiFi
+  // selection, where QR sign-in is impossible but a password can still be stored
+  // (see onWifiSelectionComplete).
 
   if (state != State::ShowingQr) return;
 
@@ -203,7 +206,7 @@ void FouladQrLoginActivity::render(RenderLock&&) {
       break;
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", tr(STR_QR_LOGIN_MANUAL));
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
