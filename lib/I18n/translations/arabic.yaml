@@ -3,6 +3,8 @@ _language_code: "AR"
 _order: "1"
 
 STR_CROSSPOINT: "Foulad eInk"
+STR_BRAND_MIDAD: "MIDAD"
+STR_BRAND_BY_FOULAD: "By Foulad"
 STR_FOULAD_EBOOKS: "مداد"
 STR_FOULAD_EBOOKS_LOGIN: "تسجيل الدخول إلى مداد"
 STR_FOULAD_EBOOKS_LOGOUT: "تسجيل الخروج من مداد"
