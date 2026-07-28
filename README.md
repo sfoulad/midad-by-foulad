@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sfoulad/foulad-eink/releases"><img src="https://img.shields.io/github/v/release/sfoulad/foulad-eink?label=release&color=blue&style=flat-square" alt="Latest release"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/foulad-eink?color=brightgreen&style=flat-square" alt="License"></a>
+  <a href="https://github.com/sfoulad/midad-by-foulad/releases"><img src="https://img.shields.io/github/v/release/sfoulad/midad-by-foulad?label=release&color=blue&style=flat-square" alt="Latest release"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/midad-by-foulad?color=brightgreen&style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/Arabic-100%25-orange?style=flat-square" alt="Arabic support">
   <img src="https://img.shields.io/badge/updates-over--the--air-blueviolet?style=flat-square" alt="OTA updates">
 </p>
@@ -252,7 +252,7 @@ maintained by the upstream CrossPoint project, not this fork.
 ### 🌐 Easiest: web installer
 
 1. Connect your device via USB-C and wake it up.
-2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/foulad-eink/releases) page.
+2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/midad-by-foulad/releases) page.
 3. Open the [web flasher](https://crosspointreader.com/#flash-tools), pick your device (X3 or X4), choose **Custom
    .bin**, and upload the file. That's it.
 
@@ -271,7 +271,7 @@ maintained by the upstream CrossPoint project, not this fork.
    pip install esptool
    ```
 
-2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/foulad-eink/releases) page.
+2. Download `firmware.bin` from the [Releases](https://github.com/sfoulad/midad-by-foulad/releases) page.
 3. Connect your device via USB-C.
 4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
 
@@ -375,8 +375,8 @@ Prefer a different Arabic look? You can swap in your own font too:
 ### Setup
 
 ```bash
-git clone --recursive https://github.com/sfoulad/foulad-eink
-cd foulad-eink
+git clone --recursive https://github.com/sfoulad/midad-by-foulad
+cd midad-by-foulad
 
 # if cloned without --recursive:
 git submodule update --init --recursive
