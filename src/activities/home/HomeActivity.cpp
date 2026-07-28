@@ -14,9 +14,7 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
-#include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
-#include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SilentRestart.h"
 #include "activities/stats/StatsActivity.h"
@@ -25,22 +23,8 @@
 #include "reading/ReadingStatsStore.h"
 #include "util/CoverThumbs.h"
 
-namespace {
-// The first menu slot is "eBooks" only while a Foulad eBooks account is
-// configured; logged out it becomes "Files" (SD card browser) so users who
-// don't use the catalog aren't shown its icon. The store is a boot-loaded
-// in-RAM vector of at most 8 servers, so this check is effectively free --
-// no SD or network access -- and can run on every render/dispatch.
-bool fouladEbooksLoggedIn() {
-  for (const auto& server : OPDS_STORE.getServers()) {
-    if (server.url == FOULAD_EBOOKS_URL) return true;
-  }
-  return false;
-}
-}  // namespace
-
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // eBooks-or-Files, Stats, Update, Settings
+  int count = 4;  // eBooks, Stats, Files, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -311,26 +295,16 @@ void HomeActivity::loop() {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
       switch (indexToMenuItem(menuIndex)) {
         case HomeMenuItem::FOULAD_EBOOKS:
-          // Slot 0 is dual-purpose: "eBooks" with a Foulad eBooks account,
-          // "Files" (SD browser) without one -- see fouladEbooksLoggedIn().
-          if (fouladEbooksLoggedIn()) {
-            onFouladEbooksOpen();
-          } else {
-            activityManager.goToFileBrowser("/");
-          }
+          // Signed out is not a separate destination: goToFouladEbooks() sends an
+          // unconfigured device to FouladEbooksSetupActivity, whose onEnter() opens
+          // the QR sign-in, and a configured one straight to the catalog.
+          onFouladEbooksOpen();
           break;
         case HomeMenuItem::SETTINGS_MENU:
           onSettingsOpen();
           break;
-        case HomeMenuItem::CHECK_UPDATE:
-          // Slot 2 is dual-purpose like slot 0: "Files" when a Foulad eBooks
-          // account is configured (Update moves to Settings > System), the
-          // OTA update flow when not -- see the menuItems comment in render().
-          if (fouladEbooksLoggedIn()) {
-            activityManager.goToFileBrowser("/");
-          } else {
-            onCheckUpdateOpen();
-          }
+        case HomeMenuItem::FILE_BROWSER:
+          activityManager.goToFileBrowser("/");
           break;
         case HomeMenuItem::STATS:
           onStatsOpen();
@@ -366,20 +340,18 @@ void HomeActivity::render(RenderLock&&) {
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
-  // Build menu items dynamically. Order: Foulad eBooks, Recent Books, Check for
-  // Update, Settings -- matches menuItemToIndex/indexToMenuItem.
+  // Order: eBooks, Stats, Files, Settings -- matches menuItemToIndex/indexToMenuItem.
   // Short labels chosen to fit the bottom icon bar tiles. Recent Books has no
   // menu entry anymore: the recents covers row (and its stacked +N tile, which
   // opens the full grid) took over that job.
-  // Slot 0 and slot 2 both follow the Foulad eBooks login state (user-specified):
-  // logged in  -> eBooks, Stats, Files,  Settings (Update lives in Settings > System)
-  // logged out -> Files,  Stats, Update, Settings (no catalog, so no eBooks icon)
-  // Files (the SD browser) is always one tap away either way.
-  const bool ebooksAccount = fouladEbooksLoggedIn();
-  std::vector<const char*> menuItems = {ebooksAccount ? tr(STR_EBOOKS) : tr(STR_FILES), tr(STR_STATS),
-                                        ebooksAccount ? tr(STR_FILES) : tr(STR_UPDATE), tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {ebooksAccount ? Library : Folder, Stats, ebooksAccount ? Folder : Transfer,
-                                   Settings};
+  // Fixed, not login-dependent (user-specified). The slots used to swap on Foulad
+  // eBooks login state -- eBooks/Files in slot 0, Files/Update in slot 2 -- which
+  // moved two icons the moment an account was added or removed, and made eBooks
+  // undiscoverable to exactly the people who had not signed in yet. Signed out,
+  // eBooks now opens the QR sign-in (see loop()). Update keeps its permanent home
+  // under Settings > System, where it already lived for signed-in devices.
+  std::vector<const char*> menuItems = {tr(STR_EBOOKS), tr(STR_STATS), tr(STR_FILES), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Library, Stats, Folder, Settings};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
@@ -433,11 +405,4 @@ void HomeActivity::onFouladEbooksOpen() {
   // browsing from a fragmented session heap ended in OOM aborts on-device.
   // Does not return.
   silentRestartToFouladEbooks();
-}
-
-void HomeActivity::onCheckUpdateOpen() {
-  // Reboot into the OTA flow instead of opening it in this session: after
-  // Home/library browsing the heap is fragmented below what the GitHub TLS
-  // handshakes need (see silentRestartToOtaCheck). Does not return.
-  silentRestartToOtaCheck();
 }

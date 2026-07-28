@@ -246,12 +246,14 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
-    // FileBrowser/CrossPointWebServer no longer have a Home row to pre-select
-    // (moved under Settings -> System), so they fall through to NONE here.
+    // CrossPointWebServer has no Home row to pre-select (it lives under Settings ->
+    // System), so it falls through to NONE here.
     if (activityName == "RecentBooks") {
       initialMenuItem = HomeMenuItem::RECENTS;
     } else if (activityName == "Settings") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
+    } else if (activityName == "FileBrowser") {
+      initialMenuItem = HomeMenuItem::FILE_BROWSER;
     }
   }
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem));
