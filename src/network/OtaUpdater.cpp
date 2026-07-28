@@ -27,9 +27,17 @@ namespace {
 constexpr char latestReleaseUrl[] = "https://api.github.com/repos/sfoulad/midad-by-foulad/releases/latest";
 // Every release, newest-first, pre-releases included (GitHub does not surface
 // unpublished drafts to an unauthenticated request like this one either way).
-// Used when Settings -> System -> Pre-release is on -- ReleaseJsonParser
-// parses only the first (newest) array element, whichever channel it's on.
-constexpr char allReleasesUrl[] = "https://api.github.com/repos/sfoulad/midad-by-foulad/releases";
+// Used when Settings -> System -> Pre-release is on.
+//
+// per_page=1 because ReleaseJsonParser reads only the FIRST (newest) array
+// element and discards everything after it. Without the parameter GitHub sends
+// its default page of 30 full release objects -- measured at 114,887 bytes
+// against this repo's 190 releases, versus 3,908 with it. That whole payload was
+// being streamed over TLS and parsed on a 160MHz single core so that 96% of it
+// could be thrown away, which is most of the wait between pressing Check for
+// updates and getting an answer. The stable channel never had this:
+// /releases/latest is a single object.
+constexpr char allReleasesUrl[] = "https://api.github.com/repos/sfoulad/midad-by-foulad/releases?per_page=1";
 
 // The pre-rename repository path, tried only if the one above answers 404.
 //
@@ -44,7 +52,7 @@ constexpr char allReleasesUrl[] = "https://api.github.com/repos/sfoulad/midad-by
 // (see checkForUpdate) and a second request cannot succeed either -- it would
 // just spend another of the 60 per hour that failure is already about.
 constexpr char legacyLatestReleaseUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases/latest";
-constexpr char legacyAllReleasesUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases";
+constexpr char legacyAllReleasesUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases?per_page=1";
 
 esp_err_t http_client_set_header_cb(esp_http_client_handle_t http_client) {
   return esp_http_client_set_header(http_client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
@@ -56,7 +64,7 @@ esp_err_t http_client_set_header_cb(esp_http_client_handle_t http_client) {
 constexpr char checkCachePath[] = "/.crosspoint/ota_check.txt";
 // Bumped if the line layout below changes; a mismatch just discards the cache and
 // costs one ordinary conditional-less fetch.
-constexpr char checkCacheVersion[] = "1";
+constexpr char checkCacheVersion[] = "2";
 
 struct CheckCache {
   std::string etag;
