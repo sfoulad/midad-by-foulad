@@ -38,6 +38,17 @@ struct ReadingBookStats {
   std::string path;
   std::string title;
   std::string author;
+  // Foulad eBooks catalog id, empty for a side-loaded file. Lives here rather
+  // than only in RecentBooksStore because that list is capped at 10 and evicts:
+  // a catalog book read a while ago used to lose its id entirely, so
+  // flushPendingReadingStats() could never report it and the server never got a
+  // library_reading row for it (see INSTRUCTIONS-14). Here it has exactly the
+  // lifetime of the reading it describes.
+  //
+  // A separate path->id map was the alternative and is worse: it can drift, and
+  // a stale entry attributes reading to the WRONG book. A missing id only costs
+  // a cover; a wrong one costs trust in the data.
+  std::string fouladBookId;
   // Ascending dayOrdinal; capped at MAX_DAYS_PER_BOOK (oldest pruned).
   std::vector<ReadingDayStats> readingDays;
   uint64_t totalReadingMs = 0;
@@ -121,6 +132,12 @@ class ReadingStatsStore {
   const std::vector<ReadingBookStats>& getBooks() const { return books; }
   const std::vector<ReadingDayStats>& getReadingDays() const { return readingDays; }
   const ReadingBookStats* findBook(const std::string& path) const;
+  // Records the catalog id for a book already known to the store. Called when a
+  // book is opened, so the id is captured while RecentBooksStore still has it --
+  // before its 10-entry cap evicts the entry (see ReadingBookStats::fouladBookId).
+  // No-op for an unknown path or an empty id, so a side-loaded book is untouched
+  // and an id already stored is never cleared.
+  void setFouladBookId(const std::string& path, const std::string& fouladBookId);
   uint32_t readingMsOnDay(uint32_t dayOrdinal) const;
   uint64_t getTotalReadingMs() const;
   uint64_t getTodayReadingMs() const;

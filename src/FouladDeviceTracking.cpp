@@ -481,13 +481,19 @@ void reportReadingStats(const std::string& username, const std::string& password
 void flushPendingReadingStats(const std::string& username, const std::string& password) {
   if (!wifiConnected() || username.empty() || password.empty()) return;
 
+  // Driven by the stats store, not RecentBooksStore. Recents caps at 10 and
+  // evicts, so iterating it silently skipped every catalog book that had been
+  // read but pushed out of the top 10 -- those never produced a library_reading
+  // row on the server no matter how often the device reconnected
+  // (INSTRUCTIONS-14). The stats store holds up to MAX_BOOKS and now carries the
+  // id itself, so the two lists can no longer disagree about what is reportable.
+  READING_STATS.ensureLoaded();
   int flushed = 0;
-  for (const auto& book : RECENT_BOOKS.getBooks()) {
-    if (book.fouladBookId.empty()) continue;
-    const ReadingBookStats* stats = READING_STATS.findBook(book.path);
-    if (!stats || stats->totalReadingMs == 0) continue;
-    reportReadingStats(username, password, book.fouladBookId, stats->lastProgressPercent, "",
-                       static_cast<uint32_t>(stats->totalReadingMs / 1000));
+  for (const auto& stats : READING_STATS.getBooks()) {
+    if (stats.fouladBookId.empty()) continue;  // side-loaded, or read before v3
+    if (stats.totalReadingMs == 0) continue;
+    reportReadingStats(username, password, stats.fouladBookId, stats.lastProgressPercent, "",
+                       static_cast<uint32_t>(stats.totalReadingMs / 1000));
     flushed++;
   }
   if (flushed > 0) diagLog("flush: reported " + std::to_string(flushed) + " book(s)");
