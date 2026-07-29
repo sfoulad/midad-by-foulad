@@ -16,9 +16,16 @@ namespace {
 constexpr char STATS_PATH[] = "/.crosspoint/reading_stats.bin";
 constexpr char LEGACY_GLOBAL_STATS_PATH[] = "/.crosspoint/global_stats.bin";
 // v2 adds lifetimeBooksFinished (persisted, never-decreasing books-finished
-// count) -- see that field's own comment in ReadingStatsStore.h. A v1 file
-// (or any other mismatch) starts fresh per this store's existing convention.
-constexpr uint8_t STATS_FILE_VERSION = 2;
+// count) -- see that field's own comment in ReadingStatsStore.h.
+// v3 adds ReadingBookStats::fouladBookId.
+//
+// Older files are READ, not discarded: every field added since v1 is optional on
+// load and simply absent on an older file. Being strict here would erase reading
+// history, streaks and the heatmap to gain nothing -- the ids those files lack
+// are gone regardless, so a v1/v2 book just behaves as side-loaded, which is
+// already the status quo. Only a version this build has never heard of starts
+// fresh.
+constexpr uint8_t STATS_FILE_VERSION = 3;
 // Sanity bounds for a corrupt file (counts read before any allocation).
 constexpr uint16_t MAX_FILE_BOOKS = 512;
 constexpr uint16_t MAX_FILE_DAYS = 4096;
@@ -58,8 +65,8 @@ void ReadingStatsStore::ensureLoaded() {
   // rather than discarding all existing streak/per-book history just to add
   // one counter. Anything else (0, or newer than we understand) starts fresh,
   // same as this store's existing convention.
-  if (version != 1 && version != STATS_FILE_VERSION) {
-    LOG_DBG("RSTAT", "Stats file version mismatch (%u), starting fresh", version);
+  if (version < 1 || version > STATS_FILE_VERSION) {
+    LOG_DBG("RSTAT", "Stats file version %u not understood, starting fresh", version);
     return;
   }
   serialization::readPod(f, maxStreakDays);
@@ -80,6 +87,11 @@ void ReadingStatsStore::ensureLoaded() {
     serialization::readString(f, book.path);
     serialization::readString(f, book.title);
     serialization::readString(f, book.author);
+    // Absent before v3. Left empty, so the book reports as side-loaded until it
+    // is next opened from the catalog -- see the field's comment.
+    if (version >= 3) {
+      serialization::readString(f, book.fouladBookId);
+    }
     serialization::readPod(f, book.totalReadingMs);
     serialization::readPod(f, book.sessions);
     serialization::readPod(f, book.lastSessionMs);
@@ -379,6 +391,16 @@ uint32_t ReadingStatsStore::getLatestReadingDayOrdinal() const {
   return readingDays.empty() ? 0 : readingDays.back().dayOrdinal;
 }
 
+void ReadingStatsStore::setFouladBookId(const std::string& path, const std::string& fouladBookId) {
+  if (fouladBookId.empty()) return;  // never clear a known id with an absent one
+  ensureLoaded();
+  const size_t index = findBookIndex(path);
+  if (index >= books.size()) return;
+  if (books[index].fouladBookId == fouladBookId) return;  // no needless SD write
+  books[index].fouladBookId = fouladBookId;
+  dirty = true;
+}
+
 bool ReadingStatsStore::removeBook(const std::string& path) {
   ensureLoaded();
   const size_t index = findBookIndex(path);
@@ -435,6 +457,7 @@ bool ReadingStatsStore::save() {
     serialization::writeString(f, book.path);
     serialization::writeString(f, book.title);
     serialization::writeString(f, book.author);
+    serialization::writeString(f, book.fouladBookId);
     serialization::writePod(f, book.totalReadingMs);
     serialization::writePod(f, book.sessions);
     serialization::writePod(f, book.lastSessionMs);

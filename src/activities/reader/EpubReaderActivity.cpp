@@ -225,6 +225,19 @@ void EpubReaderActivity::onEnter() {
   // committed and saved in onExit().
   if (SETTINGS.trackReadingStats) {
     READING_STATS.beginSession(epub->getPath(), epub->getTitle(), epub->getAuthor());
+    // Capture the catalog id into the stats entry while RecentBooksStore still
+    // holds it. That list caps at 10 and evicts, and the id used to live only
+    // there -- so a catalog book read a while ago lost its id and could never be
+    // reported to /opds/reading-stats again, leaving the server without a
+    // library_reading row and the app without a cover (INSTRUCTIONS-14). Doing it
+    // on open also backfills books that predate the v3 stats format, the moment
+    // they are next read.
+    {
+      const RecentBook recent = RECENT_BOOKS.getDataFromBook(epub->getPath());
+      if (!recent.fouladBookId.empty()) {
+        READING_STATS.setFouladBookId(epub->getPath(), recent.fouladBookId);
+      }
+    }
     // One-time cleanup of the previous stats system's per-book sidecar file.
     Storage.remove((epub->getCachePath() + "/reading_stats.bin").c_str());
     paceWarmupPending = true;
