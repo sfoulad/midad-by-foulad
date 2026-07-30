@@ -44,6 +44,7 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "activities/reader/MidadSyncActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookReaderSettings.h"
@@ -244,6 +245,19 @@ void EpubReaderActivity::onEnter() {
     Storage.remove((epub->getCachePath() + "/reading_stats.bin").c_str());
     paceWarmupPending = true;
     pageShownAtMs = millis();
+  }
+
+  // Consume a jump accepted on the sync screen. Applied here rather than there
+  // because turning a percentage into a spine/page needs the Epub loaded, and the
+  // sync activity had to release it to afford the TLS handshake. Cleared before
+  // jumping, and persisted immediately, so a crash mid-jump cannot leave the reader
+  // re-jumping on every open.
+  if (APP_STATE.pendingSyncJumpPercent > 0) {
+    const int target = APP_STATE.pendingSyncJumpPercent;
+    APP_STATE.pendingSyncJumpPercent = 0;
+    APP_STATE.saveToFile();
+    LOG_INF("SYNC", "Applying accepted cross-device jump to %d%%", target);
+    jumpToPercent(target);
   }
 
   // Trigger first update
@@ -955,6 +969,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       launchKOReaderSync();
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::MIDAD_SYNC: {
+      launchMidadSync();
+      break;
+    }
     case EpubReaderMenuActivity::MenuAction::BOOKMARKS: {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, epub, epub->getPath()),
@@ -994,6 +1012,52 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       // MORE are handled inside the drawer and never arrive here.
       break;
   }
+}
+
+void EpubReaderActivity::launchMidadSync() {
+  if (!epub) return;
+
+  const auto& recents = RECENT_BOOKS.getBooks();
+  const auto recentIt =
+      std::find_if(recents.begin(), recents.end(), [this](const RecentBook& b) { return b.path == epub->getPath(); });
+  if (recentIt == recents.end() || recentIt->fouladBookId.empty()) {
+    return;  // side-loaded: nothing the catalog can be told about
+  }
+
+  const int currentPage = section ? section->currentPage : nextPageNumber;
+  const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+  const float percent = static_cast<float>(currentBookProgressPercent());
+  // Only when a page was genuinely turned while this instance was alive -- see the
+  // close-sync block in onExit() for why a restored reader's timestamp is not an age.
+  const uint32_t ageSeconds = pageTurnedThisSession ? static_cast<uint32_t>((millis() - pageShownAtMs) / 1000UL) : 0;
+  const std::string savedEpubPath = epub->getPath();
+  const std::string bookId = recentIt->fouladBookId;
+
+  // Persist first: the reader is replaced below and resumes from this file, so a
+  // failed write would silently lose the reader's place. Same guard as KOReader's.
+  if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
+    LOG_ERR("SYNC", "Aborting Midad sync because current progress could not be saved");
+    pendingSyncSaveError = true;
+    requestUpdate();
+    return;
+  }
+
+  // Release Epub and Section (~65KB) before the handshake, exactly as the KOReader
+  // path does. A TLS session cannot be afforded alongside a loaded book, and this is
+  // the whole reason sync is a separate activity rather than a call from here.
+  LOG_DBG("SYNC", "Releasing epub for Midad sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
+  {
+    RenderLock lock(*this);
+    if (section) {
+      nextPageNumber = section->currentPage;
+    }
+    section.reset();
+    epub.reset();
+  }
+  LOG_DBG("SYNC", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
+
+  activityManager.replaceActivity(std::make_unique<MidadSyncActivity>(renderer, mappedInput, savedEpubPath, bookId,
+                                                                      percent, currentPage, totalPages, ageSeconds));
 }
 
 bool EpubReaderActivity::launchKOReaderSync() {

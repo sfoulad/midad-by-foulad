@@ -11,7 +11,9 @@
 #include "ArabicFontSystem.h"
 #include "CrossPointSettings.h"
 #include "DictionaryStore.h"
+#include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
+#include "OpdsServerStore.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
@@ -142,7 +144,12 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSettingsItems(
     const bool hasFootnotes) const {
   std::vector<MenuItem> items;
-  items.reserve(9);
+  items.reserve(10);
+  // Only offer the Midad row when there is an account to sync with -- the same
+  // check the home tile and Settings use.
+  const auto& opdsServers = OPDS_STORE.getServers();
+  const bool hasMidadAccount = std::any_of(opdsServers.begin(), opdsServers.end(),
+                                           [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
@@ -154,7 +161,14 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSetti
   items.push_back({MenuAction::RESET_BOOK_SETTINGS, StrId::STR_RESET_BOOK_SETTINGS});
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
+  // Two sync rows, both named for where they go. Repointing the existing KOReader
+  // row at Midad was the alternative and was rejected: they sync to different
+  // places, and silently changing what a row someone already relies on does reads
+  // as data loss. STR_SYNC_PROGRESS was fine when there was only one.
+  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_KOREADER});
+  if (hasMidadAccount) {
+    items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
+  }
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
   return items;
