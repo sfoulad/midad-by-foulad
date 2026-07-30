@@ -95,11 +95,12 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
                                                const int currentSpineIndex, const int currentPage, const int totalPages,
                                                const int bookProgressPercent, const uint8_t currentOrientation,
                                                const bool hasFootnotes, const bool hasBookmarks,
-                                               const bool isArabicBook)
+                                               const bool isArabicBook, const bool canSyncMidad)
     : Activity("EpubReaderMenu", renderer, mappedInput),
       epub(epub),
       currentSpineIndex(currentSpineIndex),
       isArabicBook(isArabicBook),
+      canSyncMidad_(canSyncMidad),
       sdFamilies(sdFamilyNames(isArabicBook ? arabicFontSystem.registry() : sdFontSystem.registry())),
       title(epub ? flattenedTitle(epub->getTitle()) : std::string()),
       pendingOrientation(currentOrientation),
@@ -166,7 +167,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSetti
   // places, and silently changing what a row someone already relies on does reads
   // as data loss. STR_SYNC_PROGRESS was fine when there was only one.
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_KOREADER});
-  if (hasMidadAccount) {
+  if (hasMidadAccount && canSyncMidad_) {
     items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
   }
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});

@@ -388,42 +388,43 @@ void EpubReaderActivity::openReaderMenu() {
   const std::string& lang = epub->getLanguage();
   const bool isArabicBook = ScriptDetector::containsArabic(epub->getTitle().c_str()) || lang.rfind("ar", 0) == 0 ||
                             lang.rfind("fa", 0) == 0 || lang.rfind("ur", 0) == 0;
-  startActivityForResult(
-      std::make_unique<EpubReaderMenuActivity>(renderer, mappedInput, epub.get(), currentSpineIndex, currentPage,
-                                               totalPages, bookProgressPercent, SETTINGS.orientation,
-                                               !currentPageFootnotes.empty(), !cachedBookmarks.empty(), isArabicBook),
-      [this](const ActivityResult& result) {
-        // Always apply orientation / auto-turn / per-book setting edits, even
-        // if the menu was cancelled (Back just closes the drawer).
-        const auto& menu = std::get<MenuResult>(result.data);
-        LOG_INF("ERS", "Drawer closed: action=%d cancelled=%d settingsChanged=%d chapterSpine=%d", menu.action,
-                result.isCancelled ? 1 : 0, menu.bookSettingsChanged ? 1 : 0, menu.chapterSpineIndex);
-        applyOrientation(menu.orientation);
-        toggleAutoPageTurn(menu.pageTurnOption);
-        if (menu.bookSettingsChanged && epub) {
-          BookReaderSettings::saveFromSettings(epub->getCachePath());
-          {
-            // Same mid-book re-layout dance as applyOrientation(): preserve the
-            // position, reload the font systems for the new per-book values, and
-            // reset the section -- the changed fontId/arabicFontId/lineCompression/
-            // alignment in the section cache key forces a rebuild, and
-            // applyDeferredReposition() remaps the page once the count is known.
-            RenderLock lock(*this);
-            if (section) {
-              cachedSpineIndex = currentSpineIndex;
-              cachedChapterTotalPageCount = section->pageCount;
-              nextPageNumber = section->currentPage;
-            }
-            sdFontSystem.ensureLoaded(renderer);
-            arabicFontSystem.ensureLoaded(renderer);
-            section.reset();
-          }
-          requestUpdate();
-        }
-        if (!result.isCancelled) {
-          onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action), menu);
-        }
-      });
+  startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
+                             renderer, mappedInput, epub.get(), currentSpineIndex, currentPage, totalPages,
+                             bookProgressPercent, SETTINGS.orientation, !currentPageFootnotes.empty(),
+                             !cachedBookmarks.empty(), isArabicBook, bookHasFouladId()),
+                         [this](const ActivityResult& result) {
+                           // Always apply orientation / auto-turn / per-book setting edits, even
+                           // if the menu was cancelled (Back just closes the drawer).
+                           const auto& menu = std::get<MenuResult>(result.data);
+                           LOG_INF("ERS", "Drawer closed: action=%d cancelled=%d settingsChanged=%d chapterSpine=%d",
+                                   menu.action, result.isCancelled ? 1 : 0, menu.bookSettingsChanged ? 1 : 0,
+                                   menu.chapterSpineIndex);
+                           applyOrientation(menu.orientation);
+                           toggleAutoPageTurn(menu.pageTurnOption);
+                           if (menu.bookSettingsChanged && epub) {
+                             BookReaderSettings::saveFromSettings(epub->getCachePath());
+                             {
+                               // Same mid-book re-layout dance as applyOrientation(): preserve the
+                               // position, reload the font systems for the new per-book values, and
+                               // reset the section -- the changed fontId/arabicFontId/lineCompression/
+                               // alignment in the section cache key forces a rebuild, and
+                               // applyDeferredReposition() remaps the page once the count is known.
+                               RenderLock lock(*this);
+                               if (section) {
+                                 cachedSpineIndex = currentSpineIndex;
+                                 cachedChapterTotalPageCount = section->pageCount;
+                                 nextPageNumber = section->currentPage;
+                               }
+                               sdFontSystem.ensureLoaded(renderer);
+                               arabicFontSystem.ensureLoaded(renderer);
+                               section.reset();
+                             }
+                             requestUpdate();
+                           }
+                           if (!result.isCancelled) {
+                             onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action), menu);
+                           }
+                         });
 }
 
 namespace {
@@ -1014,15 +1015,39 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   }
 }
 
+std::string EpubReaderActivity::currentBookFouladId() const {
+  if (!epub) return "";
+  // Stats store first, recents second. The id lives in ReadingBookStats precisely
+  // because RECENT_BOOKS caps at 10 and evicts (see INSTRUCTIONS-14) -- looking it
+  // up only in recents would make Sync vanish for a catalog book read a while ago,
+  // which is the same bug that hid reading from library_reading rows.
+  READING_STATS.ensureLoaded();
+  if (const auto* stats = READING_STATS.findBook(epub->getPath()); stats && !stats->fouladBookId.empty()) {
+    return stats->fouladBookId;
+  }
+  const auto& recents = RECENT_BOOKS.getBooks();
+  const auto it =
+      std::find_if(recents.begin(), recents.end(), [this](const RecentBook& b) { return b.path == epub->getPath(); });
+  return it != recents.end() ? it->fouladBookId : "";
+}
+
+bool EpubReaderActivity::bookHasFouladId() const {
+  // The Sync row is offered only for a book the catalog can be told about.
+  // launchMidadSync() requires the same id and returns silently without one, so
+  // gating the row on anything weaker (an account existing, say) produces a menu
+  // entry that does nothing at all when pressed -- which is exactly what shipped
+  // in v1.8.5-rc and was reported as "nothing happens".
+  //
+  // Empty for a side-loaded file, and also for a catalog book downloaded before
+  // the id was recorded or since evicted from the 10-entry recents list.
+  return !currentBookFouladId().empty();
+}
+
 void EpubReaderActivity::launchMidadSync() {
   if (!epub) return;
 
-  const auto& recents = RECENT_BOOKS.getBooks();
-  const auto recentIt =
-      std::find_if(recents.begin(), recents.end(), [this](const RecentBook& b) { return b.path == epub->getPath(); });
-  if (recentIt == recents.end() || recentIt->fouladBookId.empty()) {
-    return;  // side-loaded: nothing the catalog can be told about
-  }
+  const std::string bookId = currentBookFouladId();
+  if (bookId.empty()) return;  // side-loaded: nothing the catalog can be told about
 
   const int currentPage = section ? section->currentPage : nextPageNumber;
   const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
@@ -1031,7 +1056,6 @@ void EpubReaderActivity::launchMidadSync() {
   // close-sync block in onExit() for why a restored reader's timestamp is not an age.
   const uint32_t ageSeconds = pageTurnedThisSession ? static_cast<uint32_t>((millis() - pageShownAtMs) / 1000UL) : 0;
   const std::string savedEpubPath = epub->getPath();
-  const std::string bookId = recentIt->fouladBookId;
 
   // Persist first: the reader is replaced below and resumes from this file, so a
   // failed write would silently lose the reader's place. Same guard as KOReader's.
