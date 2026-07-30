@@ -83,6 +83,12 @@ void uploadDebugLog(const std::string& username, const std::string& password);
 // crash report file doesn't exist, or the upload ultimately fails.
 bool uploadCrashReport(const std::string& username, const std::string& password);
 
+// Uploads a queued crash report on reconnect, then deletes it so it is sent once.
+// No-op when none is waiting. Unlike uploadCrashReport() this is not user-initiated:
+// a device that panics and reboots cleanly never shows the crash screen, so the
+// Send button there delivers nothing for exactly the failures worth seeing.
+void flushPendingCrashReport(const std::string& username, const std::string& password);
+
 // Reports device telemetry (battery/RSSI/free heap/uptime) and a reading-
 // stats snapshot (streaks, totals, per-book history, reading-day heatmap)
 // for the "My Devices" web page's Device Stats / Reading Stats tabs -- see
