@@ -500,20 +500,27 @@ void FontDownloadActivity::loop() {
       requestUpdate();
     });
 
-    // Language tab bar: Left/Right (NavNext/NavPrevious) are otherwise idle on
-    // this screen -- Up/Down (ScrollNext/ScrollPrevious) own the list -- same
-    // free-button reasoning as SettingsActivity's own category tabs, which
-    // switch the same way. Only 2 tabs, so next/prev both just flip.
-    auto toggleLanguage = [this] {
+    // Language tab bar, bound to the FRONT Left/Right buttons directly.
+    //
+    // Not NavNext/NavPrevious, which is what this used to do and was the bug:
+    // those are not "Left/Right" at all. NavNext resolves to side Down + front
+    // Right, and ScrollNext -- which the list navigation above uses -- resolves to
+    // side Down + front Right as well (see MappedInputManager). Both fired on the
+    // same physical Down press, so every press advanced the selection and then
+    // immediately flipped the language, and rebuildVisibleList() reset
+    // selectedIndex_ to 0. The list could never be scrolled: Down only ever
+    // toggled Arabic/English and snapped back to the top.
+    //
+    // Only 2 tabs, so either direction just flips.
+    if (mappedInput.wasPressed(MappedInputManager::Button::Left) ||
+        mappedInput.wasPressed(MappedInputManager::Button::Right)) {
       {
         RenderLock lock(*this);
         showArabic_ = !showArabic_;
         rebuildVisibleList();
       }
       requestUpdate();
-    };
-    buttonNavigator_.onNext(toggleLanguage);
-    buttonNavigator_.onPrevious(toggleLanguage);
+    }
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       if (!families_.empty()) {
