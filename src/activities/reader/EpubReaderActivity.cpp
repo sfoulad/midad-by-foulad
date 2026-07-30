@@ -6,6 +6,7 @@
 #include <FontDecompressor.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <JsonSettingsIO.h>
@@ -33,6 +34,7 @@
 #include "EpubReaderUtils.h"
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "FouladReadingPosition.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
@@ -291,6 +293,25 @@ void EpubReaderActivity::onExit() {
         const uint32_t secondsRead = bookStats ? static_cast<uint32_t>(bookStats->totalReadingMs / 1000) : 0;
         FouladDeviceTracking::reportReadingStats(serverIt->username, serverIt->password, recentIt->fouladBookId,
                                                  progressPercent, positionBuf, secondsRead);
+
+        // Cross-device position, alongside (not instead of) the per-device stats
+        // above -- the two answer different questions and deliberately do not share
+        // a row. Sending both on close is expected (EINK_PAGE_SYNC_TASKS.md §7).
+        //
+        // Closing is what makes this automatic: without it the phone only ever has
+        // somewhere to sync to when a person remembers to press Sync in the drawer,
+        // and the feature half-works.
+        //
+        // read_at only when the clock is trustworthy THIS boot. Neither device can
+        // preserve a calendar date across a reboot -- the X3's DS3231 has no
+        // calendar and the X4 has no RTC at all (HalClock.h) -- so after offline
+        // reading there is usually nothing honest to send. Omitted, the server
+        // stamps arrival; a guess would be worse, and the spec says so.
+        const uint32_t readAt = HalClock::isSystemTimeValid() ? static_cast<uint32_t>(time(nullptr)) : 0;
+        FouladReadingPosition::Position remote;
+        FouladReadingPosition::sync(serverIt->username, serverIt->password, recentIt->fouladBookId,
+                                    static_cast<float>(progressPercent), section ? section->currentPage : -1,
+                                    section ? section->estimatedTotalPages() : -1, readAt, remote);
       }
     }
   }

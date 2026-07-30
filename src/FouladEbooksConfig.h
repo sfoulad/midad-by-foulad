@@ -53,6 +53,15 @@ constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://midad.one/opds/devic
 //
 // GET  <base>       -> this account's devices, each carrying id and serial_number
 // DELETE <base>/{id} -> remove one
+// Cross-device reading position (EINK_PAGE_SYNC_TASKS.md). POST reports where this
+// device is and returns where the ACCOUNT is in one round trip; GET only looks, for
+// when there is nothing honest to report yet. Same opds.auth Basic Auth as the feed.
+//
+// The shared currency is progress_percent, not page: the phone paginates with
+// epub.js at its own font size and cannot act on a page number computed for a
+// 5-inch panel. page/total_pages are sent for display only.
+constexpr char FOULAD_EBOOKS_READING_POSITION_URL[] = "http://midad.one/opds/reading-position";
+
 constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://midad.one/api/app/devices";
 
 // The one host every URL above points at. Matched on the host rather than on a
