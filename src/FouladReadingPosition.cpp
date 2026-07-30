@@ -37,6 +37,11 @@ bool parsePosition(const std::string& body, FouladReadingPosition::Position& out
   out.deviceName = doc["device_name"].isNull() ? "" : doc["device_name"].as<std::string>();
   // Absent on the GET; missing reads as false rather than throwing.
   out.shouldJump = doc["should_jump"] | false;
+  // Informational -- callers branch on shouldJump, never on this. Logged so "why
+  // didn't my sync take" is answerable from a device log instead of a guess.
+  if (!doc["resolution"].isNull()) {
+    LOG_DBG(TAG, "position resolution=%s", doc["resolution"].as<std::string>().c_str());
+  }
   return true;
 }
 
@@ -52,7 +57,8 @@ bool isUnknownDeviceFailure(const std::string& response) {
 
 bool FouladReadingPosition::sync(const std::string& username, const std::string& password,
                                  const std::string& fouladBookId, const float progressPercent, const int page,
-                                 const int totalPages, const uint32_t readAtEpochSeconds, Position& out) {
+                                 const int totalPages, const uint32_t readAtEpochSeconds,
+                                 const uint32_t readAtAgeSeconds, Position& out) {
   if (username.empty() || password.empty() || fouladBookId.empty()) return false;
 
   JsonDocument doc;
@@ -71,6 +77,12 @@ bool FouladReadingPosition::sync(const std::string& username, const std::string&
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmv);
     doc["read_at"] = buf;
   }
+  // Sent alongside read_at on purpose: the server prefers the age, so a device whose
+  // clock is wrong but whose stopwatch is right still orders correctly. Guard rails
+  // are server-side (negative rejected, >400 days treated as unknown); nothing is
+  // sent here unless a page was genuinely turned, so a wrapped counter cannot
+  // masquerade as a confident measurement.
+  if (readAtAgeSeconds > 0) doc["read_at_age_seconds"] = readAtAgeSeconds;
 
   std::string body;
   serializeJson(doc, body);

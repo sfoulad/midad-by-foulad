@@ -42,8 +42,14 @@ struct Position {
 // found. 0 omits the field, which makes the server stamp arrival time. Pass 0
 // rather than a guess: neither device can preserve a calendar date across a reboot
 // (HalClock.h), so an invented timestamp is worse than none.
+// readAtAgeSeconds: how long ago the page turn happened. PREFERRED over the absolute
+// time -- the server subtracts it from its own clock, so the result is indistinguishable
+// from a real timestamp and the device never needs to know the date. If both are sent
+// the age wins, which is why an unset RTC's 1970 alongside a good age does no harm.
+// 0 omits it, and omitting is now correct rather than a silent fallback (spec 4.2).
 bool sync(const std::string& username, const std::string& password, const std::string& fouladBookId,
-          float progressPercent, int page, int totalPages, uint32_t readAtEpochSeconds, Position& out);
+          float progressPercent, int page, int totalPages, uint32_t readAtEpochSeconds, uint32_t readAtAgeSeconds,
+          Position& out);
 
 // Looks without reporting.
 //

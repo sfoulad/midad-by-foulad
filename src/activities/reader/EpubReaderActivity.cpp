@@ -308,10 +308,23 @@ void EpubReaderActivity::onExit() {
         // reading there is usually nothing honest to send. Omitted, the server
         // stamps arrival; a guess would be worse, and the spec says so.
         const uint32_t readAt = HalClock::isSystemTimeValid() ? static_cast<uint32_t>(time(nullptr)) : 0;
+        // Age is preferred over an absolute time (spec 4.1) and is the one number
+        // this hardware can be sure of -- but only when a page was actually turned
+        // while this instance was alive. Deep sleep is a full reboot here, so a
+        // restored reader's pageShownAtMs marks when the book was reopened, not when
+        // the person last read; sending that would understate the age badly.
+        //
+        // esp_sleep_get_time_in_deep_sleep() would close that gap, but it is not in
+        // this ESP-IDF's esp_sleep.h, so there is nothing to measure the sleep with.
+        // Rather than synthesise one, send no timing at all -- spec 4.2 makes that
+        // correct now: a device supersedes its own earlier position without needing
+        // a clock, which is exactly the read-offline-all-day case.
+        const uint32_t ageSeconds =
+            pageTurnedThisSession ? static_cast<uint32_t>((millis() - pageShownAtMs) / 1000UL) : 0;
         FouladReadingPosition::Position remote;
         FouladReadingPosition::sync(serverIt->username, serverIt->password, recentIt->fouladBookId,
                                     static_cast<float>(progressPercent), section ? section->currentPage : -1,
-                                    section ? section->estimatedTotalPages() : -1, readAt, remote);
+                                    section ? section->estimatedTotalPages() : -1, readAt, ageSeconds, remote);
       }
     }
   }
@@ -1089,6 +1102,11 @@ void EpubReaderActivity::accountPageDwellForStats(const bool isForwardTurn) {
   }
   const uint32_t elapsed = static_cast<uint32_t>((millis() - pageShownAtMs) / 1000UL);
   pageShownAtMs = millis();
+  // A page was genuinely turned while this instance was alive, so pageShownAtMs now
+  // marks a real reading moment rather than the time the book happened to be opened.
+  // That is the difference between an age we can send and one we cannot -- see the
+  // close-sync block in onExit().
+  pageTurnedThisSession = true;
   if (elapsed == 0 || elapsed > READING_IDLE_THRESHOLD_SECONDS) {
     // Zero-second flicks aren't reading; anything past the idle threshold means the
     // reader was set aside with the page open -- discard rather than inflate stats.
