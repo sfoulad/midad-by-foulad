@@ -504,7 +504,8 @@ void uploadDebugLog(const std::string& username, const std::string& password) {
   if (!Storage.exists(DebugLog::PATH)) return;
 
   const std::vector<std::pair<std::string, std::string>> files = {{"log", DebugLog::PATH}};
-  const std::vector<std::pair<std::string, std::string>> fields = {{"serial_number", getSerialNumber()}};
+  const std::vector<std::pair<std::string, std::string>> fields = {{"serial_number", getSerialNumber()},
+                                                                   {"firmware_version", CROSSPOINT_VERSION}};
   std::string response;
   bool ok = HttpDownloader::postFilesMultipart(deviceLogEndpoint(), files, fields, response, 20000, username, password);
 
@@ -543,8 +544,8 @@ bool uploadCrashReport(const std::string& username, const std::string& password)
   if (!Storage.exists(CRASH_REPORT_PATH)) return false;
 
   const std::vector<std::pair<std::string, std::string>> files = {{"log", CRASH_REPORT_PATH}};
-  const std::vector<std::pair<std::string, std::string>> fields = {{"serial_number", getSerialNumber()},
-                                                                   {"type", "crash"}};
+  const std::vector<std::pair<std::string, std::string>> fields = {
+      {"serial_number", getSerialNumber()}, {"type", "crash"}, {"firmware_version", CROSSPOINT_VERSION}};
   std::string response;
   bool ok = HttpDownloader::postFilesMultipart(deviceLogEndpoint(), files, fields, response, 20000, username, password);
 
@@ -566,6 +567,17 @@ bool uploadCrashReport(const std::string& username, const std::string& password)
   diagLog(ok ? "crash report upload -> ok"
              : "crash report upload -> FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail));
   return ok;
+}
+
+void flushPendingCrashReport(const std::string& username, const std::string& password) {
+  if (!Storage.exists(CRASH_REPORT_PATH)) return;  // nothing waiting
+  if (!uploadCrashReport(username, password)) return;
+  // Delivered: drop the local copy so the next connection does not resend it.
+  // Deliberately only on success -- a failed upload leaves the file for the next
+  // attempt, which is the whole point of queueing it rather than requiring the
+  // user to be looking at the crash screen at the moment they have WiFi.
+  Storage.remove(CRASH_REPORT_PATH);
+  diagLog("crash report flushed and cleared");
 }
 
 void reportDeviceStats(const std::string& username, const std::string& password) {

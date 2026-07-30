@@ -1030,6 +1030,18 @@ void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
   // is the one reliable moment to sync any progress accumulated since the
   // last time the device was online.
   FouladDeviceTracking::flushPendingReadingStats(server.username, server.password);
+  // Crash reports go the same way, and for a stronger reason: until now the only
+  // path was the user tapping Send on the crash screen. A device that panics and
+  // reboots cleanly never shows that screen, so nobody taps it -- which is why
+  // zero crash reports have ever reached the server while nine debug logs have.
+  // The very failures worth seeing were the ones that reported nothing.
+  //
+  // Queued instead: the report sits on the SD card until the next time the device
+  // is online with an account, then uploads unattended and is deleted so it is
+  // sent once. Unconditional -- unlike the debug log below it, this is not gated
+  // on Settings -> Apps -> Debug, because a crash is not routine logging and the
+  // people whose devices crash are the least likely to have opted into anything.
+  FouladDeviceTracking::flushPendingCrashReport(server.username, server.password);
   // Same reasoning: uploading the debug log here (rather than at the moment
   // a book is opened, when WiFi is already gone) is what actually delivers
   // it. No-op unless Settings -> Apps -> Debug is on.
