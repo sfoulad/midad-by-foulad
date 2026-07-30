@@ -284,17 +284,27 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
   // layout anchoring only. The scroll bar deliberately stays on the right edge.
   const bool rtl = I18N.isRtl();
 
-  int textX = rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection;
-  int textWidth = contentWidth - LyraMetrics::values.contentSidePadding * 2 - hPaddingInSelection * 2;
   int iconSize = 0;
   if (rowIcon != nullptr) {
     iconSize = (rowSubtitle != nullptr) ? mainMenuIconSize : listIconSize;
-    textX += iconSize + hPaddingInSelection;
-    textWidth -= iconSize + hPaddingInSelection;
   }
-  // Right edge of the text area (mirror of textX): where RTL titles right-align.
-  const int textRightEdge = rect.x + contentWidth - LyraMetrics::values.contentSidePadding - hPaddingInSelection -
-                            (rowIcon != nullptr ? iconSize + hPaddingInSelection : 0);
+  // The icon column follows the UI language and stays put for every row, so the
+  // icons line up whatever each row's own script is. The gutter is therefore
+  // reserved on THAT side only.
+  //
+  // Reserving it on both (which is what "mirror of textX" used to do) is what put
+  // an Arabic filename on top of the icon in an English UI: rowRtl right-aligns a
+  // row containing Arabic even when the UI is LTR, so the title ran leftwards from
+  // a right edge that had been pulled in for an icon sitting on the left. Its left
+  // end landed exactly on the icon. Subtracting the gutter from the correct side
+  // also stops wasting a column's width on every row of a plain LTR list.
+  const int iconGutter = (rowIcon != nullptr) ? iconSize + hPaddingInSelection : 0;
+  const int textLeftEdge =
+      rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection + (rtl ? 0 : iconGutter);
+  const int textRightEdge =
+      rect.x + contentWidth - LyraMetrics::values.contentSidePadding - hPaddingInSelection - (rtl ? iconGutter : 0);
+  int textX = textLeftEdge;
+  int textWidth = std::max(0, textRightEdge - textLeftEdge);
 
   // Draw all items
   const auto pageStartIndex = selectedIndex / pageItems * pageItems;
