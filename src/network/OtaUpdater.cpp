@@ -39,21 +39,6 @@ constexpr char latestReleaseUrl[] = "https://api.github.com/repos/sfoulad/midad-
 // /releases/latest is a single object.
 constexpr char allReleasesUrl[] = "https://api.github.com/repos/sfoulad/midad-by-foulad/releases?per_page=1";
 
-// The pre-rename repository path, tried only if the one above answers 404.
-//
-// GitHub redirects a renamed repository's API path to its new one and
-// HttpDownloader follows redirects, so firmware already in the field keeps
-// updating through the old path without help. This pair covers the other
-// direction and the gap in between: firmware built after the rename but
-// installed while the repository is still called foulad-eink, which is exactly
-// the window this release ships into.
-//
-// Only a 404 falls back. A 403 must not, because that is the rate limit
-// (see checkForUpdate) and a second request cannot succeed either -- it would
-// just spend another of the 60 per hour that failure is already about.
-constexpr char legacyLatestReleaseUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases/latest";
-constexpr char legacyAllReleasesUrl[] = "https://api.github.com/repos/sfoulad/foulad-eink/releases?per_page=1";
-
 esp_err_t http_client_set_header_cb(esp_http_client_handle_t http_client) {
   return esp_http_client_set_header(http_client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 }
@@ -126,7 +111,7 @@ void saveCheckCache(bool prerelease, const std::string& etag, const std::string&
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   const bool prerelease = SETTINGS.otaPrereleaseEnabled != 0;
-  const char* url = prerelease ? allReleasesUrl : latestReleaseUrl;
+  const char* const url = prerelease ? allReleasesUrl : latestReleaseUrl;
   LOG_DBG("OTA", "Checking for update (current: %s, channel: %s)", CROSSPOINT_VERSION,
           prerelease ? "pre-release" : "stable");
 
@@ -154,19 +139,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
     return true;
   };
 
-  bool ok = HttpDownloader::fetchUrl(url, feed, conditional);
-
-  if (!ok && HttpDownloader::getLastFailure().stage == HttpDownloader::FailStage::STATUS &&
-      HttpDownloader::getLastFailure().detail == 404) {
-    // Repository not found under the Midad name -- it has not been renamed yet.
-    // Fall back to the old path for this check. Deliberately narrow: only a 404
-    // means "wrong path", and only then is a second request worth spending.
-    url = prerelease ? legacyAllReleasesUrl : legacyLatestReleaseUrl;
-    LOG_INF("OTA", "Midad repo path 404'd, retrying pre-rename path");
-    // The parser needs no reset: runGet() rejects a non-200 before its read loop,
-    // so the 404 body never reached it.
-    ok = HttpDownloader::fetchUrl(url, feed, conditional);
-  }
+  const bool ok = HttpDownloader::fetchUrl(url, feed, conditional);
 
   if (!ok) {
     LOG_ERR("OTA", "Release check fetch failed");

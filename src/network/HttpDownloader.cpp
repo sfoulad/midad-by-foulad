@@ -247,6 +247,26 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   int64_t contentLength = esp_http_client_fetch_headers(client);
   int status = esp_http_client_get_status_code(client);
   for (int hop = 0; isRedirect(status) && hop < 5; ++hop) {
+    // Close before following. The redirect response carries a body of its own
+    // (GitHub's API answers a renamed repository with 301 + a 215-byte JSON
+    // payload), and keep_alive_enable means the socket is reused -- so reopening
+    // without consuming that body left it queued in front of the next response.
+    // The header parser then read the leftovers instead of the status line,
+    // fetch_headers() failed, and the status code was never populated: the caller
+    // saw FailStage::STATUS with a nonsensical detail of -1.
+    //
+    // That path had simply never run before. Nothing this firmware talks to
+    // redirected on the check endpoint until the GitHub repository was renamed,
+    // at which point every device on a build predating the new URL began failing
+    // its update check outright, reporting "http 5:-1".
+    //
+    // Closing rather than draining is deliberate: it costs a fresh handshake on a
+    // redirect (rare, and unavoidable anyway when the host changes, as it does on
+    // the release CDN hop), and in exchange the next response is parsed on a
+    // connection that cannot be carrying anything stale -- correct regardless of
+    // whether a body was present, chunked, or truncated.
+    LOG_DBG("HTTP", "following redirect %d (status %d)", hop + 1, status);
+    esp_http_client_close(client);
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
