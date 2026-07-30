@@ -20,6 +20,17 @@ class CrossPointState {
   uint8_t recentSleepPos = 0;                           // next write slot
   uint8_t recentSleepFill = 0;                          // valid entries (0..SLEEP_RECENT_COUNT)
   uint8_t readerActivityLoadCount = 0;
+  // Cross-device jump handed from the Midad sync activity to the reader
+  // (EINK_PAGE_SYNC_TASKS.md). The sync replaces the reader to free ~65KB for the
+  // TLS handshake, so the accepted percentage cannot simply be passed in a call --
+  // it survives here across the swap and is consumed once on the reader's next open.
+  //
+  // Deliberately a percentage rather than a resolved spine/page: turning one into
+  // the other is EpubReaderActivity::jumpToPercent()'s job, and it needs the Epub
+  // loaded to do it -- which is exactly what the sync activity had to release.
+  // 0 = nothing pending; a jump to 0% is indistinguishable from none and is also
+  // the one jump nobody needs.
+  uint8_t pendingSyncJumpPercent = 0;
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
 

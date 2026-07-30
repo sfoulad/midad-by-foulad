@@ -38,6 +38,7 @@ class EpubReaderMenuActivity final : public Activity {
     DISPLAY_QR,
     GO_HOME,
     SYNC,
+    MIDAD_SYNC,
     DELETE_CACHE,
     // Handled inside the drawer (never returned as a result):
     FONT_SIZE,

@@ -128,6 +128,8 @@ class EpubReaderActivity final : public Activity {
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();
+  // Midad equivalent: same save-release-replace shape, see the implementation.
+  void launchMidadSync();
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
@@ -142,6 +144,9 @@ class EpubReaderActivity final : public Activity {
   // --- Reading-time tracking (see src/reading/ReadingStatsStore.h) ---
   // millis() when the current page became visible; 0 = timer not running.
   unsigned long pageShownAtMs = 0UL;
+  // True once a page has actually been turned in this activity instance -- see the
+  // close-sync block in onExit() for why an age is only honest after that.
+  bool pageTurnedThisSession = false;
   // First page dwell after opening/jumping includes orientation time, not reading --
   // skip it as a pace sample (it still counts toward session time).
   bool paceWarmupPending = true;
