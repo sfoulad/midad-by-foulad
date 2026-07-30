@@ -115,7 +115,19 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 // then orientation; everything else lives in the Settings tab.
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadingItems(const bool hasBookmarks) const {
   std::vector<MenuItem> items;
-  items.reserve(8);
+  items.reserve(9);
+  // First, ahead of even the dictionary: cross-device sync is pressed every time
+  // someone picks the book up after reading elsewhere, which is often. Shown only
+  // when there is an account AND this book carries a catalog id -- the same
+  // condition launchMidadSync() needs, so the row is never present-and-inert.
+  {
+    const auto& opdsServers = OPDS_STORE.getServers();
+    const bool hasMidadAccount = std::any_of(opdsServers.begin(), opdsServers.end(),
+                                             [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+    if (hasMidadAccount && canSyncMidad_) {
+      items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
+    }
+  }
   // Only offered once a dictionary is actually installed -- otherwise the row
   // would open straight into DICTIONARY_NONE_SELECTED every time. Pinned
   // first (user request) with the same label as the Settings/Apps entry
@@ -145,12 +157,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSettingsItems(
     const bool hasFootnotes) const {
   std::vector<MenuItem> items;
-  items.reserve(10);
-  // Only offer the Midad row when there is an account to sync with -- the same
-  // check the home tile and Settings use.
-  const auto& opdsServers = OPDS_STORE.getServers();
-  const bool hasMidadAccount = std::any_of(opdsServers.begin(), opdsServers.end(),
-                                           [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+  items.reserve(9);
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
@@ -162,14 +169,13 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSetti
   items.push_back({MenuAction::RESET_BOOK_SETTINGS, StrId::STR_RESET_BOOK_SETTINGS});
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
-  // Two sync rows, both named for where they go. Repointing the existing KOReader
-  // row at Midad was the alternative and was rejected: they sync to different
-  // places, and silently changing what a row someone already relies on does reads
-  // as data loss. STR_SYNC_PROGRESS was fine when there was only one.
+  // KOReader sync stays in Settings, where it has always been. Midad's moved to
+  // the Reading tab and pinned first (user request): it is reached constantly,
+  // and a tab labelled Settings is the wrong place for something used every
+  // session. Named for where it goes either way -- repointing this row at Midad
+  // was rejected, since the two sync to different places and silently changing
+  // what a row someone relies on does reads as data loss.
   items.push_back({MenuAction::SYNC, StrId::STR_SYNC_KOREADER});
-  if (hasMidadAccount && canSyncMidad_) {
-    items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
-  }
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
   return items;
