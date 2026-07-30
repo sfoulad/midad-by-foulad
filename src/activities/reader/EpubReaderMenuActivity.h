@@ -53,7 +53,7 @@ class EpubReaderMenuActivity final : public Activity {
   explicit EpubReaderMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, Epub* epub,
                                   const int currentSpineIndex, const int currentPage, const int totalPages,
                                   const int bookProgressPercent, const uint8_t currentOrientation,
-                                  const bool hasFootnotes, bool hasBookmarks, bool isArabicBook);
+                                  const bool hasFootnotes, bool hasBookmarks, bool isArabicBook, bool canSyncMidad);
 
   void onEnter() override;
   void onExit() override;
@@ -73,6 +73,10 @@ class EpubReaderMenuActivity final : public Activity {
 
   std::vector<MenuItem> buildReadingItems(bool hasBookmarks) const;
   std::vector<MenuItem> buildSettingsItems(bool hasFootnotes) const;
+  // False when THIS book has no catalog id -- side-loaded, or downloaded before
+  // the id was recorded. The row is hidden rather than shown-and-inert: pressing
+  // Sync and having nothing at all happen is worse than not offering it.
+  bool canSyncMidad_ = false;
 
   std::string valueLabel(MenuAction action) const;
   std::string globalLabel(const char* effectiveValueLabel) const;

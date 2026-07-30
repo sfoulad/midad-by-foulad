@@ -130,6 +130,11 @@ class EpubReaderActivity final : public Activity {
   bool launchKOReaderSync();
   // Midad equivalent: same save-release-replace shape, see the implementation.
   void launchMidadSync();
+  // True when this book carries a Foulad eBooks catalog id, i.e. Sync can do
+  // something. Gates the drawer row so it is never shown-and-inert.
+  bool bookHasFouladId() const;
+  // Catalog id for the open book: stats store first, recents as fallback.
+  std::string currentBookFouladId() const;
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
