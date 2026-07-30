@@ -32,6 +32,10 @@ struct Position {
   // rule changes, a firmware release is a slow way to fix a float comparison.
   // Absent on a GET, so it reads as false there.
   bool shouldJump = false;
+  // "applied" | "older" | "ambiguous". Informational only -- never branch on it.
+  // Logged next to the percent that was sent so a device log is actionable from the
+  // server side without a reproduction.
+  std::string resolution;
 };
 
 // Reports this device's position and returns the account's in one round trip.

@@ -37,11 +37,7 @@ bool parsePosition(const std::string& body, FouladReadingPosition::Position& out
   out.deviceName = doc["device_name"].isNull() ? "" : doc["device_name"].as<std::string>();
   // Absent on the GET; missing reads as false rather than throwing.
   out.shouldJump = doc["should_jump"] | false;
-  // Informational -- callers branch on shouldJump, never on this. Logged so "why
-  // didn't my sync take" is answerable from a device log instead of a guess.
-  if (!doc["resolution"].isNull()) {
-    LOG_DBG(TAG, "position resolution=%s", doc["resolution"].as<std::string>().c_str());
-  }
+  out.resolution = doc["resolution"].isNull() ? "" : doc["resolution"].as<std::string>();
   return true;
 }
 
@@ -101,7 +97,19 @@ bool FouladReadingPosition::sync(const std::string& username, const std::string&
     LOG_ERR(TAG, "position sync failed (status=%d)", HttpDownloader::getLastFailure().detail);
     return false;
   }
-  return parsePosition(response, out);
+  if (!parsePosition(response, out)) return false;
+
+  // Both percentages on one line, next to the server's own verdict. Callers branch
+  // on shouldJump and never on resolution -- this is purely so a device log answers
+  // "why didn't my sync take" without a repro.
+  //
+  // The pairing is the point: `ambiguous` says the server declined to order two
+  // reports, and the two numbers say whether that mattered. Declining to order 40.5
+  // against 40.6 is noise; declining to order 12 against 71 is someone's evening.
+  LOG_INF(TAG, "position sync book=%s sent=%.2f%% account=%.2f%% resolution=%s jump=%d", fouladBookId.c_str(),
+          static_cast<double>(progressPercent), static_cast<double>(out.progressPercent),
+          out.resolution.empty() ? "-" : out.resolution.c_str(), out.shouldJump ? 1 : 0);
+  return true;
 }
 
 bool FouladReadingPosition::fetch(const std::string& username, const std::string& password,
