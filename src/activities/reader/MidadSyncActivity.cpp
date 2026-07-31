@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include "CrossPointState.h"
+#include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -143,6 +144,13 @@ void MidadSyncActivity::performSync() {
     requestUpdate();
     return;
   }
+
+  // Refresh the registration first, exactly as reportDeviceTrackingOnConnect() does
+  // when entering the catalog. Without this a device that only ever syncs -- never
+  // browsing Library after an update -- keeps whatever firmware version it last
+  // registered with. Observed stale across three releases, which quietly misattributes
+  // every debug log, since those carry no version line of their own to fall back to.
+  FouladDeviceTracking::registerDevice(it->username, it->password);
 
   FouladReadingPosition::Position fetched;
   const bool ok = FouladReadingPosition::sync(it->username, it->password, fouladBookId, progressPercent, page,
