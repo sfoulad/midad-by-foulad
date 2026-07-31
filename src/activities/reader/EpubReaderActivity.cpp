@@ -258,12 +258,19 @@ void EpubReaderActivity::onEnter() {
     APP_STATE.pendingSyncJumpPercent = 0;
     APP_STATE.pendingSyncJumpSpine = -1;
     APP_STATE.saveToFile();
-    // Spine first when the server had one. A whole-number percent resolves to about
-    // one spine item on a 103-document book, so it cannot be more accurate than that
-    // however correct either side is; the spine anchor has no such ceiling.
-    if (targetSpine >= 0) {
-      LOG_INF("SYNC", "Applying accepted cross-device jump to spine=%d (%d%%)", targetSpine, target);
+    // Spine only when documents are fine-grained enough to beat the percentage.
+    // Each covers roughly 100/spineCount percent: on a 103-document book that is ~1%
+    // and the spine wins easily, but on a three-document book "open document 3"
+    // lands near 67% for a position 22% in -- worse than the percentage it replaced.
+    // Three of the four books on production are the coarse case, so preferring spine
+    // unconditionally would regress most of the library.
+    const int spineCount = epub ? epub->getSpineItemsCount() : 0;
+    if (targetSpine >= 0 && spineCount >= 30) {
+      LOG_INF("SYNC", "Applying accepted cross-device jump to spine=%d of %d (%d%%)", targetSpine, spineCount, target);
       jumpToSpine(targetSpine);
+    } else if (targetSpine >= 0) {
+      LOG_INF("SYNC", "Spine anchor %d of %d too coarse; using %d%% instead", targetSpine, spineCount, target);
+      jumpToPercent(target);
     } else {
       LOG_INF("SYNC", "Applying accepted cross-device jump to %d%% (no spine anchor)", target);
       jumpToPercent(target);
@@ -271,10 +278,15 @@ void EpubReaderActivity::onEnter() {
     // Where the percentage actually landed, next to what we were told. Requested by
     // foulad-ebooks after a jump missed and the report had already been overwritten
     // server-side: without the outcome logged, reconstructing what happened took
-    // three reads instead of one. spine/page here are OUR pagination, which is
-    // exactly the thing that has to be compared against the sender's percentage.
-    LOG_INF("SYNC", "Jump landed: spine=%d page=%d of %d", currentSpineIndex, section ? section->currentPage : -1,
-            section ? section->estimatedTotalPages() : -1);
+    // three reads instead of one.
+    //
+    // Spine only, deliberately. Both jump paths reset `section` so the next render
+    // rebuilds it, which means pagination is ALWAYS unresolved at this point -- the
+    // previous line printed "page=-1 of -1" every single time and was reasonably
+    // read as evidence that the jump had raced section building. It had not; that
+    // was this log line running where it does. Page numbers appear in the section
+    // build logs that follow.
+    LOG_INF("SYNC", "Jump applied: spine=%d, pagination resolves on next render", currentSpineIndex);
   }
 
   // Trigger first update
