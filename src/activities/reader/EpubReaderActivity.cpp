@@ -1046,8 +1046,12 @@ bool EpubReaderActivity::bookHasFouladId() const {
 void EpubReaderActivity::launchMidadSync() {
   if (!epub) return;
 
+  // Empty id is not an early return any more: the sync screen says why. The id is
+  // only recorded when a book is opened THROUGH Library (see
+  // OpdsBookBrowserActivity), so a catalog book that has only ever been opened from
+  // Home legitimately has none -- indistinguishable, from the outside, from a
+  // side-loaded file or a broken feature.
   const std::string bookId = currentBookFouladId();
-  if (bookId.empty()) return;  // side-loaded: nothing the catalog can be told about
 
   const int currentPage = section ? section->currentPage : nextPageNumber;
   const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;

@@ -20,6 +20,15 @@
 void MidadSyncActivity::onEnter() {
   Activity::onEnter();
 
+  if (fouladBookId.empty()) {
+    // Answer this without bringing the radio up: no id means nothing to sync
+    // against, and making someone sit through a WiFi connect to be told so would
+    // be worse than the silent row it replaces.
+    state = State::NotInLibrary;
+    requestUpdate();
+    return;
+  }
+
   WiFi.mode(WIFI_STA);
   startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
@@ -124,7 +133,7 @@ void MidadSyncActivity::loop() {
     return;
   }
 
-  if (state == State::UpToDate || state == State::Failed) {
+  if (state == State::UpToDate || state == State::Failed || state == State::NotInLibrary) {
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm) ||
         mappedInput.wasPressed(MappedInputManager::Button::Back)) {
       returnToReader();
@@ -157,6 +166,11 @@ void MidadSyncActivity::render(RenderLock&&) {
 
     case State::Failed:
       renderer.drawCenteredTextWrapped(UI_10_FONT_ID, top, textWidth, tr(STR_SYNC_FAILED), /*maxLines=*/3, true,
+                                       EpdFontFamily::BOLD);
+      break;
+
+    case State::NotInLibrary:
+      renderer.drawCenteredTextWrapped(UI_10_FONT_ID, top, textWidth, tr(STR_SYNC_NOT_IN_LIBRARY), /*maxLines=*/4, true,
                                        EpdFontFamily::BOLD);
       break;
 
