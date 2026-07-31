@@ -174,6 +174,17 @@ void MidadSyncActivity::acceptJump() {
   returnToReader();
 }
 
+void MidadSyncActivity::closeBook() {
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    delay(30);
+  }
+  // Home rather than the reader. The position is already on the server, so there is
+  // nothing left to save, and a silent restart would only reload a book about to be
+  // left anyway.
+  silentRestart();
+}
+
 void MidadSyncActivity::returnToReader() {
   // Silent restart rather than a plain activity swap: the reader is about to reload
   // a book into a heap that has just held a TLS session, which is the fragmentation
@@ -207,12 +218,16 @@ void MidadSyncActivity::loop() {
       if (promptSelection == 0) {
         acceptJump();
       } else {
-        returnToReader();
+        // Not "stay here": the position has already been sent by this point, and
+        // the reason someone syncs is to carry on reading somewhere else. So the
+        // second choice finishes the job and puts the book down, rather than
+        // dropping them back into a book they have just handed over.
+        closeBook();
       }
       return;
     }
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      returnToReader();  // declining is the same as staying put
+      returnToReader();  // backing out is not a choice between the two -- keep reading
     }
     return;
   }
@@ -282,7 +297,7 @@ void MidadSyncActivity::render(RenderLock&&) {
         }
       };
       drawChoice(0, tr(STR_SYNC_JUMP));
-      drawChoice(1, tr(STR_SYNC_STAY_HERE));
+      drawChoice(1, tr(STR_SYNC_AND_CLOSE));
       break;
     }
   }

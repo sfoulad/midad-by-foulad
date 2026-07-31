@@ -442,7 +442,7 @@ STR_SYNC_NOT_IN_LIBRARY: "تعذّر العثور على هذا الكتاب ف�
 STR_SYNC_CONTINUE_FROM: "المتابعة من %d%% - قُرئ على %s؟"
 STR_SYNC_ANOTHER_DEVICE: "جهاز آخر"
 STR_SYNC_JUMP: "انتقال"
-STR_SYNC_STAY_HERE: "البقاء هنا"
+STR_SYNC_AND_CLOSE: "مزامنة وإغلاق"
 STR_DELETE_CACHE: "حذف ذاكرة الكتاب المؤقتة"
 STR_DELETE: "حذف"
 STR_CONFIRM_DELETE_BOOKMARK: "حذف هذه العلامة؟"

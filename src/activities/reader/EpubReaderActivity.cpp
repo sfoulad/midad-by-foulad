@@ -258,6 +258,13 @@ void EpubReaderActivity::onEnter() {
     APP_STATE.saveToFile();
     LOG_INF("SYNC", "Applying accepted cross-device jump to %d%%", target);
     jumpToPercent(target);
+    // Where the percentage actually landed, next to what we were told. Requested by
+    // foulad-ebooks after a jump missed and the report had already been overwritten
+    // server-side: without the outcome logged, reconstructing what happened took
+    // three reads instead of one. spine/page here are OUR pagination, which is
+    // exactly the thing that has to be compared against the sender's percentage.
+    LOG_INF("SYNC", "Jump landed: spine=%d page=%d of %d", currentSpineIndex, section ? section->currentPage : -1,
+            section ? section->estimatedTotalPages() : -1);
   }
 
   // Trigger first update
