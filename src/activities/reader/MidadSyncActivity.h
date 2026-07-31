@@ -48,6 +48,9 @@ class MidadSyncActivity final : public Activity {
     UpToDate,    // synced, nothing newer elsewhere
     Prompt,      // account is ahead: offer the jump
     Failed,
+    // No catalog id for this book, so there is nothing to sync against. Reached
+    // without touching WiFi -- the answer is already known.
+    NotInLibrary,
   };
 
   std::string epubPath;

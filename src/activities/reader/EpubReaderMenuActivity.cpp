@@ -124,7 +124,13 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
     const auto& opdsServers = OPDS_STORE.getServers();
     const bool hasMidadAccount = std::any_of(opdsServers.begin(), opdsServers.end(),
                                              [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
-    if (hasMidadAccount && canSyncMidad_) {
+    // Shown on the strength of the account alone, not on whether THIS book carries
+    // a catalog id. Hiding it when the id is missing was the earlier behaviour and
+    // was worse: a book that genuinely is in the library -- but was only ever opened
+    // from Home, so its id was never recorded -- simply had no row, with no way to
+    // tell that apart from the feature being broken. It now explains itself when
+    // pressed. canSyncMidad_ still decides which of the two it does.
+    if (hasMidadAccount) {
       items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
     }
   }
