@@ -60,6 +60,19 @@ bool FouladReadingPosition::sync(const std::string& username, const std::string&
                                  const int totalPages, const uint32_t readAtEpochSeconds,
                                  const uint32_t readAtAgeSeconds, Position& out) {
   if (username.empty() || password.empty() || fouladBookId.empty()) return false;
+  // WiFi first, before anything reaches HttpDownloader. Every function in
+  // FouladDeviceTracking opens with this check and mine did not, which is the whole
+  // bug: the reader tears WiFi down before a book is even opened, so this ran on a
+  // stopped stack every time a SERVER book was closed. HttpDownloader's
+  // WifiPowerSaveGuard calls esp_wifi_set_ps() unconditionally in its constructor,
+  // and driving esp_wifi with no station up lands inside IDF on a null queue handle
+  // -- "assert failed: xQueueSemaphoreTake queue.c:1709 (pxQueue)".
+  //
+  // That is why a local book exited cleanly and a downloaded one did not: the close
+  // block is gated on the book carrying a catalog id, so local books never reached
+  // here. It is also why the crash appeared at any uptime and with no OPDS traffic
+  // in the window -- the request never got out.
+  if (!FouladDeviceTracking::wifiConnected()) return false;
 
   JsonDocument doc;
   doc["serial_number"] = FouladDeviceTracking::getSerialNumber();
@@ -120,6 +133,7 @@ bool FouladReadingPosition::sync(const std::string& username, const std::string&
 bool FouladReadingPosition::fetch(const std::string& username, const std::string& password,
                                   const std::string& fouladBookId, Position& out) {
   if (username.empty() || password.empty() || fouladBookId.empty()) return false;
+  if (!FouladDeviceTracking::wifiConnected()) return false;  // see sync()
 
   const std::string url = std::string(FOULAD_EBOOKS_READING_POSITION_URL) + "?book_id=" + fouladBookId;
   std::string response;

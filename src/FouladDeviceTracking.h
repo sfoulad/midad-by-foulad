@@ -21,6 +21,10 @@ namespace FouladDeviceTracking {
 // reboots/firmware updates for the same physical unit.
 std::string getSerialNumber();
 
+// True when a station connection is up. Anything that may reach HttpDownloader must
+// check this first: driving esp_wifi with no station asserts inside IDF.
+bool wifiConnected();
+
 // Registers (or re-registers -- the server upserts by serial_number) this
 // device under the given Foulad eBooks account. Call once per connection,
 // before browsing (e.g. from OpdsBookBrowserActivity right before its first
