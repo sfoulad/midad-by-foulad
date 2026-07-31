@@ -36,6 +36,17 @@ struct Position {
   // Logged next to the percent that was sent so a device log is actionable from the
   // server side without a reproduction.
   std::string resolution;
+  // Spine anchor, when the server could derive one from the sender's CFI. -1 means
+  // NO ANCHOR -- never index 0. Both fields are null together, and an odd first CFI
+  // step returns null rather than being halved, because an odd step addresses a text
+  // node and guessing there would be quietly wrong.
+  //
+  // Strictly better than the percentage for jumping: a whole-number percent caps
+  // accuracy at roughly one spine item on a 103-document book, before any
+  // disagreement about what a percentage means. Use spine to pick the document and
+  // the percentage only to place within it.
+  int spineIndex = -1;
+  int spineCount = -1;
 };
 
 // Reports this device's position and returns the account's in one round trip.

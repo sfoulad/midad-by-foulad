@@ -254,10 +254,20 @@ void EpubReaderActivity::onEnter() {
   // re-jumping on every open.
   if (APP_STATE.pendingSyncJumpPercent > 0) {
     const int target = APP_STATE.pendingSyncJumpPercent;
+    const int targetSpine = APP_STATE.pendingSyncJumpSpine;
     APP_STATE.pendingSyncJumpPercent = 0;
+    APP_STATE.pendingSyncJumpSpine = -1;
     APP_STATE.saveToFile();
-    LOG_INF("SYNC", "Applying accepted cross-device jump to %d%%", target);
-    jumpToPercent(target);
+    // Spine first when the server had one. A whole-number percent resolves to about
+    // one spine item on a 103-document book, so it cannot be more accurate than that
+    // however correct either side is; the spine anchor has no such ceiling.
+    if (targetSpine >= 0) {
+      LOG_INF("SYNC", "Applying accepted cross-device jump to spine=%d (%d%%)", targetSpine, target);
+      jumpToSpine(targetSpine);
+    } else {
+      LOG_INF("SYNC", "Applying accepted cross-device jump to %d%% (no spine anchor)", target);
+      jumpToPercent(target);
+    }
     // Where the percentage actually landed, next to what we were told. Requested by
     // foulad-ebooks after a jump missed and the report had already been overwritten
     // server-side: without the outcome logged, reconstructing what happened took
@@ -819,6 +829,31 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   {
     RenderLock lock(*this);
     currentSpineIndex = targetSpineIndex;
+    nextPageNumber = 0;
+    pendingPercentJump = true;
+    section.reset();
+  }
+}
+
+void EpubReaderActivity::jumpToSpine(const int spineIndex) {
+  if (!epub) return;
+  const int spineCount = epub->getSpineItemsCount();
+  // Out of range means the anchor does not describe this copy of the book -- a
+  // different edition, or a feed and a file that disagree. Refuse rather than clamp:
+  // landing at the end of the wrong book is not better than not jumping.
+  if (spineIndex < 0 || spineIndex >= spineCount) {
+    LOG_ERR("SYNC", "Spine anchor %d outside this book's %d items; ignoring", spineIndex, spineCount);
+    return;
+  }
+  statsOnJump();
+  // Start of the document. The percentage could position within it, but on a book
+  // where each document is a page that is already exact, and on one with long
+  // chapters the chapter opening is the honest answer -- a percentage of the WHOLE
+  // book says nothing about where inside a chapter to stop.
+  pendingSpineProgress = 0.0f;
+  {
+    RenderLock lock(*this);
+    currentSpineIndex = spineIndex;
     nextPageNumber = 0;
     pendingPercentJump = true;
     section.reset();

@@ -22,6 +22,10 @@ void HalPowerManager::begin() {
   }
   normalFreq = getCpuFrequencyMhz();
   modeMutex = xSemaphoreCreateMutex();
+  if (modeMutex == nullptr) {
+    // See HalStorage::begin -- a null handle aborts at the take, not here.
+    LOG_ERR("PWR", "OOM: could not create power mode mutex");
+  }
   assert(modeMutex != nullptr);
 }
 

@@ -77,6 +77,7 @@ bool JsonSettingsIO::saveState(const CrossPointState& s, const char* path) {
   doc["recentSleepFill"] = s.recentSleepFill;
   doc["readerActivityLoadCount"] = s.readerActivityLoadCount;
   doc["pendingSyncJumpPercent"] = s.pendingSyncJumpPercent;
+  doc["pendingSyncJumpSpine"] = s.pendingSyncJumpSpine;
   doc["lastSleepFromReader"] = s.lastSleepFromReader;
   doc["showBootScreen"] = s.showBootScreen;
 
@@ -114,6 +115,7 @@ bool JsonSettingsIO::loadState(CrossPointState& s, const char* json) {
   s.readerActivityLoadCount = doc["readerActivityLoadCount"] | static_cast<uint8_t>(0);
   // Absent on a state file written before cross-device sync; 0 means nothing pending.
   s.pendingSyncJumpPercent = doc["pendingSyncJumpPercent"] | static_cast<uint8_t>(0);
+  s.pendingSyncJumpSpine = doc["pendingSyncJumpSpine"] | static_cast<int16_t>(-1);
   s.lastSleepFromReader = doc["lastSleepFromReader"] | false;
   s.showBootScreen = doc["showBootScreen"] | true;
   return true;

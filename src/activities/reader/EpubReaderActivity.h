@@ -116,6 +116,8 @@ class EpubReaderActivity final : public Activity {
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
+  // Spine-anchored jump, preferred over the percentage when the server supplies one.
+  void jumpToSpine(int spineIndex);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu);
   // Reloads the current page fresh from the section (mirrors the loadPage()
   // call in render()) as a shared_ptr for DictionaryWordSelectActivity /

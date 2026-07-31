@@ -38,6 +38,10 @@ bool parsePosition(const std::string& body, FouladReadingPosition::Position& out
   // Absent on the GET; missing reads as false rather than throwing.
   out.shouldJump = doc["should_jump"] | false;
   out.resolution = doc["resolution"].isNull() ? "" : doc["resolution"].as<std::string>();
+  // Null means no anchor, not position 0 -- treating it as an index would jump to
+  // the front of the book on every position a reader set.
+  out.spineIndex = doc["spine_index"].isNull() ? -1 : doc["spine_index"].as<int>();
+  out.spineCount = doc["spine_count"].isNull() ? -1 : doc["spine_count"].as<int>();
   return true;
 }
 
@@ -106,9 +110,10 @@ bool FouladReadingPosition::sync(const std::string& username, const std::string&
   // The pairing is the point: `ambiguous` says the server declined to order two
   // reports, and the two numbers say whether that mattered. Declining to order 40.5
   // against 40.6 is noise; declining to order 12 against 71 is someone's evening.
-  LOG_INF(TAG, "position sync book=%s sent=%.2f%% account=%.2f%% resolution=%s jump=%d", fouladBookId.c_str(),
-          static_cast<double>(progressPercent), static_cast<double>(out.progressPercent),
-          out.resolution.empty() ? "-" : out.resolution.c_str(), out.shouldJump ? 1 : 0);
+  LOG_INF(TAG, "position sync book=%s sent=%.2f%% account=%.2f%% spine=%d/%d resolution=%s jump=%d",
+          fouladBookId.c_str(), static_cast<double>(progressPercent), static_cast<double>(out.progressPercent),
+          out.spineIndex, out.spineCount, out.resolution.empty() ? "-" : out.resolution.c_str(),
+          out.shouldJump ? 1 : 0);
   return true;
 }
 

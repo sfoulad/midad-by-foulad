@@ -168,8 +168,12 @@ void MidadSyncActivity::acceptJump() {
   // so the handshake could fit in RAM. Rounded to whole percent because that is
   // what the handoff carries and what jumpToPercent() takes.
   APP_STATE.pendingSyncJumpPercent = static_cast<uint8_t>(remote.progressPercent + 0.5f);
+  // Carried alongside, and preferred by the reader when present. -1 stays -1: the
+  // server sends both null together when it has nothing to anchor on, and treating
+  // that as spine 0 would jump to the front of the book.
+  APP_STATE.pendingSyncJumpSpine = static_cast<int16_t>(remote.spineIndex);
   APP_STATE.saveToFile();
-  LOG_INF("SYNC", "Accepted jump to %u%% (from %s)", APP_STATE.pendingSyncJumpPercent,
+  LOG_INF("SYNC", "Accepted jump to %u%% spine=%d (from %s)", APP_STATE.pendingSyncJumpPercent, remote.spineIndex,
           remote.deviceName.empty() ? "another device" : remote.deviceName.c_str());
   returnToReader();
 }
