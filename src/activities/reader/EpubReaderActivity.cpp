@@ -1060,6 +1060,9 @@ void EpubReaderActivity::launchMidadSync() {
   // close-sync block in onExit() for why a restored reader's timestamp is not an age.
   const uint32_t ageSeconds = pageTurnedThisSession ? static_cast<uint32_t>((millis() - pageShownAtMs) / 1000UL) : 0;
   const std::string savedEpubPath = epub->getPath();
+  // Read before the Epub is released below; the resolver needs them to search.
+  const std::string savedTitle = epub->getTitle();
+  const std::string savedAuthor = epub->getAuthor();
 
   // Persist first: the reader is replaced below and resumes from this file, so a
   // failed write would silently lose the reader's place. Same guard as KOReader's.
@@ -1085,7 +1088,8 @@ void EpubReaderActivity::launchMidadSync() {
   LOG_DBG("SYNC", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
 
   activityManager.replaceActivity(std::make_unique<MidadSyncActivity>(renderer, mappedInput, savedEpubPath, bookId,
-                                                                      percent, currentPage, totalPages, ageSeconds));
+                                                                      savedTitle, savedAuthor, percent, currentPage,
+                                                                      totalPages, ageSeconds));
 }
 
 bool EpubReaderActivity::launchKOReaderSync() {

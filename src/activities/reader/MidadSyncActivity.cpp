@@ -3,6 +3,8 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <OpdsParser.h>
+#include <OpdsStream.h>
 #include <WiFi.h>
 
 #include <cstdio>
@@ -11,23 +13,18 @@
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "RecentBooksStore.h"
 #include "SilentRestart.h"
 #include "activities/ActivityManager.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/HttpDownloader.h"
+#include "reading/ReadingStatsStore.h"
+#include "util/StringUtils.h"
 
 void MidadSyncActivity::onEnter() {
   Activity::onEnter();
-
-  if (fouladBookId.empty()) {
-    // Answer this without bringing the radio up: no id means nothing to sync
-    // against, and making someone sit through a WiFi connect to be told so would
-    // be worse than the silent row it replaces.
-    state = State::NotInLibrary;
-    requestUpdate();
-    return;
-  }
 
   WiFi.mode(WIFI_STA);
   startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
@@ -41,12 +38,99 @@ void MidadSyncActivity::onWifiSelectionComplete(const bool success) {
     returnToReader();
     return;
   }
+  // A book that was only ever opened from Home has no catalog id, even though it
+  // may well be in the library. Rather than telling the user to go and open it from
+  // Library -- which is a chore that exists only because of how the id happens to be
+  // recorded -- look it up now, while the radio is already up.
+  if (fouladBookId.empty()) {
+    {
+      RenderLock lock(*this);
+      state = State::Resolving;
+    }
+    requestUpdateAndWait();
+    if (!resolveBookId()) {
+      RenderLock lock(*this);
+      state = State::NotInLibrary;
+      requestUpdate();
+      return;
+    }
+  }
+
   {
     RenderLock lock(*this);
     state = State::Syncing;
   }
   requestUpdateAndWait();
   performSync();
+}
+
+namespace {
+// Percent-encodes a search term. Same rule as the browser's own search.
+std::string urlEncode(const std::string& in) {
+  static const char* hex = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(in.size() * 3);
+  for (const unsigned char c : in) {
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += hex[c >> 4];
+      out += hex[c & 0x0F];
+    }
+  }
+  return out;
+}
+
+// Trailing digits of urn:opds-library:book:{id}. Mirrors OpdsBookBrowserActivity's
+// own extractor -- kept identical so both paths agree on what an id is.
+std::string extractId(const std::string& entryId) {
+  size_t end = entryId.size();
+  while (end > 0 && isdigit(static_cast<unsigned char>(entryId[end - 1]))) end--;
+  return end == entryId.size() ? "" : entryId.substr(end);
+}
+}  // namespace
+
+bool MidadSyncActivity::resolveBookId() {
+  const auto& servers = OPDS_STORE.getServers();
+  const auto srv =
+      std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+  if (srv == servers.end() || bookTitle.empty()) return false;
+
+  const std::string url = std::string(FOULAD_EBOOKS_URL) + "/search?q=" + urlEncode(bookTitle);
+  OpdsParser parser;
+  OpdsParserStream stream{parser};
+  if (!HttpDownloader::fetchUrl(url, stream, srv->username, srv->password) || !parser) return false;
+
+  // Match on the filename the downloader WOULD have produced, not on title text.
+  // That string is how the local file got its name in the first place
+  // (OpdsBookBrowserActivity), so an exact match means this is the same catalog
+  // entry -- whereas matching titles loosely could link a position to the wrong
+  // book, which is a worse outcome than not linking at all.
+  const size_t slash = epubPath.find_last_of('/');
+  const std::string localName = slash == std::string::npos ? epubPath : epubPath.substr(slash + 1);
+  const size_t dot = localName.find_last_of('.');
+  const std::string localStem = dot == std::string::npos ? localName : localName.substr(0, dot);
+
+  std::string found;
+  for (const auto& entry : parser.getBooks()) {
+    const std::string stem =
+        StringUtils::sanitizeFilename((entry.author.empty() ? "" : entry.author + " - ") + entry.title);
+    if (stem != localStem) continue;
+    const std::string id = extractId(entry.id);
+    if (id.empty()) continue;
+    if (!found.empty() && found != id) return false;  // ambiguous: refuse rather than guess
+    found = id;
+  }
+  if (found.empty()) return false;
+
+  // Record it both places so this never has to happen again: recents is what the
+  // catalog path writes, and the stats store is what survives recents eviction.
+  fouladBookId = found;
+  RECENT_BOOKS.addBook(epubPath, bookTitle, bookAuthor, "", found);
+  READING_STATS.setFouladBookId(epubPath, found);
+  LOG_INF("SYNC", "Resolved catalog id %s for a book opened outside Library", found.c_str());
+  return true;
 }
 
 void MidadSyncActivity::performSync() {
@@ -156,6 +240,7 @@ void MidadSyncActivity::render(RenderLock&&) {
 
   switch (state) {
     case State::Connecting:
+    case State::Resolving:
     case State::Syncing:
       renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_SYNCING));
       break;
