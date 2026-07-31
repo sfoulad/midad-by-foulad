@@ -21,11 +21,13 @@
 class MidadSyncActivity final : public Activity {
  public:
   explicit MidadSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string epubPath,
-                             std::string fouladBookId, float progressPercent, int page, int totalPages,
-                             uint32_t readAtAgeSeconds)
+                             std::string fouladBookId, std::string bookTitle, std::string bookAuthor,
+                             float progressPercent, int page, int totalPages, uint32_t readAtAgeSeconds)
       : Activity("MidadSync", renderer, mappedInput),
         epubPath(std::move(epubPath)),
         fouladBookId(std::move(fouladBookId)),
+        bookTitle(std::move(bookTitle)),
+        bookAuthor(std::move(bookAuthor)),
         progressPercent(progressPercent),
         page(page),
         totalPages(totalPages),
@@ -38,7 +40,9 @@ class MidadSyncActivity final : public Activity {
   // Sleeping mid-handshake strands the sync with the radio up and nothing on
   // screen to explain it; the prompt holds the device awake for the same reason
   // OtaUpdateActivity does while waiting on a decision.
-  bool preventAutoSleep() override { return state == State::Connecting || state == State::Syncing; }
+  bool preventAutoSleep() override {
+    return state == State::Connecting || state == State::Syncing || state == State::Resolving;
+  }
   const char* activityDebugName() const override { return "MidadSyncActivity"; }
 
  private:
@@ -47,6 +51,7 @@ class MidadSyncActivity final : public Activity {
     Syncing,     // POST in flight
     UpToDate,    // synced, nothing newer elsewhere
     Prompt,      // account is ahead: offer the jump
+    Resolving,   // searching the catalog for this book's id
     Failed,
     // No catalog id for this book, so there is nothing to sync against. Reached
     // without touching WiFi -- the answer is already known.
@@ -55,6 +60,8 @@ class MidadSyncActivity final : public Activity {
 
   std::string epubPath;
   std::string fouladBookId;
+  std::string bookTitle;
+  std::string bookAuthor;
   float progressPercent = 0.0f;
   int page = -1;
   int totalPages = -1;
@@ -68,6 +75,11 @@ class MidadSyncActivity final : public Activity {
   int promptSelection = 0;
 
   void onWifiSelectionComplete(bool success);
+  // Finds this book's catalog id by searching the library, for a book that was
+  // never opened through Library and so never had one recorded. Returns false when
+  // no unambiguous match exists. See the implementation for why the match is on the
+  // downloader's own filename rule rather than on title text.
+  bool resolveBookId();
   void performSync();
   void acceptJump();
   void returnToReader();
