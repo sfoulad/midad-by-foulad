@@ -154,6 +154,11 @@ class EpubReaderActivity final : public Activity {
   // True once a page has actually been turned in this activity instance -- see the
   // close-sync block in onExit() for why an age is only honest after that.
   bool pageTurnedThisSession = false;
+  // A cross-device jump read out of APP_STATE in onEnter() and applied on the first
+  // loop() iteration -- see the comment there for why it is not applied immediately.
+  // 0 / -1 mean nothing pending.
+  uint8_t pendingJumpPercent = 0;
+  int16_t pendingJumpSpine = -1;
   // First page dwell after opening/jumping includes orientation time, not reading --
   // skip it as a pace sample (it still counts toward session time).
   bool paceWarmupPending = true;

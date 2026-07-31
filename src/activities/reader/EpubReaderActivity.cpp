@@ -247,46 +247,28 @@ void EpubReaderActivity::onEnter() {
     pageShownAtMs = millis();
   }
 
-  // Consume a jump accepted on the sync screen. Applied here rather than there
-  // because turning a percentage into a spine/page needs the Epub loaded, and the
-  // sync activity had to release it to afford the TLS handshake. Cleared before
-  // jumping, and persisted immediately, so a crash mid-jump cannot leave the reader
-  // re-jumping on every open.
+  // Consume a jump accepted on the sync screen -- but only READ it here. Applying it
+  // is deferred to the first loop() iteration.
+  //
+  // Doing the jump inside onEnter() meant resetting `section` and taking a RenderLock
+  // while the activity was still constructing itself, on the one boot that follows a
+  // sync. That is exactly where a repeating panic lands: "assert failed:
+  // xQueueSemaphoreTake queue.c:1709 (pxQueue)" ~791ms into the post-sync boot, on
+  // two consecutive releases. A null handle with 129KB free is not an allocation
+  // failure -- it is a handle taken before whatever owns it is ready.
+  //
+  // Every other reader action runs from loop(), after onEnter() has returned and the
+  // render task is serving this activity. The jump has no reason to be the exception,
+  // and one render frame later is imperceptible on e-ink.
+  //
+  // Still cleared and persisted here, not at apply time, so a crash between the two
+  // cannot leave a device re-jumping on every open.
   if (APP_STATE.pendingSyncJumpPercent > 0) {
-    const int target = APP_STATE.pendingSyncJumpPercent;
-    const int targetSpine = APP_STATE.pendingSyncJumpSpine;
+    pendingJumpPercent = APP_STATE.pendingSyncJumpPercent;
+    pendingJumpSpine = APP_STATE.pendingSyncJumpSpine;
     APP_STATE.pendingSyncJumpPercent = 0;
     APP_STATE.pendingSyncJumpSpine = -1;
     APP_STATE.saveToFile();
-    // Spine only when documents are fine-grained enough to beat the percentage.
-    // Each covers roughly 100/spineCount percent: on a 103-document book that is ~1%
-    // and the spine wins easily, but on a three-document book "open document 3"
-    // lands near 67% for a position 22% in -- worse than the percentage it replaced.
-    // Three of the four books on production are the coarse case, so preferring spine
-    // unconditionally would regress most of the library.
-    const int spineCount = epub ? epub->getSpineItemsCount() : 0;
-    if (targetSpine >= 0 && spineCount >= 30) {
-      LOG_INF("SYNC", "Applying accepted cross-device jump to spine=%d of %d (%d%%)", targetSpine, spineCount, target);
-      jumpToSpine(targetSpine);
-    } else if (targetSpine >= 0) {
-      LOG_INF("SYNC", "Spine anchor %d of %d too coarse; using %d%% instead", targetSpine, spineCount, target);
-      jumpToPercent(target);
-    } else {
-      LOG_INF("SYNC", "Applying accepted cross-device jump to %d%% (no spine anchor)", target);
-      jumpToPercent(target);
-    }
-    // Where the percentage actually landed, next to what we were told. Requested by
-    // foulad-ebooks after a jump missed and the report had already been overwritten
-    // server-side: without the outcome logged, reconstructing what happened took
-    // three reads instead of one.
-    //
-    // Spine only, deliberately. Both jump paths reset `section` so the next render
-    // rebuilds it, which means pagination is ALWAYS unresolved at this point -- the
-    // previous line printed "page=-1 of -1" every single time and was reasonably
-    // read as evidence that the jump had raced section building. It had not; that
-    // was this log line running where it does. Page numbers appear in the section
-    // build logs that follow.
-    LOG_INF("SYNC", "Jump applied: spine=%d, pagination resolves on next render", currentSpineIndex);
   }
 
   // Trigger first update
@@ -470,6 +452,35 @@ unsigned cpuMhzNow() {
 }  // namespace
 
 void EpubReaderActivity::loop() {
+  // Deferred cross-device jump (see onEnter). Runs once, on the first iteration
+  // after the activity is fully up and the render task is serving it.
+  if (pendingJumpPercent > 0) {
+    const int target = pendingJumpPercent;
+    const int targetSpine = pendingJumpSpine;
+    pendingJumpPercent = 0;
+    pendingJumpSpine = -1;
+    // Spine only when documents are fine-grained enough to beat the percentage.
+    // Each covers roughly 100/spineCount percent: on a 103-document book that is ~1%
+    // and the spine wins, but on a three-document book "open document 3" lands near
+    // 67% for a position 22% in -- worse than the percentage it replaced.
+    const int spineCount = epub ? epub->getSpineItemsCount() : 0;
+    if (targetSpine >= 0 && spineCount >= 30) {
+      LOG_INF("SYNC", "Applying cross-device jump to spine=%d of %d (%d%%)", targetSpine, spineCount, target);
+      jumpToSpine(targetSpine);
+    } else if (targetSpine >= 0) {
+      LOG_INF("SYNC", "Spine anchor %d of %d too coarse; using %d%% instead", targetSpine, spineCount, target);
+      jumpToPercent(target);
+    } else {
+      LOG_INF("SYNC", "Applying cross-device jump to %d%% (no spine anchor)", target);
+      jumpToPercent(target);
+    }
+    // Spine only; both jump paths reset `section` for the next render to rebuild, so
+    // pagination is always unresolved at this point. The previous version of this log
+    // printed "page=-1 of -1" every time and was reasonably read as evidence of a race.
+    LOG_INF("SYNC", "Jump applied: spine=%d, pagination resolves on next render", currentSpineIndex);
+    return;  // let the jump's own reload land before handling input this frame
+  }
+
   if (!epub) {
     // Should never happen
     finish();
