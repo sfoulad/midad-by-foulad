@@ -276,6 +276,9 @@ void EpubReaderActivity::onEnter() {
 }
 
 void EpubReaderActivity::onExit() {
+  // Bracketing the exit path, requested after three crashes whose last log line was
+  // the per-book settings write -- leaving no way to tell which side of it died.
+  LOG_INF("ERS", "Reader exit: begin");
   Activity::onExit();
 
   // Reset orientation back to portrait for the rest of the UI
@@ -380,6 +383,7 @@ void EpubReaderActivity::onExit() {
     sdFontSystem.ensureLoaded(renderer);
     arabicFontSystem.ensureLoaded(renderer);
   }
+  LOG_INF("ERS", "Reader exit: done");
 }
 
 void EpubReaderActivity::openReaderMenu() {

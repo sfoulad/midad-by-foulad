@@ -34,8 +34,14 @@ void CrashActivity::loop() {
     finish();
     return;
   }
+  // wasPressed, not wasReleased. Reported as needing two presses to take: the
+  // release edge is cleared by every gpio.update(), including the ones the render
+  // wait performs mid-frame, so a release landing during a repaint is simply lost.
+  // The press edge does not have that problem, and it is what every other
+  // confirm-and-go screen here uses (OtaUpdateActivity, MidadSyncActivity) -- this
+  // was the odd one out.
   if ((sendState == SendState::Idle || sendState == SendState::Failed) &&
-      mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     startSendLog();
   }
 }

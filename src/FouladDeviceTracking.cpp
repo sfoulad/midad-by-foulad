@@ -21,10 +21,10 @@
 
 namespace FouladDeviceTracking {
 
+bool wifiConnected() { return WiFi.status() == WL_CONNECTED; }
+
 namespace {
 constexpr char TAG[] = "FDT";
-
-bool wifiConnected() { return WiFi.status() == WL_CONNECTED; }
 
 std::string deviceEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/device"; }
 std::string readingStatsEndpoint() { return std::string(FOULAD_EBOOKS_URL) + "/reading-stats"; }
