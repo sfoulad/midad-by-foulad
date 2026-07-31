@@ -31,6 +31,12 @@ class CrossPointState {
   // 0 = nothing pending; a jump to 0% is indistinguishable from none and is also
   // the one jump nobody needs.
   uint8_t pendingSyncJumpPercent = 0;
+  // Spine anchor for that jump, or -1 when the server had none to give. Preferred
+  // over the percentage: a whole-number percent resolves to about one spine item on
+  // a 103-document book, so it cannot be more accurate than that however correct
+  // both sides are. The percentage is kept as the fallback and to place within the
+  // document once opened.
+  int16_t pendingSyncJumpSpine = -1;
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
 

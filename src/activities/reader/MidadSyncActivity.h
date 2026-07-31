@@ -69,7 +69,7 @@ class MidadSyncActivity final : public Activity {
 
   State state = State::Connecting;
   FouladReadingPosition::Position remote;
-  // 0 = Jump, 1 = Stay here. Defaults to Jump because the user pressed Sync, but
+  // 0 = Jump, 1 = Sync and close. Defaults to Jump because the user pressed Sync, but
   // it is a prompt and not an action: someone who deliberately flicked back three
   // pages to re-read a paragraph must not have the device take it away.
   int promptSelection = 0;
@@ -83,4 +83,6 @@ class MidadSyncActivity final : public Activity {
   void performSync();
   void acceptJump();
   void returnToReader();
+  // Finishes the sync and puts the book down -- see the prompt handling.
+  void closeBook();
 };

@@ -168,10 +168,25 @@ void MidadSyncActivity::acceptJump() {
   // so the handshake could fit in RAM. Rounded to whole percent because that is
   // what the handoff carries and what jumpToPercent() takes.
   APP_STATE.pendingSyncJumpPercent = static_cast<uint8_t>(remote.progressPercent + 0.5f);
+  // Carried alongside, and preferred by the reader when present. -1 stays -1: the
+  // server sends both null together when it has nothing to anchor on, and treating
+  // that as spine 0 would jump to the front of the book.
+  APP_STATE.pendingSyncJumpSpine = static_cast<int16_t>(remote.spineIndex);
   APP_STATE.saveToFile();
-  LOG_INF("SYNC", "Accepted jump to %u%% (from %s)", APP_STATE.pendingSyncJumpPercent,
+  LOG_INF("SYNC", "Accepted jump to %u%% spine=%d (from %s)", APP_STATE.pendingSyncJumpPercent, remote.spineIndex,
           remote.deviceName.empty() ? "another device" : remote.deviceName.c_str());
   returnToReader();
+}
+
+void MidadSyncActivity::closeBook() {
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    delay(30);
+  }
+  // Home rather than the reader. The position is already on the server, so there is
+  // nothing left to save, and a silent restart would only reload a book about to be
+  // left anyway.
+  silentRestart();
 }
 
 void MidadSyncActivity::returnToReader() {
@@ -207,12 +222,16 @@ void MidadSyncActivity::loop() {
       if (promptSelection == 0) {
         acceptJump();
       } else {
-        returnToReader();
+        // Not "stay here": the position has already been sent by this point, and
+        // the reason someone syncs is to carry on reading somewhere else. So the
+        // second choice finishes the job and puts the book down, rather than
+        // dropping them back into a book they have just handed over.
+        closeBook();
       }
       return;
     }
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      returnToReader();  // declining is the same as staying put
+      returnToReader();  // backing out is not a choice between the two -- keep reading
     }
     return;
   }
@@ -282,7 +301,7 @@ void MidadSyncActivity::render(RenderLock&&) {
         }
       };
       drawChoice(0, tr(STR_SYNC_JUMP));
-      drawChoice(1, tr(STR_SYNC_STAY_HERE));
+      drawChoice(1, tr(STR_SYNC_AND_CLOSE));
       break;
     }
   }

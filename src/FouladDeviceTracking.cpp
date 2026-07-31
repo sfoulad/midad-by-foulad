@@ -539,13 +539,40 @@ void uploadDebugLog(const std::string& username, const std::string& password) {
   }
 }
 
+// First line of crash_report.txt is "CrossPoint version: X" (HalSystem::checkPanic).
+// Empty when absent -- an older report, or a truncated write -- and the caller falls
+// back to the running version rather than sending nothing.
+std::string readCrashReportVersion() {
+  HalFile f;
+  if (!Storage.openFileForRead(TAG, CRASH_REPORT_PATH, f)) return "";
+  char buf[96] = {};
+  const int read = f.read(reinterpret_cast<uint8_t*>(buf), sizeof(buf) - 1);
+  if (read <= 0) return "";
+  const std::string head(buf, static_cast<size_t>(read));
+  constexpr const char* kPrefix = "CrossPoint version: ";
+  const size_t at = head.find(kPrefix);
+  if (at == std::string::npos) return "";
+  const size_t start = at + strlen(kPrefix);
+  const size_t end = head.find_first_of("\r\n", start);
+  return head.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
 bool uploadCrashReport(const std::string& username, const std::string& password) {
   if (!wifiConnected() || username.empty() || password.empty()) return false;
   if (!Storage.exists(CRASH_REPORT_PATH)) return false;
 
   const std::vector<std::pair<std::string, std::string>> files = {{"log", CRASH_REPORT_PATH}};
+  // The version that CRASHED, not the one uploading. A crash report queues on the SD
+  // card until the device is next online, by which time it may have updated -- so
+  // stamping CROSSPOINT_VERSION here attributes an old panic to a new release, which
+  // is exactly backwards for "did yesterday's RC break this". Observed: a 1.8.1 panic
+  // arriving labelled 1.8.5-rc. HalSystem writes the real one into the report at
+  // panic time; read it back out.
+  const std::string crashedVersion = readCrashReportVersion();
   const std::vector<std::pair<std::string, std::string>> fields = {
-      {"serial_number", getSerialNumber()}, {"type", "crash"}, {"firmware_version", CROSSPOINT_VERSION}};
+      {"serial_number", getSerialNumber()},
+      {"type", "crash"},
+      {"firmware_version", crashedVersion.empty() ? CROSSPOINT_VERSION : crashedVersion}};
   std::string response;
   bool ok = HttpDownloader::postFilesMultipart(deviceLogEndpoint(), files, fields, response, 20000, username, password);
 

@@ -18,6 +18,14 @@ HalStorage::HalStorage() {
   // HalFile::Impl::~Impl below). Priority inheritance still applies to
   // recursive mutexes.
   storageMutex = xSemaphoreCreateRecursiveMutex();
+  if (storageMutex == nullptr) {
+    // Returns null on allocation failure, and an unchecked null handle reaching
+    // xSemaphoreTake() aborts inside FreeRTOS with "assert failed:
+    // xQueueSemaphoreTake queue.c:1709 (pxQueue)" -- a panic that names the take,
+    // never the creation that actually failed. Created at boot where heap is
+    // plentiful, so this is hygiene rather than a fix for any observed crash.
+    LOG_ERR("STORAGE", "OOM: could not create storage mutex");
+  }
   assert(storageMutex != nullptr);
 }
 
