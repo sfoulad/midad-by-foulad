@@ -16,7 +16,7 @@ constexpr char FOULAD_EBOOKS_NAME[] = "Midad";
 // updates its bundle. Basic Auth credentials travel in cleartext over this
 // connection as a result -- an accepted, explicit tradeoff for beta, not something
 // to carry into a production release without revisiting.
-constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
+constexpr char FOULAD_EBOOKS_URL[] = "https://midad.one/opds";
 
 // Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
 // Convert a Font): the device uploads a raw TTF/OTF plus a language choice,
@@ -25,7 +25,7 @@ constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
 // expected to rate-limit this server-side. Plain http:// for the same reason
 // as FOULAD_EBOOKS_URL above (foulad.one's current certificate chain isn't in
 // ESP-IDF's trust bundle); revisit alongside that fix.
-constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://midad.one/api/fonts/convert";
+constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "https://midad.one/api/fonts/convert";
 
 // QR-code sign-in (see FouladDeviceLogin.h). Unauthenticated JSON POSTs, no
 // cookies/CSRF. Plain http:// is deliberate and expected here for the same
@@ -34,8 +34,8 @@ constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://midad.one/api/fonts/co
 // Nothing secret is sent TO these endpoints; the token they return is what
 // replaces the account password on the wire, so this flow strictly reduces what
 // is exposed rather than adding to it.
-constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://midad.one/api/device-login/start";
-constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://midad.one/api/device-login/poll";
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "https://midad.one/api/device-login/start";
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "https://midad.one/api/device-login/poll";
 
 // Device-facing sign-out: "remove me", identified by this device's own serial.
 // On the OPDS surface rather than the app API below, because that one sits behind
@@ -43,7 +43,7 @@ constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://midad.one/api/dev
 // it can delete any device, change settings and manage fonts. Removing only itself is a
 // far narrower capability, so a token may reach this. Contract:
 // docs/ebooks-device-signout-endpoint.md.
-constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://midad.one/opds/device/signout";
+constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "https://midad.one/opds/device/signout";
 
 // Foulad One's app JSON API, used by signing out to remove this device from the
 // account (see FouladDeviceLogout). Behind the SAME opds.auth Basic-Auth middleware
@@ -60,9 +60,9 @@ constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://midad.one/opds/devic
 // The shared currency is progress_percent, not page: the phone paginates with
 // epub.js at its own font size and cannot act on a page number computed for a
 // 5-inch panel. page/total_pages are sent for display only.
-constexpr char FOULAD_EBOOKS_READING_POSITION_URL[] = "http://midad.one/opds/reading-position";
+constexpr char FOULAD_EBOOKS_READING_POSITION_URL[] = "https://midad.one/opds/reading-position";
 
-constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://midad.one/api/app/devices";
+constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "https://midad.one/api/app/devices";
 
 // The one host every URL above points at. Matched on the host rather than on a
 // URL prefix because the requests that must carry the device serial header are

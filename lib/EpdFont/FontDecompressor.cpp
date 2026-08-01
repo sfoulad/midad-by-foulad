@@ -42,6 +42,8 @@ void FontDecompressor::freePageBuffer() {
 }
 
 void FontDecompressor::freeHotGroup() {
+  failedGroupFont = nullptr;
+  failedGroupIndex = UINT16_MAX;
   free(hotGroup);
   hotGroup = nullptr;
   hotGroupCapacity = 0;
@@ -261,7 +263,16 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     // ensureCapacity may free the buffer, so the cached-group identity dies with it either way.
     hotGroupFont = nullptr;
     hotGroupIndex = UINT16_MAX;
+    // Already known to be unaffordable, and nothing has been freed since. Bail
+    // without allocating or logging -- the caller gets the same nullptr either way.
+    if (failedGroupFont == fontData && failedGroupIndex == groupIndex) {
+      stats.bitmapAllocFailures++;
+      stats.getBitmapTimeUs += micros() - tStart;
+      return nullptr;
+    }
     if (!ensureCapacity(hotGroup, hotGroupCapacity, group.uncompressedSize)) {
+      failedGroupFont = fontData;
+      failedGroupIndex = groupIndex;
       LOG_ERR("FDC", "Failed to allocate %u bytes for hot group %u", group.uncompressedSize, groupIndex);
       stats.bitmapAllocFailures++;
       if (stats.firstFailedAllocBytes == 0) stats.firstFailedAllocBytes = group.uncompressedSize;
@@ -278,6 +289,9 @@ const uint8_t* FontDecompressor::getBitmap(const EpdFontData* fontData, const Ep
     hotGroupFont = fontData;
     hotGroupIndex = groupIndex;
     stats.hotGroupBytes = group.uncompressedSize;
+    // Memory is evidently available again; stop suppressing whatever failed before.
+    failedGroupFont = nullptr;
+    failedGroupIndex = UINT16_MAX;
   } else {
     stats.cacheHits++;
   }

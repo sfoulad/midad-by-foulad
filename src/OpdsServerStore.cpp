@@ -41,27 +41,29 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
     // right: those credentials are typed account passwords.
     server.isDeviceToken = obj["is_device_token"] | false;
 
-    // Midad rename migration. A device paired before the rename holds
-    // "http://foulad.one/opds" here, and this stored entry -- not the constant --
-    // is what every request uses, so without rewriting it the device would keep
-    // talking to the old host indefinitely. Worse, ActivityManager::goToFouladEbooks()
-    // decides "is this account set up?" by comparing this URL against
-    // FOULAD_EBOOKS_URL: left alone, the comparison fails after the rename and the
-    // device concludes it is signed out, throwing the user at a QR screen despite a
-    // perfectly good credential.
+    // Normalise a stored Midad catalog URL to whatever the current constant is.
     //
-    // Host swap only. The credential, its is_device_token flag and the account
-    // itself are untouched and stay valid -- the server is the same server under a
-    // new name. needsResave persists it, so this runs once, not on every boot.
-    if (!server.url.empty() && server.url.find(FOULAD_EBOOKS_LEGACY_HOST) != std::string::npos &&
-        isFouladEbooksUrl(server.url)) {
-      const size_t hostPos = server.url.find(FOULAD_EBOOKS_LEGACY_HOST);
-      server.url.replace(hostPos, std::strlen(FOULAD_EBOOKS_LEGACY_HOST), FOULAD_EBOOKS_HOST);
-      // The display name was "Foulad eBooks" on those entries; bring it along so the
-      // server list doesn't show the old brand next to a migrated URL.
+    // Originally this only swapped the host for the Midad rename. That was not
+    // enough the moment the scheme changed too: every device in the field has
+    // "http://midad.one/opds" on its SD card, and this entry -- not the constant --
+    // is what requests use. Worse, "is this account set up?" is decided by comparing
+    // it against FOULAD_EBOOKS_URL (goToFouladEbooks, the reader's sync gating, the
+    // Settings login row), so a scheme change alone would make every existing device
+    // conclude it was signed out and demand a fresh QR scan.
+    //
+    // Replacing the whole URL rather than patching pieces means the next change --
+    // host, scheme, path -- needs no new migration. isFouladEbooksUrl() matches both
+    // the current and pre-rename hosts, which is why FOULAD_EBOOKS_LEGACY_HOST still
+    // has to exist even though nothing calls foulad.one any more: without it these
+    // entries stop being recognised as ours and never get rewritten at all.
+    //
+    // Credential, token flag and account are untouched -- same server, same account,
+    // different address.
+    if (!server.url.empty() && server.url != FOULAD_EBOOKS_URL && isFouladEbooksUrl(server.url)) {
+      LOG_INF("OPS", "Migrated stored catalog URL: %s -> %s", server.url.c_str(), FOULAD_EBOOKS_URL);
+      server.url = FOULAD_EBOOKS_URL;
       server.name = FOULAD_EBOOKS_NAME;
       needsResave = true;
-      LOG_INF("OPS", "Migrated stored catalog URL to %s", server.url.c_str());
     }
 
     servers.push_back(std::move(server));
