@@ -114,6 +114,17 @@ class FontDecompressor {
   // ensureCapacity() returns false on OOM so the caller can skip the glyph gracefully.
   const EpdFontData* hotGroupFont = nullptr;
   uint16_t hotGroupIndex = UINT16_MAX;
+  // Last (font, group) whose decompression buffer could not be allocated. getBitmap()
+  // runs per glyph, so without this a group that fails once is retried by every
+  // remaining glyph on the line -- observed as eleven attempts at the same 10,667
+  // bytes in 23ms on a device already down to 18.7KB free. Each retry cannot succeed
+  // and fragments a little further on the way out.
+  //
+  // Cleared on any successful allocation and by clearCache(), so it suppresses a
+  // hopeless burst rather than permanently blacklisting a group: once memory is
+  // freed, the next attempt goes through.
+  const EpdFontData* failedGroupFont = nullptr;
+  uint16_t failedGroupIndex = UINT16_MAX;
   uint8_t* hotGroup = nullptr;  // owned; freed in freeHotGroup()/dtor
   uint32_t hotGroupCapacity = 0;
 
