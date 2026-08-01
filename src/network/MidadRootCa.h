@@ -13,6 +13,13 @@
 // <- ISRG Root X1 -- so X1 alone verifies it. Measured with
 // `openssl s_client -CAfile isrgrootx1.pem`: return code 0.
 //
+// NOT CURRENTLY IN USE. The https switch was reverted after "Failed to fetch feed"
+// on the first device to try it -- see fix/revert-https-midad. The pin itself is
+// unproven on hardware; the leading suspect is the device clock, since neither the
+// X3's DS3231 (no calendar) nor the X4 (no RTC) can keep a date across a reboot, and
+// certificate validity checks need one. http never cared. Kept here so the next
+// attempt starts from a measured root rather than from scratch.
+//
 // Only used for Midad hosts. GitHub is on a Sectigo chain that this root cannot
 // verify, so those requests keep the full bundle (see runGet's cert selection).
 //
