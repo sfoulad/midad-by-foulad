@@ -682,7 +682,11 @@ void FontDownloadActivity::render(RenderLock&&) {
       // Confirm's label follows what it will actually do from here -- switching
       // language on the tab row, acting on the row otherwise. Up/Down keep their
       // labels throughout, since one scroll axis now covers tabs and list alike.
-      const char* confirmLabel = selectedIndex_ < 0               ? tr(STR_SWITCH)
+      //
+      // On the tab row the label names the language you will land on, not the one
+      // already highlighted: a hint that repeated the active tab would tell you
+      // something the tab bar is showing you anyway, and say nothing about the button.
+      const char* confirmLabel = selectedIndex_ < 0               ? (showArabic_ ? tr(STR_ENGLISH) : tr(STR_ARABIC))
                                  : isSelectedFamilyDeletable()    ? tr(STR_DELETE)
                                  : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
                                                                   : tr(STR_DOWNLOAD);
