@@ -19,7 +19,7 @@
 // filter). Plain http for the same reason as FOULAD_EBOOKS_URL -- see
 // src/FouladEbooksConfig.h. Overridable for local testing.
 #ifndef FOULAD_FONTS_CATALOG_URL
-#define FOULAD_FONTS_CATALOG_URL "http://midad.one/api/fonts/catalog"
+#define FOULAD_FONTS_CATALOG_URL "https://midad.one/api/fonts/catalog"
 #endif
 
 #ifndef FONT_MANIFEST_URL

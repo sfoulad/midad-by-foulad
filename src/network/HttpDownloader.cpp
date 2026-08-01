@@ -19,6 +19,7 @@
 
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "MidadRootCa.h"
 
 namespace {
 // RX holds the response headers. 4096 fits real OPDS servers; GitHub's release
@@ -199,7 +200,20 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // servers over plain http (esp_http_client picks the transport from the URL
   // scheme, so http:// needs no cert config). The prior setInsecure() worked
   // only because Arduino's ssl_client drives mbedtls directly.
-  config.crt_bundle_attach = esp_crt_bundle_attach;
+  // One pinned root for Midad, the full bundle for everything else. The bundle costs
+  // ~250KB of contiguous allocation during the handshake -- the reason every Midad
+  // endpoint was on plain http, with account credentials in clear on every request.
+  // ISRG Root X1 alone verifies midad.one's cross-signed chain at ~1.9KB, which a
+  // device observed at 18.7KB free can actually afford.
+  //
+  // GitHub is on a Sectigo chain this root cannot verify, so OTA and font downloads
+  // keep the bundle. Selection is by host, matching the same helper that gates the
+  // device-serial header.
+  if (isFouladEbooksUrl(url)) {
+    config.cert_pem = MIDAD_ROOT_CA_PEM;
+  } else {
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+  }
   config.keep_alive_enable = true;
   if (conditional) {
     config.event_handler = captureResponseEtag;
@@ -415,7 +429,20 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
   config.timeout_ms = timeoutMs;
-  config.crt_bundle_attach = esp_crt_bundle_attach;
+  // One pinned root for Midad, the full bundle for everything else. The bundle costs
+  // ~250KB of contiguous allocation during the handshake -- the reason every Midad
+  // endpoint was on plain http, with account credentials in clear on every request.
+  // ISRG Root X1 alone verifies midad.one's cross-signed chain at ~1.9KB, which a
+  // device observed at 18.7KB free can actually afford.
+  //
+  // GitHub is on a Sectigo chain this root cannot verify, so OTA and font downloads
+  // keep the bundle. Selection is by host, matching the same helper that gates the
+  // device-serial header.
+  if (isFouladEbooksUrl(url)) {
+    config.cert_pem = MIDAD_ROOT_CA_PEM;
+  } else {
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+  }
   config.keep_alive_enable = true;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -570,7 +597,20 @@ HttpDownloader::DownloadError runDelete(const std::string& url, const std::strin
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
   config.timeout_ms = timeoutMs;
-  config.crt_bundle_attach = esp_crt_bundle_attach;
+  // One pinned root for Midad, the full bundle for everything else. The bundle costs
+  // ~250KB of contiguous allocation during the handshake -- the reason every Midad
+  // endpoint was on plain http, with account credentials in clear on every request.
+  // ISRG Root X1 alone verifies midad.one's cross-signed chain at ~1.9KB, which a
+  // device observed at 18.7KB free can actually afford.
+  //
+  // GitHub is on a Sectigo chain this root cannot verify, so OTA and font downloads
+  // keep the bundle. Selection is by host, matching the same helper that gates the
+  // device-serial header.
+  if (isFouladEbooksUrl(url)) {
+    config.cert_pem = MIDAD_ROOT_CA_PEM;
+  } else {
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+  }
   config.keep_alive_enable = true;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -656,7 +696,20 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
   config.timeout_ms = timeoutMs;
-  config.crt_bundle_attach = esp_crt_bundle_attach;
+  // One pinned root for Midad, the full bundle for everything else. The bundle costs
+  // ~250KB of contiguous allocation during the handshake -- the reason every Midad
+  // endpoint was on plain http, with account credentials in clear on every request.
+  // ISRG Root X1 alone verifies midad.one's cross-signed chain at ~1.9KB, which a
+  // device observed at 18.7KB free can actually afford.
+  //
+  // GitHub is on a Sectigo chain this root cannot verify, so OTA and font downloads
+  // keep the bundle. Selection is by host, matching the same helper that gates the
+  // device-serial header.
+  if (isFouladEbooksUrl(url)) {
+    config.cert_pem = MIDAD_ROOT_CA_PEM;
+  } else {
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+  }
   config.keep_alive_enable = true;
 
   esp_http_client_handle_t client = esp_http_client_init(&config);
