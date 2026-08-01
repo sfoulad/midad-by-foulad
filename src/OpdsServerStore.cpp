@@ -66,6 +66,22 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
       needsResave = true;
     }
 
+    // Two entries can normalise onto the same URL -- an http one from before the
+    // switch alongside an https one added by signing in again. Collapse them here
+    // rather than leaving the list showing the same server twice. The credential
+    // wins over an empty one; otherwise the first entry stands, since both describe
+    // the same account on the same server.
+    const auto twin =
+        std::find_if(servers.begin(), servers.end(), [&](const OpdsServer& s) { return s.url == server.url; });
+    if (twin != servers.end()) {
+      if (twin->password.empty() && !server.password.empty()) {
+        *twin = server;
+      }
+      needsResave = true;
+      LOG_INF("OPS", "Collapsed duplicate catalog entry for %s", server.url.c_str());
+      continue;
+    }
+
     servers.push_back(std::move(server));
   }
 
@@ -80,6 +96,19 @@ bool OpdsServerStore::fromJson(JsonVariantConst doc) {
 }
 
 bool OpdsServerStore::addServer(const OpdsServer& server) {
+  // Signing in to a server already present replaces its entry rather than adding a
+  // twin. Without this, every re-sign-in appended: a device that had
+  // http://midad.one/opds stored and then signed in again after the switch to https
+  // ended up listing Midad twice, one per scheme, with no way to tell which the rest
+  // of the app was using.
+  const auto existing =
+      std::find_if(servers.begin(), servers.end(), [&](const OpdsServer& s) { return s.url == server.url; });
+  if (existing != servers.end()) {
+    *existing = server;
+    LOG_DBG("OPS", "Updated existing server: %s", server.name.c_str());
+    return saveToFile();
+  }
+
   if (servers.size() >= MAX_SERVERS) {
     LOG_DBG("OPS", "Cannot add more servers, limit of %zu reached", MAX_SERVERS);
     return false;
