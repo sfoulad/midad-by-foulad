@@ -112,4 +112,19 @@ void flushPendingCrashReport(const std::string& username, const std::string& pas
 // the OOM aborts a prior Gym-app bug already demonstrated on this device.
 void reportDeviceStats(const std::string& username, const std::string& password);
 
+// The newest firmware build the catalog server named in its last registerDevice()
+// response, if it is newer than the one running; empty otherwise. Read-only, free,
+// and always safe to call: it is a string parsed out of a reply the device already
+// fetched, so consulting it costs no request, no TLS handshake and no heap.
+//
+// That is the entire point of routing this through registration. The Library once
+// asked GitHub directly and aborted the device doing it -- a TLS handshake needs
+// ~32KB of mbedTLS record buffers, and the heap after Home/library browsing has
+// nothing like that contiguous (see SettingsActivity's Check for updates, which
+// reboots first for exactly this reason).
+//
+// Empty is the normal state: an older server omits the key, and so does a current
+// one that could not reach GitHub. Absent means "no information", never "up to date".
+const std::string& pendingFirmwareUpdate();
+
 }  // namespace FouladDeviceTracking

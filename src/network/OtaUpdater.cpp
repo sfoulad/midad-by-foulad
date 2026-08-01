@@ -188,6 +188,12 @@ bool OtaUpdater::isUpdateNewer() const {
   if (!updateAvailable || latestVersion.empty()) {
     return false;
   }
+  return isVersionNewer(latestVersion.c_str());
+}
+
+bool OtaUpdater::isVersionNewer(const char* candidate) {
+  if (candidate == nullptr || *candidate == '\0') return false;
+  const std::string latestVersion(candidate);
 
   // GitHub tag names are conventionally "v1.6.24" while CROSSPOINT_VERSION (from
   // platformio.ini) is the bare "1.6.24" -- strip a leading 'v'/'V' before comparing so the
