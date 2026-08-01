@@ -150,6 +150,27 @@ void OpdsBookBrowserActivity::onExit() {
 }
 
 void OpdsBookBrowserActivity::loop() {
+  if (state == BrowserState::UPDATE_PROMPT) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      // Reboots into the OTA flow rather than downloading here: this session has an
+      // OPDS feed and its cover cache resident, and the firmware download needs more
+      // contiguous heap than that leaves. Does not return.
+      silentRestartToOtaCheck();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      state = BrowserState::BROWSING;  // declined; carry on browsing
+      requestUpdate();
+      return;
+    }
+    return;  // nothing else acts while the offer is up
+  }
+
+  maybeOfferFirmwareUpdate();
+  // The offer can go up mid-frame; hand this frame to it rather than letting a
+  // keypress fall through to the catalog underneath.
+  if (state == BrowserState::UPDATE_PROMPT) return;
+
   if (state == BrowserState::WIFI_SELECTION || state == BrowserState::SEARCH_INPUT) {
     return;
   }
@@ -345,6 +366,25 @@ void OpdsBookBrowserActivity::loop() {
 }
 
 void OpdsBookBrowserActivity::render(RenderLock&&) {
+  if (state == BrowserState::BROWSING && browsingFramesRendered < 2) browsingFramesRendered++;
+
+  if (state == BrowserState::UPDATE_PROMPT) {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    const int top = (renderer.getScreenHeight() - lineHeight * 3) / 2;
+    renderer.clearScreen();
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
+                   tr(STR_UPDATE));
+    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEW_UPDATE), true, EpdFontFamily::BOLD);
+    renderer.drawCenteredText(
+        UI_10_FONT_ID, top + lineHeight + metrics.verticalSpacing,
+        (std::string(tr(STR_NEW_VERSION)) + FouladDeviceTracking::pendingFirmwareUpdate()).c_str());
+    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
+
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -1049,6 +1089,30 @@ void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
   // Device/reading-stats snapshot for the "My Devices" web page's Device
   // Stats / Reading Stats tabs -- same reliable-moment reasoning.
   FouladDeviceTracking::reportDeviceStats(server.username, server.password);
+}
+
+// Once per boot, not once per Library entry: declining should stick for the session
+// rather than being asked again on every visit. File-scope because the activity is
+// destroyed and rebuilt each time.
+static bool gFirmwareOfferShownThisBoot = false;
+
+void OpdsBookBrowserActivity::maybeOfferFirmwareUpdate() {
+  if (gFirmwareOfferShownThisBoot) return;
+  if (state != BrowserState::BROWSING || browsingFramesRendered == 0) return;
+  // The catalog goes up first and the offer follows. Not a memory precaution -- this
+  // costs nothing -- simply that a popup arriving before the list has painted hides
+  // the thing the user opened Library to see.
+  if (FouladDeviceTracking::pendingFirmwareUpdate().empty()) return;
+
+  // Note what this does NOT do: contact GitHub. The version was parsed out of the
+  // registerDevice() response earlier in this same connect, so raising the offer is
+  // a string comparison. The previous attempt ran OtaUpdater::checkForUpdate() here
+  // and the TLS handshake aborted the device at ~52KB free (v1.8.17-rc); the ~32KB
+  // of mbedTLS record buffers do not fit beside a loaded feed. Nothing in this
+  // function may become a network call without moving it off this path entirely.
+  gFirmwareOfferShownThisBoot = true;
+  state = BrowserState::UPDATE_PROMPT;
+  requestUpdate();
 }
 
 void OpdsBookBrowserActivity::checkAndConnectWifi() {

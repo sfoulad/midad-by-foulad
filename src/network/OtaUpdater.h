@@ -30,6 +30,11 @@ class OtaUpdater {
   size_t getTotalSize() const { return totalSize; }
 
   OtaUpdater() = default;
+  // True when `candidate` (a GitHub tag, leading 'v' optional) names a build newer
+  // than the running one. Public and static because the catalog server now reports
+  // firmware versions too, and that path needs the identical answer -- a second
+  // implementation of "is this newer" is how the two come to disagree about an -rc.
+  static bool isVersionNewer(const char* candidate);
   bool isUpdateNewer() const;
   const std::string& getLatestVersion() const;
   OtaUpdaterError checkForUpdate();

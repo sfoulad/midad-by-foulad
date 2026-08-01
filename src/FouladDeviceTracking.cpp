@@ -14,6 +14,7 @@
 #include "KOReaderCredentialStore.h"
 #include "RecentBooksStore.h"
 #include "network/HttpDownloader.h"
+#include "network/OtaUpdater.h"
 #include "reading/ReadingStatsStore.h"
 #include "util/DebugLog.h"
 #include "util/DebugLogging.h"
@@ -428,6 +429,38 @@ std::string getSerialNumber() {
   return std::string("XTE-") + mac.c_str();
 }
 
+// Resolved once per registration: the build to offer, or empty for "nothing to say".
+// A std::string rather than a pointer into the response -- responseDoc dies with the
+// call and the Library reads this minutes later.
+static std::string latestFirmwareOffer;
+
+// Picks this device's channel out of {"stable", "rc"} and keeps the tag only if it
+// beats the running build.
+//
+// A stable device is never offered an -rc: it opted out of pre-releases by running a
+// release, and a popup is not the place to change that. An RC device prefers the rc
+// tag and falls back to stable, which is what carries it off a pre-release once the
+// equal-numbered release lands -- exactly the case OtaUpdater's -rc rule exists for
+// (a device on 1.8.19-rc takes 1.8.19, since the rc tag is by then identical to what
+// it is already running).
+static void captureLatestFirmware(JsonVariantConst latest) {
+  latestFirmwareOffer.clear();
+  if (latest.isNull()) return;  // older server, or GitHub was unreachable for it
+
+  const auto newerOrNull = [](JsonVariantConst v) -> const char* {
+    const char* tag = v.is<const char*>() ? v.as<const char*>() : nullptr;
+    return OtaUpdater::isVersionNewer(tag) ? tag : nullptr;
+  };
+
+  const char* offer = nullptr;
+  if (strstr(CROSSPOINT_VERSION, "-rc") != nullptr) offer = newerOrNull(latest["rc"]);
+  if (offer == nullptr) offer = newerOrNull(latest["stable"]);
+  if (offer == nullptr) return;
+
+  latestFirmwareOffer = offer;
+  LOG_INF(TAG, "Server reports newer firmware: %s (running %s)", offer, CROSSPOINT_VERSION);
+}
+
 void registerDevice(const std::string& username, const std::string& password) {
   if (!wifiConnected() || username.empty() || password.empty()) return;
 
@@ -454,6 +487,7 @@ void registerDevice(const std::string& username, const std::string& password) {
   JsonDocument responseDoc;
   if (!deserializeJson(responseDoc, response)) {
     applySettingsFromServer(responseDoc["settings"].as<JsonObjectConst>());
+    captureLatestFirmware(responseDoc["latest_firmware"]);
   }
 }
 
@@ -639,5 +673,7 @@ void reportDeviceStats(const std::string& username, const std::string& password)
   // treated as "already reported."
   if (ok && includeReading) lastReportedTotalReadingMs = totalMs;
 }
+
+const std::string& pendingFirmwareUpdate() { return latestFirmwareOffer; }
 
 }  // namespace FouladDeviceTracking
