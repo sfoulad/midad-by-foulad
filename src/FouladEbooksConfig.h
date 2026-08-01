@@ -6,16 +6,27 @@
 // Credentials are issued by QR sign-in on first use (FouladQrLoginActivity)
 // and stored via OpdsServerStore — never hardcoded here, since this repo is public.
 constexpr char FOULAD_EBOOKS_NAME[] = "Midad";
-// Temporarily http:// (was https://), during beta only: Let's Encrypt rotated
-// foulad.one onto a certificate hierarchy ("ISRG Root YE") that ESP-IDF's embedded
-// trust bundle doesn't recognize, and the on-device fallback that could otherwise
-// verify it was removed after it drove free heap down to ~5KB and froze the device
-// (see HttpDownloader.cpp). The server has been reconfigured to serve OPDS over
-// plain HTTP without redirecting to HTTPS, specifically so this can keep working
-// during beta testing until the certificate chain is fixed server-side or ESP-IDF
-// updates its bundle. Basic Auth credentials travel in cleartext over this
-// connection as a result -- an accepted, explicit tradeoff for beta, not something
-// to carry into a production release without revisiting.
+// http://, and Basic Auth credentials travel in cleartext as a result. That is a
+// known, unresolved exposure -- not a settled design -- and it should not reach a
+// production release unrevisited.
+//
+// The original reason recorded here was that ESP-IDF's trust bundle could not
+// resolve the certificate chain. That was wrong, and worth correcting so nobody
+// re-derives it: the server presents the full cross-signed chain, so ISRG Root X1
+// alone verifies it (checked with `openssl s_client -CAfile isrgrootx1.pem`:
+// return code 0). At ~1.9KB pinned, versus the ~250KB bundle that genuinely did
+// drive free heap to ~5KB, the memory objection does not apply either.
+//
+// https was nevertheless tried and reverted (v1.8.14-rc): the first device to run
+// it could not fetch the feed. All twelve endpoints were switched at once, so the
+// failure took out catalog, sign-in, covers, fonts and gym together with nothing to
+// compare against -- the shape of the change was as wrong as anything in it.
+//
+// For the next attempt: switch ONE endpoint, and suspect the clock first.
+// Certificate validity checking needs a roughly correct date, and neither the X3's
+// DS3231 (hour/minute, no calendar) nor the X4 (no RTC) keeps one across a reboot.
+// http never cared; https does. That is testable before writing any code -- compare
+// a freshly NTP-synced device against one that has been offline.
 constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
 
 // Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
