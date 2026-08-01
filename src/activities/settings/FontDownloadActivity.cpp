@@ -480,13 +480,16 @@ void FontDownloadActivity::loop() {
     const int listSize = listItemCount();
     const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
 
+    // Same model as the book drawer: the tab row is index -1 in the same scroll
+    // range, so Up/Down walks [-1, listSize) and Confirm does the contextual thing.
+    // That is what makes the two screens feel identical rather than merely similar.
     buttonNavigator_.onScrollNextRelease([this, listSize] {
-      selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
+      selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_ + 1, listSize + 1) - 1;
       requestUpdate();
     });
 
     buttonNavigator_.onScrollPreviousRelease([this, listSize] {
-      selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_, listSize);
+      selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_ + 1, listSize + 1) - 1;
       requestUpdate();
     });
 
@@ -500,29 +503,25 @@ void FontDownloadActivity::loop() {
       requestUpdate();
     });
 
-    // Language tab bar, bound to the FRONT Left/Right buttons directly.
-    //
-    // Not NavNext/NavPrevious, which is what this used to do and was the bug:
-    // those are not "Left/Right" at all. NavNext resolves to side Down + front
-    // Right, and ScrollNext -- which the list navigation above uses -- resolves to
-    // side Down + front Right as well (see MappedInputManager). Both fired on the
-    // same physical Down press, so every press advanced the selection and then
-    // immediately flipped the language, and rebuildVisibleList() reset
-    // selectedIndex_ to 0. The list could never be scrolled: Down only ever
-    // toggled Arabic/English and snapped back to the top.
-    //
-    // Only 2 tabs, so either direction just flips.
-    if (mappedInput.wasPressed(MappedInputManager::Button::Left) ||
-        mappedInput.wasPressed(MappedInputManager::Button::Right)) {
-      {
-        RenderLock lock(*this);
-        showArabic_ = !showArabic_;
-        rebuildVisibleList();
-      }
-      requestUpdate();
-    }
+    // Left/Right are deliberately NOT bound to tab switching. They are list-scroll
+    // shortcuts (MappedInputManager maps the front Left/Right to the same
+    // next/previous row as the side Up/Down), and intercepting them here is what
+    // broke scrolling on this screen -- the book drawer carries the same warning
+    // after the identical bug was reported against it.
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      // On the tab row, Confirm switches language -- the drawer's behaviour on its
+      // own tab row, and the reason Left/Right no longer need to be hijacked.
+      if (selectedIndex_ < 0) {
+        {
+          RenderLock lock(*this);
+          showArabic_ = !showArabic_;
+          rebuildVisibleList();
+          selectedIndex_ = -1;  // stay on the tabs after switching
+        }
+        requestUpdate();
+        return;
+      }
       if (!families_.empty()) {
         if (isDownloadAllRow(selectedIndex_)) {
           currentFileIndex_ = 0;
@@ -630,7 +629,7 @@ void FontDownloadActivity::render(RenderLock&&) {
       // visually distinct sections instead of one flat list.
       const int tabBarTop = metrics.topPadding + metrics.headerHeight;
       GUI.drawTabBar(renderer, Rect{0, tabBarTop, pageWidth, metrics.tabBarHeight},
-                     {{tr(STR_ARABIC_FONTS), showArabic_}, {tr(STR_ENGLISH_FONTS), !showArabic_}}, false);
+                     {{tr(STR_ARABIC_FONTS), showArabic_}, {tr(STR_ENGLISH_FONTS), !showArabic_}}, selectedIndex_ < 0);
 
       constexpr int DIVIDER_THICKNESS = 1;
       constexpr int DIVIDER_MARGIN = 12;  // inset from the screen edges, like the list's own side padding
@@ -680,11 +679,15 @@ void FontDownloadActivity::render(RenderLock&&) {
             return f.installed && !f.hasUpdate;
           });
 
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK),
-                                                isSelectedFamilyDeletable()      ? tr(STR_DELETE)
-                                                : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
-                                                                                 : tr(STR_DOWNLOAD),
-                                                tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+      // Confirm's label follows what it will actually do from here -- switching
+      // language on the tab row, acting on the row otherwise. Up/Down keep their
+      // labels throughout, since one scroll axis now covers tabs and list alike.
+      const char* confirmLabel = selectedIndex_ < 0               ? tr(STR_SWITCH)
+                                 : isSelectedFamilyDeletable()    ? tr(STR_DELETE)
+                                 : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
+                                                                  : tr(STR_DOWNLOAD);
+      const auto labels =
+          mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
     }
   } else if (state_ == DOWNLOADING) {
