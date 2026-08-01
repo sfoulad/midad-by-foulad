@@ -29,7 +29,6 @@
 #include "components/icons/book.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
-#include "network/OtaUpdater.h"
 #include "util/BookCacheUtils.h"
 #include "util/DebugLog.h"
 #include "util/DebugLogging.h"
@@ -151,27 +150,6 @@ void OpdsBookBrowserActivity::onExit() {
 }
 
 void OpdsBookBrowserActivity::loop() {
-  if (state == BrowserState::UPDATE_PROMPT) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      // Reboots into the OTA flow on a fresh heap, exactly as Settings does -- the
-      // catalog session has just held a feed and a TLS handshake, and the firmware
-      // download needs more contiguous memory than that leaves. Does not return.
-      silentRestartToOtaCheck();
-      return;
-    }
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      state = BrowserState::BROWSING;  // declined; carry on browsing
-      requestUpdate();
-      return;
-    }
-    return;  // nothing else acts while the offer is up
-  }
-
-  maybeCheckForFirmwareUpdate();
-  // The check can raise the prompt mid-frame; hand this frame to it rather than
-  // letting a keypress fall through to the catalog underneath.
-  if (state == BrowserState::UPDATE_PROMPT) return;
-
   if (state == BrowserState::WIFI_SELECTION || state == BrowserState::SEARCH_INPUT) {
     return;
   }
@@ -367,25 +345,6 @@ void OpdsBookBrowserActivity::loop() {
 }
 
 void OpdsBookBrowserActivity::render(RenderLock&&) {
-  if (state == BrowserState::BROWSING && browsingFramesRendered < 2) browsingFramesRendered++;
-
-  if (state == BrowserState::UPDATE_PROMPT) {
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    const int pageWidth = renderer.getScreenWidth();
-    const int pageHeight = renderer.getScreenHeight();
-    const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-    const int top = (pageHeight - lineHeight * 3) / 2;
-    renderer.clearScreen();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_UPDATE));
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEW_UPDATE), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_10_FONT_ID, top + lineHeight + metrics.verticalSpacing,
-                              (std::string(tr(STR_NEW_VERSION)) + pendingUpdateVersion).c_str());
-    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer();
-    return;
-  }
-
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -1064,11 +1023,6 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
   fetchFeed(url);
 }
 
-// Once per boot, not once per Library entry: someone browsing in and out repeatedly
-// should not pay for a GitHub round trip each time. File-scope rather than a member
-// because the activity is destroyed and rebuilt on every entry.
-static bool gFirmwareUpdateCheckedThisBoot = false;
-
 void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
   if (server.url != FOULAD_EBOOKS_URL) return;
   FouladDeviceTracking::registerDevice(server.username, server.password);
@@ -1095,30 +1049,6 @@ void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
   // Device/reading-stats snapshot for the "My Devices" web page's Device
   // Stats / Reading Stats tabs -- same reliable-moment reasoning.
   FouladDeviceTracking::reportDeviceStats(server.username, server.password);
-}
-
-void OpdsBookBrowserActivity::maybeCheckForFirmwareUpdate() {
-  if (gFirmwareUpdateCheckedThisBoot) return;
-  if (state != BrowserState::BROWSING || browsingFramesRendered == 0) return;  // wait for a painted feed
-  if (!FouladDeviceTracking::wifiConnected()) return;
-  gFirmwareUpdateCheckedThisBoot = true;
-
-  // After the catalog is up, never before it. Checking first would add a GitHub
-  // round trip to every Library open, which is the one cost this was asked not to
-  // have. Afterwards the wait is invisible: the feed is already readable.
-  //
-  // Cheap in the ordinary case -- the release check sends If-None-Match and an
-  // unchanged list comes back 304, which GitHub does not count against the rate
-  // limit at all (see OtaUpdater).
-  OtaUpdater updater;
-  if (updater.checkForUpdate() != OtaUpdater::OK || !updater.isUpdateNewer()) return;
-
-  pendingUpdateVersion = updater.getLatestVersion();
-  if (!pendingUpdateVersion.empty() && (pendingUpdateVersion[0] == 'v' || pendingUpdateVersion[0] == 'V')) {
-    pendingUpdateVersion.erase(0, 1);
-  }
-  state = BrowserState::UPDATE_PROMPT;
-  requestUpdate();
 }
 
 void OpdsBookBrowserActivity::checkAndConnectWifi() {
