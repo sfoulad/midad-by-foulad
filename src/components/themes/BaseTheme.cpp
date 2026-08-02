@@ -1061,7 +1061,18 @@ void BaseTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const ch
   const bool hasSecondary = secondaryLabel != nullptr && secondaryLabel[0] != '\0';
   const int itemWidth = renderer.getTextWidth(UI_12_FONT_ID, label);
   const int textX = rect.x + (rect.width - itemWidth) / 2;
-  const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
+  int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
+  if (ScriptDetector::containsArabic(label)) {
+    // Arabic UI labels share the Latin baseline (ArabicFontSystem.cpp:56, and the
+    // long note on arabicBaselineMatchFontIds_ for why). That is right for a line of
+    // text and wrong for a key: centring on the Latin line box assumes a label with
+    // almost no descender, which "abc" and "#@!" have and "ع" does not. The isolated
+    // form drops well below the baseline, so it reads as sitting at the bottom of the
+    // key. Lift it by a third of the line height to put the ink back in the middle --
+    // measured against the rendered frame, not derived, because the shaped glyph's
+    // ink extent is not something the font metrics expose here.
+    textY -= renderer.getLineHeight(UI_12_FONT_ID) / 3;
+  }
 
   renderer.drawText(UI_12_FONT_ID, textX, textY, label, !invert);
 

@@ -523,6 +523,8 @@ STR_KB_HINT_EXIT_URL_MODE: "اضغط ABC للخروج من وضع الروابط
 STR_KB_HINT_CLEAR_TEXT: "استمر بالضغط على DEL لمسح كل النص"
 STR_KB_HINT_SECONDARY_CHAR: "استمر بالضغط على الاختيار للحرف الثانوي"
 STR_KB_HINT_UPPER_SECONDARY: "استمر بالضغط على الاختيار للأحرف الكبيرة أو الثانوية"
+STR_KB_HINT_ARABIC_PANEL: "اضغط ع للوحة المفاتيح العربية"
+STR_KB_HINT_SWITCH_PANEL: "الصف السفلي: المفتاح الثاني يغير لوحة المفاتيح"
 STR_KB_HINT_LOWER_SECONDARY: "استمر بالضغط على الاختيار للأحرف الصغيرة أو الثانوية"
 STR_KB_HINT_URL_SNIPPETS: "اضغط URL للمقاطع الجاهزة"
 STR_SD_FIRMWARE_UPDATE: "تحديث النظام من بطاقة SD"
