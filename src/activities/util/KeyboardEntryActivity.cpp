@@ -771,11 +771,12 @@ void KeyboardEntryActivity::render(RenderLock&&) {
        (symMode || arabicMode || urlMode || numericOnly) ? shiftString[0] : shiftString[shiftState]},
       {numericOnly ? KeyboardKeyType::Disabled : KeyboardKeyType::Mode,
        // Names the panel the key goes to next, not the one you are in.
-       urlMode       ? "abc"
-       : arabicMode  ? "abc"
-       : symMode     ? (arabicPanelAvailable() ? "ع" : "abc")
-       : numericOnly ? ""
-                     : "#@!"},
+       urlMode                  ? "abc"
+       : arabicMode             ? "#@!"
+       : symMode                ? "abc"
+       : numericOnly            ? ""
+       : arabicPanelAvailable() ? "ع"
+                                : "#@!"},
       {numericOnly                   ? KeyboardKeyType::Disabled
        : inputType == InputType::Url ? KeyboardKeyType::Mode
                                      : KeyboardKeyType::Space,
