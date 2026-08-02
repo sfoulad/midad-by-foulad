@@ -138,19 +138,39 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
         // FsHelpers::hasXtcExtension's "either spelling" treatment on the read side.
         const bool isXtcAcquisition =
             type && (strcmp(type, "application/x-xtc") == 0 || strcmp(type, "application/x-xtch") == 0);
-        if (rel && strstr(rel, "opds-spec.org/acquisition") != nullptr && (isEpubAcquisition || isXtcAcquisition)) {
+        // The acquisition rel is the authoritative signal in OPDS: it means "this is
+        // the file to download". Trust it even when the type is one we do not know.
+        //
+        // Requiring a known MIME type here is what made News unusable: its entries
+        // arrived with an acquisition link the type check rejected, so they fell to
+        // the atom branch below, became NAVIGATION, and the reader fetched the EPUB
+        // and tried to parse it as a feed -- "Failed to parse feed" on every article
+        // list. Downloading a file we cannot open is a better failure than pretending
+        // it is a catalogue, and the extension logic already defaults sensibly.
+        if (rel && strstr(rel, "opds-spec.org/acquisition") != nullptr) {
           // Prefer plain EPUB links over derived/other formats when multiple
           // acquisition links are present for one entry.
+          // Known types still win when an entry offers several links: an unfamiliar
+          // one is a fallback, not a preference.
+          const bool isKnownType = isEpubAcquisition || isXtcAcquisition;
+          const bool alreadyKnownType = self->currentEntry.type == OpdsEntryType::BOOK &&
+                                        (self->currentEntry.acquisitionType == "application/epub+zip" ||
+                                         self->currentEntry.acquisitionType == "application/x-xtc" ||
+                                         self->currentEntry.acquisitionType == "application/x-xtch");
+          const bool keepExisting = self->currentEntry.type == OpdsEntryType::BOOK && alreadyKnownType && !isKnownType;
           const bool isPlainEpub =
               isEpubAcquisition && (strstr(href, ".epub") != nullptr || strstr(href, "/epub/") != nullptr);
           const bool alreadyHasPlainEpub = self->currentEntry.type == OpdsEntryType::BOOK &&
                                            self->currentEntry.acquisitionType == "application/epub+zip" &&
                                            (self->currentEntry.href.find(".epub") != std::string::npos ||
                                             self->currentEntry.href.find("/epub/") != std::string::npos);
-          if (self->currentEntry.type != OpdsEntryType::BOOK || (isPlainEpub && !alreadyHasPlainEpub)) {
+          if (!keepExisting &&
+              (self->currentEntry.type != OpdsEntryType::BOOK || (isPlainEpub && !alreadyHasPlainEpub))) {
             self->currentEntry.type = OpdsEntryType::BOOK;
             self->currentEntry.href = href;
-            self->currentEntry.acquisitionType = type;
+            // type may be absent now that the rel alone qualifies; nullptr into a
+            // std::string is undefined, not empty.
+            self->currentEntry.acquisitionType = type ? type : "";
           }
         } else if (type && strstr(type, "application/atom+xml") != nullptr) {
           if (self->currentEntry.type != OpdsEntryType::BOOK) {
