@@ -188,6 +188,12 @@ constexpr uint32_t SILENT_REBOOT_TARGET_GYM = 6;
 constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 7;
 constexpr uint32_t SILENT_REBOOT_TARGET_DICTIONARY = 8;
 constexpr uint32_t SILENT_REBOOT_TARGET_NEWS = 9;
+constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_NEWS;
+// Must always name the highest target above. The boot-time range check below uses it
+// to reject uninitialised RTC memory on a cold boot, and a target outside the range
+// is silently treated as 0 -- which is HOME. Adding a target without moving this
+// makes the new one reboot to the home screen instead, with nothing logged: exactly
+// what shipped when NEWS=9 was added while the check still read <= DICTIONARY (8).
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -530,7 +536,7 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_DICTIONARY) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_MAX) ? silentRebootTarget : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   gBootWasSilentRestart = isSilentReboot;
