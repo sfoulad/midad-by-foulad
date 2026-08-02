@@ -674,6 +674,22 @@ OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout()
   return layout;
 }
 
+// Cover work is the largest transient allocation a catalogue walk makes: an HTTP
+// download plus a JPEG/PNG decode, repeated once per book on every grid page. The
+// feed itself is not the pressure -- OpdsParserStream parses it as it arrives and
+// only title/author/id text is ever retained (OpdsParser.cpp:227) -- but the covers
+// land on a heap that a long walk has already fragmented. Crash 28 walked to page 2
+// of 57 with the floor sinking 41,448 -> 37,072 bytes and aborted there.
+//
+// Below the floor, covers are skipped and the placeholder icon is drawn. A grid with
+// grey boxes in it is a bad page; an abort is a lost session and a crash report. The
+// same trade is already made for the reading-stats snapshot in FouladDeviceTracking.
+static bool hasHeapForCoverWork() {
+  constexpr uint32_t COVER_MIN_FREE_HEAP = 32 * 1024;
+  constexpr uint32_t COVER_MIN_FREE_BLOCK = 12 * 1024;
+  return ESP.getFreeHeap() > COVER_MIN_FREE_HEAP && ESP.getMaxAllocHeap() > COVER_MIN_FREE_BLOCK;
+}
+
 void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const int pageStart) {
   const int pageEnd = std::min(pageStart + layout.itemsPerPage, layout.bookCount);
 
@@ -713,6 +729,17 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
         popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       }
       GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
+      if (!hasHeapForCoverWork()) {
+        // Stop for this page rather than skipping one and trying the next: heap this
+        // low does not recover within a loop, and each further attempt is another
+        // chance to abort. The uncached covers stay uncached and are picked up on a
+        // later visit, when the walk that fragmented the heap is behind us.
+        saveOpdsDiagnosticLog("Cover fetch stopped early, low heap: free=" + std::to_string(ESP.getFreeHeap()) +
+                              " largest=" + std::to_string(ESP.getMaxAllocHeap()) + " at book " +
+                              std::to_string(i - pageStart + 1) + "/" + std::to_string(totalToProcess));
+        LOG_ERR("OPDS", "Cover fetch stopped early (free heap %u)", static_cast<unsigned>(ESP.getFreeHeap()));
+        break;
+      }
       if (!ensureOpdsCoverCached(entry, server.username, server.password, layout.coverWidth, layout.coverHeight)) {
         coverFailures++;
       }
