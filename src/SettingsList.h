@@ -18,8 +18,23 @@
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
 // are appended after the built-in fonts. Otherwise only built-in fonts are listed.
 inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
-  // Built-in font labels (StrId)
-  std::vector<StrId> enumValues = {StrId::STR_BITTER, StrId::STR_LEXEND_DECA};
+  // Selectable built-in labels and their stored FONT_FAMILY value, in display order.
+  // Bitter's glyph data was removed from flash (~778KB) and is now a Manage Fonts
+  // download, leaving Lexend Deca as the only built-in Latin reading family. BITTER=0
+  // stays a reserved enum value that aliases Lexend in CrossPointSettings, so a device
+  // with it saved still renders -- it is simply no longer offered here.
+  //
+  // Display index is therefore NOT the stored value. That was already true for SD
+  // fonts, which persist by name rather than index (see valueSetter), so shortening
+  // this list cannot move anyone's saved choice.
+  static constexpr std::pair<StrId, uint8_t> kSelectableFonts[] = {
+      {StrId::STR_LEXEND_DECA, CrossPointSettings::LEXENDDECA},
+  };
+  static constexpr int kBuiltinCount = static_cast<int>(sizeof(kSelectableFonts) / sizeof(kSelectableFonts[0]));
+
+  std::vector<StrId> enumValues;
+  enumValues.reserve(kBuiltinCount);
+  for (const auto& [strId, familyValue] : kSelectableFonts) enumValues.push_back(strId);
   // Runtime string labels for SD card fonts
   std::vector<std::string> enumStringValues;
 
@@ -40,8 +55,8 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
   // with all options when SD fonts are present.
   std::vector<std::string> allStringValues;
   if (sdFontCount > 0) {
-    allStringValues.push_back(I18N.get(StrId::STR_BITTER));
-    allStringValues.push_back(I18N.get(StrId::STR_LEXEND_DECA));
+    std::transform(enumValues.begin(), enumValues.end(), std::back_inserter(allStringValues),
+                   [](StrId strId) { return I18N.get(strId); });
     allStringValues.insert(allStringValues.end(), enumStringValues.begin(), enumStringValues.end());
   }
 
@@ -67,20 +82,22 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
     if (SETTINGS.sdFontFamilyName[0] != '\0') {
       for (int i = 0; i < static_cast<int>(sdFamilyNames.size()); i++) {
         if (sdFamilyNames[i] == SETTINGS.sdFontFamilyName) {
-          return static_cast<uint8_t>(CrossPointSettings::BUILTIN_FONT_COUNT + i);
+          return static_cast<uint8_t>(kBuiltinCount + i);
         }
       }
       // SD font name not found in registry — fall through to built-in
     }
-    return SETTINGS.fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? SETTINGS.fontFamily : 0;
+    // Every built-in value resolves to the one remaining family, including the
+    // reserved BITTER=0, so there is only ever one built-in row to land on.
+    return 0;
   };
 
   s.valueSetter = [sdFamilyNames](uint8_t v) {
-    if (v < CrossPointSettings::BUILTIN_FONT_COUNT) {
-      SETTINGS.fontFamily = v;
+    if (v < kBuiltinCount) {
+      SETTINGS.fontFamily = kSelectableFonts[v].second;
       SETTINGS.sdFontFamilyName[0] = '\0';
     } else {
-      int sdIdx = v - CrossPointSettings::BUILTIN_FONT_COUNT;
+      int sdIdx = v - kBuiltinCount;
       if (sdIdx < static_cast<int>(sdFamilyNames.size())) {
         strncpy(SETTINGS.sdFontFamilyName, sdFamilyNames[sdIdx].c_str(), sizeof(SETTINGS.sdFontFamilyName) - 1);
         SETTINGS.sdFontFamilyName[sizeof(SETTINGS.sdFontFamilyName) - 1] = '\0';
@@ -110,7 +127,6 @@ inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* regist
   // Display index is therefore NOT the same as the stored value -- valueGetter/
   // valueSetter below translate between the two explicitly.
   static constexpr std::pair<StrId, uint8_t> kSelectableFonts[] = {
-      {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
       {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
       {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
   };
@@ -248,8 +264,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // --- Reader ---
     // Built-in font-family entry. Replaced per-call with a registry-aware
     // version when SD fonts are installed.
-    v.push_back(SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily,
-                                  {StrId::STR_BITTER, StrId::STR_LEXEND_DECA}, "fontFamily", StrId::STR_CAT_READER));
+    v.push_back(SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily, {StrId::STR_LEXEND_DECA},
+                                  "fontFamily", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Enum(StrId::STR_FONT_SIZE, &CrossPointSettings::fontSize,
                                   {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE},
                                   "fontSize", StrId::STR_CAT_READER));

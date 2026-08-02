@@ -323,7 +323,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   {
     const int heroBottom = heroCoverY + kHeroHeight - 4;
     const bool titleArabic = ScriptDetector::containsArabic(recentBooks[0].title.c_str());
-    // BITTER_18_FONT_ID doubles as the real EPUB body-text font at XLarge
+    // LEXENDDECA_18_FONT_ID doubles as the real EPUB body-text font at XLarge
     // Latin size when the user's reading font is Bitter (see
     // CrossPointSettings::getReaderFontId), so mapping IT to Tajawal globally
     // (in ArabicFontSystem::applyArabicMappings) would hijack actual book
@@ -336,7 +336,7 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
     // title itself is deliberately always Bitter regardless of the user's
     // chosen reading font (Bitter/Lexend Deca) -- fixed chrome styling, not
     // meant to track that setting.
-    const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : BITTER_18_FONT_ID;
+    const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : LEXENDDECA_18_FONT_ID;
     const int titleLineHeight = renderer.getLineHeight(titleFontId);
     int textY = heroCoverY + 6;
     const auto titleLines =

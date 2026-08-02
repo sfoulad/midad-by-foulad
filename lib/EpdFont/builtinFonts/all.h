@@ -1,21 +1,5 @@
 #pragma once
 
-#include <builtinFonts/bitter_12_bold.h>
-#include <builtinFonts/bitter_12_bolditalic.h>
-#include <builtinFonts/bitter_12_italic.h>
-#include <builtinFonts/bitter_12_regular.h>
-#include <builtinFonts/bitter_14_bold.h>
-#include <builtinFonts/bitter_14_bolditalic.h>
-#include <builtinFonts/bitter_14_italic.h>
-#include <builtinFonts/bitter_14_regular.h>
-#include <builtinFonts/bitter_16_bold.h>
-#include <builtinFonts/bitter_16_bolditalic.h>
-#include <builtinFonts/bitter_16_italic.h>
-#include <builtinFonts/bitter_16_regular.h>
-#include <builtinFonts/bitter_18_bold.h>
-#include <builtinFonts/bitter_18_bolditalic.h>
-#include <builtinFonts/bitter_18_italic.h>
-#include <builtinFonts/bitter_18_regular.h>
 #include <builtinFonts/tasbih_32_bold.h>
 #include <builtinFonts/stopwatch_32_bold.h>
 #include <builtinFonts/lexenddeca_12_bold.h>
@@ -30,10 +14,6 @@
 #include <builtinFonts/notosansarabic_8_regular.h>
 #include <builtinFonts/notosansarabic_10_regular.h>
 #include <builtinFonts/notosansarabic_12_regular.h>
-#include <builtinFonts/notonaskharabic_12_regular.h>
-#include <builtinFonts/notonaskharabic_14_regular.h>
-#include <builtinFonts/notonaskharabic_16_regular.h>
-#include <builtinFonts/notonaskharabic_18_regular.h>
 #include <builtinFonts/uthmanichafs_12_regular.h>
 #include <builtinFonts/uthmanichafs_14_regular.h>
 #include <builtinFonts/uthmanichafs_16_regular.h>
