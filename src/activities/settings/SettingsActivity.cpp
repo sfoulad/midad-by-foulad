@@ -83,7 +83,12 @@ void SettingsActivity::rebuildSettingsLists() {
   appsSettings.push_back(SettingInfo::Toggle(StrId::STR_DEBUG_LOGGING, &CrossPointSettings::debugLoggingEnabled,
                                              "debugLoggingEnabled", StrId::STR_CAT_APPS));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
+  // OPDS Servers is deliberately not listed. Adding a catalog by hand means typing a
+  // URL and credentials on an on-screen keyboard, and every catalog these devices
+  // actually reach is reached by signing in -- so the row only ever offered a way to
+  // get it wrong. The activity itself stays (ActivityManager still routes to it), and
+  // SettingAction::OPDSBrowser with it, so nothing else has to change to bring the row
+  // back.
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
