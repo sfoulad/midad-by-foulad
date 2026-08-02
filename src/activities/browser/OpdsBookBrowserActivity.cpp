@@ -227,12 +227,16 @@ void OpdsBookBrowserActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!entries.empty()) {
         const auto& entry = entries[selectorIndex];
-        entry.type == OpdsEntryType::BOOK ? downloadBook(entry) : navigateToEntry(entry);
+        if (entry.type == OpdsEntryType::SEARCH) {
+          launchSearch();
+        } else if (entry.type == OpdsEntryType::BOOK) {
+          downloadBook(entry);
+        } else {
+          navigateToEntry(entry);
+        }
       }
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       navigateBack();
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Left) && !onBook) {
-      if (!searchTemplate.empty() && selectorIndex == 0) launchSearch();
     }
 
     if (entries.empty()) {
@@ -276,7 +280,9 @@ void OpdsBookBrowserActivity::loop() {
       };
       auto moveUp = [this, layout, goToFeedPage] {
         if (selectorIndex == layout.bookStart && layout.topNavCount > 0) {
-          selectorIndex = 0;
+          // The row directly above the grid, not the top of the strip -- with a search
+          // row now sitting above Prev Page, jumping to 0 would skip past it.
+          selectorIndex = layout.topNavCount - 1;
           requestUpdate();
           return;
         }
@@ -456,7 +462,10 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   const GridLayout layout = computeGridLayout();
   const bool onBook = !entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK;
 
-  const char* confirmLabel = onBook ? tr(STR_DOWNLOAD) : tr(STR_OPEN);
+  // "Open" is wrong on the search row -- nothing opens, a keyboard appears. The hint
+  // names what the button does, the same rule the font browser's tab row follows.
+  const bool onSearchRow = !entries.empty() && entries[selectorIndex].type == OpdsEntryType::SEARCH;
+  const char* confirmLabel = onSearchRow ? tr(STR_SEARCH) : (onBook ? tr(STR_DOWNLOAD) : tr(STR_OPEN));
   const char* leftLabel;
   const char* rightLabel;
   // Grid-page book cells use genuinely horizontal Left/Right (mirror under RTL,
@@ -468,7 +477,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     leftLabel = tr(STR_DIR_LEFT);
     rightLabel = tr(STR_DIR_RIGHT);
   } else {
-    leftLabel = (!searchTemplate.empty() && selectorIndex == 0) ? tr(STR_SEARCH) : tr(STR_DIR_UP);
+    leftLabel = tr(STR_DIR_UP);
     rightLabel = tr(STR_DIR_DOWN);
   }
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, leftLabel, rightLabel, rtlSwapLabels);
@@ -493,7 +502,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
 
     for (size_t i = pageStartIndex; i < entries.size() && i < static_cast<size_t>(pageStartIndex + pageItems); i++) {
       const auto& entry = entries[i];
-      std::string displayText = (entry.type == OpdsEntryType::NAVIGATION) ? "> " + entry.title : entry.title;
+      std::string displayText = (entry.type != OpdsEntryType::BOOK) ? "> " + entry.title : entry.title;
       if (entry.type == OpdsEntryType::BOOK && !entry.author.empty()) displayText += " - " + entry.author;
       auto item = renderer.truncatedText(UI_10_FONT_ID, displayText.c_str(), pageWidth - 40);
       renderer.drawTextInWidth(UI_10_FONT_ID, 20, GRID_CONTENT_TOP + (i % pageItems) * rowHeight, pageWidth - 40,
@@ -878,8 +887,20 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   if (!feedNextUrl.empty()) {
     entries.push_back(OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_NEXT_PAGE), "", feedNextUrl, ""});
   }
+  // Search goes in as a row, above everything, on every feed that advertises it.
+  //
+  // It was already implemented and already worked -- but it lived on the Left button,
+  // and only while the selection happened to be on the top row. Nothing said so. A
+  // catalogue that has grown to 679 books behind a 57-page walk is unusable if the one
+  // feature that finds a book by name is a binding you have to be told about, so it
+  // stops being a binding.
+  if (!searchTemplate.empty()) {
+    entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::SEARCH, tr(STR_SEARCH), "", "", ""});
+  }
 
-  selectorIndex = 0;
+  // Past the search row: it is the first thing you can reach by pressing Up, not the
+  // thing you land on every time a page loads.
+  selectorIndex = (!entries.empty() && entries[0].type == OpdsEntryType::SEARCH && entries.size() > 1) ? 1 : 0;
   if (pendingSelect != PendingGridSelect::None) {
     // Auto-advance landing spot: continue the reading direction seamlessly
     // instead of parking the selection on the "> Prev Page" strip row.

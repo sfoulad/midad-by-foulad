@@ -10,7 +10,12 @@
  */
 enum class OpdsEntryType {
   NAVIGATION,  // Link to another catalog
-  BOOK         // Downloadable book
+  BOOK,        // Downloadable book
+  // Opens the search keyboard rather than fetching anything. Never produced by the
+  // parser -- the browser synthesises one row per feed from the OpenSearch template
+  // in <link rel="search">, so search is a thing you can see and select rather than
+  // a button binding you have to be told about.
+  SEARCH
 };
 
 /**

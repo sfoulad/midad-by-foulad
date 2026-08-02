@@ -191,60 +191,6 @@ bool OtaUpdater::isUpdateNewer() const {
   return isVersionNewer(latestVersion.c_str());
 }
 
-bool OtaUpdater::isVersionNewer(const char* candidate) {
-  if (candidate == nullptr || *candidate == '\0') return false;
-  const std::string latestVersion(candidate);
-
-  // GitHub tag names are conventionally "v1.6.24" while CROSSPOINT_VERSION (from
-  // platformio.ini) is the bare "1.6.24" -- strip a leading 'v'/'V' before comparing so the
-  // two aren't treated as different versions just because of the tag prefix. This also
-  // matters for the sscanf below: handing it a string that starts with a non-digit character
-  // leaves its output variables uninitialized rather than parsed, which previously made this
-  // function's result depend on stack garbage whenever the tag prefix caused a mismatch here.
-  const char* latestVersionStr = latestVersion.c_str();
-  if (*latestVersionStr == 'v' || *latestVersionStr == 'V') latestVersionStr++;
-
-  const auto currentVersion = CROSSPOINT_VERSION;
-  if (strcmp(latestVersionStr, currentVersion) == 0) {
-    return false;
-  }
-
-  int currentMajor, currentMinor, currentPatch;
-  int latestMajor, latestMinor, latestPatch;
-
-  // semantic version check (only match on 3 segments)
-  sscanf(latestVersionStr, "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
-  sscanf(currentVersion, "%d.%d.%d", &currentMajor, &currentMinor, &currentPatch);
-
-  /*
-   * Compare major versions.
-   * If they differ, return true if latest major version greater than current major version
-   * otherwise return false.
-   */
-  if (latestMajor != currentMajor) return latestMajor > currentMajor;
-
-  /*
-   * Compare minor versions.
-   * If they differ, return true if latest minor version greater than current minor version
-   * otherwise return false.
-   */
-  if (latestMinor != currentMinor) return latestMinor > currentMinor;
-
-  /*
-   * Check patch versions.
-   */
-  if (latestPatch != currentPatch) return latestPatch > currentPatch;
-
-  // If we reach here, it means all segments are equal.
-  // One final check, if we're on an RC build (contains "-rc"), we should consider the latest version as newer even if
-  // the segments are equal, since RC builds are pre-release versions.
-  if (strstr(currentVersion, "-rc") != nullptr) {
-    return true;
-  }
-
-  return false;
-}
-
 const std::string& OtaUpdater::getLatestVersion() const { return latestVersion; }
 
 OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgress, void* ctx) {
