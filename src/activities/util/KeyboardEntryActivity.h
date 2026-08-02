@@ -23,14 +23,15 @@ class KeyboardEntryActivity : public Activity {
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                  std::string title = "Enter Text", std::string initialText = "",
                                  const size_t maxLength = 0, InputType inputType = InputType::Text,
-                                 std::string customTip = "", bool numericOnly = false)
+                                 std::string customTip = "", bool numericOnly = false, bool preferArabic = false)
       : Activity("KeyboardEntry", renderer, mappedInput),
         title(std::move(title)),
         text(std::move(initialText)),
         maxLength(maxLength),
         inputType(inputType),
         customTip(std::move(customTip)),
-        numericOnly(numericOnly) {}
+        numericOnly(numericOnly),
+        preferArabic(preferArabic) {}
 
   void onEnter() override;
   void onExit() override;
@@ -59,6 +60,12 @@ class KeyboardEntryActivity : public Activity {
   int selectedCol = 0;
   int shiftState = 0;
   bool symMode = false;
+  // Third panel on the Mode key, offered only for plain text entry -- a URL or a
+  // WiFi password is not going to be Arabic, and the numeric pad has nowhere to go.
+  bool arabicMode = false;
+  // Set by the caller when this entry is likely to be Arabic (catalog search from an
+  // Arabic interface). Not a stored setting: it describes the field, not the user.
+  bool preferArabic = false;
   bool confirmHeld = false;
   bool confirmLongHandled = false;
 
@@ -97,6 +104,7 @@ class KeyboardEntryActivity : public Activity {
 
   static constexpr int COLS = 10;
   static constexpr int ABC_ROWS = 4;
+  static constexpr int ARA_ROWS = 4;
   static constexpr int SYM_ROWS = 4;
   static constexpr int BOTTOM_KEY_COUNT = 5;
 
@@ -141,6 +149,23 @@ class KeyboardEntryActivity : public Activity {
        {'=', '+'},
        {'.', '>'},
        {',', '<'}},
+  };
+
+  // Arabic panel. Separate from KeyDef because that holds two `char`s and every one
+  // of these is a two-byte UTF-8 sequence -- widening KeyDef would touch the shift,
+  // symbol and URL panels for no gain, so the Arabic panel is its own table and its
+  // own branch.
+  //
+  // No shift row: Arabic has no case. All 28 letters, plus the hamza carriers and the
+  // ta marbuta/alef maqsura a reader actually types. Those last ones matter less than
+  // they used to -- the catalog server folds hamza, alef maqsura and ta marbuta before
+  // matching, so someone typing plain ا still finds أ -- but this keyboard is not only
+  // for search, and a keyboard that cannot type إبراهيم is not an Arabic keyboard.
+  static constexpr const char* arabicLayout[ARA_ROWS][COLS] = {
+      {"ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح"},
+      {"ج", "د", "ش", "س", "ي", "ب", "ل", "ا", "ت", "ن"},
+      {"م", "ك", "ط", "ئ", "ء", "ؤ", "ر", "ى", "ة", "و"},
+      {"ز", "ظ", "ذ", "لا", "أ", "إ", "آ", "،", "؟", "."},
   };
 
   static constexpr KeyDef urlLayout[ABC_ROWS][COLS] = {
@@ -237,6 +262,11 @@ class KeyboardEntryActivity : public Activity {
   bool isBottomRow(int row) const;
   char getSelectedChar() const;
   char getAlternativeChar() const;
+  // What the selected key inserts. A std::string, not a char: an Arabic key is a
+  // two-byte UTF-8 sequence and one of them ("لا") is two characters.
+  std::string getSelectedKeyText() const;
+  // True when the Mode key has an Arabic panel to offer.
+  bool arabicPanelAvailable() const;
   bool handleKeyPress();
   bool insertChar(char c);
   void insertString(const std::string& str);

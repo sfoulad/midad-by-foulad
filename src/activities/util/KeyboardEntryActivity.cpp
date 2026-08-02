@@ -9,12 +9,45 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+// The edit buffer is bytes; Arabic characters are two of them. Every place that used
+// to step one byte has to step one character instead, or Del leaves half a letter
+// behind and the cursor lands inside a sequence.
+bool isUtf8Continuation(const char c) { return (static_cast<unsigned char>(c) & 0xC0) == 0x80; }
+
+// First byte of the character ending at `pos`.
+size_t utf8PrevStart(const std::string& s, size_t pos) {
+  if (pos == 0) return 0;
+  size_t i = pos - 1;
+  while (i > 0 && isUtf8Continuation(s[i])) i--;
+  return i;
+}
+
+// One past the last byte of the character starting at `pos`.
+size_t utf8NextEnd(const std::string& s, size_t pos) {
+  if (pos >= s.size()) return s.size();
+  size_t i = pos + 1;
+  while (i < s.size() && isUtf8Continuation(s[i])) i++;
+  return i;
+}
+
+// The whole character at `pos`, for measuring and highlighting the cursor cell.
+std::string utf8CharAt(const std::string& s, size_t pos) {
+  if (pos >= s.size()) return {};
+  return s.substr(pos, utf8NextEnd(s, pos) - pos);
+}
+}  // namespace
+
 const char* const KeyboardEntryActivity::shiftString[2] = {"shift", "SHIFT"};
 
 void KeyboardEntryActivity::onEnter() {
   Activity::onEnter();
   cursorPos = text.length();
   symMode = false;
+  // Search opens straight into Arabic for a reader whose interface is Arabic --
+  // see preferArabic. Everything else starts on abc, because a WiFi password or an
+  // SSID is not going to be Arabic no matter what language the menus are in.
+  arabicMode = preferArabic && arabicPanelAvailable();
   urlMode = false;
   cursorMode = false;
   togglePos = false;
@@ -66,7 +99,7 @@ char KeyboardEntryActivity::getSelectedChar() const {
 }
 
 char KeyboardEntryActivity::getAlternativeChar() const {
-  if (symMode || urlMode || numericOnly) return '\0';
+  if (symMode || arabicMode || urlMode || numericOnly) return '\0';
   if (inputType == InputType::Url && selectedRow > 0) return '\0';
 
   const KeyDef(*layout)[COLS] = abcLayout;
@@ -79,6 +112,18 @@ char KeyboardEntryActivity::getAlternativeChar() const {
   if (current == key.primary && key.secondary != '\0') return key.secondary;
   if (current == key.secondary) return key.primary;
   return '\0';
+}
+
+bool KeyboardEntryActivity::arabicPanelAvailable() const { return !numericOnly && inputType == InputType::Text; }
+
+std::string KeyboardEntryActivity::getSelectedKeyText() const {
+  if (arabicMode) {
+    if (selectedRow < 0 || selectedRow >= ARA_ROWS) return {};
+    if (selectedCol < 0 || selectedCol >= COLS) return {};
+    return arabicLayout[selectedRow][selectedCol];
+  }
+  const char c = getSelectedChar();
+  return c == '\0' ? std::string{} : std::string(1, c);
 }
 
 bool KeyboardEntryActivity::insertChar(char c) {
@@ -111,6 +156,7 @@ bool KeyboardEntryActivity::handleKeyPress() {
         // letters can be entered (#2178).
         if (urlMode) return true;
         if (symMode) return true;
+        if (arabicMode) return true;  // Arabic has no case
         if (numericOnly) return true;
         shiftState = (shiftState + 1) % 2;
         return true;
@@ -126,7 +172,17 @@ bool KeyboardEntryActivity::handleKeyPress() {
           requestUpdate();
           return true;
         }
-        symMode = !symMode;
+        // abc -> #@! -> Arabic -> abc. One key, one cycle, label naming the next
+        // panel -- rather than a fourth bottom key, which would cost every existing
+        // layout a column to serve a panel most entries never open.
+        if (arabicMode) {
+          arabicMode = false;
+        } else if (symMode) {
+          symMode = false;
+          arabicMode = arabicPanelAvailable();
+        } else {
+          symMode = true;
+        }
         int maxRow = getTotalRowCount() - 1;
         if (selectedRow > maxRow) selectedRow = maxRow;
         if (isBottomRow(selectedRow)) {
@@ -160,8 +216,9 @@ bool KeyboardEntryActivity::handleKeyPress() {
           hintShowTime = millis();
         }
         if (cursorPos > 0 && !text.empty()) {
-          text.erase(cursorPos - 1, 1);
-          cursorPos--;
+          const size_t start = utf8PrevStart(text, cursorPos);
+          text.erase(start, cursorPos - start);
+          cursorPos = start;
         }
         return true;
       case SpecialKeyType::Ok:
@@ -187,7 +244,8 @@ bool KeyboardEntryActivity::handleKeyPress() {
   delPressCount = 0;
   hintVisible = false;
 
-  return insertChar(getSelectedChar());
+  insertString(getSelectedKeyText());
+  return true;
 }
 
 void KeyboardEntryActivity::mapColContentBottom(int& col, bool goingUp) const {
@@ -281,7 +339,7 @@ void KeyboardEntryActivity::loop() {
         togglePos = false;
         requestUpdate();
       } else if (cursorPos > 0) {
-        cursorPos--;
+        cursorPos = utf8PrevStart(text, cursorPos);
         requestUpdate();
       }
     }
@@ -318,7 +376,7 @@ void KeyboardEntryActivity::loop() {
       rightLongHandled = false;
     }
     if (cursorMode && !togglePos && cursorPos < text.length()) {
-      cursorPos++;
+      cursorPos = utf8NextEnd(text, cursorPos);
       requestUpdate();
     }
     if (cursorMode) return;
@@ -422,7 +480,7 @@ void KeyboardEntryActivity::render(RenderLock&&) {
 
   int cursorCharWidth = 6;
   if (cursorPos < text.length()) {
-    int w = renderer.getTextWidth(UI_12_FONT_ID, text.substr(cursorPos, 1).c_str());
+    int w = renderer.getTextWidth(UI_12_FONT_ID, utf8CharAt(text, cursorPos).c_str());
     if (w > cursorCharWidth) cursorCharWidth = w;
   }
 
@@ -453,8 +511,8 @@ void KeyboardEntryActivity::render(RenderLock&&) {
           std::string beforeAndCursor = beforeCursor + displayText.substr(cursorPos, 1);
           int beforeAndCursorWidth =
               renderer.getTextAdvanceX(UI_12_FONT_ID, beforeAndCursor.c_str(), EpdFontFamily::REGULAR);
-          int charAdvance =
-              renderer.getTextAdvanceX(UI_12_FONT_ID, displayText.substr(cursorPos, 1).c_str(), EpdFontFamily::REGULAR);
+          int charAdvance = renderer.getTextAdvanceX(UI_12_FONT_ID, utf8CharAt(displayText, cursorPos).c_str(),
+                                                     EpdFontFamily::REGULAR);
           kernOffset = beforeAndCursorWidth - beforeWidth - charAdvance;
         }
         if (centerText) {
@@ -609,7 +667,9 @@ void KeyboardEntryActivity::render(RenderLock&&) {
       if (!text.empty()) {
         drawTip(tr(STR_KB_HINT_CLEAR_TEXT), y);
       }
-    } else if (symMode) {
+    } else if (symMode || arabicMode) {
+      // Neither panel has a shifted or secondary character, so the "hold SELECT for
+      // UPPERCASE" tip below would be advertising a key that does nothing.
       if (!text.empty()) {
         drawTip(tr(STR_KB_HINT_CLEAR_TEXT), y);
       }
@@ -673,6 +733,12 @@ void KeyboardEntryActivity::render(RenderLock&&) {
           const char digitBuf[2] = {numericKeys[idx], '\0'};
           GUI.drawKeyboardKey(renderer, Rect{keyX, rowY, keyWidth, keyHeight}, digitBuf, activeKeySelected, nullptr);
         }
+      } else if (arabicMode) {
+        // drawText routes anything containing Arabic through the shaper and the
+        // built-in Noto Sans Arabic, so an isolated letter on a key needs nothing
+        // special here -- isolated is exactly the form a key should show.
+        GUI.drawKeyboardKey(renderer, Rect{keyX, rowY, keyWidth, keyHeight}, arabicLayout[row][col], activeKeySelected,
+                            nullptr);
       } else {
         const KeyDef& key = layout[row][col];
 
@@ -701,10 +767,15 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     const char* label;
   };
   const BottomKeyInfo bottomKeys[BOTTOM_KEY_COUNT] = {
-      {(symMode || urlMode || numericOnly) ? KeyboardKeyType::Disabled : KeyboardKeyType::Shift,
-       (symMode || urlMode || numericOnly) ? shiftString[0] : shiftString[shiftState]},
+      {(symMode || arabicMode || urlMode || numericOnly) ? KeyboardKeyType::Disabled : KeyboardKeyType::Shift,
+       (symMode || arabicMode || urlMode || numericOnly) ? shiftString[0] : shiftString[shiftState]},
       {numericOnly ? KeyboardKeyType::Disabled : KeyboardKeyType::Mode,
-       urlMode ? "abc" : (symMode ? "abc" : (numericOnly ? "" : "#@!"))},
+       // Names the panel the key goes to next, not the one you are in.
+       urlMode       ? "abc"
+       : arabicMode  ? "abc"
+       : symMode     ? (arabicPanelAvailable() ? "ع" : "abc")
+       : numericOnly ? ""
+                     : "#@!"},
       {numericOnly                   ? KeyboardKeyType::Disabled
        : inputType == InputType::Url ? KeyboardKeyType::Mode
                                      : KeyboardKeyType::Space,
@@ -752,6 +823,9 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         GUI.drawKeyboardKey(renderer, Rect{selKeyX, selKeyY, selKeyW, selKeyH}, selDigitBuf, true, nullptr,
                             KeyboardKeyType::Normal, true);
       }
+    } else if (arabicMode) {
+      GUI.drawKeyboardKey(renderer, Rect{selKeyX, selKeyY, selKeyW, selKeyH}, arabicLayout[selectedRow][selectedCol],
+                          true, nullptr, KeyboardKeyType::Normal, true);
     } else {
       const KeyDef& selKey = layout[selectedRow][selectedCol];
       char selPrimary = selKey.primary;
