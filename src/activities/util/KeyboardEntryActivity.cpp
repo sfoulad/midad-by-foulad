@@ -670,6 +670,13 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     } else if (symMode || arabicMode) {
       // Neither panel has a shifted or secondary character, so the "hold SELECT for
       // UPPERCASE" tip below would be advertising a key that does nothing.
+      //
+      // The way out is worth stating here: someone who reached a panel by pressing an
+      // unlabelled-looking key should not have to guess that the same key keeps going.
+      if (arabicMode) {
+        drawTip(tr(STR_KB_HINT_SWITCH_PANEL), y);
+        y += tipsLh;
+      }
       if (!text.empty()) {
         drawTip(tr(STR_KB_HINT_CLEAR_TEXT), y);
       }
@@ -684,6 +691,13 @@ void KeyboardEntryActivity::render(RenderLock&&) {
       }
       drawTip(altCharTip, y);
       y += tipsLh;
+      // Says how to reach the Arabic panel, on the panel you would be looking for it
+      // from. The key is one press away and labelled, but a label alone was what the
+      // hidden search binding relied on and that was not enough either.
+      if (arabicPanelAvailable()) {
+        drawTip(tr(STR_KB_HINT_ARABIC_PANEL), y);
+        y += tipsLh;
+      }
       if (inputType == InputType::Url) {
         drawTip(tr(STR_KB_HINT_URL_SNIPPETS), y);
         y += tipsLh;
