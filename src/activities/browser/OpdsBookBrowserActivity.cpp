@@ -889,9 +889,19 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   searchTemplate = parser->getSearchTemplate();
+  // On the News root the advertised search is the BOOK search (/opds/search), which
+  // would put a row inside News that returns books. Wrong answer to the wrong
+  // question, so News does not offer it.
+  if (server.url == FOULAD_EBOOKS_NEWS_URL) searchTemplate.clear();
   feedNextUrl = parser->getNextPageUrl();
   feedPrevUrl = parser->getPrevPageUrl();
   entries = std::move(*parser).getEntries();
+
+  // Whether the FEED was empty, captured before the synthetic rows go in. The empty
+  // state has to be decided on what the server actually sent: a page carrying only a
+  // Search row is an empty feed wearing a button, and treating it as populated is how
+  // "Add news feeds in the Midad app" stopped appearing at all.
+  const bool feedHadEntries = !entries.empty();
 
   if (!feedPrevUrl.empty()) {
     entries.insert(entries.begin(), OpdsEntry{OpdsEntryType::NAVIGATION, tr(STR_PREV_PAGE), "", feedPrevUrl, ""});
@@ -929,8 +939,8 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     }
   }
 
-  state = entries.empty() ? BrowserState::ERROR : BrowserState::BROWSING;
-  if (entries.empty()) {
+  state = feedHadEntries ? BrowserState::BROWSING : BrowserState::ERROR;
+  if (!feedHadEntries) {
     // An empty feed is the normal, successful answer to "this account has no
     // subscriptions" -- not an error (EINK_NEWS_TASKS.md §2). Say what to do next
     // instead, because the thing to do is on the phone and nothing here can do it.
