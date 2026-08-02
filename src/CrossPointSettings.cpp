@@ -210,9 +210,9 @@ bool CrossPointSettings::loadFromBinaryFile() {
       // that the moment BUILTIN_FONT_COUNT grew past 1: an old value of 1
       // meant the long-since-trimmed Noto Sans, not the new LEXENDDECA slot.
       if (legacyFontFamily == 0) {
-        fontFamily = BITTER;
+        fontFamily = LEXENDDECA;
       } else if (legacyFontFamily == LEGACY_OPENDYSLEXIC) {
-        fontFamily = BITTER;
+        fontFamily = LEXENDDECA;
         strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
         sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
       }
@@ -347,13 +347,13 @@ int CrossPointSettings::getReaderFontId() const {
   }
   switch (effFontSize()) {
     case SMALL:
-      return BITTER_12_FONT_ID;
+      return LEXENDDECA_12_FONT_ID;
     case MEDIUM:
     default:
-      return BITTER_14_FONT_ID;
+      return LEXENDDECA_14_FONT_ID;
     case LARGE:
-      return BITTER_16_FONT_ID;
+      return LEXENDDECA_16_FONT_ID;
     case EXTRA_LARGE:
-      return BITTER_18_FONT_ID;
+      return LEXENDDECA_18_FONT_ID;
   }
 }

@@ -26,7 +26,6 @@ constexpr const char* ELLIPSIS_UTF8 = "\xe2\x80\xa6";
 // as the stored ARABIC_FONT_FAMILY value (deliberately non-contiguous), so every use
 // below carries the family value explicitly rather than assuming index == value.
 constexpr std::pair<StrId, uint8_t> kSelectableArabicFonts[] = {
-    {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
     {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
     {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
 };

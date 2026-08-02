@@ -555,7 +555,7 @@ void SleepActivity::renderDashboardSleepScreen() const {
   int textY = coverY + 6;
 
   const bool titleArabic = ScriptDetector::containsArabic(book.title.c_str());
-  const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : BITTER_18_FONT_ID;
+  const int titleFontId = titleArabic ? TAJAWAL_18_FONT_ID : LEXENDDECA_18_FONT_ID;
   const int titleLineHeight = renderer.getLineHeight(titleFontId);
   const auto titleLines = renderer.wrappedText(titleFontId, book.title.c_str(), metaWidth, 3, EpdFontFamily::BOLD);
   for (const auto& line : titleLines) {

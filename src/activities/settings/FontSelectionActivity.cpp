@@ -52,7 +52,9 @@ void FontSelectionActivity::onEnter() {
   fonts_.clear();
   fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
 
-  fonts_.push_back({I18N.get(StrId::STR_BITTER), true, static_cast<uint8_t>(CrossPointSettings::BITTER)});
+  // Lexend Deca is the only built-in Latin family now -- Bitter's glyph data moved to
+  // Manage Fonts. BITTER=0 remains a reserved value that aliases Lexend, so anyone who
+  // had it selected keeps rendering; it is simply not offered.
   fonts_.push_back({I18N.get(StrId::STR_LEXEND_DECA), true, static_cast<uint8_t>(CrossPointSettings::LEXENDDECA)});
 
   if (registry_) {

@@ -36,7 +36,7 @@ constexpr StrId kAlignLabels[CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT] = {
 // the same as the stored family value -- every use below translates explicitly via
 // kSelectableArabicFonts / displayIndexForArabicFamily.
 constexpr std::pair<StrId, uint8_t> kSelectableArabicFonts[] = {
-    {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
+
     {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
     {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
 };
@@ -53,7 +53,6 @@ int displayIndexForArabicFamily(const uint8_t family) {
 // Selectable built-in Latin families for the per-book override picker, mirroring
 // kSelectableArabicFonts above -- (label, FONT_FAMILY value) pairs, in display order.
 constexpr std::pair<StrId, uint8_t> kSelectableLatinFonts[] = {
-    {StrId::STR_BITTER, CrossPointSettings::BITTER},
     {StrId::STR_LEXEND_DECA, CrossPointSettings::LEXENDDECA},
 };
 constexpr int kSelectableLatinFontCount =

@@ -53,30 +53,10 @@ FontCacheManager fontCacheManager(renderer.getFontMap(), renderer.getSdCardFonts
 static unsigned long allowSleepAt = 0;
 
 // Fonts
-EpdFont bitter14RegularFont(&bitter_14_regular);
-EpdFont bitter14BoldFont(&bitter_14_bold);
-EpdFont bitter14ItalicFont(&bitter_14_italic);
-EpdFont bitter14BoldItalicFont(&bitter_14_bolditalic);
-EpdFontFamily bitter14FontFamily(&bitter14RegularFont, &bitter14BoldFont, &bitter14ItalicFont, &bitter14BoldItalicFont);
 EpdFont lexenddeca14RegularFont(&lexenddeca_14_regular);
 EpdFont lexenddeca14BoldFont(&lexenddeca_14_bold);
 EpdFontFamily lexenddeca14FontFamily(&lexenddeca14RegularFont, &lexenddeca14BoldFont);
 #ifndef OMIT_FONTS
-EpdFont bitter12RegularFont(&bitter_12_regular);
-EpdFont bitter12BoldFont(&bitter_12_bold);
-EpdFont bitter12ItalicFont(&bitter_12_italic);
-EpdFont bitter12BoldItalicFont(&bitter_12_bolditalic);
-EpdFontFamily bitter12FontFamily(&bitter12RegularFont, &bitter12BoldFont, &bitter12ItalicFont, &bitter12BoldItalicFont);
-EpdFont bitter16RegularFont(&bitter_16_regular);
-EpdFont bitter16BoldFont(&bitter_16_bold);
-EpdFont bitter16ItalicFont(&bitter_16_italic);
-EpdFont bitter16BoldItalicFont(&bitter_16_bolditalic);
-EpdFontFamily bitter16FontFamily(&bitter16RegularFont, &bitter16BoldFont, &bitter16ItalicFont, &bitter16BoldItalicFont);
-EpdFont bitter18RegularFont(&bitter_18_regular);
-EpdFont bitter18BoldFont(&bitter_18_bold);
-EpdFont bitter18ItalicFont(&bitter_18_italic);
-EpdFont bitter18BoldItalicFont(&bitter_18_bolditalic);
-EpdFontFamily bitter18FontFamily(&bitter18RegularFont, &bitter18BoldFont, &bitter18ItalicFont, &bitter18BoldItalicFont);
 
 // Digit-only 32pt font for the Tasbih app's counter -- none of the reader
 // sizes above go this large. Registered as a single "regular" style; the
@@ -134,15 +114,6 @@ EpdFontFamily notosansarabic12FontFamily(&notosansarabic12RegularFont);
 // images small; custom families can still be loaded from the SD card (Settings ->
 // Reader -> Arabic Font). See ArabicFontSystem.cpp for family/size -> font ID
 // resolution.
-
-EpdFont notonaskharabic12RegularFont(&notonaskharabic_12_regular);
-EpdFontFamily notonaskharabic12FontFamily(&notonaskharabic12RegularFont);
-EpdFont notonaskharabic14RegularFont(&notonaskharabic_14_regular);
-EpdFontFamily notonaskharabic14FontFamily(&notonaskharabic14RegularFont);
-EpdFont notonaskharabic16RegularFont(&notonaskharabic_16_regular);
-EpdFontFamily notonaskharabic16FontFamily(&notonaskharabic16RegularFont);
-EpdFont notonaskharabic18RegularFont(&notonaskharabic_18_regular);
-EpdFontFamily notonaskharabic18FontFamily(&notonaskharabic18RegularFont);
 
 // KFGQPC Uthmanic Hafs (King Fahd Complex; use/copy/distribute permitted,
 // modification not permitted -- see conversion note in
@@ -477,12 +448,8 @@ void setupDisplayAndFonts(bool seamless = false, bool uiOnlyFonts = false) {
   }
   fontCacheManager.setFontDecompressor(&fontDecompressor);
   renderer.setFontCacheManager(&fontCacheManager);
-  renderer.insertFont(BITTER_14_FONT_ID, bitter14FontFamily);
   renderer.insertFont(LEXENDDECA_14_FONT_ID, lexenddeca14FontFamily);
 #ifndef OMIT_FONTS
-  renderer.insertFont(BITTER_12_FONT_ID, bitter12FontFamily);
-  renderer.insertFont(BITTER_16_FONT_ID, bitter16FontFamily);
-  renderer.insertFont(BITTER_18_FONT_ID, bitter18FontFamily);
   renderer.insertFont(TASBIH_32_FONT_ID, tasbih32FontFamily);
   renderer.insertFont(STOPWATCH_32_FONT_ID, stopwatch32FontFamily);
   renderer.insertFont(LEXENDDECA_12_FONT_ID, lexenddeca12FontFamily);
@@ -496,10 +463,6 @@ void setupDisplayAndFonts(bool seamless = false, bool uiOnlyFonts = false) {
   renderer.insertFont(NOTOSANSARABIC_8_FONT_ID, notosansarabic8FontFamily);
   renderer.insertFont(NOTOSANSARABIC_10_FONT_ID, notosansarabic10FontFamily);
   renderer.insertFont(NOTOSANSARABIC_12_FONT_ID, notosansarabic12FontFamily);
-  renderer.insertFont(NOTONASKHARABIC_12_FONT_ID, notonaskharabic12FontFamily);
-  renderer.insertFont(NOTONASKHARABIC_14_FONT_ID, notonaskharabic14FontFamily);
-  renderer.insertFont(NOTONASKHARABIC_16_FONT_ID, notonaskharabic16FontFamily);
-  renderer.insertFont(NOTONASKHARABIC_18_FONT_ID, notonaskharabic18FontFamily);
   renderer.insertFont(UTHMANICHAFS_12_FONT_ID, uthmanichafs12FontFamily);
   renderer.insertFont(UTHMANICHAFS_14_FONT_ID, uthmanichafs14FontFamily);
   renderer.insertFont(UTHMANICHAFS_16_FONT_ID, uthmanichafs16FontFamily);

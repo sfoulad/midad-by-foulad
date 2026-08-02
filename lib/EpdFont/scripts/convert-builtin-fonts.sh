@@ -5,28 +5,13 @@ set -e
 cd "$(dirname "$0")"
 
 READER_FONT_STYLES=("Regular" "Italic" "Bold" "BoldItalic")
-BITTER_FONT_SIZES=(12 14 16 18)
 LEXENDDECA_FONT_SIZES=(12 14 16 18)
 NOTOSANS_FONT_SIZES=(12 14 16 18)
 
-# Bitter (OFL, google/fonts ofl/bitter): default built-in Latin reading serif,
-# replacing NotoSerif -- chosen (like CrossInk, uxjulia/crossink) for its
-# flatter, more uniform stroke weight, which anti-aliases with less ghosting
-# on this panel's 2-bit grayscale than NotoSerif's higher-contrast strokes.
-# Static instances pinned from the variable font at wght=500 (regular) /
-# wght=700 (bold) via fonttools.instancer, matching CrossInk's own choice of
-# a Medium (not Regular/400) weight for readability at small e-ink sizes --
-# see lib/EpdFont/scripts/sd-fonts.yaml's Bitter entry for the exact pins if
-# regenerating from the variable font instead of the committed static cuts.
-for size in ${BITTER_FONT_SIZES[@]}; do
-  for style in ${READER_FONT_STYLES[@]}; do
-    font_name="bitter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    font_path="../builtinFonts/source/Bitter/Bitter-${style}.ttf"
-    output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
-    echo "Generated $output_path"
-  done
-done
+# Bitter was the built-in Latin reading serif until its glyph data (~778KB) was
+# moved to the Manage Fonts catalog; Lexend Deca is the built-in now. The TTF stays
+# in source/ because Tasbih and Stopwatch below still cut their display digits from
+# Bitter-Bold -- only the reading-size generation is gone.
 
 # Tasbih counter digits: a genuinely large (32pt) display size for the Tasbih
 # app's counter, which none of the reader font sizes above go up to. Digit-
@@ -129,15 +114,11 @@ for size in ${ARABIC_UI_FONT_SIZES[@]}; do
   echo "Generated ../builtinFonts/notosansarabic_${size}_regular.h"
 done
 
-# Built-in Arabic READING fonts (ArabicFontSystem's default reading families) at the
-# four reading sizes matching NOTOSERIF sizes -- see kBuiltinArabicReadingFontIds.
-ARABIC_READING_FONT_SIZES=(12 14 16 18)
-for size in ${ARABIC_READING_FONT_SIZES[@]}; do
-  python fontconvert.py notonaskharabic_${size}_regular ${size} \
-    ../builtinFonts/source/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf \
-    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_${size}_regular.h
-  echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
-done
+# Noto Naskh Arabic was a built-in Arabic reading family until its glyph data
+# (~111KB) moved to the Manage Fonts catalog. Tajawal below is the built-in now.
+# Noto Sans Arabic above stays: it supplies ayah-marker digits and the surah banner
+# label, which the Quran needs regardless of the reading font (ArabicFontSystem.cpp).
+
 # Tajawal (Boutros International, OFL-licensed, google/fonts ofl/tajawal): a modern
 # geometric-sans reading option alongside the two traditional book-printing styles
 # above. Has GPOS MarkBasePos/MarkMarkPos (confirmed via fontTools), same as the

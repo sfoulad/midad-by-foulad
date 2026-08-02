@@ -12,17 +12,15 @@ namespace {
 // CrossPointSettings::ARABIC_FONT_FAMILY and FONT_SIZE.
 constexpr int
     kBuiltinArabicReadingFontIds[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT][CrossPointSettings::FONT_SIZE_COUNT] = {
-        {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
-         NOTONASKHARABIC_18_FONT_ID},
-        // Amiri font data was removed to save flash space (no longer selectable in the
-        // UI). This row aliases NotoNaskhArabic's font IDs rather than being deleted so
-        // ARABIC_FONT_FAMILY's numeric values stay stable -- an existing on-device
-        // setting or Quran per-book sidecar byte still holding the old AMIRI=1 value
-        // resolves to a real, correct font instead of clamping to NOTONASKHARABIC via
-        // resolveBuiltinReadingFontId's out-of-range guard (which would also work, but
-        // would silently change what a previously-saved "1" means).
-        {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
-         NOTONASKHARABIC_18_FONT_ID},
+        // Noto Naskh Arabic's glyph data was removed from flash (~111KB) and is now a
+        // Manage Fonts download. Same treatment Amiri already had: the row stays and
+        // aliases Tajawal rather than being deleted, so ARABIC_FONT_FAMILY's numeric
+        // values keep meaning what they meant. A device with NOTONASKHARABIC=0 saved,
+        // or a Quran per-book sidecar byte written under the old numbering, resolves
+        // to a real font instead of rendering nothing.
+        {TAJAWAL_12_FONT_ID, TAJAWAL_14_FONT_ID, TAJAWAL_16_FONT_ID, TAJAWAL_18_FONT_ID},
+        // Amiri, removed earlier for the same reason, aliased the same way.
+        {TAJAWAL_12_FONT_ID, TAJAWAL_14_FONT_ID, TAJAWAL_16_FONT_ID, TAJAWAL_18_FONT_ID},
         // KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface -- the Quran's
         // default reading face (per-book sidecar written at extraction; see
         // QuranBook::ensureExtracted).
@@ -81,7 +79,7 @@ void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
 }  // namespace
 
 int ArabicFontSystem::resolveBuiltinReadingFontId(uint8_t family, uint8_t size) {
-  if (family >= CrossPointSettings::ARABIC_FONT_FAMILY_COUNT) family = CrossPointSettings::NOTONASKHARABIC;
+  if (family >= CrossPointSettings::ARABIC_FONT_FAMILY_COUNT) family = CrossPointSettings::TAJAWAL;
   if (size >= CrossPointSettings::FONT_SIZE_COUNT) size = CrossPointSettings::MEDIUM;
   return kBuiltinArabicReadingFontIds[family][size];
 }

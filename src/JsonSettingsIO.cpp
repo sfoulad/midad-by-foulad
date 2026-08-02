@@ -266,7 +266,7 @@ bool JsonSettingsIO::loadSettings(CrossPointSettings& s, const char* json, bool*
   strncpy(s.sdArabicFontFamilyName, safn, sizeof(s.sdArabicFontFamilyName) - 1);
   s.sdArabicFontFamilyName[sizeof(s.sdArabicFontFamilyName) - 1] = '\0';
   if (storedFontFamily == CrossPointSettings::LEGACY_OPENDYSLEXIC && s.sdFontFamilyName[0] == '\0') {
-    s.fontFamily = CrossPointSettings::BITTER;
+    s.fontFamily = CrossPointSettings::LEXENDDECA;
     strncpy(s.sdFontFamilyName, "OpenDyslexic", sizeof(s.sdFontFamilyName) - 1);
     s.sdFontFamilyName[sizeof(s.sdFontFamilyName) - 1] = '\0';
     if (needsResave) *needsResave = true;
