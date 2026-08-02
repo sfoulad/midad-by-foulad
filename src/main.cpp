@@ -187,6 +187,7 @@ constexpr uint32_t SILENT_REBOOT_TARGET_FOULAD_EBOOKS = 5;
 constexpr uint32_t SILENT_REBOOT_TARGET_GYM = 6;
 constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 7;
 constexpr uint32_t SILENT_REBOOT_TARGET_DICTIONARY = 8;
+constexpr uint32_t SILENT_REBOOT_TARGET_NEWS = 9;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -262,6 +263,16 @@ void silentRestartToFileTransfer() {
   silentRebootTarget = SILENT_REBOOT_TARGET_FILE_TRANSFER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=file_transfer)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToNews() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_NEWS;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=news)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -676,6 +687,10 @@ void setup() {
     // allocations for the WiFi driver and TCP buffers, and a fragmented heap
     // makes page loads crawl. Settings reboots here before starting it.
     activityManager.goToFileTransfer();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_NEWS) {
+    // Same fresh-heap treatment as the catalog, for the same reasons: WiFi, feed
+    // parsing and an EPUB download stacked on one session's heap.
+    activityManager.goToNews();
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_FOULAD_EBOOKS) {
     // Same fresh-heap treatment: OPDS browsing stacks WiFi + feed parsing +
     // cover download/decode allocations; started from a fragmented session

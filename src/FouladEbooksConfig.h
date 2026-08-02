@@ -28,6 +28,11 @@ constexpr char FOULAD_EBOOKS_NAME[] = "Midad";
 // http never cared; https does. That is testable before writing any code -- compare
 // a freshly NTP-synced device against one that has been offline.
 constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
+// News feeds (EINK_NEWS_TASKS.md). A normal OPDS acquisition feed, one entry per
+// subscription, browsed by the same activity as the catalog -- News is a different
+// root, not a different browser. Entry ids live in their own namespace
+// ("urn:midad:feed:<id>"), which is why extractFouladBookId checks the prefix.
+constexpr char FOULAD_EBOOKS_NEWS_URL[] = "http://midad.one/opds/news";
 
 // Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
 // Convert a Font): the device uploads a raw TTF/OTF plus a language choice,
