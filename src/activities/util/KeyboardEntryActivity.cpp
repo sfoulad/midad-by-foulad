@@ -172,17 +172,10 @@ bool KeyboardEntryActivity::handleKeyPress() {
           requestUpdate();
           return true;
         }
-        // abc -> #@! -> Arabic -> abc. One key, one cycle, label naming the next
-        // panel -- rather than a fourth bottom key, which would cost every existing
-        // layout a column to serve a panel most entries never open.
-        if (arabicMode) {
-          arabicMode = false;
-        } else if (symMode) {
-          symMode = false;
-          arabicMode = arabicPanelAvailable();
-        } else {
-          symMode = true;
-        }
+        // Symbols on, symbols off. Nothing else -- changing writing system is the
+        // Lang key's job.
+        symMode = !symMode;
+        if (symMode) arabicMode = false;
         int maxRow = getTotalRowCount() - 1;
         if (selectedRow > maxRow) selectedRow = maxRow;
         if (isBottomRow(selectedRow)) {
@@ -190,6 +183,16 @@ bool KeyboardEntryActivity::handleKeyPress() {
         } else {
           if (selectedCol >= getContentColCount()) selectedCol = getContentColCount() - 1;
         }
+        return true;
+      }
+      case SpecialKeyType::Lang: {
+        delPressCount = 0;
+        hintVisible = false;
+        if (!arabicPanelAvailable()) return true;
+        arabicMode = !arabicMode;
+        if (arabicMode) symMode = false;
+        const int maxRow = getTotalRowCount() - 1;
+        if (selectedRow > maxRow) selectedRow = maxRow;
         return true;
       }
       case SpecialKeyType::Space:
@@ -254,7 +257,7 @@ void KeyboardEntryActivity::mapColContentBottom(int& col, bool goingUp) const {
     if (col < 0) col = 0;
     if (col >= 3) col = 2;
   } else {
-    col = goingUp ? col * 2 : col / 2;
+    col = goingUp ? col * COLS / BOTTOM_KEY_COUNT : col * BOTTOM_KEY_COUNT / COLS;
   }
 }
 
@@ -784,13 +787,13 @@ void KeyboardEntryActivity::render(RenderLock&&) {
       {(symMode || arabicMode || urlMode || numericOnly) ? KeyboardKeyType::Disabled : KeyboardKeyType::Shift,
        (symMode || arabicMode || urlMode || numericOnly) ? shiftString[0] : shiftString[shiftState]},
       {numericOnly ? KeyboardKeyType::Disabled : KeyboardKeyType::Mode,
-       // Names the panel the key goes to next, not the one you are in.
-       urlMode                  ? "abc"
-       : arabicMode             ? "#@!"
-       : symMode                ? "abc"
-       : numericOnly            ? ""
-       : arabicPanelAvailable() ? "ع"
-                                : "#@!"},
+       // Each key names the one thing it does, and does it in both directions.
+       urlMode       ? "abc"
+       : symMode     ? "abc"
+       : numericOnly ? ""
+                     : "#@!"},
+      {arabicPanelAvailable() ? KeyboardKeyType::Mode : KeyboardKeyType::Disabled,
+       !arabicPanelAvailable() ? "" : (arabicMode ? "abc" : "ع")},
       {numericOnly                   ? KeyboardKeyType::Disabled
        : inputType == InputType::Url ? KeyboardKeyType::Mode
                                      : KeyboardKeyType::Space,

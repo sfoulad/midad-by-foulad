@@ -14,7 +14,12 @@ struct KeyDef {
   char secondary;
 };
 
-enum class SpecialKeyType { Shift, Mode, Space, Del, Ok };
+// Column order of the bottom row. Lang is its own key rather than another stop on
+// Mode's cycle: with three panels behind one key the label can only name the next
+// one, so returning to abc from Arabic meant passing through the symbols -- and a
+// mismatched merge of that cycle against its own labels shipped a key that said ع
+// and gave #@!. Two keys, each meaning exactly one thing, in both directions.
+enum class SpecialKeyType { Shift, Mode, Lang, Space, Del, Ok };
 
 enum class InputType { Text, Password, Url };
 
@@ -106,7 +111,7 @@ class KeyboardEntryActivity : public Activity {
   static constexpr int ABC_ROWS = 4;
   static constexpr int ARA_ROWS = 4;
   static constexpr int SYM_ROWS = 4;
-  static constexpr int BOTTOM_KEY_COUNT = 5;
+  static constexpr int BOTTOM_KEY_COUNT = 6;
 
   static constexpr KeyDef abcLayout[ABC_ROWS][COLS] = {
       {{'1', '!'},
