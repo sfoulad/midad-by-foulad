@@ -2,6 +2,7 @@
 
 #include <HalGPIO.h>
 #include <I18n.h>
+#include <ScriptDetector.h>
 
 #include <algorithm>
 
@@ -487,6 +488,17 @@ void KeyboardEntryActivity::render(RenderLock&&) {
     if (w > cursorCharWidth) cursorCharWidth = w;
   }
 
+  // A right-to-left field: text hugs the right margin and the caret sits at the
+  // LEFT end, because that is where the next letter goes. drawText already shapes
+  // and reorders the glyphs -- what it cannot know is where the field's origin
+  // should be, which is a layout decision and belongs here.
+  //
+  // Keyed on the content, not just the panel, so a line typed in Arabic keeps its
+  // direction after switching back to abc to add a digit. The empty-field case
+  // falls back to the panel, so opening Arabic puts the caret where the writing
+  // will actually start.
+  const bool rtlField = ScriptDetector::containsArabic(displayText.c_str()) || (arabicMode && displayText.empty());
+
   int lineStartIdx = 0;
   int lineEndIdx = displayText.length();
   int textWidth = 0;
@@ -520,6 +532,10 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         }
         if (centerText) {
           cursorPixelX = effectiveMargin + (maxLineWidth - textWidth) / 2 + beforeWidth + kernOffset;
+        } else if (rtlField) {
+          // Mirrored: the prefix occupies the RIGHT side of the run, so the caret sits
+          // that far in from the right edge rather than from the left.
+          cursorPixelX = effectiveMargin + maxLineWidth - beforeWidth - kernOffset;
         } else {
           cursorPixelX = effectiveMargin + beforeWidth + kernOffset;
         }
@@ -528,7 +544,9 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         isCursorLine = true;
       }
 
-      const int lineStartX = centerText ? effectiveMargin + (maxLineWidth - textWidth) / 2 : effectiveMargin;
+      const int lineStartX = centerText ? effectiveMargin + (maxLineWidth - textWidth) / 2
+                             : rtlField ? effectiveMargin + maxLineWidth - textWidth
+                                        : effectiveMargin;
       if (isCursorLine && cursorMode && isPassword && !passwordVisible && !togglePos) {
         // Draw text in 3 parts to avoid block cursor overflowing onto next char.
         // displayText uses '*' for all chars; actual char may be wider than '*'.
