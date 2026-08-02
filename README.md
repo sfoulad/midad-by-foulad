@@ -16,6 +16,20 @@
 </p>
 
 <p align="center">
+  <a href="https://www.reddit.com/r/midad_one/s/5cHfK3pZhm"><img src="https://img.shields.io/badge/JOIN%20THE-REDDIT%20COMMUNITY-FF4500?style=for-the-badge&logo=reddit&logoColor=white&labelColor=555555" alt="Join the Midad community on Reddit"></a>
+  <a href="https://testflight.apple.com/join/6xSuHYbe"><img src="https://img.shields.io/badge/IOS%20BETA-TESTFLIGHT-0D96F6?style=for-the-badge&logo=apple&logoColor=white&labelColor=555555" alt="Join the Midad iOS beta on TestFlight"></a>
+</p>
+
+<p align="center">
+  <sub>
+    The <b>Midad app</b> pairs with your reader over Wi-Fi — sign in by QR, manage your library and news feeds,
+    and pick up your page on either device.
+  </sub>
+</p>
+
+<br>
+
+<p align="center">
   <a href="https://github.com/sfoulad/midad-by-foulad/releases"><img src="https://img.shields.io/github/v/release/sfoulad/midad-by-foulad?label=release&color=blue&style=flat-square" alt="Latest release"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/sfoulad/midad-by-foulad?color=brightgreen&style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/Arabic-100%25-orange?style=flat-square" alt="Arabic support">
@@ -156,7 +170,10 @@
 - 🕌 **A fully Arabic interface** — mirrored, translated, and with page-turn buttons that swap direction automatically so "forward" is always where your thumb expects it.
 - 🌍 **Reads Arabic, Persian, Ottoman Turkish, and Kurdish correctly** — proper letter shaping and right-to-left text, everywhere it shows up.
 - 📖 **A bundled Quran** — Uthmani script, ayah and surah markers, and justified lines that stretch the way a real mushaf does.
-- ☁️ **Midad library** — connect to a self-hosted catalogue and browse it as a cover grid, right from the home screen.
+- ☁️ **Midad library** — sign in by scanning a QR code with the Midad app, then browse your catalogue as a cover grid, search it by name, and download straight to the device.
+- 🔄 **Cross-device page sync** — put the book down on the reader and carry on in the app, or the other way round. Sync from the reading drawer and it lands on the right page, not just the right percentage.
+- 📰 **News** — subscribe to feeds in the Midad app and read them on the device as a proper book, pictures and all. Each open fetches the current articles.
+- ⌨️ **An Arabic keyboard** — a full Arabic layout with right-to-left entry, so you can search an Arabic library by typing its titles.
 - 📊 **Reading stats** — streaks, a monthly heatmap, and per-book progress.
 - 🎮 **Four built-in games** — Snake, Tetris, Sudoku, and Maze.
 - 🏋️ **Gym workout planner** — a 7-day split, per-set weight/reps logging, and exercise photos, synced from a shared catalog.
@@ -182,7 +199,7 @@
 **📖 Reading**
 
 - EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, focus reading, and KOReader progress sync.
-- Custom fonts — install your favorite fonts on the SD card.
+- Custom fonts — browse three dozen Arabic and Latin families in Manage Fonts and download them over Wi-Fi, or drop your own on the SD card.
 - Tilt page turn (X3 only).
 - Offline dictionary — select a word while reading and look it up right from the drawer, no connection needed once a dictionary is installed.
 
@@ -197,10 +214,14 @@
 - **Gym**: a 7-day workout split shown as a day-at-a-glance grid (muscle group, exercise count, rest days), an exercise picker synced from a shared catalog, and a per-set logger that remembers your last weight/reps and shows the exercise photo on the page.
 - **Tasbih**: a dhikr counter with a top-count leaderboard and daily/yearly totals.
 - **Stop Watch**: start/pause, lap tracking, and a MM:SS:CS Casio-style display.
+- **Pomodoro**: the same timer in a work/break cadence, for reading or studying in blocks.
+- **News**: feeds you subscribe to in the Midad app, delivered to the reader as an EPUB — one chapter per article, with the publisher's picture. Off by default; subscriptions are managed in the app, never on the device.
 
 **☁️ Midad library**
 
-- A dedicated home-screen entry that opens a self-hosted OPDS catalog directly — cover-grid browsing, search, pagination, and one-tap downloads that keep the catalog's cover art. No manual server setup beyond a one-time username/password prompt on first use.
+- A dedicated home-screen entry that opens your catalogue directly — cover-grid browsing, a search row on every feed, pagination, and one-tap downloads that keep the catalogue's cover art.
+- **Sign in by QR**: scan the code with the Midad app on your phone. No password typed on an on-screen keyboard, and signing out from the app signs the reader out too.
+- **Reading position sync**: the reader sends where you stopped and takes back the furthest point across your devices, resolved by spine anchor rather than a bare percentage so it lands on the right page in a long book.
 
 **📶 Wireless**
 
@@ -211,7 +232,7 @@
 - WebDAV handler
 - AP mode (hotspot) and STA mode (join existing Wi-Fi), both with QR helpers
 - Calibre wireless connect flow
-- OPDS browser with saved servers (up to 8), search, pagination, and direct download
+- OPDS browser with search, pagination, and direct download. Catalogues are added by signing in with the Midad app rather than typed in on the device.
 - OTA update checks and installs from this repo's GitHub releases — the updater restarts the device into a clean-memory state before downloading, so updates install reliably even after long reading sessions
 
 **🎨 Customization**
@@ -220,7 +241,7 @@
 
 **⚙️ Under the hood**
 
-- Lean firmware, trimmed to the two languages it's actually for (English and Arabic) and a curated font set (Noto Serif for Latin reading, Noto Naskh Arabic for Arabic) — the whole image is a few MB, which keeps OTA updates fast.
+- Lean firmware, trimmed to the two languages it's actually for (English and Arabic). The built-in reading faces are Lexend Deca for Latin and Tajawal for Arabic; everything else — Bitter, Noto Naskh Arabic, and three dozen more families — downloads over Wi-Fi from Manage Fonts, which keeps the image small and OTA updates fast.
 - Full English and Arabic UI localization with complete RTL support.
 
 </details>
