@@ -51,10 +51,22 @@ constexpr int LIST_ROW_VERTICAL_PADDING = 6;
 // server's own id convention, or a malformed entry) so callers can treat
 // that as "no Foulad book id available" rather than a parse error.
 std::string extractFouladBookId(const std::string& entryId) {
-  size_t end = entryId.size();
-  while (end > 0 && isdigit(static_cast<unsigned char>(entryId[end - 1]))) end--;
-  if (end == entryId.size()) return "";  // no trailing digits at all
-  return entryId.substr(end);
+  // The prefix is checked, not just the trailing digits. News entries are
+  // "urn:midad:feed:<id>" in a DIFFERENT namespace, and a bare trailing-digit
+  // parse turns feed 3 into book 3 -- which is not a missing id, it is somebody
+  // else's book. That id is sent to /opds/reading-position and /opds/reading-stats,
+  // so the failure mode is a news article silently overwriting the saved position
+  // of an unrelated real book. Anything that is not a book entry returns "".
+  static constexpr char kBookPrefix[] = "urn:opds-library:book:";
+  static constexpr size_t kBookPrefixLen = sizeof(kBookPrefix) - 1;
+  if (entryId.compare(0, kBookPrefixLen, kBookPrefix) != 0) return "";
+
+  const std::string tail = entryId.substr(kBookPrefixLen);
+  if (tail.empty()) return "";
+  for (const char c : tail) {
+    if (!isdigit(static_cast<unsigned char>(c))) return "";
+  }
+  return tail;
 }
 
 int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
@@ -918,7 +930,12 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   state = entries.empty() ? BrowserState::ERROR : BrowserState::BROWSING;
-  if (entries.empty()) errorMessage = tr(STR_NO_ENTRIES);
+  if (entries.empty()) {
+    // An empty feed is the normal, successful answer to "this account has no
+    // subscriptions" -- not an error (EINK_NEWS_TASKS.md §2). Say what to do next
+    // instead, because the thing to do is on the phone and nothing here can do it.
+    errorMessage = (server.url == FOULAD_EBOOKS_NEWS_URL) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
+  }
 
   {
     int bookCount = 0;
@@ -977,7 +994,17 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   const std::string filename =
       "/" + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + extension;
 
-  if (Storage.exists(filename.c_str())) {
+  // News is never "already downloaded". Each download is the whole current feed
+  // rather than a delta, and the filename is stable per feed, so the fast path below
+  // would open yesterday's articles forever and the page would never refresh
+  // (EINK_NEWS_TASKS.md §4: replace rather than accumulate). Remove first, because
+  // the download writes to the same path.
+  const bool isNewsFeed = server.url == FOULAD_EBOOKS_NEWS_URL;
+  if (isNewsFeed && Storage.exists(filename.c_str())) {
+    Storage.remove(filename.c_str());
+  }
+
+  if (!isNewsFeed && Storage.exists(filename.c_str())) {
     // Already downloaded -- open it directly rather than downloading again.
     if (server.url == FOULAD_EBOOKS_URL) {
       const std::string fouladBookId = extractFouladBookId(book.id);

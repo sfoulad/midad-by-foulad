@@ -126,6 +126,7 @@ void addSettingsReport(JsonObject settings) {
   settings["tiltPageTurn"] = s.tiltPageTurn;
   // Apps
   settings["quranEnabled"] = s.quranEnabled;
+  settings["rssEnabled"] = s.rssEnabled;
   settings["gamesEnabled"] = s.gamesEnabled;
   settings["tasbihEnabled"] = s.tasbihEnabled;
   settings["stopwatchEnabled"] = s.stopwatchEnabled;
@@ -264,6 +265,7 @@ void applySettingsFromServer(JsonObjectConst settings) {
   applyEnum(s.tiltPageTurn, "tiltPageTurn", S::TILT_PAGE_TURN_COUNT);
 
   applyToggle(s.quranEnabled, "quranEnabled");
+  applyToggle(s.rssEnabled, "rssEnabled");
   applyToggle(s.gamesEnabled, "gamesEnabled");
   applyToggle(s.tasbihEnabled, "tasbihEnabled");
   applyToggle(s.stopwatchEnabled, "stopwatchEnabled");

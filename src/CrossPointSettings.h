@@ -313,6 +313,12 @@ class CrossPointSettings {
   // to SD and pinned as the first book in My Books (see QuranBook.h).
   uint8_t quranEnabled = 0;
 
+  // Apps -> News: pins a synthetic "News" tile that browses /opds/news. Off by
+  // default and, like the other app toggles, mirrored from the server so the
+  // Midad app can turn it on -- a missing key means false, never "on" (a server
+  // that has not shipped News yet is not opting anyone in).
+  uint8_t rssEnabled = 0;
+
   // Settings -> System -> Games: pins a synthetic "Games" tile in My Books
   // (see GAMES_PSEUDO_PATH in RecentBooksActivity.cpp) that opens a picker for
   // the built-in Snake/Tetris activities. No SD extraction needed (unlike

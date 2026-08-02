@@ -341,6 +341,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // extraction step needed, same as Games.
     v.push_back(SettingInfo::Toggle(StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled, "tasbihEnabled",
                                     StrId::STR_CAT_APPS));
+    // News toggle: pins a "News" tile in My Books that browses the account's feed
+    // subscriptions (EINK_NEWS_TASKS.md). Off by default, and the Midad app can turn
+    // it on remotely -- subscriptions are managed there, never here, because adding
+    // one means typing a URL on an on-screen keyboard.
+    v.push_back(
+        SettingInfo::Toggle(StrId::STR_NEWS, &CrossPointSettings::rssEnabled, "rssEnabled", StrId::STR_CAT_APPS));
     // Stop Watch toggle: pins a "Stop Watch" tile in My Books (see
     // STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp) that opens the
     // built-in stopwatch. No extraction step needed, same as Games.

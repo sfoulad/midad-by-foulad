@@ -31,6 +31,7 @@ void silentRestartToFileTransfer();
 // heap sliding 36KB -> 14KB across cover fetches). The browser's exit path
 // already silent-restarts when WiFi was up; this makes entry symmetric.
 void silentRestartToFouladEbooks();
+void silentRestartToNews();  // Apps -> News (EINK_NEWS_TASKS.md)
 
 // Return-to-caller targets: a WiFi flow launched FROM this menu should land
 // back on it, not on Home, once its own onExit() silent-restarts to clear

@@ -16,6 +16,7 @@
 #include "MappedInputManager.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
+#include "SilentRestart.h"
 #include "activities/apps/GymActivity.h"
 #include "activities/apps/StopwatchActivity.h"
 #include "activities/apps/TasbihActivity.h"
@@ -39,6 +40,9 @@ constexpr const char* GAMES_PSEUDO_PATH = "/Games";
 // Same idea for the Tasbih tile (see SETTINGS.tasbihEnabled) -- opens
 // TasbihActivity instead of the reader.
 constexpr const char* TASBIH_PSEUDO_PATH = "/Tasbih";
+// Sentinel "path" for the synthetic News tile (see SETTINGS.rssEnabled) -- browses
+// the account's feed subscriptions rather than opening anything on SD.
+constexpr const char* NEWS_PSEUDO_PATH = "/News";
 // Same idea for the Stop Watch tile (see SETTINGS.stopwatchEnabled) -- opens
 // StopwatchActivity instead of the reader.
 constexpr const char* STOPWATCH_PSEUDO_PATH = "/StopWatch";
@@ -275,6 +279,20 @@ void RecentBooksActivity::loadRecentBooks() {
   // Inserted at the front AFTER Stop Watch (above) but BEFORE Quran (below),
   // so Quran's own unconditional front-insert pushes this to the second slot,
   // same technique the Games block already uses against Quran.
+  // Pinned News: synthetic tile shown alongside the other apps -- opens the OPDS
+  // browser rooted at /opds/news instead of the reader (see loop()'s special-case).
+  // Inserted before Tasbih below so Tasbih's own front-insert pushes this down,
+  // the same technique every tile above uses.
+  if (SETTINGS.rssEnabled) {
+    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                     [](const RecentBook& b) { return b.path == NEWS_PSEUDO_PATH; }),
+                      recentBooks.end());
+    RecentBook news;
+    news.path = NEWS_PSEUDO_PATH;
+    news.title = tr(STR_NEWS);
+    recentBooks.insert(recentBooks.begin(), std::move(news));
+  }
+
   if (SETTINGS.tasbihEnabled) {
     recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
                                      [](const RecentBook& b) { return b.path == TASBIH_PSEUDO_PATH; }),
@@ -339,7 +357,7 @@ void RecentBooksActivity::loop() {
   // cf. FileBrowserActivity BACK long-press).
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
       recentBooks[selectorIndex].path != QuranBook::PATH && recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH && recentBooks[selectorIndex].path != NEWS_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH &&
       recentBooks[selectorIndex].path != POMODORO_PSEUDO_PATH && recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
@@ -354,6 +372,13 @@ void RecentBooksActivity::loop() {
       if (recentBooks[selectorIndex].path == GAMES_PSEUDO_PATH) {
         startActivityForResult(std::make_unique<GamesMenuActivity>(renderer, mappedInput),
                                [](const ActivityResult&) {});
+        return;
+      }
+      if (recentBooks[selectorIndex].path == NEWS_PSEUDO_PATH) {
+        // Reboot in, like the Library does: News browses OPDS over WiFi and then
+        // downloads an EPUB, which is the same stack of allocations that made
+        // goToFouladEbooks() restart first (crash reports 7 and 8). Does not return.
+        silentRestartToNews();
         return;
       }
       if (recentBooks[selectorIndex].path == TASBIH_PSEUDO_PATH) {

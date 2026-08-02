@@ -133,6 +133,8 @@ class ActivityManager {
   void goToRecentBooks();
   void goToBrowser();
   void goToFouladEbooks();
+  // Apps -> News: the OPDS browser rooted at the account's feed subscriptions.
+  void goToNews();
   void goToGym();
   void goToDictionary();
   void goToReader(std::string path);
