@@ -743,6 +743,8 @@ void RecentBooksActivity::render(RenderLock&&) {
         // Solid fill repaints over the thin outline drawRect() just drew --
         // same black, no visible seam -- with the designed cover on top.
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GAMES));
+      } else if (!drawn && book.path == NEWS_PSEUDO_PATH) {
+        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_NEWS));
       } else if (!drawn && book.path == TASBIH_PSEUDO_PATH) {
         drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_TASBIH));
       } else if (!drawn && book.path == STOPWATCH_PSEUDO_PATH) {
