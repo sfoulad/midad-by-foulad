@@ -1064,7 +1064,12 @@ void OpdsBookBrowserActivity::launchSearch() {
   state = BrowserState::SEARCH_INPUT;
   requestUpdate();
 
-  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH));
+  // Opens on the Arabic panel when the interface is Arabic: this catalog is mostly
+  // Arabic books, and making an Arabic reader press Mode twice before typing a title
+  // is the same discoverability failure the search row itself just fixed.
+  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH), "", 0, InputType::Text,
+                                                          "", /*numericOnly=*/false,
+                                                          /*preferArabic=*/I18N.isRtl());
   startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
     state = BrowserState::BROWSING;
     if (!result.isCancelled) {
