@@ -1023,6 +1023,15 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   // the download writes to the same path.
   if (isNewsFeed && Storage.exists(filename.c_str())) {
     Storage.remove(filename.c_str());
+    // And the cache with it. The cache directory is keyed on the FILE PATH
+    // (Epub.h: "epub_" + hash(filepath)) and is only validated against the cache
+    // format version -- never against the file's size or contents. A feed keeps the
+    // same path every time, so without this the reader would find yesterday's
+    // book.bin and rendered sections still valid and read the old articles out of
+    // cache, no matter how fresh the download was. Progress goes too, which is
+    // correct: page 4 of yesterday's articles means nothing in today's.
+    const std::string cacheDir = Epub(filename, "/.crosspoint").getCachePath();
+    if (Storage.exists(cacheDir.c_str())) Storage.removeDir(cacheDir.c_str());
   }
 
   if (!isNewsFeed && Storage.exists(filename.c_str())) {
