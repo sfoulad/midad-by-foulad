@@ -1009,15 +1009,18 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   } else if (book.acquisitionType == "application/x-xtc") {
     extension = ".xtc";
   }
+  // News goes in its own folder; books stay at the root where they have always been.
+  const bool isNewsFeed = server.url == FOULAD_EBOOKS_NEWS_URL;
+  if (isNewsFeed) Storage.mkdir(FOULAD_NEWS_DIR);
   const std::string filename =
-      "/" + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + extension;
+      (isNewsFeed ? std::string(FOULAD_NEWS_DIR) + "/" : std::string("/")) +
+      StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + extension;
 
   // News is never "already downloaded". Each download is the whole current feed
   // rather than a delta, and the filename is stable per feed, so the fast path below
   // would open yesterday's articles forever and the page would never refresh
   // (EINK_NEWS_TASKS.md §4: replace rather than accumulate). Remove first, because
   // the download writes to the same path.
-  const bool isNewsFeed = server.url == FOULAD_EBOOKS_NEWS_URL;
   if (isNewsFeed && Storage.exists(filename.c_str())) {
     Storage.remove(filename.c_str());
   }
