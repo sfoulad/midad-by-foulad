@@ -25,6 +25,7 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "components/TileCover.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "fontIds.h"
@@ -574,7 +575,14 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         }
       }
       renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
-      if (!drawn) {
+      if (!drawn && server.url == FOULAD_EBOOKS_NEWS_URL) {
+        // News entries carry no cover art -- there is no image link in the feed, so
+        // nothing failed to download and nothing is going to appear later. The generic
+        // book icon reads as a book that did not load; the feed's own name on a
+        // designed tile reads as the thing it is, which is what the app tiles already
+        // do for the same reason.
+        drawTileCover(renderer, cellX, cellY, layout.coverWidth, layout.coverHeight, entry.title.c_str());
+      } else if (!drawn) {
         renderer.drawIcon(BookIcon, cellX + (layout.coverWidth - 32) / 2, cellY + (layout.coverHeight - 32) / 2, 32);
       }
       if (bookIdx == selectorIndex) {
