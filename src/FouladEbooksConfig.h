@@ -34,6 +34,15 @@ constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
 // ("urn:midad:feed:<id>"), which is why extractFouladBookId checks the prefix.
 constexpr char FOULAD_EBOOKS_NEWS_URL[] = "http://midad.one/opds/news";
 
+// Downloaded news lives in its own folder rather than beside the books at the SD
+// root. It is not a book: it has no author, it is replaced wholesale every time you
+// open the feed, and finishing it is not finishing anything. Keeping it in one place
+// is what lets the home screen, My Books and the reading stats leave it alone
+// without having to guess from a filename.
+constexpr char FOULAD_NEWS_DIR[] = "/News";
+
+inline bool isNewsBookPath(const std::string_view path) { return path.rfind("/News/", 0) == 0; }
+
 // Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
 // Convert a Font): the device uploads a raw TTF/OTF plus a language choice,
 // foulad-ebooks converts it into the device's .cpfont SD-font format (4 sizes)

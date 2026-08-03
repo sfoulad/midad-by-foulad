@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "CrossPointSettings.h"
+#include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
@@ -121,8 +122,11 @@ void RecentBooksActivity::loadRecentBooks() {
       if (entry.isDirectory()) {
         // XTCache is the STOCK Xteink firmware's cache tree -- 60+ nested dirs
         // of extracted chapter HTML on a card that dual-boots, with no books.
+        // /News holds downloaded feeds, which are reached from the News tile and are
+        // replaced wholesale on every open -- listing them here would put a headline
+        // among the books and leave yesterday's copy looking like one.
         if (strcmp(nameBuf, "System Volume Information") != 0 && strcmp(nameBuf, "fonts") != 0 &&
-            strcmp(nameBuf, "XTCache") != 0) {
+            strcmp(nameBuf, "XTCache") != 0 && entryPath != FOULAD_NEWS_DIR) {
           dirs.push_back(entryPath);
         }
         continue;

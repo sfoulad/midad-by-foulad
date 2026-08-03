@@ -219,14 +219,24 @@ void EpubReaderActivity::onEnter() {
   // Save current epub as last opened epub and add to recent books
   APP_STATE.openEpubPath = epub->getPath();
   APP_STATE.saveToFile();
-  RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
+  // News is deliberately not a recent book. The home screen's hero card is the most
+  // recent entry, so a downloaded feed took over the "currently reading" slot with a
+  // progress bar and an estimated time left -- for something that is replaced whole
+  // the next time you open News. It is reached from its own tile, not from here.
+  const bool isNews = isNewsBookPath(epub->getPath());
+  if (!isNews) {
+    RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
+  }
 
   loadCachedBookmarks();
 
   // Reading-time tracking: open a session in the day-level stats store and start
   // the first page's dwell timer. Time is credited per page turn; the session is
   // committed and saved in onExit().
-  if (SETTINGS.trackReadingStats) {
+  // Nor does it count as reading. EINK_NEWS_TASKS.md is explicit that finishing a
+  // feed is not finishing a book, and counting it would distort streaks and
+  // books-finished -- the same reason the server refuses a feed id for stats.
+  if (SETTINGS.trackReadingStats && !isNews) {
     READING_STATS.beginSession(epub->getPath(), epub->getTitle(), epub->getAuthor());
     // Capture the catalog id into the stats entry while RecentBooksStore still
     // holds it. That list caps at 10 and evicts, and the id used to live only
