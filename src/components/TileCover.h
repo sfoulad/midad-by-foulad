@@ -11,4 +11,4 @@
 // the OPDS browser uses it for news feeds, which carry no cover art in their entries.
 // Both looked broken with the generic BookIcon placeholder -- an anonymous icon in a
 // box reads as an unopened book that failed, not as a thing you are meant to press.
-void drawTileCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight, const char* label);
+void drawTileCover(const GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight, const char* label);

@@ -14,7 +14,8 @@
 // instantly as its own distinct "book" in the grid, the way a plain black
 // spine stands out on a shelf. Drawn with plain fillRect/drawText primitives,
 // no bitmap asset needed.
-void drawTileCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight, const char* label) {
+void drawTileCover(const GfxRenderer& renderer, int cellX, int cellY, int cellWidth, int cellHeight,
+                   const char* label) {
   renderer.fillRect(cellX, cellY, cellWidth, cellHeight, true);
 
   // Thin white inset frame -- a plain black rectangle reads as "missing
@@ -36,8 +37,7 @@ void drawTileCover(GfxRenderer& renderer, int cellX, int cellY, int cellWidth, i
     textWidth = renderer.getTextWidth(fontId, label, EpdFontFamily::BOLD);
   }
   if (textWidth > maxTextWidth) {
-    fontId = SMALL_FONT_ID;
-    textWidth = renderer.getTextWidth(fontId, label, EpdFontFamily::BOLD);
+    fontId = SMALL_FONT_ID;  // no width needed here: the clip below recomputes it
   }
   // Shrinking twice is not enough for a long feed name -- clip what is left so the
   // label stays inside the frame instead of running past it.
