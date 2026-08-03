@@ -17,6 +17,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "CuratedAyahs.h"
+#include "FouladEbooksConfig.h"
 #include "QuranBook.h"
 #include "ReaderTitles.h"
 #include "RecentBooksStore.h"
@@ -351,7 +352,11 @@ void SleepActivity::renderCoverSleepScreen() const {
       break;
   }
 
-  if (APP_STATE.openEpubPath.empty()) {
+  // News is not the book you are reading, so it does not become the sleep screen
+  // either -- the same reason it is kept off the home screen and out of My Books.
+  // openEpubPath itself is left alone: it is what resumes the article you were on
+  // when the device wakes, which is still the right thing mid-session.
+  if (APP_STATE.openEpubPath.empty() || isNewsBookPath(APP_STATE.openEpubPath)) {
     return (this->*renderNoCoverSleepScreen)();
   }
 
