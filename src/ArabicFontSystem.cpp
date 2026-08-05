@@ -12,15 +12,12 @@ namespace {
 // CrossPointSettings::ARABIC_FONT_FAMILY and FONT_SIZE.
 constexpr int
     kBuiltinArabicReadingFontIds[CrossPointSettings::ARABIC_FONT_FAMILY_COUNT][CrossPointSettings::FONT_SIZE_COUNT] = {
-        // Noto Naskh Arabic's glyph data was removed from flash (~111KB) and is now a
-        // Manage Fonts download. Same treatment Amiri already had: the row stays and
-        // aliases Tajawal rather than being deleted, so ARABIC_FONT_FAMILY's numeric
-        // values keep meaning what they meant. A device with NOTONASKHARABIC=0 saved,
-        // or a Quran per-book sidecar byte written under the old numbering, resolves
-        // to a real font instead of rendering nothing.
-        {TAJAWAL_12_FONT_ID, TAJAWAL_14_FONT_ID, TAJAWAL_16_FONT_ID, TAJAWAL_18_FONT_ID},
-        // Amiri, removed earlier for the same reason, aliased the same way.
-        {TAJAWAL_12_FONT_ID, TAJAWAL_14_FONT_ID, TAJAWAL_16_FONT_ID, TAJAWAL_18_FONT_ID},
+        {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
+         NOTONASKHARABIC_18_FONT_ID},
+        // Amiri's own glyph data was dropped long ago; the row stays and aliases Naskh
+        // so a persisted AMIRI=1 keeps meaning a real Arabic book face.
+        {NOTONASKHARABIC_12_FONT_ID, NOTONASKHARABIC_14_FONT_ID, NOTONASKHARABIC_16_FONT_ID,
+         NOTONASKHARABIC_18_FONT_ID},
         // KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface -- the Quran's
         // default reading face (per-book sidecar written at extraction; see
         // QuranBook::ensureExtracted).
@@ -79,7 +76,7 @@ void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
 }  // namespace
 
 int ArabicFontSystem::resolveBuiltinReadingFontId(uint8_t family, uint8_t size) {
-  if (family >= CrossPointSettings::ARABIC_FONT_FAMILY_COUNT) family = CrossPointSettings::TAJAWAL;
+  if (family >= CrossPointSettings::ARABIC_FONT_FAMILY_COUNT) family = CrossPointSettings::NOTONASKHARABIC;
   if (size >= CrossPointSettings::FONT_SIZE_COUNT) size = CrossPointSettings::MEDIUM;
   return kBuiltinArabicReadingFontIds[family][size];
 }

@@ -127,6 +127,7 @@ inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* regist
   // Display index is therefore NOT the same as the stored value -- valueGetter/
   // valueSetter below translate between the two explicitly.
   static constexpr std::pair<StrId, uint8_t> kSelectableFonts[] = {
+      {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
       {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
       {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
   };

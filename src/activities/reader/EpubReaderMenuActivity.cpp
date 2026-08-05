@@ -37,6 +37,7 @@ constexpr StrId kAlignLabels[CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT] = {
 // kSelectableArabicFonts / displayIndexForArabicFamily.
 constexpr std::pair<StrId, uint8_t> kSelectableArabicFonts[] = {
 
+    {StrId::STR_NOTO_NASKH_ARABIC, CrossPointSettings::NOTONASKHARABIC},
     {StrId::STR_UTHMANI_HAFS, CrossPointSettings::UTHMANICHAFS},
     {StrId::STR_TAJAWAL, CrossPointSettings::TAJAWAL},
 };

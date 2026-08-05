@@ -100,6 +100,14 @@ EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 // UI_12_FONT_ID=12pt) so Arabic renders at the same size/baseline as the Latin text
 // around it instead of one fixed size that overflows small rows/grid cells. Users can
 // still override with a custom SD font family via Settings -> Reader -> Arabic Font.
+EpdFont notonaskharabic12RegularFont(&notonaskharabic_12_regular);
+EpdFontFamily notonaskharabic12FontFamily(&notonaskharabic12RegularFont);
+EpdFont notonaskharabic14RegularFont(&notonaskharabic_14_regular);
+EpdFontFamily notonaskharabic14FontFamily(&notonaskharabic14RegularFont);
+EpdFont notonaskharabic16RegularFont(&notonaskharabic_16_regular);
+EpdFontFamily notonaskharabic16FontFamily(&notonaskharabic16RegularFont);
+EpdFont notonaskharabic18RegularFont(&notonaskharabic_18_regular);
+EpdFontFamily notonaskharabic18FontFamily(&notonaskharabic18RegularFont);
 EpdFont notosansarabic8RegularFont(&notosansarabic_8_regular);
 EpdFontFamily notosansarabic8FontFamily(&notosansarabic8RegularFont);
 EpdFont notosansarabic10RegularFont(&notosansarabic_10_regular);
@@ -480,6 +488,10 @@ void setupDisplayAndFonts(bool seamless = false, bool uiOnlyFonts = false) {
   renderer.insertFont(NOTOSANSARABIC_8_FONT_ID, notosansarabic8FontFamily);
   renderer.insertFont(NOTOSANSARABIC_10_FONT_ID, notosansarabic10FontFamily);
   renderer.insertFont(NOTOSANSARABIC_12_FONT_ID, notosansarabic12FontFamily);
+  renderer.insertFont(NOTONASKHARABIC_12_FONT_ID, notonaskharabic12FontFamily);
+  renderer.insertFont(NOTONASKHARABIC_14_FONT_ID, notonaskharabic14FontFamily);
+  renderer.insertFont(NOTONASKHARABIC_16_FONT_ID, notonaskharabic16FontFamily);
+  renderer.insertFont(NOTONASKHARABIC_18_FONT_ID, notonaskharabic18FontFamily);
   renderer.insertFont(UTHMANICHAFS_12_FONT_ID, uthmanichafs12FontFamily);
   renderer.insertFont(UTHMANICHAFS_14_FONT_ID, uthmanichafs14FontFamily);
   renderer.insertFont(UTHMANICHAFS_16_FONT_ID, uthmanichafs16FontFamily);
