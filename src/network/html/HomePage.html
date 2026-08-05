@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Foulad eInk</title>
+    <title>Midad</title>
     <style>
       :root {
         --font-color: #333;
@@ -25,6 +25,11 @@
           --border-color: #555;
           color-scheme: dark;
         }
+        /* Mark is a solid black drop on a transparent background -- inverting it to
+           white is cheaper than embedding a second image just for dark mode. */
+        .logo-mark {
+          filter: invert(1);
+        }
       }
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -39,6 +44,12 @@
         color: var(--title-color);
         border-bottom: 2px solid var(--accent-color);
         padding-bottom: 10px;
+      }
+      .logo-mark {
+        width: 28px;
+        height: 28px;
+        vertical-align: middle;
+        margin-right: 6px;
       }
       h2 {
         color: var(--title-color);
@@ -98,7 +109,7 @@
     </style>
   </head>
   <body>
-    <h1>📚 Foulad eInk</h1>
+    <h1><img class="logo-mark" src="data:image/png;base64,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" alt="" />Midad</h1>
 
     <div class="nav-links">
       <a href="/" class="active">Home</a>
@@ -133,7 +144,7 @@
 
     <div class="card">
       <p style="text-align: center; color: #95a5a6; margin: 0">
-        Foulad eInk • Open Source
+        Midad • Open Source
       </p>
     </div>
   <script>
