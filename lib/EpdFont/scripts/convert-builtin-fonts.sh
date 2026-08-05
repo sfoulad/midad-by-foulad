@@ -114,10 +114,18 @@ for size in ${ARABIC_UI_FONT_SIZES[@]}; do
   echo "Generated ../builtinFonts/notosansarabic_${size}_regular.h"
 done
 
-# Noto Naskh Arabic was a built-in Arabic reading family until its glyph data
-# (~111KB) moved to the Manage Fonts catalog. Tajawal below is the built-in now.
-# Noto Sans Arabic above stays: it supplies ayah-marker digits and the surah banner
-# label, which the Quran needs regardless of the reading font (ArabicFontSystem.cpp).
+# Built-in Arabic READING fonts (ArabicFontSystem's default reading families) at the
+# four reading sizes -- see kBuiltinArabicReadingFontIds. Noto Naskh briefly moved to
+# the Manage Fonts catalog to save flash and came straight back: a reader built around
+# Arabic that ships no Arabic BOOK face, and puts one behind a sign-in and a phone app,
+# is not one. Tajawal is a UI sans and reads like one at paragraph length.
+ARABIC_READING_FONT_SIZES=(12 14 16 18)
+for size in ${ARABIC_READING_FONT_SIZES[@]}; do
+  python fontconvert.py notonaskharabic_${size}_regular ${size} \
+    ../builtinFonts/source/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf \
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_${size}_regular.h
+  echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
+done
 
 # Tajawal (Boutros International, OFL-licensed, google/fonts ofl/tajawal): a modern
 # geometric-sans reading option alongside the two traditional book-printing styles

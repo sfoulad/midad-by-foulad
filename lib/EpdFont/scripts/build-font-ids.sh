@@ -32,6 +32,9 @@ for size in 8 10 12; do
   echo "#define NOTOSANSARABIC_${size}_FONT_ID ($(id_for ./notosansarabic_${size}_regular.h))"
 done
 for size in 12 14 16 18; do
+  echo "#define NOTONASKHARABIC_${size}_FONT_ID ($(id_for ./notonaskharabic_${size}_regular.h))"
+done
+for size in 12 14 16 18; do
   echo "#define UTHMANICHAFS_${size}_FONT_ID ($(id_for ./uthmanichafs_${size}_regular.h))"
 done
 for size in 8 10 12 14 16 18; do
