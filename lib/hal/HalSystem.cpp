@@ -14,6 +14,12 @@
 
 RTC_NOINIT_ATTR char panicMessage[256];
 RTC_NOINIT_ATTR HalSystem::StackFrame panicStack[MAX_PANIC_STACK_DEPTH];
+// Survives the reboot the panic causes, which is the whole point -- these are read
+// back out on the next boot when the report is written.
+RTC_NOINIT_ATTR uint32_t lastFreeHeap;
+RTC_NOINIT_ATTR uint32_t lastLargestBlock;
+RTC_NOINIT_ATTR uint32_t heapSampleValid;
+constexpr uint32_t HEAP_SAMPLE_MAGIC = 0x48454150;  // "HEAP" -- RTC memory is garbage on a cold boot
 
 extern "C" {
 
@@ -109,6 +115,12 @@ void clearPanic() {
   clearLastLogs();
 }
 
+void noteHeap(const uint32_t freeBytes, const uint32_t largestBlock) {
+  lastFreeHeap = freeBytes;
+  lastLargestBlock = largestBlock;
+  heapSampleValid = HEAP_SAMPLE_MAGIC;
+}
+
 std::string getPanicInfo(bool full) {
   if (!full) {
     return panicMessage;
@@ -117,6 +129,13 @@ std::string getPanicInfo(bool full) {
 
     info += "CrossPoint version: " CROSSPOINT_VERSION;
     info += "\n\nPanic reason: " + std::string(panicMessage);
+    // Named as a sample, not as the value at the fault -- see noteHeap().
+    if (heapSampleValid == HEAP_SAMPLE_MAGIC) {
+      info += "\n\nHeap before panic: free " + std::to_string(lastFreeHeap) + " bytes, largest block " +
+              std::to_string(lastLargestBlock) + " bytes";
+    } else {
+      info += "\n\nHeap before panic: not sampled";
+    }
     info += "\n\nLast logs:\n" + getLastLogs();
     info += "\n\nStack memory:\n";
 

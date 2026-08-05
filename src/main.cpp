@@ -769,6 +769,7 @@ void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
   static unsigned long lastMemPrint = 0;
+  unsigned long lastHeapSample = 0;
 
   gpio.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
@@ -786,6 +787,14 @@ void loop() {
   // Applied per tick like fadingFix, so flipping the toggle inverts the very
   // next refresh -- including the settings screen itself.
   renderer.setDarkMode(SETTINGS.darkModeEnabled != 0);
+
+  // Sampled every second and unconditionally -- the LOG_INF below is gated on a
+  // serial connection and a 10s interval, so on a device in someone's hands it never
+  // runs, which is exactly the device whose crash report needs the number.
+  if (millis() - lastHeapSample >= 1000) {
+    HalSystem::noteHeap(ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    lastHeapSample = millis();
+  }
 
   if (Serial && millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
