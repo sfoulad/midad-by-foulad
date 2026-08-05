@@ -638,22 +638,26 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
     ctx.nextOutY_srcStart = scaleY_fp;
   }
 
+  // makeUniqueNoThrow only guards the outer allocation -- each ditherer's constructor makes
+  // its own nothrow-checked internal buffer allocations (see BitmapHelpers.h), so ok() must
+  // be checked too or a mid-construction OOM leaves a live object with null buffers that
+  // processPixel()/nextRow() would dereference unconditionally.
   if (oneBit) {
     ctx.atkinson1BitDitherer = makeUniqueNoThrow<Atkinson1BitDitherer>(outWidth);
-    if (!ctx.atkinson1BitDitherer) {
+    if (!ctx.atkinson1BitDitherer || !ctx.atkinson1BitDitherer->ok()) {
       LOG_ERR("JPG", "OOM: Atkinson1BitDitherer");
       return false;
     }
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
       ctx.atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth);
-      if (!ctx.atkinsonDitherer) {
+      if (!ctx.atkinsonDitherer || !ctx.atkinsonDitherer->ok()) {
         LOG_ERR("JPG", "OOM: AtkinsonDitherer");
         return false;
       }
     } else if (USE_FLOYD_STEINBERG) {
       ctx.fsDitherer = makeUniqueNoThrow<FloydSteinbergDitherer>(outWidth);
-      if (!ctx.fsDitherer) {
+      if (!ctx.fsDitherer || !ctx.fsDitherer->ok()) {
         LOG_ERR("JPG", "OOM: FloydSteinbergDitherer");
         return false;
       }
