@@ -41,6 +41,7 @@
 #include "OpdsServerStore.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
+#include "ReaderPomodoro.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
@@ -590,6 +591,18 @@ void EpubReaderActivity::loop() {
     pendingReadFolderMove = false;
   }
 
+  // Pomodoro expiry. consumeJustExpired() is a millis() comparison and latches, so this
+  // costs nothing on every other tick and fires exactly once -- the ONLY refresh the
+  // countdown ever asks for. Everything else about it rides along on repaints the reader
+  // was already doing.
+  if (READER_POMODORO.consumeJustExpired()) {
+    flashPomodoroAlert();
+    // Repaint the page so the footer swaps the countdown for the phase-done message.
+    // The page content is unchanged, so this is a plain refresh, not a re-layout.
+    requestUpdate();
+    return;
+  }
+
   if (automaticPageTurnActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
         mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -954,6 +967,22 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   };
 
   switch (action) {
+    case EpubReaderMenuActivity::MenuAction::POMODORO: {
+      // One row, three meanings, matching the label the drawer showed: idle starts a
+      // session, a finished phase is acknowledged into the next one, and a running
+      // session stops. No requestUpdate() -- the drawer closing already repaints the
+      // page, and that repaint picks up the new footer state for free.
+      auto& pomodoro = READER_POMODORO;
+      if (!pomodoro.isActive()) {
+        pomodoro.start();
+        reserveStatusBarSpaceIfHidden();
+      } else if (pomodoro.isFinished()) {
+        pomodoro.advancePhase();
+      } else {
+        pomodoro.stop();
+      }
+      break;
+    }
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
       // The chapter was already picked from the in-drawer TOC list.
       if (menu.chapterSpineIndex >= 0) {
@@ -1257,18 +1286,52 @@ void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption
   pageTurnDuration = (1UL * 60 * 1000) / PAGE_TURN_RATES[selectedPageTurnOption];
   automaticPageTurnActive = true;
 
-  const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
-  // resets cached section so that space is reserved for auto page turn indicator when None or progress bar only
-  if (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight()) {
-    // Preserve current reading position so we can restore after reflow.
-    RenderLock lock(*this);
-    if (section) {
-      cachedSpineIndex = currentSpineIndex;
-      cachedChapterTotalPageCount = section->pageCount;
-      nextPageNumber = section->currentPage;
-    }
-    section.reset();
+  reserveStatusBarSpaceIfHidden();
+}
+
+void EpubReaderActivity::flashPomodoroAlert() {
+  // The screen is the only alert channel this hardware has -- no buzzer, speaker or
+  // vibration motor exists anywhere in the firmware or the SDK (see
+  // StopwatchActivity::flashAlert, which hit the same ceiling).
+  //
+  // Two passes where the Pomodoro app uses three, and shorter ones: that app is alerting
+  // someone who is watching a timer, this interrupts someone mid-sentence. The footer
+  // keeps saying the phase is done afterwards, so the flash only has to pull the eye up,
+  // not carry the whole message. FULL_REFRESH each way because a partial pass leaves the
+  // inversion streaked rather than clean.
+  //
+  // Holds the render lock for the duration: this drives the framebuffer directly from
+  // loop(), and the render task painting a page turn into the middle of the sequence
+  // would leave the screen inverted.
+  RenderLock lock(*this);
+  for (int i = 0; i < 2; ++i) {
+    renderer.invertScreen();
+    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    delay(150);
+    renderer.invertScreen();
+    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    delay(150);
   }
+}
+
+// A status bar that is hidden, or drawn as a bare progress bar, has no text lane for an
+// indicator to live in -- the page's text is laid out over that space. Anything that
+// needs to write there (the auto-page-turn rate, the Pomodoro countdown) has to give the
+// lane back first, which means a re-layout. Only done when the lane is genuinely absent:
+// with a normal status bar this is a no-op and the indicator costs nothing at all.
+void EpubReaderActivity::reserveStatusBarSpaceIfHidden() {
+  const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  if (statusBarHeight != 0 && statusBarHeight != UITheme::getInstance().getProgressBarHeight()) {
+    return;
+  }
+  // Preserve current reading position so we can restore after reflow.
+  RenderLock lock(*this);
+  if (section) {
+    cachedSpineIndex = currentSpineIndex;
+    cachedChapterTotalPageCount = section->pageCount;
+    nextPageNumber = section->currentPage;
+  }
+  section.reset();
 }
 
 void EpubReaderActivity::accountPageDwellForStats(const bool isForwardTurn) {
@@ -1460,8 +1523,9 @@ void EpubReaderActivity::render(RenderLock&& lock) {
 
   const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
 
-  // reserves space for automatic page turn indicator when no status bar or progress bar only
-  if (automaticPageTurnActive &&
+  // reserves space for the automatic page turn indicator (or the Pomodoro countdown --
+  // both write into the status bar's text lane) when no status bar or progress bar only
+  if ((automaticPageTurnActive || READER_POMODORO.isActive()) &&
       (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight())) {
     orientedMarginBottom +=
         std::max(SETTINGS.screenMargin,
@@ -2243,7 +2307,32 @@ void EpubReaderActivity::renderStatusBar() const {
 
   int textYOffset = 0;
 
-  if (automaticPageTurnActive) {
+  // Pomodoro takes the lane ahead of the auto-turn rate when both are on: the rate is a
+  // fixed value you set once and can re-read from the drawer, while this is the number
+  // that is actually changing and the reason the reader asked for a footer readout.
+  const auto& pomodoro = READER_POMODORO;
+  if (pomodoro.isActive()) {
+    if (pomodoro.isFinished()) {
+      title = I18N.get(pomodoro.currentPhase() == ReaderPomodoro::Phase::Focus ? StrId::STR_POMODORO_FOCUS_DONE
+                                                                               : StrId::STR_POMODORO_BREAK_DONE);
+    } else {
+      // Phase name alongside the clock -- "12:04" alone doesn't say whether you are
+      // reading or on a break, and the break phases are short enough to misread as a
+      // nearly-finished focus block.
+      const StrId phaseLabel = pomodoro.currentPhase() == ReaderPomodoro::Phase::Focus ? StrId::STR_POMODORO_FOCUS
+                               : pomodoro.currentPhase() == ReaderPomodoro::Phase::LongBreak
+                                   ? StrId::STR_POMODORO_LONG_BREAK
+                                   : StrId::STR_POMODORO_SHORT_BREAK;
+      title = std::string(I18N.get(phaseLabel)) + " " + formatPomodoroRemaining(pomodoro.remainingMs());
+    }
+    // Same offset the auto-turn indicator needs for the same reason: with the text lane
+    // reserved rather than native, the baseline sits high without it.
+    const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+    if (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight()) {
+      textYOffset += UITheme::getInstance().getMetrics().statusBarVerticalMargin;
+    }
+
+  } else if (automaticPageTurnActive) {
     title = tr(STR_AUTO_TURN_ENABLED) + std::to_string(60 * 1000 / pageTurnDuration);
 
     // calculates textYOffset when rendering title in status bar

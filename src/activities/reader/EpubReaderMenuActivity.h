@@ -40,6 +40,10 @@ class EpubReaderMenuActivity final : public Activity {
     SYNC,
     MIDAD_SYNC,
     DELETE_CACHE,
+    // Start / stop / acknowledge the reading Pomodoro (see ReaderPomodoro.h). The
+    // drawer only reports the press; the reader owns the session so the footer and the
+    // end-of-phase flash stay with whoever is painting the page.
+    POMODORO,
     // Handled inside the drawer (never returned as a result):
     FONT_SIZE,
     FONT_NAME,

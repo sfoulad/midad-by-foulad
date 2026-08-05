@@ -139,6 +139,13 @@ class EpubReaderActivity final : public Activity {
   std::string currentBookFouladId() const;
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
+  // Gives the status bar's text lane back when it is hidden or progress-bar-only, so a
+  // footer indicator has somewhere to draw. Costs a re-layout, so it is only called when
+  // one is actually starting. No-op with a normal status bar.
+  void reserveStatusBarSpaceIfHidden();
+  // Inverted full-screen passes when a Pomodoro phase runs out. The only refresh the
+  // reading Pomodoro ever costs; see ReaderPomodoro.h.
+  void flashPomodoroAlert();
   void pageTurn(bool isForwardTurn);
   void loadCachedBookmarks();
   void addBookmark();
