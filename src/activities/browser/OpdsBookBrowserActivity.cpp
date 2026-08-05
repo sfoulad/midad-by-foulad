@@ -70,6 +70,17 @@ std::string extractFouladBookId(const std::string& entryId) {
   return tail;
 }
 
+// What earns a cell in the cover grid. Books always do. A navigation entry does when
+// it carries cover art -- a collection is a shelf with a picture on it, and rendering
+// it as a "> Summer reading" text row beside a grid of book covers would make the one
+// thing the user is meant to press look like the page furniture.
+//
+// Navigation entries WITHOUT art stay text rows on purpose: that is the Prev/Next page
+// strip and any plain category link, none of which are things to show a cell for.
+bool isGridItem(const OpdsEntry& entry) {
+  return entry.type == OpdsEntryType::BOOK || (entry.type == OpdsEntryType::NAVIGATION && !entry.coverUrl.empty());
+}
+
 int moveHorizontalInGrid(const int currentIndex, const int totalItems, const bool moveRight) {
   return GridNav::moveHorizontal(currentIndex, totalItems, moveRight);
 }
@@ -575,7 +586,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
         }
       }
       renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
-      if (!drawn && server.url == FOULAD_EBOOKS_NEWS_URL) {
+      if (!drawn && (server.url == FOULAD_EBOOKS_NEWS_URL || entry.type == OpdsEntryType::NAVIGATION)) {
         // News entries carry no cover art -- there is no image link in the feed, so
         // nothing failed to download and nothing is going to appear later. The generic
         // book icon reads as a book that did not load; the feed's own name on a
@@ -668,7 +679,7 @@ OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout()
   int firstBookIndex = -1;
   int lastBookIndex = -1;
   for (size_t i = 0; i < entries.size(); i++) {
-    if (entries[i].type == OpdsEntryType::BOOK) {
+    if (isGridItem(entries[i])) {
       if (firstBookIndex < 0) firstBookIndex = static_cast<int>(i);
       lastBookIndex = static_cast<int>(i);
     }
@@ -937,7 +948,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     int firstBook = -1;
     int lastBook = -1;
     for (size_t i = 0; i < entries.size(); i++) {
-      if (entries[i].type == OpdsEntryType::BOOK) {
+      if (isGridItem(entries[i])) {
         if (firstBook < 0) firstBook = static_cast<int>(i);
         lastBook = static_cast<int>(i);
       }
