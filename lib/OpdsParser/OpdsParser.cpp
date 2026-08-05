@@ -18,21 +18,36 @@ OpdsParser::OpdsParser() {
   // and competing for the same heap. Confirmed via a real device crash: operator new
   // inside std::vector<OpdsEntry>::_M_realloc_append aborted (no exceptions to catch
   // under -fno-exceptions) well under the MAX_ENTRIES=200 cap -- the cap bounds the
-  // final size, not the number/timing of reallocation events on the way there. 64
-  // covers real category feeds seen so far (up to 26 entries) with no reallocation at
-  // all; larger feeds still grow automatically (doubling) up to MAX_ENTRIES.
+  // final size, not the number/timing of reallocation events on the way there.
   //
-  // But reserve(64) is itself a single ~11KB contiguous allocation (64 *
-  // sizeof(OpdsEntry), each holding 7 std::string fields) -- with -fno-exceptions a
-  // failed reserve() aborts the whole device, uncatchable. Confirmed via a second
-  // real device crash: this exact reserve() call aborted at ~16KB free heap. Only
-  // attempt it with comfortable headroom; below that, skip it and let the vector
-  // grow via its own doubling from empty, where each growth allocation starts tiny
-  // and stays far smaller than one 11KB block, so it's much more likely to find a
-  // free contiguous run even when the heap is fragmented and low.
-  constexpr uint32_t kMinFreeHeapForReserve = 64 * 1024;
+  // Originally reserve(64) gated behind a 64KB floor. Recalibrated after two more real
+  // crashes on a Collections feed of only 10 (and separately 3) entries -- nowhere near
+  // 64 -- with "Heap before panic" readings of 57KB free / 31KB largest block, i.e.
+  // comfortably healthy by the 64KB gate's own standard. The session's actual free heap
+  // throughout browsing sat in the 28-57KB range (device-side [OPDS] logs), meaning the
+  // 64KB gate was essentially never satisfied in practice -- the vector fell back to
+  // its risky from-empty doubling growth (the exact failure mode this exists to avoid)
+  // precisely when heap was tightest, which is backwards. That doubling is also why a
+  // 50-entries-per-page Authors feed crashes far more reliably than a 10-entry
+  // Collections one: its largest reallocation jump (32->64 capacity) approaches the
+  // same ~11KB block the original reserve(64) itself needed once already proven to
+  // abort at ~16KB free.
+  //
+  // Halving both numbers keeps the same proportional safety margin the original author
+  // established empirically (roughly floor >= 6x the reserved block's size) while
+  // actually engaging at the heap levels real browsing sessions run at: 32 covers every
+  // feed size seen in these crash logs (3, 9, 10) and the previously-documented category
+  // feeds (up to 26) with zero reallocation, and halves the worst-case single allocation
+  // a larger feed (Authors) still has to make beyond it.
+  //
+  // This narrows the window, it does not close it -- heap can still be low enough to
+  // skip the reserve AND fail a later doubling step. A full fix needs a nothrow-aware
+  // allocator for `entries`, tracked separately; this is the same class of bug as
+  // OpdsBookBrowserActivity.cpp's hasHeapForNavigation() gate and buildUrl()'s abort,
+  // just recalibrated with newer evidence rather than newly discovered.
+  constexpr uint32_t kMinFreeHeapForReserve = 32 * 1024;
   if (ESP.getFreeHeap() >= kMinFreeHeapForReserve) {
-    entries.reserve(64);
+    entries.reserve(32);
   }
   XML_SetUserData(parser, this);
   XML_SetElementHandler(parser, startElement, endElement);
