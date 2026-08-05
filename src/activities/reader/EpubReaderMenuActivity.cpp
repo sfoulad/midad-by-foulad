@@ -14,6 +14,7 @@
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "ReaderPomodoro.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
@@ -115,7 +116,9 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 // then orientation; everything else lives in the Settings tab.
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadingItems(const bool hasBookmarks) const {
   std::vector<MenuItem> items;
-  items.reserve(9);
+  // Every row this can push, including the four conditional ones -- a short reserve here
+  // means a reallocate-copy-free on a heap the reader has already loaded a book onto.
+  items.reserve(11);
   // First, ahead of even the dictionary: cross-device sync is pressed every time
   // someone picks the book up after reading elsewhere, which is often. Shown only
   // when there is an account AND this book carries a catalog id -- the same
@@ -157,6 +160,14 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
   items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
   items.push_back({MenuAction::TEXT_ALIGN, StrId::STR_TEXT_ALIGNMENT});
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
+  // Appended last rather than slotted in among the reading settings above: those have a
+  // settled order people reach for by position, and pushing them all down one row to make
+  // space is a worse cost than one extra row to scroll past. Gated on the same
+  // Settings -> Apps -> Pomodoro toggle that pins the My Books tile, so a device that
+  // doesn't use the feature sees no new row at all.
+  if (SETTINGS.pomodoroEnabled) {
+    items.push_back({MenuAction::POMODORO, StrId::STR_POMODORO});
+  }
   return items;
 }
 
@@ -254,6 +265,18 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       return I18N.get(orientationLabels[pendingOrientation]);
     case MenuAction::AUTO_PAGE_TURN:
       return pageTurnLabels[selectedPageTurnOption];
+    case MenuAction::POMODORO: {
+      // The row doubles as the session's readout, so the value column says what pressing
+      // it will do AND where the session is: "Start Session" when idle, the live
+      // countdown while running, the phase-done message when it needs acknowledging.
+      const auto& pomodoro = READER_POMODORO;
+      if (!pomodoro.isActive()) return I18N.get(StrId::STR_POMODORO_START_SESSION);
+      if (pomodoro.isFinished()) {
+        return I18N.get(pomodoro.currentPhase() == ReaderPomodoro::Phase::Focus ? StrId::STR_POMODORO_FOCUS_DONE
+                                                                                : StrId::STR_POMODORO_BREAK_DONE);
+      }
+      return formatPomodoroRemaining(pomodoro.remainingMs());
+    }
     default:
       return "";
   }
