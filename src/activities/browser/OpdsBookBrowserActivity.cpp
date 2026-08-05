@@ -743,6 +743,23 @@ static bool hasHeapForCoverWork() {
   return ESP.getFreeHeap() > COVER_MIN_FREE_HEAP && ESP.getMaxAllocHeap() > COVER_MIN_FREE_BLOCK;
 }
 
+// Crash report from 1.8.40-rc: confirming a collection tile aborted with a BLANK panic
+// reason -- no "abort() was called at PC X" the way a normal abort() gets, because this
+// wasn't one. Stack: OpdsBookBrowserActivity::loop() (Confirm) -> navigateToEntry() ->
+// UrlUtils::buildUrl() -> operator new. buildUrl() copies its input through plain
+// std::string construction, which allocates via the THROWING global operator new -- there
+// is no nothrow equivalent for ordinary std::string/std::vector growth the way
+// makeUniqueNoThrow covers explicit heap buffers. Under -fno-exceptions, that failed `new`
+// calls std::terminate() directly, which is why the report carries no message at all.
+// Free heap alone was 55,952 bytes at the time (noteHeap() samples once a loop tick) --
+// largest block was only 21,492, so fragmentation, not raw exhaustion, did it. Same
+// defense as hasHeapForCoverWork() above: refuse the risky path below this floor rather
+// than let a plain string copy take the device down.
+static bool hasHeapForNavigation() {
+  constexpr uint32_t NAV_MIN_FREE_HEAP = 32 * 1024;
+  return ESP.getFreeHeap() > NAV_MIN_FREE_HEAP;
+}
+
 void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const int pageStart) {
   const int pageEnd = std::min(pageStart + layout.itemsPerPage, layout.bookCount);
 
@@ -992,6 +1009,17 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
 }
 
 void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
+  // See hasHeapForNavigation() -- everything below here allocates ordinary std::strings
+  // (navigationHistory.push_back, both buildUrl() calls), which has no OOM-safe fallback
+  // the way explicit buffers do. Declining up front beats a silent abort mid-navigation.
+  if (!hasHeapForNavigation()) {
+    LOG_ERR("OPDS", "Navigation stopped early, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
+    state = BrowserState::ERROR;
+    errorMessage = tr(STR_MEMORY_ERROR);
+    requestUpdate();
+    return;
+  }
+
   navigationHistory.push_back(currentPath);
   // Resolve to a full URL so sub-sub-navigation retains parent path context
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
