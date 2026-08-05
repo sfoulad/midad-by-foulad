@@ -6,25 +6,31 @@
     <title>Midad - Fonts</title>
     <style>
       :root {
-        --font-color: #333;
-        --bg: #f5f5f5;
-        --title-color: #2c3e50;
+        --font-color: #171717;
+        --bg: #fafafa;
+        --title-color: #171717;
         --card-bg: #FFF;
-        --label-color: #7f8c8d;
-        --border-color: #eee;
-        --accent-color: rgb(110, 154, 130);
-        --accent-hover-color: #5a8c73;
+        --label-color: #737373;
+        --border-color: #e5e5e5;
+        --accent-color: #171717;
+        --accent-hover-color: #000000;
+        --accent-text-color: white;
         --danger-color: #e74c3c;
         --danger-hover: #c0392b;
       }
       @media (prefers-color-scheme: dark) {
         :root {
           --font-color: #f5f5f5;
-          --bg: #333;
-          --title-color: #ecf0f1;
-          --card-bg: #444;
-          --label-color: #bdc3c7;
-          --border-color: #555;
+          --bg: #171717;
+          --title-color: #ffffff;
+          --card-bg: #262626;
+          --label-color: #a3a3a3;
+          --border-color: #404040;
+          /* Accent is the brand's near-black in light mode -- invisible against a dark
+             background, so it inverts here too, mirroring the logo-mark filter below. */
+          --accent-color: #ffffff;
+          --accent-hover-color: #d4d4d4;
+          --accent-text-color: #171717;
           color-scheme: dark;
         }
         /* Mark is a solid black drop on a transparent background -- inverting it to
@@ -75,11 +81,11 @@
       }
       .nav-links a.active {
         background-color: var(--accent-color);
-        color: white;
+        color: var(--accent-text-color);
       }
       .nav-links a:not(.active):hover {
         background-color: var(--accent-hover-color);
-        color: white;
+        color: var(--accent-text-color);
       }
       .family {
         border-bottom: 1px solid var(--border-color);
@@ -105,7 +111,7 @@
       .btn-danger:hover { background: var(--danger-hover); }
       .btn-primary {
         background: var(--accent-color);
-        color: white;
+        color: var(--accent-text-color);
       }
       .btn-primary:hover { background: var(--accent-hover-color); }
       .upload-form {
