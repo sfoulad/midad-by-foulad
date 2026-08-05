@@ -246,7 +246,14 @@ void OpdsBookBrowserActivity::loop() {
 
   if (state == BrowserState::BROWSING) {
     const GridLayout layout = computeGridLayout();
-    const bool onBook = !entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK;
+    // Grid-vs-strip dispatch has to key off "is this a cell in the cover grid", not "is
+    // this a book" -- a collection tile is a NAVIGATION entry with cover art (isGridItem()
+    // says so too; see computeGridLayout()), and needs the same Left/Right/Up/Down grid
+    // movement a book cell gets. Checking type == BOOK here left every collection landing
+    // in the nav-strip branch below even though computeGridLayout() had already counted it
+    // as part of the grid, so Left/Right walked off the end of an empty "strip" and the
+    // selector vanished.
+    const bool onGridItem = !entries.empty() && isGridItem(entries[selectorIndex]);
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!entries.empty()) {
@@ -285,7 +292,7 @@ void OpdsBookBrowserActivity::loop() {
         selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, entries.size(), pageItems);
         requestUpdate();
       });
-    } else if (onBook) {
+    } else if (onGridItem) {
       // Inside the cover grid: Left/Right cycle through books; Up/Down move by
       // row, escaping to the nav strip above/below at the grid's true edges.
       // Any movement that would WRAP around the in-memory books instead pages
@@ -484,7 +491,13 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   }
 
   const GridLayout layout = computeGridLayout();
+  // Kept strictly type == BOOK: this only decides the confirm-button label (Download vs
+  // Open), which is correct for a book regardless of grid placement -- a collection tile
+  // is still something you navigate INTO, not download, even though it now shares the
+  // grid layout with books. See onGridItem below for the "is this cell in the grid"
+  // question that governs layout math instead.
   const bool onBook = !entries.empty() && entries[selectorIndex].type == OpdsEntryType::BOOK;
+  const bool onGridItem = !entries.empty() && isGridItem(entries[selectorIndex]);
 
   // "Open" is wrong on the search row -- nothing opens, a keyboard appears. The hint
   // names what the button does, the same rule the font browser's tab row follows.
@@ -492,11 +505,11 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   const char* confirmLabel = onSearchRow ? tr(STR_SEARCH) : (onBook ? tr(STR_DOWNLOAD) : tr(STR_OPEN));
   const char* leftLabel;
   const char* rightLabel;
-  // Grid-page book cells use genuinely horizontal Left/Right (mirror under RTL,
-  // like any other horizontal grid); the plain-list and nav-strip cases below use
-  // a vertical Up/Down pair instead (down is still down regardless of script
-  // direction -- see mapLabels' rtlSwap parameter).
-  const bool rtlSwapLabels = layout.isGridPage && onBook;
+  // Grid-page cells (books and collection tiles alike) use genuinely horizontal
+  // Left/Right (mirror under RTL, like any other horizontal grid); the plain-list and
+  // nav-strip cases below use a vertical Up/Down pair instead (down is still down
+  // regardless of script direction -- see mapLabels' rtlSwap parameter).
+  const bool rtlSwapLabels = layout.isGridPage && onGridItem;
   if (rtlSwapLabels) {
     leftLabel = tr(STR_DIR_LEFT);
     rightLabel = tr(STR_DIR_RIGHT);
@@ -550,7 +563,7 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     }
     const int gridTop = y + (layout.topNavCount > 0 ? 10 : 0);
 
-    const bool selectionInGrid = onBook;
+    const bool selectionInGrid = onGridItem;
     const int localSelector = selectionInGrid ? selectorIndex - layout.bookStart : 0;
     gridPageStart = (localSelector / layout.itemsPerPage) * layout.itemsPerPage;
     const int pageCount = std::min(layout.itemsPerPage, layout.bookCount - gridPageStart);
@@ -728,6 +741,23 @@ static bool hasHeapForCoverWork() {
   constexpr uint32_t COVER_MIN_FREE_HEAP = 32 * 1024;
   constexpr uint32_t COVER_MIN_FREE_BLOCK = 12 * 1024;
   return ESP.getFreeHeap() > COVER_MIN_FREE_HEAP && ESP.getMaxAllocHeap() > COVER_MIN_FREE_BLOCK;
+}
+
+// Crash report from 1.8.40-rc: confirming a collection tile aborted with a BLANK panic
+// reason -- no "abort() was called at PC X" the way a normal abort() gets, because this
+// wasn't one. Stack: OpdsBookBrowserActivity::loop() (Confirm) -> navigateToEntry() ->
+// UrlUtils::buildUrl() -> operator new. buildUrl() copies its input through plain
+// std::string construction, which allocates via the THROWING global operator new -- there
+// is no nothrow equivalent for ordinary std::string/std::vector growth the way
+// makeUniqueNoThrow covers explicit heap buffers. Under -fno-exceptions, that failed `new`
+// calls std::terminate() directly, which is why the report carries no message at all.
+// Free heap alone was 55,952 bytes at the time (noteHeap() samples once a loop tick) --
+// largest block was only 21,492, so fragmentation, not raw exhaustion, did it. Same
+// defense as hasHeapForCoverWork() above: refuse the risky path below this floor rather
+// than let a plain string copy take the device down.
+static bool hasHeapForNavigation() {
+  constexpr uint32_t NAV_MIN_FREE_HEAP = 32 * 1024;
+  return ESP.getFreeHeap() > NAV_MIN_FREE_HEAP;
 }
 
 void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const int pageStart) {
@@ -979,6 +1009,17 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
 }
 
 void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
+  // See hasHeapForNavigation() -- everything below here allocates ordinary std::strings
+  // (navigationHistory.push_back, both buildUrl() calls), which has no OOM-safe fallback
+  // the way explicit buffers do. Declining up front beats a silent abort mid-navigation.
+  if (!hasHeapForNavigation()) {
+    LOG_ERR("OPDS", "Navigation stopped early, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
+    state = BrowserState::ERROR;
+    errorMessage = tr(STR_MEMORY_ERROR);
+    requestUpdate();
+    return;
+  }
+
   navigationHistory.push_back(currentPath);
   // Resolve to a full URL so sub-sub-navigation retains parent path context
   const std::string feedUrl = UrlUtils::buildUrl(server.url, currentPath);
