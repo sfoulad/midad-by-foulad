@@ -445,21 +445,48 @@ static std::string latestFirmwareOffer;
 // equal-numbered release lands -- exactly the case OtaUpdater's -rc rule exists for
 // (a device on 1.8.19-rc takes 1.8.19, since the rc tag is by then identical to what
 // it is already running).
+// Every outcome below is recorded to the SD debug log, not just the one that produces an
+// offer. From outside the device "the server named nothing" and "the server named a build
+// that is not newer than this one" are the same observation -- no popup -- but they are
+// completely different problems, and telling them apart is otherwise impossible after the
+// fact: the LOG_INF here reaches serial only, which nobody has attached while actually
+// using the device. A report that the Library update check "stopped working" is
+// unanswerable without this line.
 static void captureLatestFirmware(JsonVariantConst latest) {
   latestFirmwareOffer.clear();
-  if (latest.isNull()) return;  // older server, or GitHub was unreachable for it
 
-  const auto newerOrNull = [](JsonVariantConst v) -> const char* {
-    const char* tag = v.is<const char*>() ? v.as<const char*>() : nullptr;
+  const auto tagOf = [](JsonVariantConst v) -> const char* {
+    return v.is<const char*>() ? v.as<const char*>() : nullptr;
+  };
+  const auto orNone = [](const char* s) { return s ? s : "(none)"; };
+
+  if (latest.isNull()) {
+    // Older server, or a current one that could not reach GitHub. Absent means "no
+    // information", never "up to date".
+    diagLog(std::string("firmware check: server sent no latest_firmware (running ") + CROSSPOINT_VERSION + ")");
+    return;
+  }
+
+  const char* rcTag = tagOf(latest["rc"]);
+  const char* stableTag = tagOf(latest["stable"]);
+
+  const auto newerOrNull = [&tagOf](JsonVariantConst v) -> const char* {
+    const char* tag = tagOf(v);
     return OtaUpdater::isVersionNewer(tag) ? tag : nullptr;
   };
 
   const char* offer = nullptr;
   if (strstr(CROSSPOINT_VERSION, "-rc") != nullptr) offer = newerOrNull(latest["rc"]);
   if (offer == nullptr) offer = newerOrNull(latest["stable"]);
-  if (offer == nullptr) return;
+  if (offer == nullptr) {
+    diagLog(std::string("firmware check: rc=") + orNone(rcTag) + " stable=" + orNone(stableTag) +
+            " -- none newer than " + CROSSPOINT_VERSION);
+    return;
+  }
 
   latestFirmwareOffer = offer;
+  diagLog(std::string("firmware check: offering ") + offer + " (rc=" + orNone(rcTag) + " stable=" + orNone(stableTag) +
+          ", running " + CROSSPOINT_VERSION + ")");
   LOG_INF(TAG, "Server reports newer firmware: %s (running %s)", offer, CROSSPOINT_VERSION);
 }
 
