@@ -5,6 +5,7 @@
 #include <XmlParserUtils.h>
 
 #include <cstring>
+#include <utility>
 
 OpdsParser::OpdsParser() {
   parser = XML_ParserCreate(nullptr);
@@ -233,7 +234,24 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
   if (strcmp(name, "entry") == 0 || strstr(name, ":entry") != nullptr) {
     if (!self->currentEntry.title.empty() && !self->currentEntry.href.empty()) {
       if (self->entries.size() < MAX_ENTRIES) {
-        self->entries.push_back(self->currentEntry);
+        // MOVED, not copied. Copying an OpdsEntry copy-constructs all seven of its
+        // std::string members, and every one of those that exceeds the small-string
+        // buffer calls the THROWING operator new -- which, with -fno-exceptions, aborts
+        // the device instead of failing. Three real crash reports (1.8.40, 1.8.41, 1.8.44)
+        // symbolicate to exactly this line, every one landing in
+        // construct_at<OpdsEntry, OpdsEntry CONST&> -> operator new -> bad_alloc ->
+        // std::terminate, on a heap the HTTP session had already taken down to ~30KB.
+        //
+        // Moving transfers the buffers the parser has already allocated instead of
+        // duplicating them, so an entry costs zero allocations to store and the peak
+        // never holds two copies of the same strings at once. That removes the failing
+        // call rather than trying to predict whether it would succeed -- which is what
+        // the reserve() heap floor below attempts, and why that alone did not fix this:
+        // it only guards the vector's own block, never the per-string copies.
+        //
+        // Safe because currentEntry is dead after this: the branch sets inEntry = false
+        // immediately below, and the next <entry> start assigns it a fresh OpdsEntry{}.
+        self->entries.push_back(std::move(self->currentEntry));
       } else {
         if (!self->truncated) {
           LOG_ERR("OPDS", "Feed has more than %u entries; truncating (server should paginate)",
