@@ -144,6 +144,25 @@ class OpdsBookBrowserActivity final : public Activity {
   GridLayout computeGridLayout() const;
   void loadGridPageCovers(const GridLayout& layout, int pageStart);
 
+  // Cell geometry, shared by the full render and the selector fast path so the two can
+  // never disagree about where a cell sits.
+  int gridStartXFor(const GridLayout& layout) const;
+  int gridTopFor(const GridLayout& layout) const;
+  // Draws one cell (cover/fallback, selection frame, title). `slot` is the cell's position
+  // on the page, 0-based. `eraseFirst` clears the cell's footprint before drawing, which
+  // the fast path needs because it paints over a live frame instead of a cleared one.
+  void drawGridCell(const GridLayout& layout, int pageStart, int slot, bool eraseFirst) const;
+
+  // Selector fast path (see render()). A full repaint re-reads and re-decodes every cover
+  // on the page from the SD card, which is what made moving the selector feel slow, so a
+  // pure selection move within an already-drawn page redraws only the two cells whose
+  // frame changed. These track what the framebuffer currently holds; FB_GRID_NONE means
+  // it holds something the fast path must not touch up.
+  static constexpr int FB_GRID_NONE = -1;
+  int fbGridPageStart = FB_GRID_NONE;
+  int fbSelectorIndex = -1;
+  bool canFastRepaintSelector() const;
+
   // Row height (pitch) in pixels for plain text-list rows (category/navigation entries, both
   // the pure-list page and the nav strips above/below a book grid). Kept tight/Latin-sized
   // unconditionally so row-to-row spacing looks identical for English and Arabic pages -- see
