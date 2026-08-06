@@ -439,12 +439,19 @@ static std::string latestFirmwareOffer;
 // Picks this device's channel out of {"stable", "rc"} and keeps the tag only if it
 // beats the running build.
 //
-// A stable device is never offered an -rc: it opted out of pre-releases by running a
-// release, and a popup is not the place to change that. An RC device prefers the rc
-// tag and falls back to stable, which is what carries it off a pre-release once the
-// equal-numbered release lands -- exactly the case OtaUpdater's -rc rule exists for
-// (a device on 1.8.19-rc takes 1.8.19, since the rc tag is by then identical to what
-// it is already running).
+// Channel comes from Settings -> System -> Pre-release (otaPrereleaseEnabled), which is
+// what "Check for Update" has always obeyed (OtaUpdater::checkForUpdate). This path used
+// to ignore that toggle and infer the channel from whether the RUNNING build had "-rc" in
+// its version instead, on the reasoning that a device running a release had opted out of
+// pre-releases by doing so. That was wrong once an explicit opt-in existed: someone on a
+// stable build who ticks Pre-release got RC offers from Check for Update and never from
+// Library, so the toggle silently did nothing here -- reported as the Library check being
+// broken.
+//
+// A device already running an -rc still gets rc offers whatever the toggle says: it is on
+// that channel already, and the alternative is stranding it there with no route forward.
+// Either way the stable tag remains the fallback, which is what carries an RC device off a
+// pre-release once the equal-numbered release lands.
 // Every outcome below is recorded to the SD debug log, not just the one that produces an
 // offer. From outside the device "the server named nothing" and "the server named a build
 // that is not newer than this one" are the same observation -- no popup -- but they are
@@ -475,18 +482,23 @@ static void captureLatestFirmware(JsonVariantConst latest) {
     return OtaUpdater::isVersionNewer(tag) ? tag : nullptr;
   };
 
+  const bool wantsPrerelease = SETTINGS.otaPrereleaseEnabled != 0 || strstr(CROSSPOINT_VERSION, "-rc") != nullptr;
+
   const char* offer = nullptr;
-  if (strstr(CROSSPOINT_VERSION, "-rc") != nullptr) offer = newerOrNull(latest["rc"]);
+  if (wantsPrerelease) offer = newerOrNull(latest["rc"]);
   if (offer == nullptr) offer = newerOrNull(latest["stable"]);
   if (offer == nullptr) {
+    // The channel is logged too: "rc names a newer build but this device is on the stable
+    // channel" and "rc names nothing" both end here, and only the toggle's state separates
+    // them.
     diagLog(std::string("firmware check: rc=") + orNone(rcTag) + " stable=" + orNone(stableTag) +
-            " -- none newer than " + CROSSPOINT_VERSION);
+            " channel=" + (wantsPrerelease ? "pre" : "stable") + " -- none newer than " + CROSSPOINT_VERSION);
     return;
   }
 
   latestFirmwareOffer = offer;
   diagLog(std::string("firmware check: offering ") + offer + " (rc=" + orNone(rcTag) + " stable=" + orNone(stableTag) +
-          ", running " + CROSSPOINT_VERSION + ")");
+          " channel=" + (wantsPrerelease ? "pre" : "stable") + ", running " + CROSSPOINT_VERSION + ")");
   LOG_INF(TAG, "Server reports newer firmware: %s (running %s)", offer, CROSSPOINT_VERSION);
 }
 
