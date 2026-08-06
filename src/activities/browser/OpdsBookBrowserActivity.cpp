@@ -422,6 +422,25 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     return;
   }
 
+  // Selector fast path. Moving the selection one cell changes two frames' worth of pixels,
+  // but a full repaint re-opens and re-decodes EVERY cover on the page from the SD card
+  // (see drawGridCell) -- on a page of covers that re-read is essentially the entire cost
+  // of a keypress, and it is what makes the selector feel slow. When the framebuffer
+  // already holds this exact grid page and only the selection moved, redraw just the two
+  // cells whose frame changed and leave the rest of the frame standing.
+  if (canFastRepaintSelector()) {
+    const GridLayout layout = computeGridLayout();
+    drawGridCell(layout, fbGridPageStart, fbSelectorIndex - layout.bookStart - fbGridPageStart, /*eraseFirst=*/true);
+    drawGridCell(layout, fbGridPageStart, selectorIndex - layout.bookStart - fbGridPageStart, /*eraseFirst=*/true);
+    renderer.displayBuffer();
+    fbSelectorIndex = selectorIndex;
+    return;
+  }
+  // Anything that is not a full grid render leaves the framebuffer in a state the fast
+  // path must not touch up. Invalidated here and re-armed only at the end of a grid
+  // render, so every other path (list, error, loading, popups) is covered by default.
+  fbGridPageStart = FB_GRID_NONE;
+
   renderer.clearScreen();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -549,7 +568,6 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
     // Nav strip above the grid (e.g. a "Prev Page" entry). Same tight row height as the
     // plain list above.
     const int rowHeight = getListRowHeight();
-    const int titleHeight = getGridTitleHeight();
     int y = GRID_CONTENT_TOP;
     for (int i = 0; i < layout.topNavCount; i++) {
       const auto& entry = entries[i];
@@ -561,73 +579,17 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       renderer.drawTextInWidth(UI_10_FONT_ID, 20, y, pageWidth - 40, item.c_str(), i != selectorIndex);
       y += rowHeight;
     }
-    const int gridTop = y + (layout.topNavCount > 0 ? 10 : 0);
+    const int gridTop = gridTopFor(layout);
 
     const bool selectionInGrid = onGridItem;
     const int localSelector = selectionInGrid ? selectorIndex - layout.bookStart : 0;
     gridPageStart = (localSelector / layout.itemsPerPage) * layout.itemsPerPage;
     const int pageCount = std::min(layout.itemsPerPage, layout.bookCount - gridPageStart);
-    const int totalGridWidth = layout.columns * (layout.coverWidth + GRID_GUTTER) - GRID_GUTTER;
-    const int gridStartX = std::max(0, (pageWidth - totalGridWidth) / 2);
 
     for (int i = 0; i < pageCount; i++) {
-      const int bookIdx = layout.bookStart + gridPageStart + i;
-      const auto& entry = entries[bookIdx];
-      const int col = i % layout.columns;
-      const int row = i / layout.columns;
-      const int cellX = gridStartX + col * (layout.coverWidth + GRID_GUTTER);
-      const int cellY = gridTop + row * (layout.coverHeight + titleHeight + GRID_GUTTER);
-
-      bool drawn = false;
-      if (!entry.coverUrl.empty()) {
-        const std::string coverPath = getOpdsCoverCachePath(entry.id, layout.coverWidth, layout.coverHeight);
-        if (Storage.exists(coverPath.c_str())) {
-          HalFile file;
-          if (Storage.openFileForRead("OPDS", coverPath, file)) {
-            Bitmap bitmap(file);
-            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-              // The cache file may be smaller than the cell (OpdsCoverCache never upscales a
-              // source cover below the target size) -- center it instead of pinning to the
-              // top-left corner. drawBitmap only ever scales down, never up, so this stays a
-              // no-op for the common case where the cache file already matches the cell.
-              const int offsetX = std::max(0, (layout.coverWidth - bitmap.getWidth()) / 2);
-              const int offsetY = std::max(0, (layout.coverHeight - bitmap.getHeight()) / 2);
-              renderer.drawBitmap(bitmap, cellX + offsetX, cellY + offsetY, layout.coverWidth, layout.coverHeight);
-              drawn = true;
-            }
-          }
-        }
-      }
-      renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
-      if (!drawn && (server.url == FOULAD_EBOOKS_NEWS_URL || entry.type == OpdsEntryType::NAVIGATION)) {
-        // News entries carry no cover art -- there is no image link in the feed, so
-        // nothing failed to download and nothing is going to appear later. The generic
-        // book icon reads as a book that did not load; the feed's own name on a
-        // designed tile reads as the thing it is, which is what the app tiles already
-        // do for the same reason.
-        drawTileCover(renderer, cellX, cellY, layout.coverWidth, layout.coverHeight, entry.title.c_str());
-      } else if (!drawn) {
-        renderer.drawIcon(BookIcon, cellX + (layout.coverWidth - 32) / 2, cellY + (layout.coverHeight - 32) / 2, 32);
-      }
-      if (bookIdx == selectorIndex) {
-        // A 1px outline was hard to spot at a glance on e-ink, especially across a
-        // multi-column grid where the eye has to search for it -- a thick (4px) border
-        // reads as a deliberate, high-contrast selection frame instead.
-        renderer.drawRect(cellX - 4, cellY - 4, layout.coverWidth + 8, layout.coverHeight + 8, 4, true);
-      }
-
-      const auto titleLines =
-          renderer.wrappedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth, GRID_TITLE_LINES);
-      // Was previously widened per-title for an Arabic title (using the taller Arabic line
-      // height between its two lines). Explicit user feedback preferred the gap between
-      // lines matching the Latin/English spacing exactly over the extra clipping headroom
-      // -- always uses the tight Latin height now; revisit if Arabic titles start clipping.
-      const int titleLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-      int titleY = cellY + layout.coverHeight + GRID_TITLE_TOP_GAP;
-      for (const auto& line : titleLines) {
-        renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, layout.coverWidth, line.c_str());
-        titleY += titleLineHeight;
-      }
+      // Screen was just cleared, so no per-cell erase is needed here -- only the
+      // selector fast path (which draws over a live frame) asks for one.
+      drawGridCell(layout, gridPageStart, i, /*eraseFirst=*/false);
     }
 
     // Nav strip below the grid (e.g. a "Next Page" entry). Same tight row height.
@@ -648,8 +610,131 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   }
   renderer.displayBuffer();
 
+  // Arm the selector fast path: the framebuffer now holds this grid page in full, so the
+  // next pure selection move can touch up two cells instead of repainting all of them.
+  // Only for a grid page -- the list/error paths left it invalidated above.
+  if (layout.isGridPage && !entries.empty()) {
+    fbGridPageStart = gridPageStart;
+    fbSelectorIndex = selectorIndex;
+  }
+
   if (layout.isGridPage && !entries.empty() && loadedGridPageStart != gridPageStart) {
     loadGridPageCovers(layout, gridPageStart);
+  }
+}
+
+// Every condition that has to hold before render() may touch up the standing frame instead
+// of redrawing it. Deliberately strict: the cost of being wrong is a visibly corrupt screen,
+// while the cost of a false negative is one ordinary full repaint.
+bool OpdsBookBrowserActivity::canFastRepaintSelector() const {
+  if (state != BrowserState::BROWSING) return false;
+  // No frame we put there, or nothing actually moved.
+  if (fbGridPageStart == FB_GRID_NONE || fbSelectorIndex == selectorIndex) return false;
+  if (entries.empty()) return false;
+  if (selectorIndex < 0 || selectorIndex >= static_cast<int>(entries.size())) return false;
+  if (fbSelectorIndex < 0 || fbSelectorIndex >= static_cast<int>(entries.size())) return false;
+  // Covers for this page must already be on screen. While they are still downloading,
+  // loadGridPageCovers() is going to request a full render anyway, and touching up a page
+  // that is about to gain artwork would show a frame around a placeholder.
+  if (loadedGridPageStart != fbGridPageStart) return false;
+
+  const GridLayout layout = computeGridLayout();
+  if (!layout.isGridPage || layout.itemsPerPage <= 0) return false;
+  // Both ends of the move must be cells (not nav-strip rows) on the page already drawn --
+  // a move onto a strip row, or onto another grid page, changes more than two cells.
+  if (!isGridItem(entries[selectorIndex]) || !isGridItem(entries[fbSelectorIndex])) return false;
+  const int newLocal = selectorIndex - layout.bookStart;
+  const int oldLocal = fbSelectorIndex - layout.bookStart;
+  if (newLocal < 0 || oldLocal < 0) return false;
+  return (newLocal / layout.itemsPerPage) * layout.itemsPerPage == fbGridPageStart &&
+         (oldLocal / layout.itemsPerPage) * layout.itemsPerPage == fbGridPageStart;
+}
+
+int OpdsBookBrowserActivity::gridStartXFor(const GridLayout& layout) const {
+  const int totalGridWidth = layout.columns * (layout.coverWidth + GRID_GUTTER) - GRID_GUTTER;
+  return std::max(0, (renderer.getScreenWidth() - totalGridWidth) / 2);
+}
+
+int OpdsBookBrowserActivity::gridTopFor(const GridLayout& layout) const {
+  // Mirrors where render()'s nav-strip loop leaves its cursor: one row height per strip
+  // entry from the content top, plus a gap when the strip is non-empty.
+  return GRID_CONTENT_TOP + layout.topNavCount * getListRowHeight() + (layout.topNavCount > 0 ? 10 : 0);
+}
+
+// One grid cell: cover art (or its fallback), the selection frame, and the wrapped title.
+// Extracted so the full-page render and the selector fast path draw a cell through exactly
+// the same code -- two copies of this would drift, and a cell that renders differently
+// depending on which path touched it is the kind of bug that only shows up on device.
+void OpdsBookBrowserActivity::drawGridCell(const GridLayout& layout, const int pageStart, const int slot,
+                                           const bool eraseFirst) const {
+  const int bookIdx = layout.bookStart + pageStart + slot;
+  if (bookIdx < 0 || bookIdx >= static_cast<int>(entries.size())) return;
+  const auto& entry = entries[bookIdx];
+
+  const int titleHeight = getGridTitleHeight();
+  const int col = slot % layout.columns;
+  const int row = slot / layout.columns;
+  const int cellX = gridStartXFor(layout) + col * (layout.coverWidth + GRID_GUTTER);
+  const int cellY = gridTopFor(layout) + row * (layout.coverHeight + titleHeight + GRID_GUTTER);
+
+  if (eraseFirst) {
+    // Clear the cell's whole footprint, selection frame included, before redrawing over a
+    // live frame. Bounded to stay inside the gutter: the frame reaches 4px out of a 12px
+    // gap, so this stops 4px short of a neighbour's frame on either axis and 4px short of
+    // the next row's.
+    renderer.fillRect(cellX - 4, cellY - 4, layout.coverWidth + 8, layout.coverHeight + 8 + titleHeight, false);
+  }
+
+  bool drawn = false;
+  if (!entry.coverUrl.empty()) {
+    const std::string coverPath = getOpdsCoverCachePath(entry.id, layout.coverWidth, layout.coverHeight);
+    // No exists() probe before opening: on FAT each path lookup is a linear scan of a
+    // directory that accumulates one file per cover ever fetched, and openFileForRead
+    // already fails cleanly when the file is missing. Probing first paid for that scan
+    // twice per cover per render.
+    HalFile file;
+    if (Storage.openFileForRead("OPDS", coverPath, file)) {
+      Bitmap bitmap(file);
+      if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+        // The cache file may be smaller than the cell (OpdsCoverCache never upscales a
+        // source cover below the target size) -- center it instead of pinning to the
+        // top-left corner. drawBitmap only ever scales down, never up, so this stays a
+        // no-op for the common case where the cache file already matches the cell.
+        const int offsetX = std::max(0, (layout.coverWidth - bitmap.getWidth()) / 2);
+        const int offsetY = std::max(0, (layout.coverHeight - bitmap.getHeight()) / 2);
+        renderer.drawBitmap(bitmap, cellX + offsetX, cellY + offsetY, layout.coverWidth, layout.coverHeight);
+        drawn = true;
+      }
+    }
+  }
+  renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
+  if (!drawn && (server.url == FOULAD_EBOOKS_NEWS_URL || entry.type == OpdsEntryType::NAVIGATION)) {
+    // News entries carry no cover art -- there is no image link in the feed, so
+    // nothing failed to download and nothing is going to appear later. The generic
+    // book icon reads as a book that did not load; the feed's own name on a
+    // designed tile reads as the thing it is, which is what the app tiles already
+    // do for the same reason.
+    drawTileCover(renderer, cellX, cellY, layout.coverWidth, layout.coverHeight, entry.title.c_str());
+  } else if (!drawn) {
+    renderer.drawIcon(BookIcon, cellX + (layout.coverWidth - 32) / 2, cellY + (layout.coverHeight - 32) / 2, 32);
+  }
+  if (bookIdx == selectorIndex) {
+    // A 1px outline was hard to spot at a glance on e-ink, especially across a
+    // multi-column grid where the eye has to search for it -- a thick (4px) border
+    // reads as a deliberate, high-contrast selection frame instead.
+    renderer.drawRect(cellX - 4, cellY - 4, layout.coverWidth + 8, layout.coverHeight + 8, 4, true);
+  }
+
+  const auto titleLines = renderer.wrappedText(SMALL_FONT_ID, entry.title.c_str(), layout.coverWidth, GRID_TITLE_LINES);
+  // Was previously widened per-title for an Arabic title (using the taller Arabic line
+  // height between its two lines). Explicit user feedback preferred the gap between
+  // lines matching the Latin/English spacing exactly over the extra clipping headroom
+  // -- always uses the tight Latin height now; revisit if Arabic titles start clipping.
+  const int titleLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
+  int titleY = cellY + layout.coverHeight + GRID_TITLE_TOP_GAP;
+  for (const auto& line : titleLines) {
+    renderer.drawTextInWidth(SMALL_FONT_ID, cellX, titleY, layout.coverWidth, line.c_str());
+    titleY += titleLineHeight;
   }
 }
 
