@@ -28,7 +28,8 @@ enum class HomeMenuItem {
   FILE_TRANSFER,
   SETTINGS_MENU,
   CHECK_UPDATE,
-  STATS
+  STATS,
+  APPS
 };
 
 /**
@@ -131,6 +132,7 @@ class ActivityManager {
   void goToSettings();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
+  void goToApps();
   void goToBrowser();
   void goToFouladEbooks();
   // Apps -> News: the OPDS browser rooted at the account's feed subscriptions.

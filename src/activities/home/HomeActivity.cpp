@@ -303,8 +303,8 @@ void HomeActivity::loop() {
         case HomeMenuItem::SETTINGS_MENU:
           onSettingsOpen();
           break;
-        case HomeMenuItem::FILE_BROWSER:
-          activityManager.goToFileBrowser("/");
+        case HomeMenuItem::APPS:
+          activityManager.goToApps();
           break;
         case HomeMenuItem::STATS:
           onStatsOpen();
@@ -350,8 +350,12 @@ void HomeActivity::render(RenderLock&&) {
   // undiscoverable to exactly the people who had not signed in yet. Signed out,
   // eBooks now opens the QR sign-in (see loop()). Update keeps its permanent home
   // under Settings > System, where it already lived for signed-in devices.
-  std::vector<const char*> menuItems = {tr(STR_EBOOKS), tr(STR_STATS), tr(STR_FILES), tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Library, Stats, Folder, Settings};
+  // Files gave up this slot to Apps and is now the first tile inside it. The apps
+  // themselves were the reason: every one of them was off by default and, once
+  // enabled, appeared inside My Books, so nobody could find them. Files is reached
+  // constantly but is one press deeper rather than invisible, which is the trade.
+  std::vector<const char*> menuItems = {tr(STR_EBOOKS), tr(STR_STATS), tr(STR_CAT_APPS), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Library, Stats, Apps, Settings};
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme

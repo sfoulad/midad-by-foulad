@@ -14,6 +14,7 @@
 #include "CrossPointSettings.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
+#include "components/icons/apps.h"
 #include "components/icons/cover.h"
 #include "components/icons/folder.h"
 #include "components/icons/library.h"
@@ -67,6 +68,8 @@ const uint8_t* menuIconBitmap(const UIIcon icon) {
       return RecentIcon;
     case UIIcon::Stats:
       return StatsIcon;
+    case UIIcon::Apps:
+      return AppsIcon;
     case UIIcon::Transfer:
       return TransferIcon;
     case UIIcon::Settings:

@@ -13,6 +13,7 @@
 
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
+#include "components/icons/apps.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/bookmark.h"
@@ -83,6 +84,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return BookmarkIcon;
       case UIIcon::Stats:
         return StatsIcon;
+      case UIIcon::Apps:
+        return AppsIcon;
       default:
         return nullptr;
     }

@@ -317,7 +317,9 @@ class CrossPointSettings {
   // default and, like the other app toggles, mirrored from the server so the
   // Midad app can turn it on -- a missing key means false, never "on" (a server
   // that has not shipped News yet is not opting anyone in).
-  uint8_t rssEnabled = 0;
+  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
+  // they no longer clutter My Books, which is the only reason they were opt-in.
+  uint8_t rssEnabled = 1;
 
   // Settings -> System -> Games: pins a synthetic "Games" tile in My Books
   // (see GAMES_PSEUDO_PATH in RecentBooksActivity.cpp) that opens a picker for
@@ -329,13 +331,17 @@ class CrossPointSettings {
   // (see TASBIH_PSEUDO_PATH in RecentBooksActivity.cpp), between Quran and
   // Games, that opens the built-in dhikr counter (TasbihActivity). No SD
   // extraction needed, same as Games.
-  uint8_t tasbihEnabled = 0;
+  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
+  // they no longer clutter My Books, which is the only reason they were opt-in.
+  uint8_t tasbihEnabled = 1;
 
   // Settings -> Apps -> Stop Watch: pins a synthetic "Stop Watch" tile in My
   // Books (see STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp), between
   // Tasbih and Games, that opens the built-in stopwatch (StopwatchActivity).
   // No SD extraction or persisted state, same as Games.
-  uint8_t stopwatchEnabled = 0;
+  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
+  // they no longer clutter My Books, which is the only reason they were opt-in.
+  uint8_t stopwatchEnabled = 1;
 
   // Settings -> Apps -> Pomodoro: pins a synthetic "Pomodoro" tile in My Books
   // (see POMODORO_PSEUDO_PATH in RecentBooksActivity.cpp) that opens
@@ -344,7 +350,9 @@ class CrossPointSettings {
   //
   // Off by default, like every app tile except Games -- a fresh device shows only
   // Games in My Books, and anything else is opt-in from Settings -> Apps.
-  uint8_t pomodoroEnabled = 0;
+  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
+  // they no longer clutter My Books, which is the only reason they were opt-in.
+  uint8_t pomodoroEnabled = 1;
 
   // Phase lengths in minutes. Read live at each phase change rather than cached
   // when the app opens, so an edit mid-cycle applies at the next phase instead
@@ -364,7 +372,9 @@ class CrossPointSettings {
   // Watch, this DOES need SD data (the downloaded exercise catalog) -- the
   // tile itself works with zero downloaded data (shows an empty plan), so no
   // extraction gate is needed here, only inside the exercise browser.
-  uint8_t gymEnabled = 0;
+  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
+  // they no longer clutter My Books, which is the only reason they were opt-in.
+  uint8_t gymEnabled = 1;
   // Display unit for logged weights: 0 = kg, 1 = lb. Weight is always stored
   // internally in kg (GymLogStore) regardless of this setting, so toggling it
   // never rewrites persisted data, only how it's displayed.

@@ -45,7 +45,7 @@ class HomeActivity final : public Activity {
     ++i;
     if (item == HomeMenuItem::STATS) return i;
     ++i;
-    if (item == HomeMenuItem::FILE_BROWSER) return i;
+    if (item == HomeMenuItem::APPS) return i;
     ++i;
     if (item == HomeMenuItem::SETTINGS_MENU) return i;
     return 0;
@@ -56,7 +56,7 @@ class HomeActivity final : public Activity {
     int i = 0;
     if (idx == i++) return HomeMenuItem::FOULAD_EBOOKS;
     if (idx == i++) return HomeMenuItem::STATS;
-    if (idx == i++) return HomeMenuItem::FILE_BROWSER;
+    if (idx == i++) return HomeMenuItem::APPS;
     if (idx == i) return HomeMenuItem::SETTINGS_MENU;
     return HomeMenuItem::NONE;
   }
