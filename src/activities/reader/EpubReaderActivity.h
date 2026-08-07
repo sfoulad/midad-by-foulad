@@ -17,6 +17,13 @@ class EpubReaderActivity final : public Activity {
   std::unique_ptr<Section> section = nullptr;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
+  // Absolute page to land on when the NEXT section loads (uint16 max = last page).
+  // Armed by backward-across-boundary turns and the end-of-book "last page" paths;
+  // consumed exactly once at section load. INVARIANT: every other navigation that
+  // resets `section` (forward turns, chapter select, jumps, href/footnote moves) must
+  // clear this, or a stale arm left by a failed/preempted load overrides that
+  // navigation's own landing page -- real-device report: finishing a chapter and
+  // turning forward landed on the LAST page of the next chapter.
   std::optional<uint16_t> pendingPageJump;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).
   // Cleared on the next render after the new section loads and resolves it to a page.

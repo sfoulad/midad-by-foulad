@@ -42,7 +42,12 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
       {AppId::Quran, StrId::STR_QURAN, &CrossPointSettings::quranEnabled},
       {AppId::Games, StrId::STR_GAMES, &CrossPointSettings::gamesEnabled},
       {AppId::Tasbih, StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled},
-      {AppId::News, StrId::STR_NEWS, &CrossPointSettings::rssEnabled},
+      // News is deliberately absent: the server removed /opds/news (foulad-ebooks
+      // PR #113, live 2026-08-05) after News-as-EPUB kept producing on-device parse
+      // crashes -- News is an app-only feature now (the phone app renders native
+      // article cards). A tile here would only ever reach a permanent 404. The
+      // launch plumbing (AppId::News, goToNews) stays for a possible future
+      // device-facing endpoint, but nothing routes to it.
       {AppId::Stopwatch, StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled},
       {AppId::Pomodoro, StrId::STR_POMODORO, &CrossPointSettings::pomodoroEnabled},
       {AppId::Gym, StrId::STR_GYM, &CrossPointSettings::gymEnabled},
