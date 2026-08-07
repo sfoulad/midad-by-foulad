@@ -341,12 +341,17 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
     effectiveNoSpaceBefore = true;
   }
 
+  // words is a deque (see ParsedText.h) precisely so it never needs this kind of
+  // pre-reservation -- it grows in fixed-size chunks with no large reallocation
+  // event to avoid. Only the small parallel vectors (bools/enum, a few bytes per
+  // token even at thousands of tokens) still benefit from CLAUDE.md's reserve-
+  // before-push_back rule, so wordStyles stands in for "words.capacity()" below.
   const auto ensureTokenCapacity = [&](const size_t additionalTokens) {
     if (additionalTokens == 0) return;
     const size_t requiredSize = words.size() + additionalTokens;
-    if (words.capacity() >= requiredSize) return;
+    if (wordStyles.capacity() >= requiredSize) return;
 
-    size_t newCapacity = words.capacity();
+    size_t newCapacity = wordStyles.capacity();
     if (newCapacity < 16) {
       newCapacity = 16;
     }
@@ -354,7 +359,6 @@ void ParsedText::addWord(std::string word, const EpdFontFamily::Style fontStyle,
       newCapacity *= 2;
     }
 
-    words.reserve(newCapacity);
     wordStyles.reserve(newCapacity);
     wordContinues.reserve(newCapacity);
     wordNoSpaceBefore.reserve(newCapacity);
