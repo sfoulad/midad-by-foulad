@@ -17,13 +17,7 @@
 #include "MappedInputManager.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
-#include "SilentRestart.h"
-#include "activities/apps/GymActivity.h"
-#include "activities/apps/StopwatchActivity.h"
-#include "activities/apps/TasbihActivity.h"
-#include "activities/games/GamesMenuActivity.h"
 #include "activities/util/ConfirmationActivity.h"
-#include "components/TileCover.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "fontIds.h"
@@ -34,28 +28,6 @@
 #include "util/RollingSdLog.h"
 
 namespace {
-// Sentinel "path" for the synthetic Games tile (see SETTINGS.gamesEnabled) --
-// never a real SD file, so it's always skipped by every coverBmpPath-driven
-// EPUB/XTC load path below (empty cover, no matching extension). Tapping it
-// is special-cased in loop() to open GamesMenuActivity instead of the reader.
-constexpr const char* GAMES_PSEUDO_PATH = "/Games";
-// Same idea for the Tasbih tile (see SETTINGS.tasbihEnabled) -- opens
-// TasbihActivity instead of the reader.
-constexpr const char* TASBIH_PSEUDO_PATH = "/Tasbih";
-// Sentinel "path" for the synthetic News tile (see SETTINGS.rssEnabled) -- browses
-// the account's feed subscriptions rather than opening anything on SD.
-constexpr const char* NEWS_PSEUDO_PATH = "/News";
-// Same idea for the Stop Watch tile (see SETTINGS.stopwatchEnabled) -- opens
-// StopwatchActivity instead of the reader.
-constexpr const char* STOPWATCH_PSEUDO_PATH = "/StopWatch";
-// Pomodoro opens the SAME activity as Stop Watch, with its Pomodoro mode
-// preselected -- a separate tile purely for discoverability. Behind a Confirm
-// press inside something labelled "Stop Watch", nobody finds it; a user who
-// wants a Pomodoro timer looks for the word Pomodoro.
-constexpr const char* POMODORO_PSEUDO_PATH = "/Pomodoro";
-// Same idea for the Gym tile (see SETTINGS.gymEnabled) -- opens GymActivity
-// instead of the reader.
-constexpr const char* GYM_PSEUDO_PATH = "/Gym";
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
 
@@ -173,92 +145,15 @@ void RecentBooksActivity::loadRecentBooks() {
   recentBooks.insert(recentBooks.end(), std::make_move_iterator(discovered.begin()),
                      std::make_move_iterator(discovered.end()));
 
-  // Pinned Games: synthetic tile (GAMES_PSEUDO_PATH is never a real SD file)
-  // shown right after Quran when enabled in Settings -> System -- opens
-  // GamesMenuActivity instead of the reader (see loop()'s special-case).
-  // Inserted at the front BEFORE the Quran block below, so Quran's own
-  // unconditional front-insert naturally pushes Games to the second slot.
-  if (SETTINGS.gamesEnabled) {
-    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
-                                     [](const RecentBook& b) { return b.path == GAMES_PSEUDO_PATH; }),
-                      recentBooks.end());
-    RecentBook games;
-    games.path = GAMES_PSEUDO_PATH;
-    games.title = tr(STR_GAMES);
-    recentBooks.insert(recentBooks.begin(), std::move(games));
-  }
-
-  // Pinned Gym: synthetic tile (GYM_PSEUDO_PATH is never a real SD file),
-  // shown between Stop Watch and Games -- opens GymActivity instead of the
-  // reader (see loop()'s special-case). Inserted at the front AFTER Games
-  // (above) but BEFORE Stop Watch (below), so Stop Watch's own front-insert
-  // pushes this down one slot, same technique Games uses against Quran.
-  if (SETTINGS.gymEnabled) {
-    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
-                                     [](const RecentBook& b) { return b.path == GYM_PSEUDO_PATH; }),
-                      recentBooks.end());
-    RecentBook gym;
-    gym.path = GYM_PSEUDO_PATH;
-    gym.title = tr(STR_GYM);
-    recentBooks.insert(recentBooks.begin(), std::move(gym));
-  }
-
-  // Pinned Pomodoro: synthetic tile, front-inserted just before Stop Watch so
-  // the two timer apps end up adjacent in the grid.
-  if (SETTINGS.pomodoroEnabled) {
-    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
-                                     [](const RecentBook& b) { return b.path == POMODORO_PSEUDO_PATH; }),
-                      recentBooks.end());
-    RecentBook pomodoro;
-    pomodoro.path = POMODORO_PSEUDO_PATH;
-    pomodoro.title = tr(STR_POMODORO);
-    recentBooks.insert(recentBooks.begin(), std::move(pomodoro));
-  }
-
-  // Pinned Stop Watch: synthetic tile (STOPWATCH_PSEUDO_PATH is never a real
-  // SD file), shown between Tasbih and Gym -- opens StopwatchActivity
-  // instead of the reader (see loop()'s special-case). Inserted at the front
-  // AFTER Gym (above) but BEFORE Tasbih (below), so Tasbih's own front-
-  // insert pushes this down one slot, same technique Games uses against Quran.
-  if (SETTINGS.stopwatchEnabled) {
-    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
-                                     [](const RecentBook& b) { return b.path == STOPWATCH_PSEUDO_PATH; }),
-                      recentBooks.end());
-    RecentBook stopwatch;
-    stopwatch.path = STOPWATCH_PSEUDO_PATH;
-    stopwatch.title = tr(STR_STOPWATCH);
-    recentBooks.insert(recentBooks.begin(), std::move(stopwatch));
-  }
-
-  // Pinned Tasbih: synthetic tile (TASBIH_PSEUDO_PATH is never a real SD
-  // file), shown between Quran and Stop Watch (user request) -- opens
-  // TasbihActivity instead of the reader (see loop()'s special-case).
-  // Inserted at the front AFTER Stop Watch (above) but BEFORE Quran (below),
-  // so Quran's own unconditional front-insert pushes this to the second slot,
-  // same technique the Games block already uses against Quran.
-  // Pinned News: synthetic tile shown alongside the other apps -- opens the OPDS
-  // browser rooted at /opds/news instead of the reader (see loop()'s special-case).
-  // Inserted before Tasbih below so Tasbih's own front-insert pushes this down,
-  // the same technique every tile above uses.
-  if (SETTINGS.rssEnabled) {
-    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
-                                     [](const RecentBook& b) { return b.path == NEWS_PSEUDO_PATH; }),
-                      recentBooks.end());
-    RecentBook news;
-    news.path = NEWS_PSEUDO_PATH;
-    news.title = tr(STR_NEWS);
-    recentBooks.insert(recentBooks.begin(), std::move(news));
-  }
-
-  if (SETTINGS.tasbihEnabled) {
-    recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
-                                     [](const RecentBook& b) { return b.path == TASBIH_PSEUDO_PATH; }),
-                      recentBooks.end());
-    RecentBook tasbih;
-    tasbih.path = TASBIH_PSEUDO_PATH;
-    tasbih.title = tr(STR_TASBIH);
-    recentBooks.insert(recentBooks.begin(), std::move(tasbih));
-  }
+  // App tiles used to be pinned here (Games, Gym, Pomodoro, Stop Watch, News,
+  // Tasbih) because there was nowhere else to reach them from. They live in the
+  // Apps screen now -- see AppsActivity -- and this page is books again, which is
+  // what its header always said it was. Keeping them would have been actively
+  // worse now that the apps default to on: a fresh library would open on six app
+  // tiles before a single book.
+  //
+  // Quran stays below: it is a real extracted EPUB that opens in the reader, not a
+  // synthetic tile, so it belongs among the books.
 
   // Pinned Quran: when enabled in Settings -> System (and extracted), it is
   // always the FIRST book -- drop whatever entry the scan/recents produced for
@@ -313,10 +208,7 @@ void RecentBooksActivity::loop() {
   // Fires when the hold times out while still held (firmware hold-to-act pattern,
   // cf. FileBrowserActivity BACK long-press).
   if (!recentBooks.empty() && selectorIndex < recentBooks.size() &&
-      recentBooks[selectorIndex].path != QuranBook::PATH && recentBooks[selectorIndex].path != GAMES_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != TASBIH_PSEUDO_PATH && recentBooks[selectorIndex].path != NEWS_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != STOPWATCH_PSEUDO_PATH &&
-      recentBooks[selectorIndex].path != POMODORO_PSEUDO_PATH && recentBooks[selectorIndex].path != GYM_PSEUDO_PATH &&
+      recentBooks[selectorIndex].path != QuranBook::PATH &&
       mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= LONG_PRESS_MS) {
     longPressFired = true;
     promptRemoveBook(recentBooks[selectorIndex].path, recentBooks[selectorIndex].title);
@@ -326,37 +218,6 @@ void RecentBooksActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (!recentBooks.empty() && selectorIndex < static_cast<int>(recentBooks.size())) {
       LOG_DBG("RBA", "Selected recent book: %s", recentBooks[selectorIndex].path.c_str());
-      if (recentBooks[selectorIndex].path == GAMES_PSEUDO_PATH) {
-        startActivityForResult(std::make_unique<GamesMenuActivity>(renderer, mappedInput),
-                               [](const ActivityResult&) {});
-        return;
-      }
-      if (recentBooks[selectorIndex].path == NEWS_PSEUDO_PATH) {
-        // Reboot in, like the Library does: News browses OPDS over WiFi and then
-        // downloads an EPUB, which is the same stack of allocations that made
-        // goToFouladEbooks() restart first (crash reports 7 and 8). Does not return.
-        silentRestartToNews();
-        return;
-      }
-      if (recentBooks[selectorIndex].path == TASBIH_PSEUDO_PATH) {
-        startActivityForResult(std::make_unique<TasbihActivity>(renderer, mappedInput), [](const ActivityResult&) {});
-        return;
-      }
-      if (recentBooks[selectorIndex].path == STOPWATCH_PSEUDO_PATH) {
-        startActivityForResult(std::make_unique<StopwatchActivity>(renderer, mappedInput),
-                               [](const ActivityResult&) {});
-        return;
-      }
-      if (recentBooks[selectorIndex].path == POMODORO_PSEUDO_PATH) {
-        startActivityForResult(
-            std::make_unique<StopwatchActivity>(renderer, mappedInput, StopwatchActivity::Mode::Pomodoro),
-            [](const ActivityResult&) {});
-        return;
-      }
-      if (recentBooks[selectorIndex].path == GYM_PSEUDO_PATH) {
-        startActivityForResult(std::make_unique<GymActivity>(renderer, mappedInput), [](const ActivityResult&) {});
-        return;
-      }
       onSelectBook(recentBooks[selectorIndex].path);
       return;
     }
@@ -645,10 +506,11 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  // Home screen's own "My Books" divider/tile label (STR_RECENTS) stays as-is
-  // -- this page's own header uses a distinct string ("My Books & Apps")
-  // since it also lists the pinned Quran/Games/Tasbih tiles, not just books.
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_RECENTS_PAGE_TITLE));
+  // Same string as the Home screen's own divider/tile label. This page used to
+  // carry a distinct "My Books & Apps" title because it also listed the pinned
+  // app tiles; those live in their own Apps screen now, so the page is books
+  // again and the two labels should agree.
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_RECENTS));
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 
@@ -696,21 +558,10 @@ void RecentBooksActivity::render(RenderLock&&) {
         }
       }
       renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
-      if (!drawn && book.path == GAMES_PSEUDO_PATH) {
-        // Solid fill repaints over the thin outline drawRect() just drew --
-        // same black, no visible seam -- with the designed cover on top.
-        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GAMES));
-      } else if (!drawn && book.path == NEWS_PSEUDO_PATH) {
-        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_NEWS));
-      } else if (!drawn && book.path == TASBIH_PSEUDO_PATH) {
-        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_TASBIH));
-      } else if (!drawn && book.path == STOPWATCH_PSEUDO_PATH) {
-        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_STOPWATCH));
-      } else if (!drawn && book.path == POMODORO_PSEUDO_PATH) {
-        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_POMODORO));
-      } else if (!drawn && book.path == GYM_PSEUDO_PATH) {
-        drawTileCover(renderer, cellX, cellY, geometry.coverWidth, geometry.coverHeight, tr(STR_GYM));
-      } else if (!drawn) {
+      if (!drawn) {
+        // Every tile here is a real book now, so the only fallback left is a book
+        // whose cover could not be read -- the app tiles that used drawTileCover()
+        // moved to the Apps screen.
         renderer.drawIcon(BookIcon, cellX + (geometry.coverWidth - 32) / 2, cellY + (geometry.coverHeight - 32) / 2,
                           32);
       }
