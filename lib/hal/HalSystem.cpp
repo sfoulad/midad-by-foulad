@@ -161,7 +161,11 @@ std::string getPanicInfo(bool full) {
 
 bool isRebootFromPanic() {
   const auto resetReason = esp_reset_reason();
-  return resetReason == ESP_RST_PANIC || resetReason == ESP_RST_CPU_LOCKUP;
+  // Watchdog resets (task/interrupt/RTC WDT) fire when code hangs badly enough that it
+  // never reaches the panic handler -- functionally the same "something crashed" event
+  // as ESP_RST_PANIC and just as worth a crash report, not a silent boot.
+  return resetReason == ESP_RST_PANIC || resetReason == ESP_RST_CPU_LOCKUP || resetReason == ESP_RST_INT_WDT ||
+         resetReason == ESP_RST_TASK_WDT || resetReason == ESP_RST_WDT;
 }
 
 }  // namespace HalSystem

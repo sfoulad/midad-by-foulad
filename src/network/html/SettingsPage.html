@@ -616,8 +616,6 @@
     btn.textContent = 'Save Settings';
   }
 
-  loadSettings();
-
   // --- Wi-Fi Network Management ---
   // Renders an editable list of saved Wi-Fi networks using /api/wifi endpoints.
   // Password fields are never pre-filled; when left blank during edit, existing
@@ -845,8 +843,15 @@
     }
   }
 
-  loadWifiNetworks();
-  loadOpdsServers();
+  // Sequential, not concurrent: the ESP32 WebServer handles one request at a
+  // time, and firing these as three independent unawaited fetches on page load
+  // let the browser open overlapping connections the device couldn't service
+  // in parallel, producing intermittent load failures/timeouts on this page.
+  (async function loadPageData() {
+    await loadSettings();
+    await loadWifiNetworks();
+    await loadOpdsServers();
+  })();
 </script>
 </body>
 </html>

@@ -50,13 +50,18 @@ class OptionPopup {
   bool handleInput(MappedInputManager& input, const std::function<void()>& requestUpdate) {
     if (!active) return false;
 
+    // ScrollNext/ScrollPrevious, not raw Up/Down/Left/Right: this list is vertical, and the
+    // raw buttons don't follow SETTINGS.frontButtonFollowOrientation, so in a rotated
+    // orientation the popup's front-button navigation would stop matching the on-screen
+    // Up/Down hint labels. NavNext/NavPrevious are also wrong here -- their RTL horizontal
+    // flip is for genuine left/right "next item" lists, not a vertical scroll.
     const int count = static_cast<int>(ownedStrings.size());
-    if (input.wasPressed(MappedInputManager::Button::Up) || input.wasPressed(MappedInputManager::Button::Left)) {
+    if (input.wasPressed(MappedInputManager::Button::ScrollPrevious)) {
       selectedIndex = (selectedIndex - 1 + count) % count;
       requestUpdate();
       return true;
     }
-    if (input.wasPressed(MappedInputManager::Button::Down) || input.wasPressed(MappedInputManager::Button::Right)) {
+    if (input.wasPressed(MappedInputManager::Button::ScrollNext)) {
       selectedIndex = (selectedIndex + 1) % count;
       requestUpdate();
       return true;
