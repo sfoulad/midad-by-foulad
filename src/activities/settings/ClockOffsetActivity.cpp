@@ -201,7 +201,10 @@ void ClockOffsetActivity::render(RenderLock&&) {
     char timeBuf[9];
     const uint8_t encoded = encodeOffset(sign, hours, minutesQuarter);
     if (halClock.formatTime(timeBuf, sizeof(timeBuf), encoded, SETTINGS.clockFormat == 1)) {
-      char preview[24];
+      // 48, not 24: STR_CURRENT_TIME is UTF-8 (e.g. Arabic "الوقت الحالي:" is 24 bytes alone
+      // vs 13 codepoints) -- a tight buffer truncates mid-multibyte-sequence and corrupts
+      // the last glyph instead of just clipping an ASCII character.
+      char preview[48];
       snprintf(preview, sizeof(preview), "%s %s", tr(STR_CURRENT_TIME), timeBuf);
       renderer.drawCenteredText(UI_10_FONT_ID, centreY + 60, preview);
     }

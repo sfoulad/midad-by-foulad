@@ -116,7 +116,9 @@ void ClockSyncActivity::render(RenderLock&&) {
     case SUCCESS: {
       renderer.drawCenteredText(UI_12_FONT_ID, midY - 20, tr(STR_CLOCK_SYNC_OK), true, EpdFontFamily::BOLD);
       if (syncedTime[0] != '\0') {
-        char line[32];
+        // 48, not 32: STR_CURRENT_TIME is UTF-8 (e.g. Arabic "الوقت الحالي:" is 24 bytes
+        // alone vs 13 codepoints) -- a tight buffer truncates mid-multibyte-sequence.
+        char line[48];
         snprintf(line, sizeof(line), "%s %s", tr(STR_CURRENT_TIME), syncedTime);
         renderer.drawCenteredText(UI_10_FONT_ID, midY + 10, line);
       }

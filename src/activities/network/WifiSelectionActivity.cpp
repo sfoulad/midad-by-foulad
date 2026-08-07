@@ -534,7 +534,9 @@ void WifiSelectionActivity::render(RenderLock&&) {
   Rect screen = theme.getScreenSafeArea(renderer, true, false);
 
   // Draw header
-  char countStr[32];
+  // 64, not 32: STR_NETWORKS_FOUND is UTF-8 (e.g. Arabic "تم العثور على %zu شبكة" is 37
+  // bytes alone vs 22 codepoints) -- a tight buffer truncates mid-multibyte-sequence.
+  char countStr[64];
   snprintf(countStr, sizeof(countStr), tr(STR_NETWORKS_FOUND), networks.size());
   GUI.drawHeader(renderer, Rect{screen.x, screen.y + metrics.topPadding, screen.width, metrics.headerHeight},
                  tr(STR_WIFI_NETWORKS), countStr);

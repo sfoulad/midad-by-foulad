@@ -1987,33 +1987,35 @@ DictionaryLookupResult DictionaryStore::lookup(const std::string& rawWord, const
     return result;
   }
 
+  // Returns false when the index pointed at a headword but the definition bytes
+  // couldn't actually be read (SD read/seek failure, corrupt offset, OOM) --
+  // those aren't a legitimate empty entry and must not report Found with a
+  // blank body. Caller keeps searching fallbacks / falls through to NotFound.
   auto finishFound = [&](const IndexHit& hit) {
-    result.status = DictionaryLookupResult::Status::Found;
     result.headword = hit.headword;
     result.definition = readDefinition(*entry, hit, result.truncated);
+    if (result.definition.empty()) return false;
+    result.status = DictionaryLookupResult::Status::Found;
     addHistory(result.headword.empty() ? result.query : result.headword);
+    return true;
   };
 
   IndexHit hit;
   if (findIndexHit(*entry, result.query, hit)) {
-    finishFound(hit);
-    return result;
+    if (finishFound(hit)) return result;
   }
 
   std::string canonical;
   if (lookupSynonym(*entry, result.query, canonical) && findIndexHit(*entry, canonical, hit)) {
-    finishFound(hit);
-    return result;
+    if (finishFound(hit)) return result;
   }
 
   for (const std::string& fallback : getFallbackForms(*entry, result.query)) {
     if (findIndexHit(*entry, fallback, hit)) {
-      finishFound(hit);
-      return result;
+      if (finishFound(hit)) return result;
     }
     if (lookupSynonym(*entry, fallback, canonical) && findIndexHit(*entry, canonical, hit)) {
-      finishFound(hit);
-      return result;
+      if (finishFound(hit)) return result;
     }
   }
 

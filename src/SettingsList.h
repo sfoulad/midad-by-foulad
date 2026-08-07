@@ -446,7 +446,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // Clock entries (web settings only; device UI uses ClockOffsetActivity for the offset).
     // Range 0..104 = quarter-hour steps from UTC-12:00 to UTC+14:00, biased by 48.
     v.push_back(SettingInfo::Enum(StrId::STR_CLOCK, &CrossPointSettings::statusBarClock,
-                                  {StrId::STR_HIDE, StrId::STR_DIR_LEFT, StrId::STR_DIR_RIGHT}, "statusBarClock",
+                                  {StrId::STR_HIDE, StrId::STR_DIR_RIGHT, StrId::STR_DIR_LEFT}, "statusBarClock",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Value(StrId::STR_CLOCK_UTC_OFFSET, &CrossPointSettings::clockUtcOffsetQ, {0, 104, 1},
                                    "clockUtcOffsetQ", StrId::STR_CUSTOMISE_STATUS_BAR));
