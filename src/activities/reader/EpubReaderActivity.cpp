@@ -788,6 +788,7 @@ void EpubReaderActivity::loop() {
     {
       RenderLock lock(*this);
       nextPageNumber = 0;
+      pendingPageJump.reset();  // see the invariant at its declaration
       if (nextTriggered) {
         currentSpineIndex++;
       } else if (currentSpineIndex > 0) {
@@ -880,6 +881,7 @@ void EpubReaderActivity::jumpToPercent(int percent) {
     RenderLock lock(*this);
     currentSpineIndex = targetSpineIndex;
     nextPageNumber = 0;
+    pendingPageJump.reset();  // see the invariant at its declaration
     pendingPercentJump = true;
     section.reset();
   }
@@ -905,6 +907,7 @@ void EpubReaderActivity::jumpToSpine(const int spineIndex) {
     RenderLock lock(*this);
     currentSpineIndex = spineIndex;
     nextPageNumber = 0;
+    pendingPageJump.reset();  // see the invariant at its declaration
     pendingPercentJump = true;
     section.reset();
   }
@@ -996,6 +999,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
 
         // Otherwise page 0 will be used.
         nextPageNumber = 0;
+        pendingPageJump.reset();  // see the invariant at its declaration
 
         section.reset();
       }
@@ -1431,6 +1435,7 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
       {
         RenderLock lock(*this);
         nextPageNumber = 0;
+        pendingPageJump.reset();  // see the invariant at its declaration
         currentSpineIndex++;
         section.reset();
       }
@@ -2398,6 +2403,7 @@ void EpubReaderActivity::navigateToHref(const std::string& hrefStr, const bool s
     pendingAnchor = std::move(anchor);
     currentSpineIndex = targetSpineIndex;
     nextPageNumber = 0;
+    pendingPageJump.reset();  // see the invariant at its declaration
     section.reset();
   }
   requestUpdate();
@@ -2415,6 +2421,7 @@ void EpubReaderActivity::restoreSavedPosition() {
     RenderLock lock(*this);
     currentSpineIndex = pos.spineIndex;
     nextPageNumber = pos.pageNumber;
+    pendingPageJump.reset();  // see the invariant at its declaration
     section.reset();
   }
   requestUpdate();
