@@ -430,8 +430,8 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   // cells whose frame changed and leave the rest of the frame standing.
   if (canFastRepaintSelector()) {
     const GridLayout layout = computeGridLayout();
-    drawGridCell(layout, fbGridPageStart, fbSelectorIndex - layout.bookStart - fbGridPageStart, /*eraseFirst=*/true);
-    drawGridCell(layout, fbGridPageStart, selectorIndex - layout.bookStart - fbGridPageStart, /*eraseFirst=*/true);
+    drawGridSelectionRing(layout, fbSelectorIndex - layout.bookStart - fbGridPageStart, /*black=*/false);
+    drawGridSelectionRing(layout, selectorIndex - layout.bookStart - fbGridPageStart, /*black=*/true);
     renderer.displayBuffer();
     fbSelectorIndex = selectorIndex;
     return;
@@ -648,6 +648,15 @@ bool OpdsBookBrowserActivity::canFastRepaintSelector() const {
   if (newLocal < 0 || oldLocal < 0) return false;
   return (newLocal / layout.itemsPerPage) * layout.itemsPerPage == fbGridPageStart &&
          (oldLocal / layout.itemsPerPage) * layout.itemsPerPage == fbGridPageStart;
+}
+
+void OpdsBookBrowserActivity::drawGridSelectionRing(const GridLayout& layout, const int slot, const bool black) const {
+  const int col = slot % layout.columns;
+  const int row = slot / layout.columns;
+  const int titleHeight = getGridTitleHeight();
+  const int cellX = gridStartXFor(layout) + col * (layout.coverWidth + GRID_GUTTER);
+  const int cellY = gridTopFor(layout) + row * (layout.coverHeight + titleHeight + GRID_GUTTER);
+  renderer.drawRect(cellX - 4, cellY - 4, layout.coverWidth + 8, layout.coverHeight + 8, 4, black);
 }
 
 int OpdsBookBrowserActivity::gridStartXFor(const GridLayout& layout) const {
