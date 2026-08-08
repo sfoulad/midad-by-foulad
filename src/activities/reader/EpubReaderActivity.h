@@ -108,6 +108,18 @@ class EpubReaderActivity final : public Activity {
   // in one sitting -- instant reopen comes from Section::suspendBuild() persisting the pages
   // already laid out as a partial file on exit/sleep.
   static constexpr int BUILD_WINDOW_AHEAD = 5;
+  // Background build ticks pause below these thresholds instead of attempting a chunk: layout
+  // (CSS rule storage, TextBlock/word arrays, image decode buffers) makes real allocations, and
+  // running it while the heap is already this tight is how a background tick becomes the straw
+  // that triggers an OOM abort for something unrelated (e.g. a WiFi/TLS operation started right
+  // after). Matches the free-heap/largest-block gate idiom used elsewhere in this codebase (see
+  // OpdsBookBrowserActivity.cpp, DictionaryStore.cpp). Foreground paths (page turns, initial
+  // build) are NOT gated -- the reader must still open the book it's showing.
+  static constexpr uint32_t BUILD_TICK_MIN_FREE_HEAP_BYTES = 32 * 1024;
+  static constexpr uint32_t BUILD_TICK_MIN_LARGEST_BLOCK_BYTES = 16 * 1024;
+  // Set when a background tick was skipped for the heap gate above. Read by skipLoopDelay() so
+  // a paused build doesn't spin the reader at full CPU/no-delay for nothing -- see its comment.
+  bool buildHeapPaused = false;
   // Show the indexing popup when an initial build must lay out more than this many pages up front
   // (a deep resume/jump into a not-yet-built section), so it isn't a silent wait. Kept independent
   // of the small look-ahead window so ordinary landings stay popup-free.
@@ -202,8 +214,10 @@ class EpubReaderActivity final : public Activity {
   // tick delay, stretching each (input-blind) build chunk 3-4x and the post-open
   // watermark-rebuild storm to a minute-plus of degraded responsiveness. Race to
   // idle instead: build at full clock, then let power saving resume. Auto-sleep
-  // is unaffected (its timer doesn't consult this).
-  bool skipLoopDelay() override { return section && section->isBuilding(); }
+  // is unaffected (its timer doesn't consult this). Excludes buildHeapPaused: a build
+  // that's paused for the heap gate makes no progress, so racing to idle for it would
+  // just burn battery at full clock while doing nothing.
+  bool skipLoopDelay() override { return section && section->isBuilding() && !buildHeapPaused; }
   bool handleForcedRefresh() override {
     {
       RenderLock lock(*this);

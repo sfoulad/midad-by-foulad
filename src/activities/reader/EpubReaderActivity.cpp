@@ -525,7 +525,16 @@ void EpubReaderActivity::loop() {
     // reopen comes from suspendBuild() persisting the laid-out pages as a partial on exit.
     // Skip while the render mutex is busy so we never delay a pending render; re-check
     // isBuilding() under the lock since render() may have just finished it.
-    if (section && section->isBuilding() && !RenderLock::peek() &&
+    // Heap gate: while a build is active, buildHeapPaused always reflects the CURRENT heap
+    // reading, independent of whether this particular tick would otherwise attempt a chunk
+    // (render-lock busy / already caught up to BUILD_WINDOW_AHEAD) -- skipLoopDelay() reads
+    // this every frame, so a stale "paused" left over from a tick that skipped for an
+    // unrelated reason would wrongly suppress the CPU race-to-idle once the real gate clears.
+    buildHeapPaused = section && section->isBuilding() &&
+                      (ESP.getFreeHeap() < BUILD_TICK_MIN_FREE_HEAP_BYTES ||
+                       ESP.getMaxAllocHeap() < BUILD_TICK_MIN_LARGEST_BLOCK_BYTES);
+
+    if (section && section->isBuilding() && !buildHeapPaused && !RenderLock::peek() &&
         static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD) {
       RenderLock lock;
       // Re-check under the lock: render() (which also holds the RenderLock) may have finalized the

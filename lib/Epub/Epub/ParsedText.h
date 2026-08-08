@@ -2,6 +2,7 @@
 
 #include <EpdFontFamily.h>
 
+#include <deque>
 #include <functional>
 #include <memory>
 #include <string>
@@ -13,7 +14,13 @@
 class GfxRenderer;
 
 class ParsedText {
-  std::vector<std::string> words;
+  // deque, not vector: a large chapter can hold thousands of word tokens, and a
+  // vector<string> growing to that size needs one contiguous allocation of
+  // 64-128KB -- exactly the kind of block that a fragmented heap can't satisfy,
+  // aborting under -fno-exceptions. deque never needs a single allocation larger
+  // than its fixed chunk size (a couple KB), at the cost of no operator[]-adjacent
+  // pointer arithmetic -- none of this file relies on that.
+  std::deque<std::string> words;
   std::vector<EpdFontFamily::Style> wordStyles;
   std::vector<bool> wordContinues;      // true = word attaches to previous with no break
   std::vector<bool> wordNoSpaceBefore;  // true = may break before token, but no synthetic space when joined
