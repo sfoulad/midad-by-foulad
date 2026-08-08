@@ -102,7 +102,7 @@ void addSettingsReport(JsonObject settings) {
   settings["darkModeEnabled"] = s.darkModeEnabled;
   // Reader
   settings["fontFamily"] = s.fontFamily;
-  settings["fontSize"] = s.fontSize;
+  settings["fontSize"] = s.fontPointSize;
   settings["arabicFontFamily"] = arabicFontFamilyToDisplayIndex(s.arabicFontFamily);
   settings["arabicFontSize"] = s.arabicFontSize;
   settings["lineSpacing"] = s.lineSpacing;
@@ -242,7 +242,11 @@ void applySettingsFromServer(JsonObjectConst settings) {
     }
   }
 
-  applyEnum(s.fontSize, "fontSize", S::FONT_SIZE_COUNT);
+  // fontSize (wire key, unchanged) is now a point size, not a bounded enum slot --
+  // an out-of-range/unavailable value is made safe at load/render time by
+  // snapToNearestPointSize() (see SdCardFontSystem::ensureLoaded), so a plain
+  // sanity range is enough here rather than an exact enum-count bound.
+  applyRange(s.fontPointSize, "fontSize", 6, 72);
   applyEnum(s.arabicFontSize, "arabicFontSize", S::FONT_SIZE_COUNT);
   applyEnum(s.lineSpacing, "lineSpacing", S::LINE_COMPRESSION_COUNT);
   applyRange(s.screenMargin, "screenMargin", 5, 40);

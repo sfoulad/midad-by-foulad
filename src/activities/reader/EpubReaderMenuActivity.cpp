@@ -5,6 +5,7 @@
 #include <I18n.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <utility>
 
@@ -14,6 +15,7 @@
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
+#include "ReaderFontSizes.h"
 #include "ReaderPomodoro.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
@@ -219,12 +221,25 @@ std::string EpubReaderMenuActivity::globalLabel(const char* effectiveValueLabel)
 std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
   switch (action) {
     case MenuAction::FONT_SIZE: {
-      const uint8_t book = isArabicBook ? SETTINGS.bookArabicFontSize : SETTINGS.bookFontSize;
-      const uint8_t global = isArabicBook ? SETTINGS.arabicFontSize : SETTINGS.fontSize;
-      return book == CrossPointSettings::BOOK_NO_OVERRIDE
-                 ? globalLabel(
-                       I18N.get(kSizeLabels[std::min<uint8_t>(global, CrossPointSettings::FONT_SIZE_COUNT - 1)]))
-                 : I18N.get(kSizeLabels[book]);
+      if (isArabicBook) {
+        const uint8_t book = SETTINGS.bookArabicFontSize;
+        const uint8_t global = SETTINGS.arabicFontSize;
+        return book == CrossPointSettings::BOOK_NO_OVERRIDE
+                   ? globalLabel(
+                         I18N.get(kSizeLabels[std::min<uint8_t>(global, CrossPointSettings::FONT_SIZE_COUNT - 1)]))
+                   : I18N.get(kSizeLabels[book]);
+      }
+      // Latin: point-size based (see ReaderFontSizes.h), not the fixed enum --
+      // the selectable/snapped sizes depend on whichever family is effectively
+      // active for this book (per-book family override, else the global one).
+      const std::vector<uint8_t> sizes = readerFontPointSizes(&sdFontSystem.registry(), SETTINGS.effSdFontFamilyName());
+      char buf[16];
+      if (SETTINGS.bookFontSize == CrossPointSettings::BOOK_NO_OVERRIDE) {
+        snprintf(buf, sizeof(buf), "%u pt", snapToNearestPointSize(sizes, SETTINGS.fontPointSize));
+        return globalLabel(buf);
+      }
+      snprintf(buf, sizeof(buf), "%u pt", snapToNearestPointSize(sizes, SETTINGS.bookFontSize));
+      return buf;
     }
     case MenuAction::FONT_NAME: {
       if (isArabicBook) {
@@ -304,9 +319,46 @@ void EpubReaderMenuActivity::openSettingEditor(const MenuAction action) {
 
   switch (action) {
     case MenuAction::FONT_SIZE:
-      showEnumPopup(StrId::STR_FONT_SIZE_GENERIC, kSizeLabels, CrossPointSettings::FONT_SIZE_COUNT,
-                    isArabicBook ? SETTINGS.bookArabicFontSize : SETTINGS.bookFontSize,
-                    isArabicBook ? SETTINGS.arabicFontSize : SETTINGS.fontSize);
+      if (isArabicBook) {
+        showEnumPopup(StrId::STR_FONT_SIZE_GENERIC, kSizeLabels, CrossPointSettings::FONT_SIZE_COUNT,
+                      SETTINGS.bookArabicFontSize, SETTINGS.arabicFontSize);
+        break;
+      }
+      {
+        // Latin: the option list is a dynamic set of point sizes (built-in fixed
+        // set, or an SD family's actually-installed sizes -- see
+        // ReaderFontSizes.h), not showEnumPopup's fixed StrId-label shape, so
+        // this popup is built directly rather than reusing that helper.
+        const std::vector<uint8_t> sizes =
+            readerFontPointSizes(&sdFontSystem.registry(), SETTINGS.effSdFontFamilyName());
+        std::vector<std::string> options;
+        options.reserve(sizes.size() + 1);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%u pt", snapToNearestPointSize(sizes, SETTINGS.fontPointSize));
+        options.push_back(globalLabel(buf));
+        for (const uint8_t pt : sizes) options.push_back(std::to_string(pt) + " pt");
+
+        int current = 0;
+        if (SETTINGS.bookFontSize != CrossPointSettings::BOOK_NO_OVERRIDE) {
+          const uint8_t snapped = snapToNearestPointSize(sizes, SETTINGS.bookFontSize);
+          for (size_t i = 0; i < sizes.size(); i++) {
+            if (sizes[i] == snapped) {
+              current = static_cast<int>(1 + i);
+              break;
+            }
+          }
+        }
+
+        optionPopup.show(StrId::STR_FONT_SIZE_GENERIC, options, current, [this, sizes](const int idx) {
+          const uint8_t newValue = (idx == 0 || sizes.empty()) ? CrossPointSettings::BOOK_NO_OVERRIDE
+                                                               : sizes[std::min<size_t>(idx - 1, sizes.size() - 1)];
+          if (SETTINGS.bookFontSize != newValue) {
+            SETTINGS.bookFontSize = newValue;
+            bookSettingsChanged = true;
+          }
+          requestUpdate();
+        });
+      }
       break;
     case MenuAction::TEXT_ALIGN:
       showEnumPopup(StrId::STR_TEXT_ALIGNMENT, kAlignLabels, CrossPointSettings::PARAGRAPH_ALIGNMENT_COUNT,

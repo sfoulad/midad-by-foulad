@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
+#include "ReaderFontSizes.h"
 #include "activities/settings/SettingsActivity.h"
 
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
@@ -105,6 +107,38 @@ inline SettingInfo buildFontFamilySetting(const SdCardFontRegistry* registry) {
     }
   };
 
+  return s;
+}
+
+// Build the LATIN reading-font size setting dynamically. Selectable point sizes
+// depend on the active family: the fixed built-in set (BUILTIN_READER_POINT_SIZES)
+// when no SD family is selected, or the SD family's actually-installed sizes
+// otherwise (see ReaderFontSizes.h). Mirrors buildFontFamilySetting() above's
+// dynamic-enum-with-lambda-getter/setter shape. Arabic Font Size is untouched --
+// it stays the static SMALL/MEDIUM/LARGE/EXTRA_LARGE enum entry below.
+inline SettingInfo buildFontSizeSetting(const SdCardFontRegistry* registry) {
+  const std::vector<uint8_t> sizes = readerFontPointSizes(registry, SETTINGS.sdFontFamilyName);
+  std::vector<std::string> labels;
+  labels.reserve(sizes.size());
+  for (const uint8_t pt : sizes) labels.push_back(std::to_string(pt) + " pt");  // "pt" deliberately untranslated
+
+  SettingInfo s;
+  s.nameId = StrId::STR_FONT_SIZE;
+  s.type = SettingType::ENUM;
+  s.enumStringValues = std::move(labels);
+  s.key = "fontSize";
+  s.category = StrId::STR_CAT_READER;
+
+  s.valueGetter = [sizes]() -> uint8_t {
+    const uint8_t pt = snapToNearestPointSize(sizes, SETTINGS.fontPointSize);
+    for (int i = 0; i < static_cast<int>(sizes.size()); i++) {
+      if (sizes[i] == pt) return static_cast<uint8_t>(i);
+    }
+    return 0;
+  };
+  s.valueSetter = [sizes](uint8_t v) {
+    if (v < sizes.size()) SETTINGS.fontPointSize = sizes[v];
+  };
   return s;
 }
 
@@ -267,9 +301,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // version when SD fonts are installed.
     v.push_back(SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily, {StrId::STR_LEXEND_DECA},
                                   "fontFamily", StrId::STR_CAT_READER));
-    v.push_back(SettingInfo::Enum(StrId::STR_FONT_SIZE, &CrossPointSettings::fontSize,
-                                  {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE},
-                                  "fontSize", StrId::STR_CAT_READER));
+    // Placeholder -- replaced unconditionally below with buildFontSizeSetting(),
+    // since the selectable point sizes depend on the active family (built-in
+    // fixed set, or an SD family's actually-installed sizes), not a fixed enum.
+    v.push_back(SettingInfo::Enum(StrId::STR_FONT_SIZE, nullptr, {}, "fontSize", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Enum(StrId::STR_ARABIC_FONT_SIZE, &CrossPointSettings::arabicFontSize,
                                   {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE},
                                   "arabicFontSize", StrId::STR_CAT_READER));
@@ -485,6 +520,15 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_FAMILY; });
     if (it != v.end()) {
       *it = buildFontFamilySetting(registry);
+    }
+  }
+  // Unconditional (unlike font-family's SD-fonts-installed guard above): the
+  // built-in point-size set is dynamic too (BUILTIN_READER_POINT_SIZES), not a
+  // fixed enum, so this always needs the registry-aware build.
+  {
+    auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_SIZE; });
+    if (it != v.end()) {
+      *it = buildFontSizeSetting(registry);
     }
   }
   return v;

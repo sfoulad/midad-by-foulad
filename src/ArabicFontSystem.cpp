@@ -39,6 +39,27 @@ constexpr int
 // pinned Arabic body text to 12pt UI type for anyone reading with an SD-card
 // Latin font -- Arabic Font Size appeared to do nothing (user report, and the
 // reason SD Arabic overrides ignoring the size setting went unnoticed too).
+// SdCardFontManager::loadFamily() now takes a physical point size (the LATIN
+// reader's point-size migration -- see ReaderFontSizes.h), not a FONT_SIZE enum
+// slot. Arabic sizing is UNTOUCHED by that migration -- arabicFontSize /
+// effArabicFontSize() still return a SMALL/MEDIUM/LARGE/EXTRA_LARGE slot -- so
+// translate to the slot's target point size here rather than changing what
+// effArabicFontSize() returns. Matches kBuiltinArabicReadingFontIds' own column
+// order (12/14/16/18 = Small/Medium/Large/X-Large).
+uint8_t arabicSizeEnumToPointSize(const uint8_t sizeEnum) {
+  switch (sizeEnum) {
+    case CrossPointSettings::SMALL:
+      return 12;
+    case CrossPointSettings::LARGE:
+      return 16;
+    case CrossPointSettings::EXTRA_LARGE:
+      return 18;
+    case CrossPointSettings::MEDIUM:
+    default:
+      return 14;
+  }
+}
+
 void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
   renderer.clearArabicFontIdMappings();
   // matchLatinBaseline=true: UI labels sit on the requested Latin font's baseline so
@@ -137,7 +158,7 @@ void ArabicFontSystem::ensureLoaded(GfxRenderer& renderer) {
   }
 
   const auto* family = registry_.findFamily(wantedFamily);
-  if (family && manager_.loadFamily(*family, renderer, SETTINGS.effArabicFontSize())) {
+  if (family && manager_.loadFamily(*family, renderer, arabicSizeEnumToPointSize(SETTINGS.effArabicFontSize()))) {
     LOG_DBG("ARFS", "Loaded Arabic font family: %s (sizeEnum=%u)", wantedFamily, SETTINGS.effArabicFontSize());
     loadedSdSizeEnum_ = SETTINGS.effArabicFontSize();
     applyArabicMappings(renderer, manager_.getFontId(wantedFamily));

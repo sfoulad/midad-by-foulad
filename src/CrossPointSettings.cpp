@@ -8,10 +8,12 @@
 #include <Serialization.h>
 
 #include <cstring>
+#include <iterator>
 #include <mutex>
 #include <string>
 
 #include "I18nKeys.h"
+#include "ReaderFontSizes.h"
 #include "SettingsList.h"
 #include "fontIds.h"
 
@@ -167,8 +169,10 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   doc["frontButtonConfirm"] = frontButtonConfirm;
   doc["frontButtonLeft"] = frontButtonLeft;
   doc["frontButtonRight"] = frontButtonRight;
-  // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
+  // Font family and size — both use dynamic getter/setters in SettingsList (the
+  // option lists depend on the SD font registry), so the generic loop skips them.
   doc["fontFamily"] = fontFamily;
+  doc["fontSize"] = fontPointSize;
   // SD card font family name — not in SettingsList, save manually
   if (sdFontFamilyName[0] != '\0') {
     doc["sdFontFamilyName"] = sdFontFamilyName;
@@ -258,6 +262,17 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   frontButtonRight =
       clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
   CrossPointSettings::validateFrontButtonMapping(*this);
+
+  // Reader font size — an actual point size since the point-size migration. Files
+  // written before it hold the old SMALL/MEDIUM/LARGE/EXTRA_LARGE slot in 0..3; no
+  // font is renderable at those sizes, so the range is unambiguous and folds to the
+  // point sizes those slots used to mean. Drop this once pre-migration upgrades are done.
+  uint8_t storedFontSize = doc["fontSize"] | DEFAULT_FONT_POINT_SIZE;
+  if (storedFontSize <= LEGACY_FONT_SIZE_MAX) {
+    storedFontSize = 12 + storedFontSize * 2;  // 0,1,2,3 -> 12,14,16,18
+    _needsResaveAfterLoad = true;
+  }
+  fontPointSize = storedFontSize;
 
   // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
   const uint8_t storedFontFamily = doc["fontFamily"] | (uint8_t)0;
@@ -418,7 +433,14 @@ bool CrossPointSettings::loadFromBinaryFile() {
       }
     }
     if (++settingsRead >= fileSettingsCount) break;
-    readAndValidate(inputFile, fontSize, FONT_SIZE_COUNT);
+    {
+      // This binary format predates the point-size migration: the on-disk byte
+      // is the old SMALL/MEDIUM/LARGE/EXTRA_LARGE slot (0..3), same fold as
+      // fromJson()'s legacy handling.
+      uint8_t legacyFontSize = MEDIUM;
+      readAndValidate(inputFile, legacyFontSize, FONT_SIZE_COUNT);
+      fontPointSize = 12 + legacyFontSize * 2;  // 0,1,2,3 -> 12,14,16,18
+    }
     if (++settingsRead >= fileSettingsCount) break;
     readAndValidate(inputFile, lineSpacing, LINE_COMPRESSION_COUNT);
     if (++settingsRead >= fileSettingsCount) break;
@@ -522,6 +544,13 @@ int CrossPointSettings::getRefreshFrequency() const {
   }
 }
 
+void CrossPointSettings::clearSdFontFamily() {
+  sdFontFamilyName[0] = '\0';
+  fontPointSize =
+      snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES), fontPointSize);
+  saveToFile();
+}
+
 int CrossPointSettings::getReaderFontId() const {
   // Check SD card font first (eff* so a per-book override wins -- see the
   // per-book overrides block in CrossPointSettings.h)
@@ -532,28 +561,20 @@ int CrossPointSettings::getReaderFontId() const {
     // Fall through to built-in if SD font not found
   }
 
-  if (effFontFamily() == LEXENDDECA) {
-    switch (effFontSize()) {
-      case SMALL:
-        return LEXENDDECA_12_FONT_ID;
-      case MEDIUM:
-      default:
-        return LEXENDDECA_14_FONT_ID;
-      case LARGE:
-        return LEXENDDECA_16_FONT_ID;
-      case EXTRA_LARGE:
-        return LEXENDDECA_18_FONT_ID;
-    }
-  }
-  switch (effFontSize()) {
-    case SMALL:
+  // Both FONT_FAMILY values resolve here identically: Bitter's glyph data was
+  // stripped from flash (see FONT_FAMILY's comment in CrossPointSettings.h), so
+  // BITTER renders as Lexend Deca too. Only the point size varies.
+  const uint8_t pt =
+      snapToNearestPointSize(BUILTIN_READER_POINT_SIZES, std::size(BUILTIN_READER_POINT_SIZES), effFontSize());
+  switch (pt) {
+    case 12:
       return LEXENDDECA_12_FONT_ID;
-    case MEDIUM:
+    case 16:
+      return LEXENDDECA_16_FONT_ID;
+    case 18:
+      return LEXENDDECA_18_FONT_ID;
+    case 14:
     default:
       return LEXENDDECA_14_FONT_ID;
-    case LARGE:
-      return LEXENDDECA_16_FONT_ID;
-    case EXTRA_LARGE:
-      return LEXENDDECA_18_FONT_ID;
   }
 }

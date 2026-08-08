@@ -138,8 +138,15 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   enum FONT_FAMILY { BITTER = 0, LEXENDDECA = 1, FONT_FAMILY_COUNT };
   static constexpr uint8_t LEGACY_OPENDYSLEXIC = 2;
   static constexpr uint8_t BUILTIN_FONT_COUNT = FONT_FAMILY_COUNT;
-  // Font size options
+  // The LATIN reading font size is a point size (fontPointSize below), not this
+  // enum -- see ReaderFontSizes.h. This enum survives ONLY because arabicFontSize
+  // / bookArabicFontSize still use it (the Arabic size picker stays a fixed
+  // 4-slot SMALL/MEDIUM/LARGE/EXTRA_LARGE choice). Legacy 1.4-and-earlier files
+  // stored the Latin size in this same 0..3 shape too; fromJson() folds that
+  // range up into a point size (see LEGACY_FONT_SIZE_MAX).
   enum FONT_SIZE { SMALL = 0, MEDIUM = 1, LARGE = 2, EXTRA_LARGE = 3, FONT_SIZE_COUNT };
+  static constexpr uint8_t LEGACY_FONT_SIZE_MAX = 3;
+  static constexpr uint8_t DEFAULT_FONT_POINT_SIZE = 14;
   // Arabic reading-font family options (built-in only; SD card fonts use
   // sdArabicFontFamilyName). Independent of FONT_FAMILY/fontFamily above -- see
   // ArabicFontSystem. Reuses FONT_SIZE (Small/Medium/Large/X-Large) for arabicFontSize.
@@ -269,7 +276,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t frontButtonRight = FRONT_HW_RIGHT;
   // Reader font settings
   uint8_t fontFamily = BITTER;
-  uint8_t fontSize = MEDIUM;
+  // Point size of the LATIN reading font. Only sizes the active family actually
+  // ships are selectable in the UI (see ReaderFontSizes.h / SettingsList.h's
+  // buildFontSizeSetting()); SdCardFontSystem::ensureLoaded() snaps this to the
+  // nearest available size (and persists the snap) whenever the family changes.
+  // The Arabic reading font size is unaffected -- see arabicFontSize below.
+  uint8_t fontPointSize = DEFAULT_FONT_POINT_SIZE;
   uint8_t lineSpacing = NORMAL;
   uint8_t paragraphAlignment = JUSTIFIED;
   // Auto-sleep timeout setting (default 10 minutes). Legacy sleepTimeout enum values are migration-only.
@@ -412,7 +424,13 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // font family even when the global setting points at an SD family.
   static constexpr uint8_t BOOK_NO_OVERRIDE = 0xFF;
   static constexpr char BOOK_FORCE_BUILTIN_FAMILY[2] = "\x01";
+  // A point size (see fontPointSize above), NOT a FONT_SIZE enum slot, despite
+  // the shared BOOK_NO_OVERRIDE sentinel shape. snapToNearestPointSize() at
+  // render/load time keeps an override that the active family can't render
+  // exactly (e.g. after switching to an SD family with a sparser size set) safe.
   uint8_t bookFontSize = BOOK_NO_OVERRIDE;
+  // Arabic reading-font size override -- still a FONT_SIZE enum slot, unlike
+  // bookFontSize above. Arabic sizing is untouched by the point-size migration.
   uint8_t bookArabicFontSize = BOOK_NO_OVERRIDE;
   // Which BUILT-IN Arabic family this book uses when the built-in path is
   // active (bookSdArabicFontFamilyName forced-builtin or global has no SD
@@ -429,7 +447,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   char bookSdFontFamilyName[32] = "";
   char bookSdArabicFontFamilyName[32] = "";
 
-  uint8_t effFontSize() const { return bookFontSize != BOOK_NO_OVERRIDE ? bookFontSize : fontSize; }
+  // Effective LATIN reading-font point size (per-book override, else the global
+  // fontPointSize). Name kept as effFontSize() rather than effFontPointSize() --
+  // it predates the point-size migration and every call site already expects
+  // this name; only the returned value's meaning changed (slot -> point size).
+  uint8_t effFontSize() const { return bookFontSize != BOOK_NO_OVERRIDE ? bookFontSize : fontPointSize; }
   uint8_t effArabicFontSize() const {
     return bookArabicFontSize != BOOK_NO_OVERRIDE ? bookArabicFontSize : arabicFontSize;
   }
@@ -507,7 +529,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Callback to resolve SD card font IDs. Set by SdCardFontSystem::begin().
   // Returns font ID or 0 if not found.
-  using SdFontIdResolver = int (*)(void* ctx, const char* familyName, uint8_t fontSize);
+  using SdFontIdResolver = int (*)(void* ctx, const char* familyName, uint8_t pointSize);
   SdFontIdResolver sdFontIdResolver = nullptr;
   void* sdFontResolverCtx = nullptr;
 
@@ -515,6 +537,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     return (shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP) ? 10 : 400;
   }
   int getReaderFontId() const;
+
+  // Drop the SD font selection and fall back to the built-in family. The reader
+  // point size comes back into BUILTIN_READER_POINT_SIZES with it, since that is
+  // the only set a built-in family ships -- otherwise the settings UI would keep
+  // offering a size nothing renders at. Both fields are persisted in one write.
+  void clearSdFontFamily();
 
   // If count_only is true, returns the number of settings items that would be written.
   uint8_t writeSettings(HalFile& file, bool count_only = false) const;
