@@ -1,5 +1,6 @@
 #include "ZipFile.h"
 
+#include <BuildScratch.h>
 #include <HalStorage.h>
 #include <InflateReader.h>
 #include <Logging.h>
@@ -13,6 +14,30 @@ struct ZipInflateCtx {
   uint8_t* readBuf = nullptr;
   size_t readBufSize = 0;
 };
+
+namespace {
+// Opportunistically use the framebuffer's lent bytes as the inflate ring
+// instead of a fresh 32KB heap allocation, when a build phase
+// (GfxRenderer::FrameBufferLoan) currently has them lent out -- e.g. chapter
+// HTML extraction during a section build. Falls back to nullptr (caller uses
+// InflateReader::init(true), which self-allocates) when no loan is active or
+// the block is already claimed. RAII so every early-return path in the two
+// call sites below still releases the claim.
+class ScopedBuildScratchRing {
+ public:
+  ScopedBuildScratchRing() { ring_ = buildscratch::claim(InflateReader::RING_BYTES); }
+  ~ScopedBuildScratchRing() {
+    if (ring_) buildscratch::release(ring_);
+  }
+  ScopedBuildScratchRing(const ScopedBuildScratchRing&) = delete;
+  ScopedBuildScratchRing& operator=(const ScopedBuildScratchRing&) = delete;
+
+  uint8_t* get() const { return ring_; }
+
+ private:
+  uint8_t* ring_ = nullptr;
+};
+}  // namespace
 
 namespace {
 constexpr uint16_t ZIP_METHOD_STORED = 0;
@@ -404,13 +429,18 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
       return nullptr;
     }
 
+    // Declared before ctx so it outlives it: ctx's InflateReader never frees a
+    // ring it doesn't own (initWithRing), so destruction order only matters
+    // for handing the claim back after the reader's last use.
+    ScopedBuildScratchRing scratchRing;
     ZipInflateCtx ctx;
     ctx.file = &file;
     ctx.fileRemaining = deflatedDataSize;
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = 1024;
 
-    if (!ctx.reader.init(true)) {
+    const bool inflateReady = scratchRing.get() ? ctx.reader.initWithRing(scratchRing.get()) : ctx.reader.init(true);
+    if (!inflateReady) {
       LOG_ERR("ZIP", "Failed to init inflate reader");
       free(fileReadBuffer);
       free(data);
@@ -496,13 +526,18 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
       return false;
     }
 
+    // Declared before ctx so it outlives it: ctx's InflateReader never frees a
+    // ring it doesn't own (initWithRing), so destruction order only matters
+    // for handing the claim back after the reader's last use.
+    ScopedBuildScratchRing scratchRing;
     ZipInflateCtx ctx;
     ctx.file = &file;
     ctx.fileRemaining = deflatedDataSize;
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = chunkSize;
 
-    if (!ctx.reader.init(true)) {
+    const bool inflateReady = scratchRing.get() ? ctx.reader.initWithRing(scratchRing.get()) : ctx.reader.init(true);
+    if (!inflateReady) {
       LOG_ERR("ZIP", "Failed to init inflate reader");
       free(outputBuffer);
       free(fileReadBuffer);
@@ -555,7 +590,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
     free(outputBuffer);
     free(fileReadBuffer);
-    return success;  // ctx.reader destructor frees the ring buffer
+    return success;  // ctx.reader/scratchRing destructors release the ring buffer
   }
 
   LOG_ERR("ZIP", "Unsupported compression method");

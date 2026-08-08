@@ -470,6 +470,36 @@ class GfxRenderer {
   // Font helpers
   const uint8_t* getGlyphBitmap(const EpdFontData* fontData, const EpdGlyph* glyph) const;
 
+  // Lend the framebuffer's bytes IN PLACE to a blocking build phase (chapter
+  // layout): the allocation is never freed, so it cannot move and repeated
+  // loans cannot fragment the heap the way a free+realloc cycle measurably
+  // did. Rendering is unavailable (getFrameBuffer() is null, hasFrameBuffer()
+  // false) until restoreFrameBufferAfterBuild(). The bytes are deposited in
+  // buildscratch so a memory-hungry build consumer (e.g. InflateReader's 32KB
+  // ring) can claim them instead of allocating from the heap.
+  void releaseFrameBufferForBuild();
+  // Reclaim the framebuffer: cannot fail (the allocation was never freed).
+  // Returns false only if the framebuffer never existed to begin with.
+  bool restoreFrameBufferAfterBuild();
+  bool hasFrameBuffer() const { return frameBuffer != nullptr; }
+
+  // RAII form of the loan above, for blocking build regions with early-return
+  // error paths: restores on scope exit (or explicitly via end()). Display the
+  // popup/screen the panel should hold BEFORE constructing one. Constructing
+  // while the framebuffer is already lent yields an inert loan (nesting-safe).
+  class FrameBufferLoan {
+   public:
+    explicit FrameBufferLoan(GfxRenderer& renderer);
+    ~FrameBufferLoan() { end(); }
+    void end();
+    FrameBufferLoan(const FrameBufferLoan&) = delete;
+    FrameBufferLoan& operator=(const FrameBufferLoan&) = delete;
+
+   private:
+    GfxRenderer& renderer_;
+    bool active_ = false;
+  };
+
   // Low level functions
   uint8_t* getFrameBuffer() const;
   size_t getBufferSize() const;

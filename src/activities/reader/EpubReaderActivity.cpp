@@ -479,10 +479,14 @@ unsigned cpuMhzNow() {
 
 void EpubReaderActivity::showBuildPopup() {
   // Mid-build indexing popup: only during render()'s blocking build-to-target
-  // phase (buildPopupPending), at most once. The parser's popup callback lives
-  // as long as the build and keeps firing from background buildSomeMore ticks;
-  // without this gate it would draw the popup over an already-displayed page.
-  if (!buildPopupPending) return;
+  // phase (buildPopupPending), at most once, and only when the framebuffer
+  // isn't on loan. If it fires while the loan is active (e.g. the parser's
+  // size-based call during startBuild), pending stays set and the deadline
+  // check retries after the loan. The parser's popup callback lives as long
+  // as the build and keeps firing from background buildSomeMore ticks;
+  // without the buildPopupPending gate it would draw over an already-
+  // displayed page.
+  if (!buildPopupPending || !renderer.hasFrameBuffer()) return;
   GUI.drawPopup(renderer, tr(STR_INDEXING));
   // HALF-clear the popup when the page replaces it, else "INDEXING" ghosts.
   pagesUntilFullRefresh = 1;
@@ -1682,16 +1686,25 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         // The popup's own refresh is a plain FAST, so force the page that replaces it onto the HALF
         // ghost-cleanup path -- otherwise the "INDEXING" text ghosts under the rendered page.
         pagesUntilFullRefresh = 1;
-        const auto popupFn = [this]() { GUI.drawPopup(renderer, tr(STR_INDEXING)); };
+        // No popup redraws while the framebuffer is lent to the build below;
+        // the panel holds the popup displayed above (e-ink is persistent).
+        const auto popupFn = [this]() {
+          if (renderer.hasFrameBuffer()) GUI.drawPopup(renderer, tr(STR_INDEXING));
+        };
+        // Lend the framebuffer's 48 KB to the blocking full build; restored
+        // (white) at scope exit, and the page render below redraws everything.
+        GfxRenderer::FrameBufferLoan loan(renderer);
         if (!section->createSectionFile(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                         SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
                                         viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
                                         SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, popupFn)) {
           LOG_ERR("ERS", "Failed to persist page data to SD");
           section.reset();
+          loan.end();  // restore before anything draws
           showBuildError();
           return;
         }
+        loan.end();
       } else {
         // Lay out just enough to show the landing page; loop() builds the rest behind it. Show the
         // indexing popup up front only when the build will actually be slow: a large spine (its
@@ -1732,10 +1745,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         // phase so a background build in loop() can never draw over a page.
         buildPopupPending = !showPopup;
         const unsigned long buildStartMs = millis();
-        if (!section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-                                 SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
-                                 viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
-                                 SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, [this] { showBuildPopup(); })) {
+        bool started;
+        {
+          // Lend the framebuffer's 48 KB to startBuild only (the spine HTML
+          // inflation peak). The chunk loop below runs without it so the popup
+          // can draw mid-build; background chunks never had the loan either.
+          GfxRenderer::FrameBufferLoan loan(renderer);
+          started =
+              section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
+                                  SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
+                                  viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
+                                  SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, [this] { showBuildPopup(); });
+        }
+        if (!started) {
           LOG_ERR("ERS", "Failed to start section build");
           section.reset();
           buildPopupPending = false;
