@@ -59,17 +59,29 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
   return {prev, next, tiltPrev || tiltNext};
 }
 
-inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {
+// async=true starts the panel waveform and returns so the caller can overlap
+// CPU work (the grayscale plane render) with the panel's refresh time. Async
+// callers must not touch the framebuffer until renderer.waitRefreshComplete()
+// and must rebuild the differential baseline before the next differential
+// update (the tiled-grayscale cleanup path already does this).
+inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh, bool async = false) {
+  const auto mode = (pagesUntilFullRefresh <= 1) ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH;
+  // forceCleanBaseOnHalf=false only on the periodic ghost-cleanup HALF: it's a
+  // full-pixel scrub of the page already on screen, not a base-clearing
+  // operation -- the forced resync it would otherwise trigger on X3 chains 2
+  // extra panel waveform passes on top of this one (~3.4s vs ~800ms measured
+  // on-device) for no visual benefit here. See HalDisplay::displayBuffer's
+  // comment. The FAST branch keeps the default (true), matching every other
+  // existing call site.
+  const bool forceCleanBaseOnHalf = mode != HalDisplay::HALF_REFRESH;
+  if (async) {
+    renderer.displayBufferAsync(mode, forceCleanBaseOnHalf);
+  } else {
+    renderer.displayBuffer(mode, forceCleanBaseOnHalf);
+  }
   if (pagesUntilFullRefresh <= 1) {
-    // forceCleanBaseOnHalf=false: this is a periodic full-pixel scrub of the
-    // page already on screen, not a base-clearing operation -- the forced
-    // resync it would otherwise trigger on X3 chains 2 extra panel waveform
-    // passes on top of this one (~3.4s vs ~800ms measured on-device) for no
-    // visual benefit here. See HalDisplay::displayBuffer's comment.
-    renderer.displayBuffer(HalDisplay::HALF_REFRESH, /*forceCleanBaseOnHalf=*/false);
     pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
   } else {
-    renderer.displayBuffer();
     pagesUntilFullRefresh--;
   }
 }

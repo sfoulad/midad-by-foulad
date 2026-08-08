@@ -2488,6 +2488,28 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const
   if (darkMode_) invertScreen();
 }
 
+void GfxRenderer::displayBufferAsync(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
+  // Fading fix relies on turnOffScreen, which the async SDK primitive has no
+  // hook for at all -- keep those users on the blocking path unconditionally.
+  if (fadingFix) {
+    displayBuffer(refreshMode, forceCleanBaseOnHalf);
+    return;
+  }
+  auto elapsed = millis() - start_ms;
+  LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBufferAsync", elapsed);
+  // Safe to un-invert once this call returns even though the panel is still
+  // refreshing: the SDK's "push" step (SPI transfer into controller RAM) is
+  // synchronous and already complete by the time displayBufferAsync returns;
+  // the panel refreshes afterward from ITS OWN copy, not by re-reading ours.
+  if (darkMode_) invertScreen();
+  display.displayBufferAsync(refreshMode, forceCleanBaseOnHalf);
+  if (darkMode_) invertScreen();
+}
+
+void GfxRenderer::waitRefreshComplete() const { display.waitRefreshComplete(); }
+
+bool GfxRenderer::supportsAsyncRefresh() const { return !fadingFix && display.supportsAsyncRefresh(); }
+
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
                                        const EpdFontFamily::Style style) const {
   if (!text || maxWidth <= 0) return "";

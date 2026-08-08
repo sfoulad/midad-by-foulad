@@ -286,6 +286,24 @@ class GfxRenderer {
   // is the one caller that passes false.
   void displayBuffer(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH,
                      bool forceCleanBaseOnHalf = true) const;
+  // Non-blocking form: starts the panel waveform and returns so CPU work (the
+  // grayscale plane render) can overlap the panel's refresh time. The
+  // framebuffer must stay untouched until waitRefreshComplete() -- safe to
+  // read/invert again once this call itself returns (the SDK's "push" step is
+  // synchronous; the panel refreshes afterward from its own RAM copy, not by
+  // re-reading ours). Falls back to the blocking displayBuffer() when fading
+  // fix is active: the async SDK primitive has no turnOffScreen hook, which
+  // the fix relies on.
+  void displayBufferAsync(HalDisplay::RefreshMode refreshMode = HalDisplay::FAST_REFRESH,
+                          bool forceCleanBaseOnHalf = true) const;
+  // Block until a pending async refresh completes (no-op when none is).
+  void waitRefreshComplete() const;
+  // True when displayBufferAsync() genuinely overlaps (panel driver defers
+  // the wait); false where it silently falls back to blocking. Callers can
+  // skip overlap scaffolding (e.g. whole-plane grayscale buffers) when there
+  // is nothing to overlap. Also false whenever fading fix is active, since
+  // displayBufferAsync() always takes the blocking fallback in that case.
+  bool supportsAsyncRefresh() const;
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   // void displayWindow(int x, int y, int width, int height) const;
   void invertScreen() const;

@@ -52,6 +52,24 @@ class HalDisplay {
   // true so every other existing call site's behavior is unchanged.
   void displayBuffer(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false,
                      bool forceCleanBaseOnHalf = true);
+  // Non-blocking refresh: pushes the frame, starts the panel waveform, and
+  // returns (~25ms) while the panel refreshes on its own (~0.3-2s). The
+  // caller must not touch the framebuffer until waitRefreshComplete()
+  // (refreshBusy()==false / any blocking display call also drains it first),
+  // and must rebuild the differential baseline itself before the next
+  // differential update -- the tiled-grayscale cleanup path already does
+  // this via cleanupGrayscaleWithFrameBuffer(). Same X3 forceCleanBaseOnHalf
+  // resync-gating as displayBuffer() above; see that comment for why.
+  // Falls back to the blocking path on panels that don't support deferral
+  // (supportsAsyncRefresh() reports which).
+  void displayBufferAsync(RefreshMode mode = RefreshMode::FAST_REFRESH, bool forceCleanBaseOnHalf = true);
+  // Block until a pending async refresh completes (no-op when none is).
+  void waitRefreshComplete();
+  // True when displayBufferAsync() genuinely overlaps (panel driver defers
+  // the wait); false where it silently falls back to a blocking refresh, in
+  // which case overlap scaffolding upstream (e.g. whole-plane grayscale
+  // buffers) has nothing to overlap and should skip itself.
+  bool supportsAsyncRefresh() const;
   void refreshDisplay(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
 
   // Power management

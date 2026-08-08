@@ -812,8 +812,9 @@ build_flags =
    **Local simulator patches.** `crosspoint-simulator` is fetched from git HEAD and lags
    this firmware, so `.pio/libdeps/simulator/` needs local edits. All of them live in a
    gitignored directory: `pio clean` or a libdeps re-fetch silently reverts every one.
-   If the simulator misbehaves, check this list before debugging anything else. All three
-   are upstream fix candidates in the crosspoint-simulator repo.
+   If the simulator misbehaves, check this list before debugging anything else. a-c are
+   upstream fix candidates in the crosspoint-simulator repo; e is fork-specific until
+   upstream grows an equivalent async-refresh HAL surface.
 
    a. **Build blocker — `displayBuffer` arity.** The firmware's `HalDisplay::displayBuffer`
       takes three arguments (`mode, turnOffScreen, forceCleanBaseOnHalf`); the simulator's
@@ -845,6 +846,21 @@ build_flags =
       `QrUtils::drawQrCode` faithfully draws nothing. The encoder and draw path are fine on
       device. Do not chase this; verify QR rendering on hardware, or by encoding the payload
       against the real `ricmoo/QRCode` in a standalone host program.
+
+   e. **Build blocker — no async-refresh HAL surface.** The async grayscale refresh
+      overlap feature (`HalDisplay::displayBufferAsync`/`waitRefreshComplete`/
+      `supportsAsyncRefresh`) has no simulator counterpart, so `GfxRenderer.cpp` fails to
+      link with "no member named 'displayBufferAsync' in 'HalDisplay'" until patched.
+      Add all three to `simulator/src/HalDisplay.h` and implement them in
+      `HalDisplay.cpp`: `displayBufferAsync()` just calls the existing blocking
+      `refreshDisplay()` (the sim's SDL push is already synchronous, nothing to overlap),
+      `waitRefreshComplete()` is a no-op, and `supportsAsyncRefresh()` returns `true` so
+      host builds exercise the same 2-plane-buffer overlap path as async-capable device
+      panels (same reasoning as `supportsStripGrayscale()` always returning `true`). Note
+      the firmware's own `GfxRenderer::supportsAsyncRefresh()` still gates on
+      `!fadingFix` — with `fadingFix` at its default of `1`, the sim (and device) fall
+      back to the blocking strip-scratch tier regardless of this stub; set
+      `SETTINGS.fadingFix = 0` before opening a book to actually exercise the overlap tier.
 
    **Seeing the screen without a GUI.** SDL windows are not always exposed to the macOS
    Accessibility API, and when they aren't, `osascript` keystrokes silently go nowhere and
