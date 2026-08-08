@@ -6,10 +6,18 @@ All POD fields are written in the ESP32 little-endian representation used by
 
 ## `book.bin`
 
-### Version 7
+### Version 9
 
 `book.bin` stores EPUB metadata plus lookup tables for spine and TOC entries.
 The current firmware writes this version from `BookMetadataCache`.
+
+Version 9 ignores ambiguous EPUB 2 `<guide>` `type="text"` references when
+locating the book's first-reading position: many EPUB 2 files mark every
+content file as `"text"`, so that type alone doesn't reliably identify a
+start location. Only an explicit `type="start"` reference is now used;
+otherwise the reader opens at spine index 0.
+
+Version 8 (undocumented at the time) stores TOC/book titles NFC-composed.
 
 ImHex pattern:
 
@@ -18,7 +26,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 7
+#define EXPECTED_VERSION 9
 #define MAX_STRING_LENGTH 65535
 
 struct String {
