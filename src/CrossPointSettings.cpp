@@ -1,8 +1,10 @@
 #include "CrossPointSettings.h"
 
+#include <ArduinoJson.h>
 #include <HalStorage.h>
-#include <JsonSettingsIO.h>
+#include <I18n.h>
 #include <Logging.h>
+#include <ObfuscationUtils.h>
 #include <Serialization.h>
 
 #include <cstring>
@@ -10,10 +12,8 @@
 #include <string>
 
 #include "I18nKeys.h"
+#include "SettingsList.h"
 #include "fontIds.h"
-
-// Initialize the static instance
-CrossPointSettings CrossPointSettings::instance;
 
 void readAndValidate(HalFile& file, uint8_t& member, const uint8_t maxValue) {
   uint8_t tempValue;
@@ -26,10 +26,58 @@ void readAndValidate(HalFile& file, uint8_t& member, const uint8_t maxValue) {
 namespace {
 constexpr uint8_t SETTINGS_FILE_VERSION = 2;
 constexpr char SETTINGS_FILE_BIN[] = "/.crosspoint/settings.bin";
-constexpr char SETTINGS_FILE_JSON[] = "/.crosspoint/settings.json";
 constexpr char SETTINGS_FILE_BAK[] = "/.crosspoint/settings.bin.bak";
 constexpr char LANG_FILE_BIN[] = "/.crosspoint/language.bin";
 constexpr char LANG_FILE_BAK[] = "/.crosspoint/language.bin.bak";
+
+// Convert legacy settings.
+void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
+  switch (static_cast<CrossPointSettings::STATUS_BAR_MODE>(settings.statusBar)) {
+    case CrossPointSettings::NONE:
+      settings.statusBarChapterPageCount = 0;
+      settings.statusBarBookProgressPercentage = 0;
+      settings.statusBarProgressBar = CrossPointSettings::HIDE_PROGRESS;
+      settings.statusBarTitle = CrossPointSettings::HIDE_TITLE;
+      settings.statusBarBattery = 0;
+      break;
+    case CrossPointSettings::NO_PROGRESS:
+      settings.statusBarChapterPageCount = 0;
+      settings.statusBarBookProgressPercentage = 0;
+      settings.statusBarProgressBar = CrossPointSettings::HIDE_PROGRESS;
+      settings.statusBarTitle = CrossPointSettings::CHAPTER_TITLE;
+      settings.statusBarBattery = 1;
+      break;
+    case CrossPointSettings::BOOK_PROGRESS_BAR:
+      settings.statusBarChapterPageCount = 1;
+      settings.statusBarBookProgressPercentage = 0;
+      settings.statusBarProgressBar = CrossPointSettings::BOOK_PROGRESS;
+      settings.statusBarTitle = CrossPointSettings::CHAPTER_TITLE;
+      settings.statusBarBattery = 1;
+      break;
+    case CrossPointSettings::ONLY_BOOK_PROGRESS_BAR:
+      settings.statusBarChapterPageCount = 1;
+      settings.statusBarBookProgressPercentage = 0;
+      settings.statusBarProgressBar = CrossPointSettings::BOOK_PROGRESS;
+      settings.statusBarTitle = CrossPointSettings::HIDE_TITLE;
+      settings.statusBarBattery = 0;
+      break;
+    case CrossPointSettings::CHAPTER_PROGRESS_BAR:
+      settings.statusBarChapterPageCount = 0;
+      settings.statusBarBookProgressPercentage = 1;
+      settings.statusBarProgressBar = CrossPointSettings::CHAPTER_PROGRESS;
+      settings.statusBarTitle = CrossPointSettings::CHAPTER_TITLE;
+      settings.statusBarBattery = 1;
+      break;
+    case CrossPointSettings::FULL:
+    default:
+      settings.statusBarChapterPageCount = 1;
+      settings.statusBarBookProgressPercentage = 1;
+      settings.statusBarProgressBar = CrossPointSettings::HIDE_PROGRESS;
+      settings.statusBarTitle = CrossPointSettings::CHAPTER_TITLE;
+      settings.statusBarBattery = 1;
+      break;
+  }
+}
 
 // Convert legacy front button layout into explicit logical->hardware mapping.
 void applyLegacyFrontButtonLayout(CrossPointSettings& settings) {
@@ -96,33 +144,185 @@ uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue)
   }
 }
 
+void CrossPointSettings::toJson(JsonDocument& doc) const {
+  for (const auto& info : getSettingsList()) {
+    if (!info.key) continue;
+    // Dynamic entries (KOReader etc.) are stored in their own files — skip.
+    if (!info.valuePtr && !info.stringOffset) continue;
+
+    if (info.stringOffset) {
+      const char* strPtr = (const char*)this + info.stringOffset;
+      if (info.obfuscated) {
+        doc[std::string(info.key) + "_obf"] = obfuscation::obfuscateToBase64(strPtr);
+      } else {
+        doc[info.key] = strPtr;
+      }
+    } else {
+      doc[info.key] = this->*(info.valuePtr);
+    }
+  }
+
+  // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
+  doc["frontButtonBack"] = frontButtonBack;
+  doc["frontButtonConfirm"] = frontButtonConfirm;
+  doc["frontButtonLeft"] = frontButtonLeft;
+  doc["frontButtonRight"] = frontButtonRight;
+  // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
+  doc["fontFamily"] = fontFamily;
+  // SD card font family name — not in SettingsList, save manually
+  if (sdFontFamilyName[0] != '\0') {
+    doc["sdFontFamilyName"] = sdFontFamilyName;
+  }
+  if (sdArabicFontFamilyName[0] != '\0') {
+    doc["sdArabicFontFamilyName"] = sdArabicFontFamilyName;
+  }
+
+  // Language -- managed by LanguageSelectActivity, not in SettingsList.
+  // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
+  doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
+
+  // Debug logging -- appended in SettingsActivity's own Apps list (not SettingsList's
+  // static table) so it always lands right after KOReader Sync; save/load it manually
+  // here for the same reason frontButtonBack etc. are manual above. Without this the
+  // toggle silently reset to off on every deep sleep (a chip reset), defeating the
+  // rolling SD diagnostic logs (SleepDiagLog/BatteryDiagLog/etc.) the next session.
+  doc["debugLoggingEnabled"] = debugLoggingEnabled;
+}
+
+bool CrossPointSettings::fromJson(JsonVariantConst doc) {
+  _needsResaveAfterLoad = false;
+  auto clamp = [](uint8_t val, uint8_t maxVal, uint8_t def) -> uint8_t { return val < maxVal ? val : def; };
+
+  // Legacy migration: if statusBarChapterPageCount is absent this is a pre-refactor settings file.
+  // Populate this with migrated values now so the generic loop below picks them up as defaults and clamps them.
+  if (doc["statusBarChapterPageCount"].isNull()) {
+    applyLegacyStatusBarSettings(*this);
+  }
+
+  for (const auto& info : getSettingsList()) {
+    if (!info.key) continue;
+    // Dynamic entries (KOReader etc.) are stored in their own files — skip.
+    if (!info.valuePtr && !info.stringOffset) continue;
+
+    if (info.stringOffset) {
+      const char* strPtr = (const char*)this + info.stringOffset;
+      const std::string fieldDefault = strPtr;  // current buffer = struct-initializer default
+      std::string val;
+      if (info.obfuscated) {
+        bool ok = false;
+        val = obfuscation::deobfuscateFromBase64(doc[std::string(info.key) + "_obf"] | "", &ok);
+        if (!ok || val.empty()) {
+          val = doc[info.key] | fieldDefault;
+          if (val != fieldDefault) _needsResaveAfterLoad = true;
+        }
+      } else {
+        val = doc[info.key] | fieldDefault;
+      }
+      char* destPtr = (char*)this + info.stringOffset;
+      if (info.stringMaxLen == 0) {
+        LOG_ERR("CPS", "Misconfigured SettingInfo: stringMaxLen is 0 for key '%s'", info.key);
+        destPtr[0] = '\0';
+        _needsResaveAfterLoad = true;
+        continue;
+      }
+      strncpy(destPtr, val.c_str(), info.stringMaxLen - 1);
+      destPtr[info.stringMaxLen - 1] = '\0';
+    } else {
+      const uint8_t fieldDefault = this->*(info.valuePtr);  // struct-initializer default, read before we overwrite it
+      uint8_t v = doc[info.key] | fieldDefault;
+      if (info.type == SettingType::ENUM) {
+        v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
+      } else if (info.type == SettingType::TOGGLE) {
+        v = clamp(v, (uint8_t)2, fieldDefault);
+      } else if (info.type == SettingType::VALUE) {
+        if (v < info.valueRange.min)
+          v = info.valueRange.min;
+        else if (v > info.valueRange.max)
+          v = info.valueRange.max;
+      }
+      this->*(info.valuePtr) = v;
+    }
+  }
+
+  if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
+    const uint8_t legacyValue =
+        clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);
+    sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(legacyValue);
+    _needsResaveAfterLoad = true;
+  }
+  // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
+  frontButtonBack = clamp(doc["frontButtonBack"] | (uint8_t)FRONT_HW_BACK, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
+  frontButtonConfirm =
+      clamp(doc["frontButtonConfirm"] | (uint8_t)FRONT_HW_CONFIRM, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_CONFIRM);
+  frontButtonLeft = clamp(doc["frontButtonLeft"] | (uint8_t)FRONT_HW_LEFT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
+  frontButtonRight =
+      clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
+  CrossPointSettings::validateFrontButtonMapping(*this);
+
+  // Font family — uses dynamic getter/setter in SettingsList so the generic loop skips it.
+  const uint8_t storedFontFamily = doc["fontFamily"] | (uint8_t)0;
+  fontFamily = clamp(storedFontFamily, BUILTIN_FONT_COUNT, 0);
+  // SD card font family name — not in SettingsList, load manually
+  const char* sfn = doc["sdFontFamilyName"] | "";
+  strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
+  sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
+  const char* safn = doc["sdArabicFontFamilyName"] | "";
+  strncpy(sdArabicFontFamilyName, safn, sizeof(sdArabicFontFamilyName) - 1);
+  sdArabicFontFamilyName[sizeof(sdArabicFontFamilyName) - 1] = '\0';
+  if (storedFontFamily == LEGACY_OPENDYSLEXIC && sdFontFamilyName[0] == '\0') {
+    fontFamily = LEXENDDECA;
+    strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
+    sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
+    _needsResaveAfterLoad = true;
+  } else if (storedFontFamily >= BUILTIN_FONT_COUNT) {
+    _needsResaveAfterLoad = true;
+  }
+
+  // Language -- stored as code string for stability across enum reorders.
+  if (doc["language"].is<const char*>()) {
+    language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
+  }
+
+  // Debug logging -- not in SettingsList's static table (see save side above); load
+  // it manually so the toggle actually survives a reboot.
+  debugLoggingEnabled = clamp(doc["debugLoggingEnabled"] | (uint8_t)0, 2, 0);
+
+  LOG_DBG("CPS", "Settings loaded from file");
+
+  return true;
+}
+
 bool CrossPointSettings::saveToFile() const {
   std::lock_guard<std::mutex> lock(_mutex);
-  Storage.mkdir("/.crosspoint");
-  return JsonSettingsIO::saveSettings(*this, SETTINGS_FILE_JSON);
+  return PersistableStore<CrossPointSettings>::saveToFile();
 }
 
 bool CrossPointSettings::loadFromFile() {
-  // Try JSON first
-  if (Storage.exists(SETTINGS_FILE_JSON)) {
-    String json = Storage.readFile(SETTINGS_FILE_JSON);
-    if (!json.isEmpty()) {
-      bool resave = false;
-      bool result;
-      {
-        std::lock_guard<std::mutex> lock(_mutex);
-        result = JsonSettingsIO::loadSettings(*this, json.c_str(), &resave);
-      }
-      if (result && resave) {
-        if (saveToFile()) {
-          LOG_DBG("CPS", "Resaved settings to update format");
-        } else {
-          LOG_ERR("CPS", "Failed to resave settings after format update");
-        }
-      }
-      migrateLanguageBinaryFile();
-      return result;
+  // Try JSON first. PersistableStore::loadFromFile() returns false uniformly
+  // for a missing, empty, OR corrupt settings.json -- a deliberate widening
+  // from the pre-migration code, which only fell through to the binary
+  // migration below for missing/empty. Recovering a corrupt settings.json
+  // from settings.bin.bak (when one exists) is strictly better than
+  // discarding every setting, so this is an intentional improvement, not an
+  // accidental behavior change. Same widening applied to CrossPointState.
+  bool result;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    result = PersistableStore<CrossPointSettings>::loadFromFile();
+  }
+  // Resave (if fromJson silently migrated a legacy field) strictly outside
+  // the lock above: saveToFile() takes the same mutex, and it is not
+  // recursive.
+  if (result && _needsResaveAfterLoad) {
+    if (saveToFile()) {
+      LOG_DBG("CPS", "Resaved settings to update format");
+    } else {
+      LOG_ERR("CPS", "Failed to resave settings after format update");
     }
+  }
+  if (result) {
+    migrateLanguageBinaryFile();
+    return true;
   }
 
   // Fall back to binary migration
