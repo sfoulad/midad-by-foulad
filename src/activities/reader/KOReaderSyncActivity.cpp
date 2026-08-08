@@ -14,6 +14,7 @@
 
 #include "Epub/Section.h"
 #include "EpubReaderUtils.h"
+#include "FouladDeviceTracking.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderDocumentId.h"
 #include "MappedInputManager.h"
@@ -25,11 +26,6 @@
 #include "fontIds.h"
 
 namespace {
-std::string calculateDocumentHashForMethod(const std::string& path, const DocumentMatchMethod method) {
-  return method == DocumentMatchMethod::FILENAME ? KOReaderDocumentId::calculateFromFilename(path)
-                                                 : KOReaderDocumentId::calculate(path);
-}
-
 DocumentMatchMethod alternateMatchMethod(const DocumentMatchMethod method) {
   return method == DocumentMatchMethod::FILENAME ? DocumentMatchMethod::BINARY : DocumentMatchMethod::FILENAME;
 }
@@ -122,6 +118,14 @@ void KOReaderSyncActivity::onWifiSelectionComplete(const bool success) {
 
   LOG_DBG("KOSync", "WiFi connected, starting sync");
 
+  // The radio is up anyway -- opportunistically deliver any progress queued
+  // from a DIFFERENT book closed since the last reconnect (single-slot queue,
+  // see PendingKOReaderSync; this book's own upload below always wins if it
+  // happens to be the same document). Harmless no-op the vast majority of the
+  // time -- there is usually nothing queued once the manual Sync flow is what
+  // got the radio up in the first place.
+  FouladDeviceTracking::flushPendingKOReaderSync();
+
   {
     RenderLock lock(*this);
     state = SYNCING;
@@ -144,7 +148,7 @@ void KOReaderSyncActivity::onWifiSelectionComplete(const bool success) {
 void KOReaderSyncActivity::performSync() {
   // Calculate document hash based on user's preferred method
   const DocumentMatchMethod primaryMethod = KOREADER_STORE.getMatchMethod();
-  documentHash = calculateDocumentHashForMethod(epubPath, primaryMethod);
+  documentHash = KOReaderDocumentId::calculateForMatchMethod(epubPath, primaryMethod);
   if (documentHash.empty()) {
     {
       RenderLock lock(*this);
@@ -175,7 +179,7 @@ void KOReaderSyncActivity::performSync() {
 
   if (smartSyncEnabled()) {
     const DocumentMatchMethod altMethod = alternateMatchMethod(primaryMethod);
-    const std::string altHash = calculateDocumentHashForMethod(epubPath, altMethod);
+    const std::string altHash = KOReaderDocumentId::calculateForMatchMethod(epubPath, altMethod);
     if (!altHash.empty() && altHash != documentHash) {
       KOReaderProgress altProgress;
       const auto altResult = KOReaderSyncClient::getProgress(altHash, altProgress);
@@ -545,7 +549,7 @@ void KOReaderSyncActivity::loop() {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       // Calculate hash if not done yet
       if (documentHash.empty()) {
-        documentHash = calculateDocumentHashForMethod(epubPath, KOREADER_STORE.getMatchMethod());
+        documentHash = KOReaderDocumentId::calculateForMatchMethod(epubPath, KOREADER_STORE.getMatchMethod());
       }
       performUpload();
     }

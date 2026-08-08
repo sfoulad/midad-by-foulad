@@ -37,6 +37,7 @@
 #include "FouladEbooksConfig.h"
 #include "FouladReadingPosition.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderDocumentId.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -376,6 +377,36 @@ void EpubReaderActivity::onExit() {
                                     static_cast<float>(progressPercent), section ? section->currentPage : -1,
                                     section ? section->estimatedTotalPages() : -1, readAt, ageSeconds, remote);
       }
+    }
+  }
+
+  // KOReader/MidadReader Sync: queue this session's position the same way the
+  // manual "Sync" menu item uploads it (see launchKOReaderSync()), so a device
+  // that's read but never pressed Sync still shows up server-side eventually.
+  // Queued rather than sent live for the same reason as the Foulad reading-
+  // position block above: WiFi is torn down before the reader even opens, so a
+  // live attempt here would almost always no-op. FouladDeviceTracking::
+  // flushPendingKOReaderSync() delivers it the next time the device reconnects
+  // for any reason. Gated on pageTurnedThisSession so opening a book and
+  // immediately backing out doesn't overwrite a real remote position with
+  // nothing.
+  if (epub && pageTurnedThisSession && KOREADER_STORE.hasCredentials()) {
+    const CrossPointPosition localPos = getCurrentPosition();
+    const SavedProgressPosition localProgress = ProgressMapper::toSavedProgress(epub, localPos);
+    const std::string documentHash =
+        KOReaderDocumentId::calculateForMatchMethod(epub->getPath(), KOREADER_STORE.getMatchMethod());
+    if (!documentHash.empty()) {
+      PendingKOReaderSync pending;
+      pending.documentHash = documentHash;
+      pending.xpath = localProgress.xpath;
+      pending.percentage = localProgress.percentage;
+      pending.spineIndex = static_cast<uint16_t>(localPos.spineIndex);
+      pending.pageNumber = static_cast<uint16_t>(localPos.pageNumber);
+      pending.totalPages = static_cast<uint16_t>(localPos.totalPages > 0 ? localPos.totalPages : 1);
+      if (localPos.hasParagraphIndex) {
+        pending.paragraphIndex = localPos.paragraphIndex;
+      }
+      KOREADER_STORE.setPendingSync(pending);
     }
   }
 

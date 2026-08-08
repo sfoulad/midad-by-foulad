@@ -3,12 +3,29 @@
 #include <PersistableStore.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 // Document matching method for KOReader sync
 enum class DocumentMatchMethod : uint8_t {
   FILENAME = 0,  // Match by filename (simpler, works across different file sources)
   BINARY = 1,    // Match by partial MD5 of file content (more accurate, but files must be identical)
+};
+
+// A progress upload the reader couldn't deliver live (no reliable WiFi at
+// book-close -- reading never keeps the radio up, see
+// OpdsBookBrowserActivity::onExit()), queued for the next time the device
+// happens to reconnect for some other reason. Fields mirror what
+// KOReaderSyncActivity::performUpload() sends, precomputed while the Epub was
+// still loaded so the flush itself needs no SD file access beyond this store.
+struct PendingKOReaderSync {
+  std::string documentHash;
+  std::string xpath;
+  float percentage = 0.0f;
+  uint16_t spineIndex = 0;
+  uint16_t pageNumber = 0;
+  uint16_t totalPages = 1;
+  std::optional<uint16_t> paragraphIndex;
 };
 
 // How manual "Sync Progress" resolves differences after fetching remote progress.
@@ -31,6 +48,7 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   std::string serverUrl;                                            // Custom sync server URL (empty = default)
   DocumentMatchMethod matchMethod = DocumentMatchMethod::FILENAME;  // Default to filename for compatibility
   KOReaderSyncBehavior syncBehavior = KOReaderSyncBehavior::SMART;  // Default to Smart for new configs
+  std::optional<PendingKOReaderSync> pendingSync;                   // Queued upload awaiting a reconnect; see above
 
   // Private constructor for singleton
   KOReaderCredentialStore() = default;
@@ -71,6 +89,13 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   // Sync behavior
   void setSyncBehavior(KOReaderSyncBehavior behavior);
   KOReaderSyncBehavior getSyncBehavior() const { return syncBehavior; }
+
+  // Queued upload for the next reconnect (see PendingKOReaderSync above).
+  // Overwrites any previous queued upload -- only the latest position matters.
+  void setPendingSync(const PendingKOReaderSync& pending);
+  bool hasPendingSync() const { return pendingSync.has_value(); }
+  const std::optional<PendingKOReaderSync>& getPendingSync() const { return pendingSync; }
+  void clearPendingSync();
 };
 
 // Helper macro to access credential store
