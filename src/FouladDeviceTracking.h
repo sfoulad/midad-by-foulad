@@ -60,6 +60,17 @@ void reportReadingStats(const std::string& username, const std::string& password
 // registerDevice(); same no-op-when-offline behavior.
 void flushPendingReadingStats(const std::string& username, const std::string& password);
 
+// Delivers a KOReader/MidadReader Sync progress upload queued by
+// EpubReaderActivity::onExit() (see PendingKOReaderSync in
+// KOReaderCredentialStore.h) -- reading never keeps WiFi connected, so this is
+// the reliable moment for it too, same reasoning as flushPendingReadingStats()
+// above. Uses KOReaderCredentialStore's own credentials, not the Foulad
+// eBooks ones passed to every other function here: KOReader Sync's server can
+// be any KOSync-compatible host, not just midad.one. No-op when nothing is
+// queued, WiFi is down, or credentials were cleared since queueing (the queue
+// entry is dropped in that last case rather than retried forever).
+void flushPendingKOReaderSync();
+
 // Uploads the on-SD shared debug log (see util/DebugLog.h) to the server,
 // where it's visible to Foulad eBooks admins only -- never to the device's
 // own owner -- so a report of "the reader crashed" or "covers won't load"

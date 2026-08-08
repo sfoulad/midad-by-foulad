@@ -15,6 +15,18 @@ void KOReaderCredentialStore::toJson(JsonDocument& doc) const {
   doc["serverUrl"] = getServerUrl();
   doc["matchMethod"] = static_cast<uint8_t>(getMatchMethod());
   doc["syncBehavior"] = static_cast<uint8_t>(getSyncBehavior());
+  if (pendingSync) {
+    JsonObject p = doc["pendingSync"].to<JsonObject>();
+    p["documentHash"] = pendingSync->documentHash;
+    p["xpath"] = pendingSync->xpath;
+    p["percentage"] = pendingSync->percentage;
+    p["spineIndex"] = pendingSync->spineIndex;
+    p["pageNumber"] = pendingSync->pageNumber;
+    p["totalPages"] = pendingSync->totalPages;
+    if (pendingSync->paragraphIndex) {
+      p["paragraphIndex"] = *pendingSync->paragraphIndex;
+    }
+  }
 }
 
 bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
@@ -47,6 +59,26 @@ bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
     LOG_DBG("KRS", "Invalid syncBehavior %u in JSON, resetting to ASK_EVERY_TIME", behavior);
     setSyncBehavior(KOReaderSyncBehavior::ASK_EVERY_TIME);
     needsResave = true;
+  }
+
+  const JsonVariantConst pendingValue = doc["pendingSync"];
+  if (!pendingValue.isNull()) {
+    PendingKOReaderSync pending;
+    pending.documentHash = pendingValue["documentHash"] | "";
+    pending.xpath = pendingValue["xpath"] | "";
+    pending.percentage = pendingValue["percentage"] | 0.0f;
+    pending.spineIndex = pendingValue["spineIndex"] | (uint16_t)0;
+    pending.pageNumber = pendingValue["pageNumber"] | (uint16_t)0;
+    pending.totalPages = pendingValue["totalPages"] | (uint16_t)1;
+    // An empty hash means a prior partial/corrupt write; drop it rather than
+    // later uploading progress attached to no document.
+    if (!pending.documentHash.empty()) {
+      const JsonVariantConst paraValue = pendingValue["paragraphIndex"];
+      if (!paraValue.isNull()) {
+        pending.paragraphIndex = paraValue.as<uint16_t>();
+      }
+      pendingSync = std::move(pending);
+    }
   }
 
   if (needsResave) {
@@ -121,4 +153,17 @@ void KOReaderCredentialStore::setSyncBehavior(KOReaderSyncBehavior behavior) {
   }
   syncBehavior = behavior;
   LOG_DBG("KRS", "Set sync behavior: %s", behavior == KOReaderSyncBehavior::SMART ? "Smart" : "Ask");
+}
+
+void KOReaderCredentialStore::setPendingSync(const PendingKOReaderSync& pending) {
+  pendingSync = pending;
+  saveToFile();
+  LOG_DBG("KRS", "Queued KOReader sync for next reconnect (doc=%s, %.1f%%)", pending.documentHash.c_str(),
+          pending.percentage * 100.0f);
+}
+
+void KOReaderCredentialStore::clearPendingSync() {
+  if (!pendingSync) return;
+  pendingSync.reset();
+  saveToFile();
 }

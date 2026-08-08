@@ -167,6 +167,11 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
 }
 
 void CrossPointWebServerActivity::reportDeviceTrackingOnConnect() {
+  // Not gated on a Foulad eBooks account below: KOReader Sync's server is
+  // independently configured, so this is worth attempting whenever WiFi comes
+  // up here, same reasoning as OpdsBookBrowserActivity's version of this call.
+  FouladDeviceTracking::flushPendingKOReaderSync();
+
   const auto& servers = OPDS_STORE.getServers();
   const auto it =
       std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });

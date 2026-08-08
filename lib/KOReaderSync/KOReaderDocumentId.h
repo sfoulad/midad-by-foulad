@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 
+#include "KOReaderCredentialStore.h"
+
 /**
  * Calculate KOReader document ID (partial MD5 hash).
  *
@@ -32,6 +34,16 @@ class KOReaderDocumentId {
    * @return 32-character lowercase hex MD5 of the filename
    */
   static std::string calculateFromFilename(const std::string& filePath);
+
+  /**
+   * Calculate the document hash using whichever method a KOReaderCredentialStore
+   * match-method setting selects. Shared by every caller that needs "the hash for
+   * this book, however this device is currently configured to match" instead of
+   * picking a specific algorithm itself.
+   */
+  static std::string calculateForMatchMethod(const std::string& filePath, DocumentMatchMethod method) {
+    return method == DocumentMatchMethod::FILENAME ? calculateFromFilename(filePath) : calculate(filePath);
+  }
 
  private:
   // Size of each chunk to read at each offset

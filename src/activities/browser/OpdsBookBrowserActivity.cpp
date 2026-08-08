@@ -1329,6 +1329,12 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
 }
 
 void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
+  // Not gated on server.url below like the rest of this function: KOReader
+  // Sync's server is independently configured (any KOSync-compatible host,
+  // not necessarily midad.one), so this is worth attempting on WiFi coming up
+  // for ANY OPDS server, Foulad eBooks or not.
+  FouladDeviceTracking::flushPendingKOReaderSync();
+
   if (server.url != FOULAD_EBOOKS_URL) return;
   FouladDeviceTracking::registerDevice(server.username, server.password);
   // Reading itself never keeps WiFi connected (see onExit() below), so this

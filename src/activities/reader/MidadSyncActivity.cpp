@@ -39,6 +39,10 @@ void MidadSyncActivity::onWifiSelectionComplete(const bool success) {
     returnToReader();
     return;
   }
+  // The radio is up for this activity's own sync anyway -- opportunistically
+  // deliver any KOReader Sync progress queued from a book closed since the
+  // last reconnect (see EpubReaderActivity::onExit()).
+  FouladDeviceTracking::flushPendingKOReaderSync();
   // A book that was only ever opened from Home has no catalog id, even though it
   // may well be in the library. Rather than telling the user to go and open it from
   // Library -- which is a chore that exists only because of how the id happens to be

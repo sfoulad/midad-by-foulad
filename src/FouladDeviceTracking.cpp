@@ -12,6 +12,7 @@
 #include "CrossPointSettings.h"
 #include "FouladEbooksConfig.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderSyncClient.h"
 #include "RecentBooksStore.h"
 #include "network/HttpDownloader.h"
 #include "network/OtaUpdater.h"
@@ -572,6 +573,44 @@ void flushPendingReadingStats(const std::string& username, const std::string& pa
     flushed++;
   }
   if (flushed > 0) diagLog("flush: reported " + std::to_string(flushed) + " book(s)");
+}
+
+void flushPendingKOReaderSync() {
+  if (!wifiConnected()) return;
+  if (!KOREADER_STORE.hasPendingSync()) return;
+  // Credentials may have been cleared (sign-out, re-pairing) since the item was
+  // queued; a stale queue entry would otherwise retry forever with NO_CREDENTIALS.
+  if (!KOREADER_STORE.hasCredentials()) {
+    KOREADER_STORE.clearPendingSync();
+    return;
+  }
+
+  const PendingKOReaderSync& pending = *KOREADER_STORE.getPendingSync();
+
+  KOReaderProgress progress;
+  progress.document = pending.documentHash;
+  progress.progress = pending.xpath;
+  progress.percentage = pending.percentage;
+
+  // Rich CrossPoint position, same as the manual sync's live upload -- see
+  // KOReaderSyncActivity::performUpload().
+  KOReaderRichPosition pos;
+  const float pct = pending.percentage < 0.0f ? 0.0f : pending.percentage > 1.0f ? 1.0f : pending.percentage;
+  pos.pctQ = static_cast<uint32_t>(pct * 1000000.0f + 0.5f);
+  pos.spineIndex = pending.spineIndex;
+  pos.pageNumber = pending.pageNumber;
+  pos.totalPages = pending.totalPages;
+  pos.paragraphIndex = pending.paragraphIndex;
+  pos.xpath = pending.xpath;
+  progress.position = std::move(pos);
+
+  const auto result = KOReaderSyncClient::updateProgress(progress);
+  if (result == KOReaderSyncClient::OK) {
+    KOREADER_STORE.clearPendingSync();
+    diagLog("KOReader sync flushed (doc=" + pending.documentHash + ")");
+  }
+  // Failure (offline mid-request, server error): leave it queued for the next
+  // reconnect, same as every other flushPending* function here.
 }
 
 void uploadDebugLog(const std::string& username, const std::string& password) {
