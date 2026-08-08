@@ -14,6 +14,7 @@
 #include <cctype>
 
 #include "CrossPointSettings.h"
+#include "DictionaryStore.h"
 #include "FontInstaller.h"
 #include "FouladEbooksConfig.h"
 #include "HttpDownloader.h"
@@ -22,6 +23,7 @@
 #include "SettingsList.h"
 #include "WebDAVHandler.h"
 #include "WifiCredentialStore.h"
+#include "html/DictionaryPageHtml.generated.h"
 #include "html/FilesPageHtml.generated.h"
 #include "html/FontsPageHtml.generated.h"
 #include "html/HomePageHtml.generated.h"
@@ -38,6 +40,44 @@ constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
 // (the one temp file, not the whole dir) after every relay attempt, success
 // or failure.
 constexpr char FONT_CONVERT_TMP_DIR[] = "/.crosspoint/font_convert_tmp";
+
+// Same discipline as FontInstaller::isValidFamilyName(): a language folder
+// name becomes a path component directly under DictionaryStore::DICTIONARY_ROOT
+// (see handleDictionaryUploadData()), so anything but alphanumeric/-/_ is
+// rejected outright rather than risk path traversal or a malformed directory.
+bool isValidLanguageId(const char* name) {
+  if (name == nullptr || name[0] == '\0') return false;
+  if (strstr(name, "..") != nullptr) return false;
+  if (strchr(name, '/') != nullptr) return false;
+  if (strchr(name, '\\') != nullptr) return false;
+  for (const char* p = name; *p != '\0'; ++p) {
+    const char c = *p;
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// StarDict sets are the only dictionary format DictionaryStore reads
+// (DictionaryStore.cpp's scan() looks for .ifo files and its siblings) --
+// reject anything outside that exact whitelist rather than let an upload
+// write an arbitrary file into the dictionary tree.
+bool isValidDictionaryFilename(const char* name) {
+  if (name == nullptr || name[0] == '\0') return false;
+  if (strstr(name, "..") != nullptr) return false;
+  if (strchr(name, '/') != nullptr) return false;
+  if (strchr(name, '\\') != nullptr) return false;
+
+  const size_t len = strlen(name);
+  static constexpr const char* kExtensions[] = {".ifo", ".idx", ".dict", ".dict.dz", ".syn"};
+  for (const char* ext : kExtensions) {
+    const size_t extLen = strlen(ext);
+    if (len > extLen && strcmp(name + len - extLen, ext) == 0) return true;
+  }
+  return false;
+}
+
 constexpr uint16_t UDP_PORTS[] = {54982, 48123, 39001, 44044, 59678};
 constexpr uint16_t LOCAL_UDP_PORT = 8134;
 
@@ -211,6 +251,14 @@ void CrossPointWebServer::begin() {
   server->on("/api/fonts/delete", HTTP_POST, [this] { handleFontDelete(); });
   server->on(
       "/api/fonts/convert", HTTP_POST, [this] { handleFontConvert(); }, [this] { handleFontConvertUploadData(); });
+
+  // Dictionary management endpoints
+  server->on("/dictionaries", HTTP_GET, [this] { handleDictionariesPage(); });
+  server->on("/api/dictionaries", HTTP_GET, [this] { handleDictionaryList(); });
+  server->on(
+      "/api/dictionaries/upload", HTTP_POST, [this] { handleDictionaryUpload(); },
+      [this] { handleDictionaryUploadData(); });
+  server->on("/api/dictionaries/delete", HTTP_POST, [this] { handleDictionaryDelete(); });
 
   // OPDS server endpoints
   server->on("/api/opds", HTTP_GET, [this] { handleGetOpdsServers(); });
@@ -2263,4 +2311,210 @@ void CrossPointWebServer::handleFontConvert() {
   sdFontSystem.markRegistryDirty();
   server->send(200, "application/json", "{\"ok\":true}");
   LOG_DBG("WEB", "Convert font complete: family=%s, files=%zu/%zu", family.c_str(), downloadedCount, files.size());
+}
+
+void CrossPointWebServer::handleDictionariesPage() const {
+  sendHtmlContent(server.get(), DictionaryPageHtml, sizeof(DictionaryPageHtml));
+  LOG_DBG("WEB", "Served dictionaries page");
+}
+
+void CrossPointWebServer::handleDictionaryList() const {
+  // Unlike fonts' lazy refreshIfDirty(), DictionaryStore has no dirty flag --
+  // scan() is the only way to pick up an upload/delete since the last load,
+  // so this always does a fresh scan (bounded by MAX_SCAN_ENTRIES, same cost
+  // as opening the on-device Dictionary app).
+  DICTIONARIES.scan();
+
+  JsonDocument doc;
+  JsonArray arr = doc["dictionaries"].to<JsonArray>();
+
+  for (const auto& entry : DICTIONARIES.getEntries()) {
+    JsonObject dObj = arr.add<JsonObject>();
+    dObj["name"] = entry.name;
+    dObj["lang"] = entry.lang;
+    dObj["languageId"] = entry.languageId;
+    dObj["wordCount"] = entry.wordCount;
+    dObj["ifoPath"] = entry.ifoPath;
+
+    unsigned long totalSize = 0;
+    const std::string* paths[] = {&entry.ifoPath, &entry.idxPath, &entry.dictPath, &entry.synPath};
+    for (const std::string* path : paths) {
+      if (path->empty()) continue;
+      HalFile f;
+      if (Storage.openFileForRead("WEB", *path, f)) {
+        totalSize += static_cast<unsigned long>(f.size());
+        f.close();
+      }
+    }
+    dObj["size"] = totalSize;
+  }
+
+  String json;
+  serializeJson(doc, json);
+  server->send(200, "application/json", json);
+}
+
+void CrossPointWebServer::handleDictionaryUploadData() {
+  HTTPUpload& upload = server->upload();
+
+  switch (upload.status) {
+    case UPLOAD_FILE_START: {
+      esp_task_wdt_reset();
+      String languageId = server->arg("languageId");
+      dictionaryUpload.file = HalFile();
+      dictionaryUpload.languageId.clear();
+      dictionaryUpload.filePath.clear();
+      dictionaryUpload.valid = false;
+      dictionaryUpload.bytesWritten = 0;
+      dictionaryUpload.bufferPos = 0;
+
+      if (!isValidLanguageId(languageId.c_str())) {
+        LOG_ERR("WEB", "Invalid dictionary language id: %s", languageId.c_str());
+        break;
+      }
+
+      String filename = upload.filename;
+      filename.replace(' ', '_');
+      // Rejects path traversal and anything outside the StarDict extension
+      // whitelist -- see isValidDictionaryFilename()'s comment.
+      if (!isValidDictionaryFilename(filename.c_str())) {
+        LOG_ERR("WEB", "Invalid dictionary filename: %s", filename.c_str());
+        break;
+      }
+
+      dictionaryUpload.languageId = languageId.c_str();
+
+      char dirPath[128];
+      snprintf(dirPath, sizeof(dirPath), "%s/%s", DictionaryStore::DICTIONARY_ROOT, languageId.c_str());
+      if (!Storage.mkdir(dirPath)) {
+        LOG_ERR("WEB", "Failed to create dictionary language dir: %s", dirPath);
+        break;
+      }
+
+      char path[192];
+      snprintf(path, sizeof(path), "%s/%s", dirPath, filename.c_str());
+      dictionaryUpload.filePath = path;
+
+      if (!Storage.openFileForWrite("WEB", path, dictionaryUpload.file)) {
+        LOG_ERR("WEB", "Failed to open dictionary file for write: %s", path);
+        break;
+      }
+
+      dictionaryUpload.valid = true;
+      LOG_DBG("WEB", "Dictionary upload started: %s -> %s", filename.c_str(), path);
+      break;
+    }
+
+    case UPLOAD_FILE_WRITE: {
+      if (!dictionaryUpload.valid) break;
+      esp_task_wdt_reset();
+
+      size_t remaining = upload.currentSize;
+      const uint8_t* src = upload.buf;
+      while (remaining > 0) {
+        size_t space = DictionaryUploadState::BUFFER_SIZE - dictionaryUpload.bufferPos;
+        size_t chunk = (remaining < space) ? remaining : space;
+        memcpy(dictionaryUpload.buffer.data() + dictionaryUpload.bufferPos, src, chunk);
+        dictionaryUpload.bufferPos += chunk;
+        src += chunk;
+        remaining -= chunk;
+
+        if (dictionaryUpload.bufferPos >= DictionaryUploadState::BUFFER_SIZE) {
+          dictionaryUpload.file.write(dictionaryUpload.buffer.data(), dictionaryUpload.bufferPos);
+          dictionaryUpload.bytesWritten += dictionaryUpload.bufferPos;
+          dictionaryUpload.bufferPos = 0;
+          esp_task_wdt_reset();
+        }
+      }
+      break;
+    }
+
+    case UPLOAD_FILE_END: {
+      if (dictionaryUpload.valid && dictionaryUpload.bufferPos > 0) {
+        dictionaryUpload.file.write(dictionaryUpload.buffer.data(), dictionaryUpload.bufferPos);
+        dictionaryUpload.bytesWritten += dictionaryUpload.bufferPos;
+        dictionaryUpload.bufferPos = 0;
+      }
+      if (dictionaryUpload.file.isOpen()) {
+        dictionaryUpload.file.close();
+      }
+
+      if (!dictionaryUpload.valid && !dictionaryUpload.filePath.empty()) {
+        Storage.remove(dictionaryUpload.filePath.c_str());
+      }
+
+      LOG_DBG("WEB", "Dictionary upload end: valid=%d, %zu bytes", dictionaryUpload.valid,
+              dictionaryUpload.bytesWritten);
+      break;
+    }
+
+    case UPLOAD_FILE_ABORTED: {
+      if (dictionaryUpload.file) {
+        dictionaryUpload.file.close();
+      }
+      if (!dictionaryUpload.filePath.empty()) {
+        Storage.remove(dictionaryUpload.filePath.c_str());
+      }
+      dictionaryUpload.valid = false;
+      LOG_DBG("WEB", "Dictionary upload aborted");
+      break;
+    }
+  }
+}
+
+void CrossPointWebServer::handleDictionaryUpload() {
+  if (dictionaryUpload.valid) {
+    DICTIONARIES.scan();
+    server->send(200, "application/json", "{\"ok\":true}");
+    LOG_DBG("WEB", "Dictionary upload complete: %s", dictionaryUpload.filePath.c_str());
+  } else {
+    server->send(400, "application/json", "{\"error\":\"Invalid dictionary file\"}");
+  }
+}
+
+void CrossPointWebServer::handleDictionaryDelete() {
+  String body = server->arg("plain");
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, body);
+
+  if (err || !doc["ifoPath"].is<const char*>()) {
+    server->send(400, "application/json", "{\"error\":\"Invalid request\"}");
+    return;
+  }
+
+  const std::string ifoPath = doc["ifoPath"].as<const char*>();
+  DICTIONARIES.scan();
+  const DictionaryEntry* target = nullptr;
+  for (const auto& entry : DICTIONARIES.getEntries()) {
+    if (entry.ifoPath == ifoPath) {
+      target = &entry;
+      break;
+    }
+  }
+
+  if (!target) {
+    server->send(404, "application/json", "{\"error\":\"Dictionary not found\"}");
+    return;
+  }
+
+  // A language folder can hold more than one dictionary set, so only this
+  // entry's own files are removed -- never the whole directory (matching
+  // FontInstaller::deleteFamily()'s whole-directory removal would delete
+  // sibling dictionaries sharing the same languageId).
+  const std::string paths[] = {target->ifoPath, target->idxPath, target->dictPath, target->synPath};
+  DICTIONARIES.clearActiveIfMatches(ifoPath);
+  bool removedAny = false;
+  for (const auto& path : paths) {
+    if (path.empty()) continue;
+    if (Storage.remove(path.c_str())) removedAny = true;
+  }
+
+  if (removedAny) {
+    DICTIONARIES.scan();
+    server->send(200, "application/json", "{\"ok\":true}");
+    LOG_DBG("WEB", "Deleted dictionary: %s", ifoPath.c_str());
+  } else {
+    server->send(500, "application/json", "{\"error\":\"Delete failed\"}");
+    LOG_ERR("WEB", "Failed to delete dictionary: %s", ifoPath.c_str());
+  }
 }

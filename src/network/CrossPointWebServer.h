@@ -117,6 +117,13 @@ class CrossPointWebServer {
   void handleFontConvert();
   void handleFontConvertUploadData();
 
+  // Dictionary management handlers
+  void handleDictionariesPage() const;
+  void handleDictionaryList() const;
+  void handleDictionaryUpload();
+  void handleDictionaryUploadData();
+  void handleDictionaryDelete();
+
   // Font upload state
   struct FontUploadState {
     HalFile file;
@@ -131,6 +138,24 @@ class CrossPointWebServer {
 
     FontUploadState() { buffer.resize(BUFFER_SIZE); }
   } fontUpload;
+
+  // Dictionary upload state. Unlike fonts (single-magic-bytes check), a
+  // StarDict set has no shared magic to validate on first chunk -- the
+  // per-extension whitelist and languageId sanitization happen in
+  // UPLOAD_FILE_START (see handleDictionaryUploadData()), so there is no
+  // magicChecked equivalent here.
+  struct DictionaryUploadState {
+    HalFile file;
+    std::string languageId;
+    std::string filePath;
+    bool valid = false;
+    size_t bytesWritten = 0;
+    static constexpr size_t BUFFER_SIZE = 4096;
+    std::vector<uint8_t> buffer;
+    size_t bufferPos = 0;
+
+    DictionaryUploadState() { buffer.resize(BUFFER_SIZE); }
+  } dictionaryUpload;
 
   // Convert-font upload state: the raw TTF/OTF is staged to a scratch path
   // (not installed as a font directly) before being relayed to foulad-ebooks.

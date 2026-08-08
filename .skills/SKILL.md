@@ -862,6 +862,22 @@ build_flags =
       back to the blocking strip-scratch tier regardless of this stub; set
       `SETTINGS.fadingFix = 0` before opening a book to actually exercise the overlap tier.
 
+   **Not patchable — the web server is a separate, out-of-sync file, not a stub.**
+   `src/network/CrossPointWebServer.cpp`/`WebDAVHandler.cpp` are NOT compiled from the
+   firmware's own `src/network/` for simulator builds; `crosspoint-simulator`'s own
+   CLAUDE.md notes it "still owns those host-side compatibility paths" and vendors a
+   full separate copy at `simulator/src/CrossPointWebServer.cpp` (a top-level `src/`
+   file there, not under `network/`). Any route/handler added to the firmware's
+   `CrossPointWebServer.cpp` — e.g. the `/dictionaries` page and `/api/dictionaries/*`
+   endpoints — silently 404 in the simulator even though `/api/status` and other
+   long-standing routes work fine, because the simulator's binary is running its own
+   older copy of the file that never learned about the new route. Confirmed via
+   `grep -c "<new route's symbol>" .pio/libdeps/simulator/simulator/src/CrossPointWebServer.cpp`
+   returning 0. Unlike the HAL-stub gaps above, this isn't a one-line patch — the
+   simulator's copy would need the new handlers ported into it too, which is real
+   effort disproportionate to most web-UI changes. Don't chase a 404 here as a
+   firmware bug; verify new CrossPointWebServer routes on-device instead.
+
    **Seeing the screen without a GUI.** SDL windows are not always exposed to the macOS
    Accessibility API, and when they aren't, `osascript` keystrokes silently go nowhere and
    the simulator cannot be driven at all (System Events reports "no windows"). Two
