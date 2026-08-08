@@ -138,7 +138,12 @@ class EpubReaderActivity final : public Activity {
   // Deadline backstop for the predictive gates above: if the blocking build-to-target still
   // hasn't produced the landing page this long after the build started, surface the popup
   // mid-build. Builds that finish under the deadline stay popup-free.
-  static constexpr unsigned long BUILD_POPUP_DEADLINE_MS = 1000;
+  // 2500, not 1000: real-device serial logs (X3, ordinary chapters, no images) showed
+  // "Rendered page" landing at 1000-1200ms routinely -- an initial 1000ms deadline fired
+  // on essentially every book open, showing "Indexing" for ordinary landings the predictive
+  // gates above were specifically designed to keep popup-free. 2500ms gives real hardware
+  // headroom over that baseline while still catching genuinely slow builds.
+  static constexpr unsigned long BUILD_POPUP_DEADLINE_MS = 2500;
   // True only during render()'s blocking build-to-target phase, until the popup has been
   // drawn. Gates showBuildPopup() so the parser's popup callback (which persists into
   // background buildSomeMore ticks) can never draw over a displayed page.

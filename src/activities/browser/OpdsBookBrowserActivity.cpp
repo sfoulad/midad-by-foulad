@@ -1081,7 +1081,12 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     errorMessage = (server.url == FOULAD_EBOOKS_NEWS_URL) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
   }
 
-  {
+  // Crash report: a heap-corruption abort (multi_heap assert_valid_block) landed inside
+  // this block's temporary std::string destructors, after an extended low-heap OPDS
+  // session -- the same throwing-`new`-under-`-fno-exceptions` hazard hasHeapForNavigation()
+  // guards against below, just one call site earlier. This block is pure diagnostics
+  // (RollingSdLog), so skipping it under memory pressure costs nothing but a log line.
+  if (hasHeapForNavigation()) {
     int bookCount = 0;
     for (const auto& e : entries) {
       if (e.type == OpdsEntryType::BOOK) bookCount++;
@@ -1089,6 +1094,8 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     browseLog("FETCH " + url + " entries=" + std::to_string(entries.size()) + " books=" + std::to_string(bookCount) +
               " next=" + (feedNextUrl.empty() ? "-" : feedNextUrl) +
               " prev=" + (feedPrevUrl.empty() ? "-" : feedPrevUrl));
+  } else {
+    LOG_ERR("OPDS", "Skipped FETCH diagnostic log, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
   }
   requestUpdate();
 }
