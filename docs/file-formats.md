@@ -90,11 +90,21 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 37
+### Version 39
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 39 adds the book-internal source href to each serialized ImageBlock,
+written right after the cache path (lazy image extraction: section builds only
+header-probe images for dimensions, and the file is extracted from the EPUB on
+the page's first render).
+
+Version 38 is a pure cache-bust (no structural change from v37) for two
+upstream layout fixes (#2652, #2679): CJK `MAX_WORD_SIZE` continuation words no
+longer gain a false leading space, and bare text after a closing block tag no
+longer inherits the closed block's style.
 
 Version 37 adds an optional `kashidaExtraPx[wordCount]` array to TextBlock's
 arena (kashida/tatweel justification for Arabic body text): the extra width,

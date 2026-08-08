@@ -1,6 +1,7 @@
 #include "EpubReaderActivity.h"
 
 #include <Epub/Page.h>
+#include <Epub/blocks/ImageBlock.h>
 #include <Epub/blocks/TextBlock.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
@@ -177,6 +178,12 @@ void EpubReaderActivity::onEnter() {
 
   epub->setupCacheDir();
 
+  // Lazy image extraction: section builds only header-probe images, so the first
+  // render of an image page pulls the file out of the EPUB through this hook.
+  ImageBlock::setExtractor(epub.get(), [](void* ctx, const char* src, const char* dest) {
+    return static_cast<Epub*>(ctx)->extractItemToFile(src, dest);
+  });
+
   // Per-book reading overrides: load this book's sidecar into SETTINGS.book*
   // (cleared again in onExit). ReaderActivity already ensured the GLOBAL fonts,
   // so the font systems only need a second pass when this book overrides them.
@@ -291,6 +298,10 @@ void EpubReaderActivity::onExit() {
   // the per-book settings write -- leaving no way to tell which side of it died.
   LOG_INF("ERS", "Reader exit: begin");
   Activity::onExit();
+
+  // The extractor holds a raw pointer to this activity's epub; drop it before
+  // the activity (and the shared_ptr) goes away.
+  ImageBlock::setExtractor(nullptr, nullptr);
 
   // Reset orientation back to portrait for the rest of the UI
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
@@ -466,6 +477,18 @@ unsigned cpuMhzNow() {
 }
 }  // namespace
 
+void EpubReaderActivity::showBuildPopup() {
+  // Mid-build indexing popup: only during render()'s blocking build-to-target
+  // phase (buildPopupPending), at most once. The parser's popup callback lives
+  // as long as the build and keeps firing from background buildSomeMore ticks;
+  // without this gate it would draw the popup over an already-displayed page.
+  if (!buildPopupPending) return;
+  GUI.drawPopup(renderer, tr(STR_INDEXING));
+  // HALF-clear the popup when the page replaces it, else "INDEXING" ghosts.
+  pagesUntilFullRefresh = 1;
+  buildPopupPending = false;
+}
+
 void EpubReaderActivity::loop() {
   // Deferred cross-device jump (see onEnter). Runs once, on the first iteration
   // after the activity is fully up and the render task is serving it.
@@ -566,6 +589,44 @@ void EpubReaderActivity::loop() {
           // The chapter re-paginated since the saved progress (settings changed): we now know the
           // real page count, so re-render at the remapped page. No-op for an unchanged resume.
           requestUpdate();
+        }
+      }
+    }
+
+    // Idle glyph prewarm for the likely next page (currentPage + 1). The scan
+    // pass draws nothing (FCM scan mode suppresses text pixels and ImageBlock
+    // skips itself while scanning), so the displayed framebuffer is untouched;
+    // endScanAndPrewarm loads only glyphs not already cached. Debounced past
+    // rapid page-flipping, one attempt per position, and deferred while a
+    // render/build owns the CPU or the heap is near the render floors.
+    // Cross-chapter prewarm is deliberately out of scope (the next spine's
+    // section isn't loaded). Mutually exclusive with the build tick above:
+    // this only runs once the section has finished building.
+    constexpr unsigned long IDLE_PREWARM_DEBOUNCE_MS = 400;
+    if (section && !section->isBuilding() && !RenderLock::peek() && lastRenderCompleteMs != 0 &&
+        millis() - lastRenderCompleteMs > IDLE_PREWARM_DEBOUNCE_MS && ESP.getFreeHeap() > RENDER_MIN_FREE_HEAP &&
+        ESP.getMaxAllocHeap() > RENDER_MIN_LARGEST_BLOCK &&
+        (idlePrewarmSpine != currentSpineIndex || idlePrewarmPage != section->currentPage)) {
+      RenderLock lock;  // the page table must not change under the scan
+      // Re-check under the lock: peek() and acquisition are not atomic, so the render
+      // task may have reset/replaced the section or moved the page in between. cppcheck
+      // can't see the cross-task mutation, so it flags this as always true.
+      // cppcheck-suppress knownConditionTrueFalse
+      if (section && !section->isBuilding() &&
+          (idlePrewarmSpine != currentSpineIndex || idlePrewarmPage != section->currentPage)) {
+        idlePrewarmSpine = currentSpineIndex;
+        idlePrewarmPage = section->currentPage;
+        const int nextPage = section->currentPage + 1;
+        if (nextPage < static_cast<int>(section->pageCount)) {
+          if (const auto p = section->loadPage(nextPage)) {
+            if (auto* fcm = renderer.getFontCacheManager()) {
+              const auto t0 = millis();
+              auto scope = fcm->createPrewarmScope();
+              p->render(renderer, SETTINGS.getReaderFontId(), 0, 0);  // scan only, no pixels
+              scope.endScanAndPrewarm();
+              LOG_DBG("ERS", "Idle prewarm: page %d in %lums", nextPage, millis() - t0);
+            }
+          }
         }
       }
     }
@@ -1203,6 +1264,10 @@ void EpubReaderActivity::launchMidadSync() {
     if (section) {
       nextPageNumber = section->currentPage;
     }
+    // The image extractor holds a raw pointer into this epub (see onEnter);
+    // clear it before the early release, mirroring onExit(), or a later image
+    // render would call through a dangling context.
+    ImageBlock::setExtractor(nullptr, nullptr);
     section.reset();
     epub.reset();
   }
@@ -1250,6 +1315,9 @@ bool EpubReaderActivity::launchKOReaderSync() {
     if (section) {
       nextPageNumber = section->currentPage;
     }
+    // Same dangling-context hazard as the Midad release: the extractor points
+    // into the epub being freed here.
+    ImageBlock::setExtractor(nullptr, nullptr);
     section.reset();
     epub.reset();
   }
@@ -1657,12 +1725,20 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           // HALF-clear the popup when the page replaces it, else "INDEXING" ghosts under the page.
           pagesUntilFullRefresh = 1;
         }
+        // Mid-build popup surfacing for slow builds the predictive gates can't
+        // see (a whole-image extraction fallback inside a single page, or any
+        // chunk overrunning the deadline). The parser fires the callback before
+        // a slow image fallback; buildPopupPending gates it to this blocking
+        // phase so a background build in loop() can never draw over a page.
+        buildPopupPending = !showPopup;
+        const unsigned long buildStartMs = millis();
         if (!section->startBuild(SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
                                  SETTINGS.extraParagraphSpacing, SETTINGS.effParagraphAlignment(), viewportWidth,
                                  viewportHeight, SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
-                                 SETTINGS.imageRendering, SETTINGS.focusReadingEnabled)) {
+                                 SETTINGS.imageRendering, SETTINGS.focusReadingEnabled, [this] { showBuildPopup(); })) {
           LOG_ERR("ERS", "Failed to start section build");
           section.reset();
+          buildPopupPending = false;
           showBuildError();
           return;
         }
@@ -1671,13 +1747,19 @@ void EpubReaderActivity::render(RenderLock&& lock) {
           // Anchor jump: build until the anchor's page is laid out (usually page 0), checking a
           // partial's on-disk anchor map too so an already-indexed anchor resolves immediately.
           // Otherwise: build until the target page exists. loop() builds the rest behind it.
+          if (buildPopupPending && millis() - buildStartMs >= BUILD_POPUP_DEADLINE_MS) {
+            // The predictive gates guessed fast but the build blew the silent budget.
+            showBuildPopup();
+          }
           if (!section->buildSomeMore(BUILD_PAGES_PER_CHUNK)) {
             LOG_ERR("ERS", "Failed during incremental section build");
             section.reset();
+            buildPopupPending = false;
             showBuildError();
             return;
           }
         }
+        buildPopupPending = false;
       }
     } else {
       LOG_DBG("ERS", "Cache found, skipping build...");
@@ -1887,6 +1969,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     const auto start = millis();
     renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
     LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
+    lastRenderCompleteMs = millis();
   }
   // Only persist when the position actually changed. render() also runs on menu,
   // bookmark and screenshot re-renders, and writeAtomic is several FAT ops for 6 bytes.

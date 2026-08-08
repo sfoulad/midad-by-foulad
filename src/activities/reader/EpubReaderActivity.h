@@ -52,6 +52,13 @@ class EpubReaderActivity final : public Activity {
   bool showBookmarkMessage = false;
   bool ignoreNextConfirmRelease = false;
   bool currentPageBookmarked = false;
+  // Idle-time glyph prewarm: after a page settles, scan the LIKELY next page
+  // (scan mode draws nothing) and load its missing glyphs from SD during idle,
+  // so the next turn's in-render prewarm is a cache hit instead of ~100 ms of
+  // SD reads on the page-turn critical path. One attempt per position.
+  int idlePrewarmSpine = -1;
+  int idlePrewarmPage = -1;
+  unsigned long lastRenderCompleteMs = 0;
   bool bookmarkRemoved = false;  // true when last toggle removed (controls popup text)
   std::vector<BookmarkEntry> cachedBookmarks;
   // Tracks whether this book is currently removed from Recent Books by the
@@ -128,6 +135,23 @@ class EpubReaderActivity final : public Activity {
   // whole HTML must be inflated before page 1 can lay out (the giant single-spine case), which is
   // a multi-second wait. Normal chapters are well under this and stay popup-free.
   static constexpr size_t BUILD_POPUP_BYTE_THRESHOLD = 96 * 1024;
+  // Deadline backstop for the predictive gates above: if the blocking build-to-target still
+  // hasn't produced the landing page this long after the build started, surface the popup
+  // mid-build. Builds that finish under the deadline stay popup-free.
+  static constexpr unsigned long BUILD_POPUP_DEADLINE_MS = 1000;
+  // True only during render()'s blocking build-to-target phase, until the popup has been
+  // drawn. Gates showBuildPopup() so the parser's popup callback (which persists into
+  // background buildSomeMore ticks) can never draw over a displayed page.
+  bool buildPopupPending = false;
+  // Draw the indexing popup mid-build (parser image-probe callback and deadline backstop).
+  void showBuildPopup();
+  // Heap floors for optional render-adjacent work (idle prewarm). Page
+  // deserialization (TextBlock word arenas/strings) and glyph caching allocate
+  // through throwing paths that abort() on OOM under -fno-exceptions; skip
+  // deferrable work below them. The largest-block floor exists because free
+  // heap alone ignores fragmentation (same lesson as the OPDS cover gate).
+  static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;
+  static constexpr size_t RENDER_MIN_LARGEST_BLOCK = 16 * 1024;
   // Remap the cached relative reading position once the section's real page count is known
   // (used after a settings change re-paginates a chapter). Returns true if currentPage moved.
   // No-op while the section is still building or when the pagination is unchanged (plain resume).

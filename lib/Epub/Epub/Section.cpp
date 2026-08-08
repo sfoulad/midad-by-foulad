@@ -37,7 +37,10 @@ namespace {
 // continuation word so it doesn't get a false leading space, and closing a block
 // tag now starts a fresh text block instead of letting bare text after it inherit
 // the closed block's style (alignment/margins). Both change layout output.
-constexpr uint8_t SECTION_FILE_VERSION = 38;
+// v39: ImageBlock serializes the book-internal source href after the cache path
+// (lazy extraction: images are header-probed at build time and extracted on
+// first render).
+constexpr uint8_t SECTION_FILE_VERSION = 39;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
