@@ -153,10 +153,19 @@ class OpdsBookBrowserActivity final : public Activity {
   // the fast path needs because it paints over a live frame instead of a cleared one.
   void drawGridCell(const GridLayout& layout, int pageStart, int slot, bool eraseFirst) const;
 
+  // Selector fast path helper: toggles only the 4px selection-ring border around a cell --
+  // no SD read, no BMP decode, cover art and title untouched. The ring lives entirely in
+  // the GRID_GUTTER=12 gap around a cell (same reasoning as RecentBooksActivity's identical
+  // ringRect idiom), so drawing white then black over it never touches the cover or caption.
+  // Real-device testing showed the previous drawGridCell-based fast path (full erase + SD
+  // read + decode for both the old and new cell) still cost ~1.2-1.4s per selector move --
+  // this replaces that cost with a single rect outline toggle.
+  void drawGridSelectionRing(const GridLayout& layout, int slot, bool black) const;
+
   // Selector fast path (see render()). A full repaint re-reads and re-decodes every cover
   // on the page from the SD card, which is what made moving the selector feel slow, so a
-  // pure selection move within an already-drawn page redraws only the two cells whose
-  // frame changed. These track what the framebuffer currently holds; FB_GRID_NONE means
+  // pure selection move within an already-drawn page redraws only the two cells' ring
+  // borders. These track what the framebuffer currently holds; FB_GRID_NONE means
   // it holds something the fast path must not touch up.
   static constexpr int FB_GRID_NONE = -1;
   int fbGridPageStart = FB_GRID_NONE;
