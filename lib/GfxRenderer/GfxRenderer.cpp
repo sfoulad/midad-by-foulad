@@ -1456,12 +1456,10 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&textCursor)))) {
-    // Skip Hebrew Niqqud (vowel marks)
-    // Temporary: avoid adding Niqqud to built-in fonts. Remove when custom fonts are supported.
-    if (cp >= 0x0591 && cp <= 0x05C7) {
-      continue;
-    }
-
+    // Hebrew niqqud (utf8IsHebrewPoint, folded into utf8IsCombiningMark below) renders
+    // through this same combining-mark path when the active font has the glyph; a font
+    // without niqqud glyphs (e.g. the built-in flash fonts) falls through to the
+    // !combiningGlyph skip just below, same as any other combining mark it lacks.
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
@@ -2931,12 +2929,10 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
   uint32_t cp;
   uint32_t prevCp = 0;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&text)))) {
-    // Skip Hebrew Niqqud (vowel marks)
-    // Temporary: avoid adding Niqqud to built-in fonts. Remove when custom fonts are supported.
-    if (cp >= 0x0591 && cp <= 0x05C7) {
-      continue;
-    }
-
+    // Hebrew niqqud (utf8IsHebrewPoint, folded into utf8IsCombiningMark below) renders
+    // through this same combining-mark path when the active font has the glyph; a font
+    // without niqqud glyphs (e.g. the built-in flash fonts) falls through to the
+    // !combiningGlyph skip just below, same as any other combining mark it lacks.
     if (utf8IsCombiningMark(cp)) {
       const EpdGlyph* combiningGlyph = font.getGlyph(cp, style);
       if (!combiningGlyph) continue;
