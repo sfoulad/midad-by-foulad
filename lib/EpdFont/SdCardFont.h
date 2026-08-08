@@ -186,13 +186,57 @@ class SdCardFont {
     // Stub EpdFontData returned when not prewarmed
     EpdFontData stubData{};
 
-    // Mini EpdFontData built during prewarm
+    // Mini EpdFontData built during prewarm. Buffers are kept-if-fits across pages
+    // (the capacity fields below track allocated sizes, separate from the *Count
+    // fields' used sizes): freeing and reallocating slightly different sizes on
+    // every page turn was a primary heap fragmenter — the freed hole rarely fit
+    // the next page's need, so the largest free block eroded over a session.
+    // prewarmStyle()'s rebuild path now calls ensureArrayCapacity() instead of
+    // unconditionally freeing, so once a book's page sizes converge (typically
+    // within a few pages), page turns stop touching the allocator entirely.
+    //
+    // Retention across scopes is what actually fixes the idle-prewarm bug: the
+    // per-render PrewarmScope (FontCacheManager.cpp) calls clearCache() ->
+    // resetStyleMiniData(), which keeps both the allocations AND the loaded
+    // data resident. prewarmStyle() then subset-checks new requests against
+    // that resident data (see its top) — when the idle prewarm already loaded
+    // the next page's glyphs, the real page-turn prewarm is a zero-SD-read hit
+    // instead of redoing the work. Retention is bounded two ways in
+    // resetStyleMiniData(): a heap floor frees outright under pressure, and
+    // sustained underuse (an outlier page's oversized bitmap arena getting
+    // reused for every subsequent smaller page) frees after a few consecutive
+    // low-use rebuilds. freeStyleMiniData() remains the unconditional full
+    // teardown (zeroes capacities too) for true style eviction / font unload.
     EpdFontData miniData{};
     EpdUnicodeInterval* miniIntervals = nullptr;
     EpdGlyph* miniGlyphs = nullptr;
     uint8_t* miniBitmap = nullptr;
     uint32_t miniIntervalCount = 0;
     uint32_t miniGlyphCount = 0;
+    uint32_t miniIntervalCapacity = 0;
+    uint32_t miniGlyphCapacity = 0;
+    uint32_t miniBitmapCapacity = 0;
+    // Bitmap bytes the current page actually used (set by prewarmStyle right
+    // after the bitmap arena is sized) — the underuse-hysteresis signal read by
+    // resetStyleMiniData(). 0 means no bitmap was built this scope (a
+    // metadata-only prewarm), which must NOT be mistaken for "used none of a
+    // real arena", so resetStyleMiniData only judges hysteresis when this is
+    // nonzero.
+    uint32_t miniBitmapUsed = 0;
+    uint8_t miniUnderuseRuns = 0;
+    // True when the resident mini was built metadata-only (no bitmaps loaded).
+    // It can still serve a metadata-only subset request, but a full render
+    // request must rebuild — the subset-check fast path in prewarmStyle() reads
+    // this before trusting a "covered" verdict.
+    bool miniMetadataOnly = false;
+    // Set by a rebuild that actually populated a bitmap arena, consumed (and
+    // cleared) by resetStyleMiniData(): gates the underuse-hysteresis
+    // evaluation to once per rebuild. A scope resets twice in a render (scan
+    // pass's PrewarmScope ctor via clearCache(), then endScanAndPrewarm()'s own
+    // ctor/dtor pair) and a subset-check hit loads nothing new to judge, so
+    // without this gate the same rebuild's underuse would be counted more than
+    // once.
+    bool miniHysteresisPending = false;
 
     // Per-page mini kern matrix (built by buildMiniKernMatrix on each full
     // prewarm). miniKernLeftClasses/miniKernRightClasses map ONLY the codepoints
@@ -207,6 +251,11 @@ class SdCardFont {
     uint8_t miniKernLeftClassCount = 0;
     uint8_t miniKernRightClassCount = 0;
     int8_t* miniKernMatrix = nullptr;
+    // Kept-if-fits capacities, same reuse rationale as the mini glyph buffers
+    // above — these were being freed and rebuilt every page too.
+    uint16_t miniKernLeftCapacity = 0;
+    uint16_t miniKernRightCapacity = 0;
+    uint32_t miniKernMatrixCapacity = 0;
 
     // The EpdFont whose data pointer we manage
     EpdFont epdFont{&stubData};
@@ -265,6 +314,11 @@ class SdCardFont {
 
   // Per-style helpers
   void freeStyleMiniData(PerStyle& s);
+  // Per-scope variant: drops the page's loaded data but keeps the buffer
+  // allocations (and thus the capacity fields) intact — see the PerStyle
+  // comment above miniData. May still escalate to a full freeStyleMiniData()
+  // call under heap pressure or sustained underuse; see its definition.
+  void resetStyleMiniData(PerStyle& s);
   void freeStyleAll(PerStyle& s);
   void freeStyleKernLigatureData(PerStyle& s);
   void freeStyleMiniKern(PerStyle& s);

@@ -68,6 +68,39 @@ bool collectUniqueCodepoints(const char* text, uint32_t* codepoints, uint32_t& c
 const char* asCStr(const std::string& s) { return s.c_str(); }
 const char* asCStr(const char* s) { return s; }
 
+// resetStyleMiniData() retention bounds (see the PerStyle::miniData comment
+// in SdCardFont.h for the full rationale).
+//
+// MIN_FREE_HEAP sits above EpubReaderActivity::RENDER_MIN_FREE_HEAP (24KB):
+// retained mini buffers must give way BEFORE the render path itself would be
+// heap-gated, or a book with a lot of glyph coverage could pin retained font
+// data right up to the render floor and starve the render's own allocations.
+constexpr size_t MINI_RETAIN_MIN_FREE_HEAP = 40 * 1024;
+// An outlier page (several styles cramped onto one page, or a CJK-heavy
+// section) can leave the bitmap arena sized far above what typical pages in
+// the same book need. Freeing on the very next low-use rebuild would thrash
+// on an alternating dense/sparse page pattern, so require several consecutive
+// low-use rebuilds before releasing.
+constexpr uint8_t MINI_UNDERUSE_RUNS_BEFORE_FREE = 3;
+
+// Keep-if-fits buffer reuse: only reallocate when the requested size exceeds
+// the current capacity. Freeing and reallocating slightly different sizes
+// every page turn was punching non-coalescing holes in the heap (the freed
+// block rarely fits the next page's need), eroding the largest contiguous
+// free block over a session. With reuse, capacities converge on the book's
+// largest page after a few turns and further page turns stop touching the
+// allocator. Only three call sites instantiate this (interval/glyph/byte
+// arrays for mini data, plus the mini kern arrays), so template bloat is
+// negligible.
+template <typename T, typename CapT>
+bool ensureArrayCapacity(T*& buf, CapT& capacity, uint32_t needed) {
+  if (buf && capacity >= needed) return true;
+  delete[] buf;
+  buf = new (std::nothrow) T[needed > 0 ? needed : 1];
+  capacity = buf ? static_cast<CapT>(needed) : 0;
+  return buf != nullptr;
+}
+
 }  // namespace
 
 SdCardFont::~SdCardFont() { freeAll(); }
@@ -83,9 +116,56 @@ void SdCardFont::freeStyleMiniData(PerStyle& s) {
   s.miniBitmap = nullptr;
   s.miniIntervalCount = 0;
   s.miniGlyphCount = 0;
+  s.miniIntervalCapacity = 0;
+  s.miniGlyphCapacity = 0;
+  s.miniBitmapCapacity = 0;
+  s.miniBitmapUsed = 0;
+  s.miniUnderuseRuns = 0;
+  s.miniMetadataOnly = false;
+  s.miniHysteresisPending = false;
   freeStyleMiniKern(s);
   memset(&s.miniData, 0, sizeof(s.miniData));
   s.epdFont.data = &s.stubData;
+}
+
+void SdCardFont::resetStyleMiniData(PerStyle& s) {
+  // Retention is a bet that the next scope (the render that follows this
+  // page's idle prewarm, or the idle prewarm that follows this render) wants
+  // similar glyph data. Don't hold buffers when the heap is tight: the mini
+  // arenas are cheaply rebuildable for one page's worth of data, and this
+  // floor keeps retained font buffers from starving a section build or the
+  // render path's own allocations (see MINI_RETAIN_MIN_FREE_HEAP above).
+  if (ESP.getFreeHeap() < MINI_RETAIN_MIN_FREE_HEAP) {
+    freeStyleMiniData(s);
+    return;
+  }
+
+  // Underuse hysteresis on the bitmap arena (the dominant allocation of the
+  // three): without it, one outlier page would pin its high-water arena
+  // capacity for the rest of the book even though every later page needs a
+  // fraction of it. Only evaluated when a rebuild actually populated a bitmap
+  // this scope (miniHysteresisPending) -- a subset-check hit in prewarmStyle()
+  // loads nothing new and has nothing to judge, and a metadata-only prewarm
+  // never sizes the bitmap arena at all.
+  if (s.miniHysteresisPending && s.miniBitmapCapacity > 0 && s.miniBitmapUsed > 0) {
+    s.miniHysteresisPending = false;
+    if (s.miniBitmapUsed < s.miniBitmapCapacity - s.miniBitmapCapacity / 4) {
+      // Used under 3/4 of the retained capacity this rebuild.
+      if (++s.miniUnderuseRuns >= MINI_UNDERUSE_RUNS_BEFORE_FREE) {
+        LOG_DBG("SDCF", "Mini release (underuse): used=%u cap=%u", s.miniBitmapUsed, s.miniBitmapCapacity);
+        freeStyleMiniData(s);
+        return;
+      }
+    } else {
+      s.miniUnderuseRuns = 0;
+    }
+  }
+
+  // Data (intervals/glyphs/bitmap/kern) deliberately survives the scope here
+  // -- only the kept-if-fits buffers' CONTENTS are stale until the next
+  // prewarmStyle() rebuild overwrites them; the next prewarm's subset-check
+  // (see prewarmStyle()) reads what's still resident and decides whether it
+  // already covers the new request.
 }
 
 void SdCardFont::freeStyleKernLigatureData(PerStyle& s) {
@@ -109,6 +189,9 @@ void SdCardFont::freeStyleMiniKern(PerStyle& s) {
   s.miniKernRightEntryCount = 0;
   s.miniKernLeftClassCount = 0;
   s.miniKernRightClassCount = 0;
+  s.miniKernLeftCapacity = 0;
+  s.miniKernRightCapacity = 0;
+  s.miniKernMatrixCapacity = 0;
 }
 
 void SdCardFont::freeStyleAll(PerStyle& s) {
@@ -263,9 +346,25 @@ static uint8_t miniLookupKernClass(const EpdKernClassEntry* entries, uint16_t co
 // on this page simply returns class 0 (no kerning), which was the pre-existing
 // behavior for any codepoint outside the kern classes.
 bool SdCardFont::buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, uint32_t cpCount) {
-  freeStyleMiniKern(s);
+  // No freeStyleMiniKern() call here: it zeroes the capacities, which would
+  // force every ensureArrayCapacity() call below to reallocate on every page
+  // and defeat the buffer reuse this function exists to enable. prewarmStyle()
+  // is the only caller, and its success path below overwrites the buffers'
+  // contents and all four count fields, so keeping stale buffer contents
+  // around between the early-return checks and a successful build is safe.
+  // The early returns instead go through resetMiniKernCounts(), which zeroes
+  // just the *count* fields (buffers/capacities kept) so a page with no
+  // applicable kern pairs kerns as none instead of through leftover data from
+  // the previous page that built a matrix.
+  const auto resetMiniKernCounts = [&s]() {
+    s.miniKernLeftEntryCount = 0;
+    s.miniKernRightEntryCount = 0;
+    s.miniKernLeftClassCount = 0;
+    s.miniKernRightClassCount = 0;
+  };
   if (!s.kernLeftClasses || !s.kernRightClasses || s.header.kernLeftEntryCount == 0 ||
       s.header.kernRightEntryCount == 0) {
+    resetMiniKernCounts();
     return true;  // font has no kern classes — nothing to build
   }
 
@@ -299,6 +398,7 @@ bool SdCardFont::buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, ui
     }
   }
   if (numLeft == 0 || numRight == 0) {
+    resetMiniKernCounts();
     return true;  // no kern pairs applicable on this page
   }
 
@@ -311,13 +411,16 @@ bool SdCardFont::buildMiniKernMatrix(PerStyle& s, const uint32_t* codepoints, ui
     if (miniLookupKernClass(s.kernRightClasses, s.header.kernRightEntryCount, codepoints[i]) != 0) miniRightCount++;
   }
 
-  // Step 4: allocate the three mini buffers. The matrix is <1KB in practice
-  // (<30 × <30 × 1 byte) so fragmentation is a non-issue.
+  // Step 4: size the three mini buffers (kept-if-fits across pages -- the
+  // per-page sizes vary by only a few entries, and freeing+reallocating that
+  // small a delta every page turn was punching non-coalescing holes in the
+  // heap; see ensureArrayCapacity()'s comment). Individually each buffer is
+  // still small (<1KB matrix in practice, <30 x <30 x 1 byte) so retaining all
+  // three resident is a non-issue.
   const uint32_t matrixBytes = static_cast<uint32_t>(numLeft) * numRight;
-  s.miniKernLeftClasses = new (std::nothrow) EpdKernClassEntry[miniLeftCount];
-  s.miniKernRightClasses = new (std::nothrow) EpdKernClassEntry[miniRightCount];
-  s.miniKernMatrix = new (std::nothrow) int8_t[matrixBytes];
-  if (!s.miniKernLeftClasses || !s.miniKernRightClasses || !s.miniKernMatrix) {
+  if (!ensureArrayCapacity(s.miniKernLeftClasses, s.miniKernLeftCapacity, miniLeftCount) ||
+      !ensureArrayCapacity(s.miniKernRightClasses, s.miniKernRightCapacity, miniRightCount) ||
+      !ensureArrayCapacity(s.miniKernMatrix, s.miniKernMatrixCapacity, matrixBytes)) {
     LOG_ERR("SDCF", "Failed to allocate mini kern (%u+%u+%u bytes)", miniLeftCount * 3u, miniRightCount * 3u,
             matrixBytes);
     freeStyleMiniKern(s);
@@ -764,6 +867,42 @@ int SdCardFont::prewarm(const char* utf8Text, uint8_t styleMask, bool metadataOn
 int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint32_t cpCount, bool metadataOnly) {
   auto& s = styles_[styleIdx];
 
+  // Idle-prewarm hit: mini data now persists across PrewarmScopes (see
+  // resetStyleMiniData()), so when a previous scope -- typically the idle
+  // prewarm scan of this exact page, fired ~400ms after the last render (see
+  // EpubReaderActivity::loop) -- already loaded every codepoint this call
+  // needs, the real page-turn prewarm costs zero SD reads. A mini built
+  // metadata-only cannot serve a full (bitmap) request, so that combination
+  // falls through to the rebuild below; the reverse (full mini serving a
+  // metadata-only request) is fine, since a full build is a superset of
+  // metadata-only. A requested codepoint outside the mini AND outside the
+  // font's own coverage doesn't block the covered verdict -- the rebuild path
+  // couldn't have loaded it either, so it's counted as missed and skipped.
+  if (s.miniGlyphCount > 0 && !(s.miniMetadataOnly && !metadataOnly)) {
+    bool covered = true;
+    int missedInMini = 0;
+    for (uint32_t i = 0; i < cpCount && covered; i++) {
+      const uint32_t cp = codepoints[i];
+      bool inMini = false;
+      for (uint32_t iv = 0; iv < s.miniIntervalCount; iv++) {
+        if (cp < s.miniIntervals[iv].first) break;  // intervals sorted ascending
+        if (cp <= s.miniIntervals[iv].last) {
+          inMini = true;
+          break;
+        }
+      }
+      if (inMini) continue;
+      if (findGlobalGlyphIndex(s, cp) < 0) {
+        missedInMini++;  // not in font coverage: a rebuild couldn't load it either
+      } else {
+        covered = false;
+      }
+    }
+    if (covered) {
+      return missedInMini;
+    }
+  }
+
   // Map codepoints to global glyph indices for this style
   struct CpGlyphMapping {
     uint32_t codepoint;
@@ -793,12 +932,21 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     return missed;
   }
 
-  // Build mini intervals from sorted codepoints
-  freeStyleMiniData(s);
+  // Build mini intervals from sorted codepoints. Reset the used counts and
+  // fall back to the stub until the rebuild below completes, but KEEP the
+  // existing buffers (kept-if-fits reuse) -- freeing and reallocating here on
+  // every page was the primary fragmentation source this whole scheme exists
+  // to fix.
+  s.miniIntervalCount = 0;
+  s.miniGlyphCount = 0;
+  s.miniKernLeftEntryCount = 0;
+  s.miniKernRightEntryCount = 0;
+  s.miniKernLeftClassCount = 0;
+  s.miniKernRightClassCount = 0;
+  memset(&s.miniData, 0, sizeof(s.miniData));
+  s.epdFont.data = &s.stubData;
 
-  uint32_t intervalCapacity = validCount;
-  s.miniIntervals = new (std::nothrow) EpdUnicodeInterval[intervalCapacity];
-  if (!s.miniIntervals) {
+  if (!ensureArrayCapacity(s.miniIntervals, s.miniIntervalCapacity, validCount)) {
     LOG_ERR("SDCF", "Failed to allocate mini intervals for style %u", styleIdx);
     delete[] mappings;
     return static_cast<int>(cpCount);
@@ -816,15 +964,14 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
     }
   }
 
-  // Allocate mini glyph array
-  s.miniGlyphCount = validCount;
-  s.miniGlyphs = new (std::nothrow) EpdGlyph[s.miniGlyphCount];
-  if (!s.miniGlyphs) {
+  // Mini glyph array (reused across pages when it fits)
+  if (!ensureArrayCapacity(s.miniGlyphs, s.miniGlyphCapacity, validCount)) {
     LOG_ERR("SDCF", "Failed to allocate mini glyphs for style %u", styleIdx);
     delete[] mappings;
     freeStyleMiniData(s);
     return static_cast<int>(cpCount);
   }
+  s.miniGlyphCount = validCount;
 
   // Build sorted read order for sequential I/O
   uint32_t* readOrder = new (std::nothrow) uint32_t[validCount];
@@ -891,14 +1038,14 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
       totalBitmapSize += s.miniGlyphs[i].dataLength;
     }
 
-    s.miniBitmap = new (std::nothrow) uint8_t[totalBitmapSize > 0 ? totalBitmapSize : 1];
-    if (!s.miniBitmap) {
+    if (!ensureArrayCapacity(s.miniBitmap, s.miniBitmapCapacity, totalBitmapSize)) {
       LOG_ERR("SDCF", "Failed to allocate mini bitmap (%u bytes) for style %u", totalBitmapSize, styleIdx);
       delete[] readOrder;
       delete[] mappings;
       freeStyleMiniData(s);
       return static_cast<int>(cpCount);
     }
+    s.miniBitmapUsed = totalBitmapSize;  // underuse-hysteresis signal for resetStyleMiniData()
 
     // Read bitmap data sorted by file offset
     std::sort(readOrder, readOrder + validCount,
@@ -958,6 +1105,12 @@ int SdCardFont::prewarmStyle(uint8_t styleIdx, const uint32_t* codepoints, uint3
   }
 
   // Populate miniData and swap
+  s.miniMetadataOnly = metadataOnly;
+  // Bitmap arena was (re)sized this rebuild only when a real render prewarm
+  // ran; gate the underuse-hysteresis evaluation in resetStyleMiniData() to
+  // exactly this case so a metadata-only prewarm (which never sizes the
+  // bitmap arena) can't be mistaken for an underused one.
+  s.miniHysteresisPending = !metadataOnly;
   memset(&s.miniData, 0, sizeof(s.miniData));
   s.miniData.bitmap = s.miniBitmap;
   s.miniData.glyph = s.miniGlyphs;
@@ -991,9 +1144,18 @@ void SdCardFont::clearCache() {
   // Note: advance table is intentionally preserved here. It persists across
   // layout passes so repeated section indexing amortizes SD reads. Use
   // clearPersistentCache() to wipe it.
+  //
+  // resetStyleMiniData(), not freeStyleMiniData(): clearCache() is the public
+  // entry point FontCacheManager::clearCache() calls on every PrewarmScope
+  // (i.e. every page render AND every idle prewarm scan -- see
+  // FontCacheManager.cpp), so an unconditional full free here would defeat
+  // both the buffer-reuse and the cross-scope data retention this whole
+  // scheme depends on. resetStyleMiniData() keeps the mini data resident
+  // (bounded by its own heap floor / underuse hysteresis) so prewarmStyle()'s
+  // subset-check can serve the next scope's request without touching SD.
   for (uint8_t i = 0; i < MAX_STYLES; i++) {
     if (!styles_[i].present) continue;
-    freeStyleMiniData(styles_[i]);
+    resetStyleMiniData(styles_[i]);
     applyGlyphMissCallback(i);
   }
 }
