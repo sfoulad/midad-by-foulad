@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "fontIds.h"
+#include "util/DictZip.h"
 
 namespace {
 constexpr uint32_t CACHE_MAGIC = 0x44435458;  // DCTX
@@ -1176,8 +1177,8 @@ bool DictionaryStore::loadEntryFromIfoPath(const std::string& ifoPath, Dictionar
 
   // Probe for the compressed variant BEFORE deciding missingFiles: a dictionary
   // shipping only <stem>.dict.dz has no plain .dict, and testing for one first
-  // flagged it as BOTH compressed and missing (harmless while compressed is
-  // itself a rejection, but it made the app show the wrong reason).
+  // would flag it as missing (readDefinition() handles compressed=true fine via
+  // DictZip, so this must not fall through to the missingFiles rejection below).
   entry.compressed = !Storage.exists(entry.dictPath.c_str()) && Storage.exists((entry.dictPath + ".dz").c_str());
   entry.missingFiles =
       !Storage.exists(entry.idxPath.c_str()) || (!Storage.exists(entry.dictPath.c_str()) && !entry.compressed);
@@ -1301,8 +1302,7 @@ void DictionaryStore::scan() {
     }
   }
 
-  if (activeIndex < 0 && entries.size() == 1 && !entries[0].compressed && !entries[0].missingFiles &&
-      !entries[0].unsupportedFormat) {
+  if (activeIndex < 0 && entries.size() == 1 && !entries[0].missingFiles && !entries[0].unsupportedFormat) {
     activeIndex = 0;
     activeIfoPath = entries[0].ifoPath;
     saveConfig();
@@ -1312,7 +1312,7 @@ void DictionaryStore::scan() {
 bool DictionaryStore::setActiveIndex(const int index) {
   if (!scanned) scan();
   if (index < 0 || index >= static_cast<int>(entries.size())) return false;
-  if (entries[index].compressed || entries[index].missingFiles || entries[index].unsupportedFormat) return false;
+  if (entries[index].missingFiles || entries[index].unsupportedFormat) return false;
   activeIndex = index;
   activeIfoPath = entries[index].ifoPath;
   clearActiveOnlyEntry();
@@ -1498,7 +1498,9 @@ bool DictionaryStore::saveCheckpointCache(const DictionaryEntry& entry) const {
 }
 
 bool DictionaryStore::ensurePrepared(DictionaryEntry& entry, const std::function<void(int percent)>& onProgress) {
-  if (entry.compressed || entry.missingFiles || entry.unsupportedFormat) return false;
+  // compressed is NOT a rejection here: index preparation only reads entry.idxPath
+  // (always plain), never entry.dictPath -- readDefinition() is what handles .dz.
+  if (entry.missingFiles || entry.unsupportedFormat) return false;
   if (!entry.checkpoints.empty() && !entry.ordinals.empty()) return true;
   if (loadCheckpointCache(entry)) return true;
 
@@ -1788,31 +1790,68 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
   truncated = readBytes == 0 || hit.dictSize > readBytes;
   if (readBytes == 0) return "";
 
-  HalFile dict;
-  if (!Storage.openFileForRead("DICT", entry.dictPath, dict)) return "";
+  std::string raw;
+  if (entry.compressed) {
+    // Most downloadable StarDict dictionaries ship .dict.dz, not a plain .dict --
+    // decompress just the needed byte range (dictzip's chunked format) instead of
+    // inflating the whole file. extractEntry() writes to a file, not a buffer, so
+    // round-trip through a scratch temp file next to the dictionary; it's a single
+    // discrete lookup, not a hot loop, so the extra SD I/O is an acceptable trade
+    // against not holding a second copy of the definition data in RAM.
+    const std::string dzPath = entry.dictPath + ".dz";
+    const std::string tempPath = entry.dictPath + ".dz.tmp";
+    Storage.remove(tempPath.c_str());
+    HalFile out;
+    if (!Storage.openFileForWrite("DICT", tempPath, out)) return "";
+    DictZip::ExtractError dzErr = DictZip::ExtractError::None;
+    const bool extracted =
+        DictZip::extractEntry(dzPath.c_str(), hit.dictOffset, static_cast<uint32_t>(readBytes), out, &dzErr);
+    out.close();
+    if (!extracted) {
+      LOG_ERR("DICT", "dictzip extract failed: off=%u size=%zu err=%d", hit.dictOffset, readBytes,
+              static_cast<int>(dzErr));
+      Storage.remove(tempPath.c_str());
+      return "";
+    }
 
-  // The offset/size pair comes from the .idx, i.e. from untrusted SD content: a
-  // truncated .dict, an .idx/.dict pair from different builds, or a corrupt
-  // cache all yield offsets past EOF. Without this, seekSet+read past the end
-  // returns whatever the FS hands back and we render it as a definition.
-  // Subtraction (not offset + size) so a size near UINT32_MAX can't wrap.
-  const uint32_t dictFileSize = static_cast<uint32_t>(dict.fileSize());
-  if (hit.dictOffset > dictFileSize || hit.dictSize > dictFileSize - hit.dictOffset) {
-    LOG_ERR("DICT", "Definition out of range: off=%u size=%u file=%u", hit.dictOffset, hit.dictSize, dictFileSize);
+    HalFile in;
+    if (!Storage.openFileForRead("DICT", tempPath, in)) {
+      Storage.remove(tempPath.c_str());
+      return "";
+    }
+    raw.resize(readBytes);
+    const int bytesRead = in.read(raw.data(), readBytes);
+    in.close();
+    Storage.remove(tempPath.c_str());
+    if (bytesRead <= 0) return "";
+    raw.resize(static_cast<size_t>(bytesRead));
+  } else {
+    HalFile dict;
+    if (!Storage.openFileForRead("DICT", entry.dictPath, dict)) return "";
+
+    // The offset/size pair comes from the .idx, i.e. from untrusted SD content: a
+    // truncated .dict, an .idx/.dict pair from different builds, or a corrupt
+    // cache all yield offsets past EOF. Without this, seekSet+read past the end
+    // returns whatever the FS hands back and we render it as a definition.
+    // Subtraction (not offset + size) so a size near UINT32_MAX can't wrap.
+    const uint32_t dictFileSize = static_cast<uint32_t>(dict.fileSize());
+    if (hit.dictOffset > dictFileSize || hit.dictSize > dictFileSize - hit.dictOffset) {
+      LOG_ERR("DICT", "Definition out of range: off=%u size=%u file=%u", hit.dictOffset, hit.dictSize, dictFileSize);
+      dict.close();
+      return "";
+    }
+
+    if (!dict.seekSet(hit.dictOffset)) {
+      dict.close();
+      return "";
+    }
+
+    raw.resize(readBytes);
+    const int bytesRead = dict.read(raw.data(), readBytes);
     dict.close();
-    return "";
+    if (bytesRead <= 0) return "";
+    raw.resize(static_cast<size_t>(bytesRead));
   }
-
-  if (!dict.seekSet(hit.dictOffset)) {
-    dict.close();
-    return "";
-  }
-
-  std::string raw(readBytes, '\0');
-  const int bytesRead = dict.read(raw.data(), readBytes);
-  dict.close();
-  if (bytesRead <= 0) return "";
-  raw.resize(static_cast<size_t>(bytesRead));
 
   std::string decoded = decodeStarDictData(raw, entry.sameTypeSequence);
   raw.clear();

@@ -115,13 +115,6 @@ void DictionaryActivity::selectCurrent() {
   const int dictionaryIndex = selectedIndex - DICTIONARY_ACTION_COUNT;
   if (dictionaryIndex < 0 || dictionaryIndex >= static_cast<int>(entries.size())) return;
   const auto& entry = entries[dictionaryIndex];
-  if (entry.compressed) {
-    GUI.drawPopup(renderer, tr(STR_DICTIONARY_COMPRESSED_UNSUPPORTED));
-    renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    delay(1100);
-    requestUpdate();
-    return;
-  }
   if (entry.missingFiles || entry.unsupportedFormat) {
     // unsupportedFormat = .ifo declared idxoffsetbits=64. Shares the "missing
     // files" wording rather than adding a string every translation would have to
@@ -266,9 +259,12 @@ void DictionaryActivity::render(RenderLock&&) {
           if (index == ACTION_DEFINITION_TEXT_SIZE) return std::string(textSizeLabel());
           if (index < DICTIONARY_ACTION_COUNT) return std::string();
           const int entryIndex = index - DICTIONARY_ACTION_COUNT;
-          if (entries[entryIndex].compressed) return std::string("ZIP");
+          // Active takes priority: a compressed dictionary can now be active (readDefinition
+          // handles .dz), so the "ZIP" format badge must not hide that state.
+          if (entryIndex == activeIndex) return std::string(tr(STR_DICTIONARY_ACTIVE));
           if (entries[entryIndex].missingFiles || entries[entryIndex].unsupportedFormat) return std::string("!");
-          return entryIndex == activeIndex ? std::string(tr(STR_DICTIONARY_ACTIVE)) : std::string();
+          if (entries[entryIndex].compressed) return std::string("ZIP");
+          return std::string();
         },
         true);
   }
