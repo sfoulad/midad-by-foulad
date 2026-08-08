@@ -7,6 +7,7 @@ This document shows common issues and possible solutions while using the device 
     - [Connection Drops or Times Out](#connection-drops-or-times-out)
     - [Upload Fails](#upload-fails)
     - [Saved Password Not Working](#saved-password-not-working)
+    - [Device Won't Boot / Bricked Device](#device-wont-boot--bricked-device)
 
 ### Cannot See the Device on the Network
 
@@ -58,3 +59,9 @@ This document shows common issues and possible solutions while using the device 
 2. Select **Yes** to remove the saved password
 3. Reconnect and enter the password again
 4. Choose to save the new password
+
+### Device Won't Boot / Bricked Device
+
+**Problem:** Device is unresponsive to a normal USB flash, or stuck on other firmware with no path to reflash it.
+
+**Solution:** This is a last-resort hardware recovery, not something the app or web UI can fix. See upstream CrossPoint Reader's guide for recovering a bricked Xteink by writing firmware directly to the SPI flash chip with an external programmer: [fix-bricked-xteink.md](https://github.com/crosspoint-reader/crosspoint-reader/blob/develop/docs/fix-bricked-xteink.md). If your device isn't USB-locked, always try flashing over USB first — it's safer and much less invasive.
