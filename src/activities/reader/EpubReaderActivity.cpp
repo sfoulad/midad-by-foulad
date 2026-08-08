@@ -2187,6 +2187,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const bool pageHasImages = page->hasImages();
   const bool manualRefreshPending = forcedRefreshPending;
   forcedRefreshPending = false;
+  // The reader starts with zero here, which means the normal refresh cycle would use
+  // a HALF refresh for its first page. Keep that same clean base for image pages:
+  // their double-FAST path otherwise runs directly over the retained frame after a
+  // silent restart (e.g. returning from KOReader/Midad sync), leaving the old UI
+  // mixed with the image.
+  const bool cleanImageBasePending = manualRefreshPending || pagesUntilFullRefresh <= 1;
   const bool needsTextGrayscale = SETTINGS.textAntiAliasing;
   const bool needsAnyGrayscale = needsTextGrayscale || pageHasImages;
   auto renderGrayscalePass = [&]() {
@@ -2210,8 +2216,8 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     int16_t imgX, imgY, imgW, imgH;
     if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
       // Image pages intentionally bypass the regular refresh cadence. Preserve
-      // the manual clean pass before their double-FAST grayscale pipeline.
-      if (manualRefreshPending) {
+      // a pending clean base before their double-FAST grayscale pipeline.
+      if (cleanImageBasePending) {
         renderer.displayBuffer(HalDisplay::HALF_REFRESH);
       }
       renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);

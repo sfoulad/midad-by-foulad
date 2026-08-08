@@ -715,6 +715,56 @@ def synthesize_presentation_forms(font_path, intervals):
     return overrides
 
 
+def extract_ligature_glyph_indices_fonttools(font_path):
+    """Map standard ligature codepoints without a cmap entry to their glyph IDs.
+
+    Most fonts implement standard Latin ligatures (fi, fl, ffi...) purely via a
+    GSUB 'liga'/'rlig' substitution triggered by the decomposed letter sequence,
+    with no cmap entry for the precomposed ligature codepoint itself (U+FB00-FB06).
+    That's fine for extract_ligatures_fonttools's runtime substitution table (built
+    from the decomposed sequence), but if the EPUB text already contains the
+    precomposed codepoint directly (common when copy-pasted from a source that
+    applied typographic ligatures), face.get_char_index() finds nothing and the
+    codepoint would be silently dropped from the rasterized set, rendering as
+    tofu. This finds the GSUB target glyph directly so it rasterizes anyway.
+    """
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(font_path)
+    cmap = font.getBestCmap() or {}
+    glyph_to_cp = {gname: cp for cp, gname in cmap.items()}
+    glyph_indices = {gname: index for index, gname in enumerate(font.getGlyphOrder())}
+    overrides = {}
+
+    if 'GSUB' in font:
+        gsub = font['GSUB'].table
+        liga_lookup_indices = set()
+        if gsub.FeatureList:
+            for fr in gsub.FeatureList.FeatureRecord:
+                if fr.FeatureTag in ('liga', 'rlig'):
+                    liga_lookup_indices.update(fr.Feature.LookupListIndex)
+
+        for li in liga_lookup_indices:
+            lookup = gsub.LookupList.Lookup[li]
+            for st in lookup.SubTable:
+                actual = st.ExtSubTable if lookup.LookupType == 7 and hasattr(st, 'ExtSubTable') else st
+                if not hasattr(actual, 'ligatures'):
+                    continue
+                for first_glyph, ligature_list in actual.ligatures.items():
+                    if first_glyph not in glyph_to_cp:
+                        continue
+                    for lig in ligature_list:
+                        if any(component not in glyph_to_cp for component in lig.Component):
+                            continue
+                        seq = tuple([glyph_to_cp[first_glyph]] + [glyph_to_cp[c] for c in lig.Component])
+                        lig_cp = STANDARD_LIGATURE_MAP.get(seq)
+                        if lig_cp is not None and lig_cp not in cmap:
+                            overrides[lig_cp] = glyph_indices[lig.LigGlyph]
+
+    font.close()
+    return overrides
+
+
 def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=False,
                          fallback_fontfile=None, reposition_marks=False):
     """Rasterize all glyphs for one font style. Returns StyleRasterData."""
@@ -738,23 +788,36 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
     if force_autohint:
         load_flags |= freetype.FT_LOAD_FORCE_AUTOHINT
 
-    # GSUB-synthesized presentation-form overrides (see synthesize_presentation_
-    # forms's docstring) -- only ever consulted below after face.get_char_index()
-    # has already returned 0 for a codepoint, so a font with direct cmap
-    # coverage for its presentation forms (Amiri, Cairo) is unaffected and
-    # converts byte-identical to before this existed.
+    # GSUB-synthesized overrides -- only ever consulted below after
+    # face.get_char_index() has already returned 0 for a codepoint, so a font
+    # with direct cmap coverage (for presentation forms or ligatures alike) is
+    # unaffected and converts byte-identical to before either of these existed.
+    # presentation_form_overrides: Arabic init/medi/fina/isol + lam-alef forms
+    # (see synthesize_presentation_forms's docstring). ligature_glyph_overrides:
+    # standard Latin ligature codepoints (U+FB00-FB06) reachable only via a
+    # 'liga'/'rlig' GSUB substitution, not a cmap entry (see
+    # extract_ligature_glyph_indices_fonttools's docstring) -- complements
+    # extract_ligatures_fonttools's runtime decomposed-sequence substitution
+    # table, which doesn't help when the EPUB text already has the precomposed
+    # ligature codepoint.
     presentation_form_overrides = synthesize_presentation_forms(fontfile, intervals)
     if presentation_form_overrides:
         print(f"  [{style_label}] GSUB-synthesized {len(presentation_form_overrides)} presentation forms "
               f"(font has no cmap coverage for them)", file=sys.stderr)
+    glyph_overrides = dict(presentation_form_overrides)
+    ligature_glyph_overrides = extract_ligature_glyph_indices_fonttools(fontfile)
+    if ligature_glyph_overrides:
+        print(f"  [{style_label}] GSUB-synthesized {len(ligature_glyph_overrides)} standard ligatures "
+              f"(font has no cmap coverage for them)", file=sys.stderr)
+    glyph_overrides.update(ligature_glyph_overrides)
 
     def load_glyph(code_point):
         glyph_index = face.get_char_index(code_point)
         if glyph_index > 0:
             face.load_glyph(glyph_index, load_flags)
             return face
-        if code_point in presentation_form_overrides:
-            face.load_glyph(presentation_form_overrides[code_point], load_flags)
+        if code_point in glyph_overrides:
+            face.load_glyph(glyph_overrides[code_point], load_flags)
             return face
         if fallback_face:
             fallback_glyph_index = fallback_face.get_char_index(code_point)
@@ -774,7 +837,7 @@ def rasterize_font_style(fontfile, size, intervals, style_id=0, force_autohint=F
         for code_point in range(i_start, i_end + 1):
             has_primary = face.get_char_index(code_point) != 0
             has_fallback = fallback_face and fallback_face.get_char_index(code_point) != 0
-            has_override = code_point in presentation_form_overrides
+            has_override = code_point in glyph_overrides
             if not has_primary and not has_fallback and not has_override:
                 if start < code_point:
                     validated_intervals.append((start, code_point - 1))
