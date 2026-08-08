@@ -1,17 +1,26 @@
 #pragma once
+#include <PersistableStore.h>
+
 #include <cstdint>
 #include <mutex>
 #include <string>
 
-class CrossPointState {
+class CrossPointState : public PersistableStore<CrossPointState> {
   mutable std::mutex _mutex;
 
-  // Static instance
-  static CrossPointState instance;
+  // Private constructor for singleton (see PersistableStore.h)
+  CrossPointState() = default;
+  ~CrossPointState() = default;
+
+  friend class PersistableStore<CrossPointState>;
 
  public:
   // Access the state mutex for protecting multi-field reads/writes from other cores.
   std::mutex& getMutex() const { return _mutex; }
+
+  static const char* getFilePath() { return "/.crosspoint/state.json"; }
+  void toJson(JsonDocument& doc) const;
+  bool fromJson(JsonVariantConst doc);
 
   static constexpr uint8_t SLEEP_RECENT_COUNT = 16;
 
@@ -45,10 +54,6 @@ class CrossPointState {
   bool isRecentSleep(uint16_t idx, uint8_t checkCount) const;
 
   void pushRecentSleep(uint16_t idx);
-  ~CrossPointState() = default;
-
-  // Get singleton instance
-  static CrossPointState& getInstance() { return instance; }
 
   bool saveToFile() const;
 

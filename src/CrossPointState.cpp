@@ -1,7 +1,6 @@
 #include "CrossPointState.h"
 
 #include <HalStorage.h>
-#include <JsonSettingsIO.h>
 #include <Logging.h>
 #include <Serialization.h>
 
@@ -11,11 +10,47 @@
 namespace {
 constexpr uint8_t STATE_FILE_VERSION = 4;
 constexpr char STATE_FILE_BIN[] = "/.crosspoint/state.bin";
-constexpr char STATE_FILE_JSON[] = "/.crosspoint/state.json";
 constexpr char STATE_FILE_BAK[] = "/.crosspoint/state.bin.bak";
 }  // namespace
 
-CrossPointState CrossPointState::instance;
+void CrossPointState::toJson(JsonDocument& doc) const {
+  doc["openEpubPath"] = openEpubPath;
+  JsonArray recentArr = doc["recentSleepImages"].to<JsonArray>();
+  for (int i = 0; i < SLEEP_RECENT_COUNT; i++) recentArr.add(recentSleepImages[i]);
+  doc["recentSleepPos"] = recentSleepPos;
+  doc["recentSleepFill"] = recentSleepFill;
+  doc["readerActivityLoadCount"] = readerActivityLoadCount;
+  doc["pendingSyncJumpPercent"] = pendingSyncJumpPercent;
+  doc["pendingSyncJumpSpine"] = pendingSyncJumpSpine;
+  doc["lastSleepFromReader"] = lastSleepFromReader;
+  doc["showBootScreen"] = showBootScreen;
+}
+
+bool CrossPointState::fromJson(JsonVariantConst doc) {
+  openEpubPath = doc["openEpubPath"] | "";
+  memset(recentSleepImages, 0, sizeof(recentSleepImages));
+  JsonArrayConst recentArr = doc["recentSleepImages"];
+  const int actualCount =
+      recentArr.isNull() ? 0 : std::min(static_cast<int>(recentArr.size()), static_cast<int>(SLEEP_RECENT_COUNT));
+  for (int i = 0; i < actualCount; i++) recentSleepImages[i] = recentArr[i] | static_cast<uint16_t>(0);
+  recentSleepPos = doc["recentSleepPos"] | static_cast<uint8_t>(0);
+  if (recentSleepPos >= SLEEP_RECENT_COUNT) recentSleepPos = actualCount > 0 ? recentSleepPos % SLEEP_RECENT_COUNT : 0;
+  recentSleepFill = doc["recentSleepFill"] | static_cast<uint8_t>(0);
+  recentSleepFill = static_cast<uint8_t>(std::min(static_cast<int>(recentSleepFill), actualCount));
+  // Migrate legacy single-image field from old state.json (pre-recency-buffer).
+  // Only seeds the buffer if the new buffer is empty (fresh migration, not a resave).
+  if (recentSleepFill == 0 && !doc["lastSleepImage"].isNull()) {
+    const uint8_t legacy = doc["lastSleepImage"] | static_cast<uint8_t>(UINT8_MAX);
+    if (legacy != UINT8_MAX) pushRecentSleep(static_cast<uint16_t>(legacy));
+  }
+  readerActivityLoadCount = doc["readerActivityLoadCount"] | static_cast<uint8_t>(0);
+  // Absent on a state file written before cross-device sync; 0 means nothing pending.
+  pendingSyncJumpPercent = doc["pendingSyncJumpPercent"] | static_cast<uint8_t>(0);
+  pendingSyncJumpSpine = doc["pendingSyncJumpSpine"] | static_cast<int16_t>(-1);
+  lastSleepFromReader = doc["lastSleepFromReader"] | false;
+  showBootScreen = doc["showBootScreen"] | true;
+  return true;
+}
 
 bool CrossPointState::isRecentSleep(uint16_t idx, uint8_t checkCount) const {
   const uint8_t effectiveCount = std::min(checkCount, recentSleepFill);
@@ -34,17 +69,20 @@ void CrossPointState::pushRecentSleep(uint16_t idx) {
 
 bool CrossPointState::saveToFile() const {
   std::lock_guard<std::mutex> lock(_mutex);
-  Storage.mkdir("/.crosspoint");
-  return JsonSettingsIO::saveState(*this, STATE_FILE_JSON);
+  return PersistableStore<CrossPointState>::saveToFile();
 }
 
 bool CrossPointState::loadFromFile() {
-  // Try JSON first
-  if (Storage.exists(STATE_FILE_JSON)) {
-    String json = Storage.readFile(STATE_FILE_JSON);
-    if (!json.isEmpty()) {
-      std::lock_guard<std::mutex> lock(_mutex);
-      return JsonSettingsIO::loadState(*this, json.c_str());
+  // Try JSON first. PersistableStore::loadFromFile() returns false uniformly
+  // for a missing, empty, OR corrupt state.json -- a deliberate widening from
+  // the pre-migration code, which only fell through to the binary migration
+  // below for missing/empty. Recovering a corrupt state.json from
+  // state.bin.bak (when one exists) is strictly better than discarding state,
+  // so this is an intentional improvement, not an accidental behavior change.
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (PersistableStore<CrossPointState>::loadFromFile()) {
+      return true;
     }
   }
 

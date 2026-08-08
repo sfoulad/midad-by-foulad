@@ -1,19 +1,27 @@
 #pragma once
 #include <HalStorage.h>
+#include <PersistableStore.h>
 
 #include <cstdint>
 #include <iosfwd>
 #include <mutex>
 
-class CrossPointSettings {
+class CrossPointSettings : public PersistableStore<CrossPointSettings> {
  private:
   mutable std::mutex _mutex;
 
-  // Private constructor for singleton
-  CrossPointSettings() = default;
+  // Set by fromJson() when it silently migrated a legacy field and the file
+  // should be resaved in the new format; consumed by loadFromFile() strictly
+  // AFTER its locked section ends, so the resave's own saveToFile() call
+  // never tries to re-lock _mutex while fromJson() (called with the lock
+  // already held) is still on the stack.
+  bool _needsResaveAfterLoad = false;
 
-  // Static instance
-  static CrossPointSettings instance;
+  // Private constructor for singleton (see PersistableStore.h)
+  CrossPointSettings() = default;
+  ~CrossPointSettings() = default;
+
+  friend class PersistableStore<CrossPointSettings>;
 
  public:
   // Delete copy constructor and assignment
@@ -489,10 +497,9 @@ class CrossPointSettings {
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
 
-  ~CrossPointSettings() = default;
-
-  // Get singleton instance
-  static CrossPointSettings& getInstance() { return instance; }
+  static const char* getFilePath() { return "/.crosspoint/settings.json"; }
+  void toJson(JsonDocument& doc) const;
+  bool fromJson(JsonVariantConst doc);
 
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;
   static constexpr uint8_t SLEEP_TIMEOUT_NEVER_MINUTES = 31;
