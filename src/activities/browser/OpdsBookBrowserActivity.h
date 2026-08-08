@@ -171,6 +171,18 @@ class OpdsBookBrowserActivity final : public Activity {
   int fbGridPageStart = FB_GRID_NONE;
   int fbSelectorIndex = -1;
   bool canFastRepaintSelector() const;
+  // Consecutive ring-only touch-ups since the last full grid repaint. Real-device
+  // testing (holding Down/Right so onContinuous fires the move handlers faster than
+  // the ~560ms e-ink refresh cycle can drain them) found a stuck double-ring: two
+  // cells' borders lit simultaneously, persisting across many subsequent moves,
+  // eventually followed by a device reset. A long unbroken chain of partial ring
+  // updates with no intervening full clearScreen()+redraw is exactly the class of
+  // problem HalDisplay's forceCleanBaseOnHalf exists for elsewhere in this codebase
+  // -- cap it the same way: force a full repaint (which re-clears and redraws
+  // everything, self-correcting any accumulated state) every FAST_REPAINT_CAP
+  // touch-ups instead of letting the chain run unbounded.
+  static constexpr int FAST_REPAINT_CAP = 5;
+  int fastRepaintStreak = 0;
 
   // Row height (pitch) in pixels for plain text-list rows (category/navigation entries, both
   // the pure-list page and the nav strips above/below a book grid). Kept tight/Latin-sized

@@ -451,6 +451,19 @@ bool Section::buildSomeMore(const int maxPages, const unsigned long budgetMs) {
   // would otherwise turn one "small" chunk into a blocking rebuild of the whole watermark.
   const int startCount = builtPageCount_;
   const unsigned long startMs = budgetMs > 0 ? millis() : 0;
+  // Real-device crash: a chapter whose HTML is almost entirely one pathologically dense
+  // paragraph (an AO3-via-FanFicFare export artifact -- hundreds of <p> tags with no page
+  // break between them) can drive many parseStep() calls without ever completing a single
+  // page, so the maxPages/budgetMs exit checks below never trigger -- neither can fire until
+  // AFTER a page finishes. That runs this loop for the parse's full duration with no
+  // opportunity for FreeRTOS to service the task watchdog, which then resets the device
+  // (CLAUDE.md's "Watchdog Timeout" debugging guidance -- same class as
+  // TxtReaderActivity's index-build loop). Unconditional and independent of
+  // maxPages/budgetMs: this must feed the watchdog even on the createSectionFile()
+  // percent-jump path, which calls with both at 0 (genuinely unbounded by design --
+  // a percent jump needs the whole chapter's page count).
+  int stepsSinceYield = 0;
+  constexpr int YIELD_EVERY_STEPS = 20;
   for (;;) {
     const auto status = build_->parser->parseStep();
     if (status == ChapterHtmlSlimParser::ParseStatus::Error) {
@@ -460,6 +473,10 @@ bool Section::buildSomeMore(const int maxPages, const unsigned long budgetMs) {
     }
     if (status == ChapterHtmlSlimParser::ParseStatus::Done) {
       return finalizeBuild();
+    }
+    if (++stepsSinceYield >= YIELD_EVERY_STEPS) {
+      stepsSinceYield = 0;
+      vTaskDelay(1);
     }
     // ParseStatus::More: yield once we've laid out the requested number of pages,
     // or once the time budget elapses (parseStep granularity: roughly one
