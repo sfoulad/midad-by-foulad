@@ -14,6 +14,7 @@ void KOReaderCredentialStore::toJson(JsonDocument& doc) const {
   doc["password_obf"] = obfuscation::obfuscateToBase64(getPassword());
   doc["serverUrl"] = getServerUrl();
   doc["matchMethod"] = static_cast<uint8_t>(getMatchMethod());
+  doc["syncBehavior"] = static_cast<uint8_t>(getSyncBehavior());
 }
 
 bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
@@ -31,6 +32,21 @@ bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
   } else {
     LOG_DBG("KRS", "Invalid matchMethod %u in JSON, resetting to FILENAME", method);
     setMatchMethod(DocumentMatchMethod::FILENAME);
+  }
+
+  // Migration: a credential file predating this setting has no "syncBehavior" key and must
+  // default to ASK_EVERY_TIME to preserve existing users' behavior. Only a brand-new store
+  // (no file on disk yet, in-memory default from the class member initializer) gets SMART.
+  const JsonVariantConst behaviorValue = doc["syncBehavior"];
+  const bool missingBehavior = behaviorValue.isNull();
+  uint8_t behavior = behaviorValue | static_cast<uint8_t>(KOReaderSyncBehavior::ASK_EVERY_TIME);
+  if (behavior <= static_cast<uint8_t>(KOReaderSyncBehavior::SMART)) {
+    setSyncBehavior(static_cast<KOReaderSyncBehavior>(behavior));
+    needsResave = needsResave || missingBehavior;
+  } else {
+    LOG_DBG("KRS", "Invalid syncBehavior %u in JSON, resetting to ASK_EVERY_TIME", behavior);
+    setSyncBehavior(KOReaderSyncBehavior::ASK_EVERY_TIME);
+    needsResave = true;
   }
 
   if (needsResave) {
@@ -97,4 +113,12 @@ std::string KOReaderCredentialStore::getBaseUrl() const {
 void KOReaderCredentialStore::setMatchMethod(DocumentMatchMethod method) {
   matchMethod = method;
   LOG_DBG("KRS", "Set match method: %s", method == DocumentMatchMethod::FILENAME ? "Filename" : "Binary");
+}
+
+void KOReaderCredentialStore::setSyncBehavior(KOReaderSyncBehavior behavior) {
+  if (static_cast<uint8_t>(behavior) > static_cast<uint8_t>(KOReaderSyncBehavior::SMART)) {
+    behavior = KOReaderSyncBehavior::ASK_EVERY_TIME;
+  }
+  syncBehavior = behavior;
+  LOG_DBG("KRS", "Set sync behavior: %s", behavior == KOReaderSyncBehavior::SMART ? "Smart" : "Ask");
 }

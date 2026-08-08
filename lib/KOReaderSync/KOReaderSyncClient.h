@@ -1,16 +1,34 @@
 #pragma once
+#include <cstdint>
+#include <optional>
 #include <string>
+
+/**
+ * Rich CrossPoint position sent alongside progress uploads. Maps 1:1 onto the
+ * crosspoint-sync extended `position` object. The official KOSync server ignores
+ * unknown fields; crosspoint-sync stores it so CrossPoint<->CrossPoint sync is
+ * lossless instead of xpath-approximated.
+ */
+struct KOReaderRichPosition {
+  uint32_t pctQ = 0;                       // Percentage quantized 0..1,000,000 (authoritative)
+  uint16_t spineIndex = 0;                 // Spine (chapter) index
+  uint16_t pageNumber = 0;                 // Page within spine (layout-dependent hint)
+  uint16_t totalPages = 1;                 // Spine page count (layout-dependent hint)
+  std::optional<uint16_t> paragraphIndex;  // Synthetic 1-based paragraph index
+  std::string xpath;                       // KOReader-style xpath (server cap: 120 bytes)
+};
 
 /**
  * Progress data from KOReader sync server.
  */
 struct KOReaderProgress {
-  std::string document;  // Document hash
-  std::string progress;  // XPath-like progress string
-  float percentage;      // Progress percentage (0.0 to 1.0)
-  std::string device;    // Device name
-  std::string deviceId;  // Device ID
-  int64_t timestamp;     // Unix timestamp of last update
+  std::string document;                          // Document hash
+  std::string progress;                          // XPath-like progress string
+  float percentage;                              // Progress percentage (0.0 to 1.0)
+  std::string device;                            // Device name
+  std::string deviceId;                          // Device ID
+  int64_t timestamp;                             // Unix timestamp of last update
+  std::optional<KOReaderRichPosition> position;  // Optional rich position (crosspoint-sync servers only)
 };
 
 /**
