@@ -428,14 +428,16 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   // of a keypress, and it is what makes the selector feel slow. When the framebuffer
   // already holds this exact grid page and only the selection moved, redraw just the two
   // cells whose frame changed and leave the rest of the frame standing.
-  if (canFastRepaintSelector()) {
+  if (canFastRepaintSelector() && fastRepaintStreak < FAST_REPAINT_CAP) {
     const GridLayout layout = computeGridLayout();
     drawGridSelectionRing(layout, fbSelectorIndex - layout.bookStart - fbGridPageStart, /*black=*/false);
     drawGridSelectionRing(layout, selectorIndex - layout.bookStart - fbGridPageStart, /*black=*/true);
     renderer.displayBuffer();
     fbSelectorIndex = selectorIndex;
+    fastRepaintStreak++;
     return;
   }
+  fastRepaintStreak = 0;
   // Anything that is not a full grid render leaves the framebuffer in a state the fast
   // path must not touch up. Invalidated here and re-armed only at the end of a grid
   // render, so every other path (list, error, loading, popups) is covered by default.
