@@ -117,6 +117,15 @@ class OpdsParser final : public Print {
   std::string prevPageUrl;
   // Helper to find attribute value
   static const char* findAttribute(const XML_Char** atts, const char* name);
+  // Cap a single string field's length so a malformed/malicious feed can't drive
+  // unbounded std::string growth into a throwing operator new -- the same abort
+  // class MAX_ENTRIES above and the move-not-copy push_back below already guard
+  // for the entry vector and per-entry copies; these close the same hole for one
+  // oversized field within an otherwise-normal entry. assignBounded replaces the
+  // target outright (attribute values, e.g. href); appendBounded accumulates
+  // character data across possibly-chunked XML_CharacterDataHandler calls.
+  static void assignBounded(std::string& target, const char* value, size_t maxLen);
+  static void appendBounded(std::string& target, const char* value, size_t len, size_t maxLen);
 
   XML_Parser parser = nullptr;
   std::vector<OpdsEntry> entries;
