@@ -2,6 +2,7 @@
 
 #include <ArabicShaper.h>
 #include <BidiUtils.h>
+#include <BuildScratch.h>
 #include <FontDecompressor.h>
 #include <HalGPIO.h>
 #include <Logging.h>
@@ -2949,6 +2950,48 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 uint8_t* GfxRenderer::getFrameBuffer() const { return frameBuffer; }
 
 size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
+
+void GfxRenderer::releaseFrameBufferForBuild() {
+  // Lend the framebuffer's bytes IN PLACE: the allocation is never freed, so
+  // it cannot move and repeated loans cannot fragment the heap (the previous
+  // free+realloc model measurably decayed the max contiguous block over a
+  // session). The bytes are deposited in the build-scratch registry so
+  // memory-hungry build phases (e.g. InflateReader's ~32KB ring buffer) can
+  // claim them instead of allocating.
+  uint32_t size = 0;
+  uint8_t* scratch = display.lendFrameBufferStorage(&size);
+  frameBuffer = nullptr;
+  if (scratch) {
+    buildscratch::lend(scratch, size);
+  }
+}
+
+bool GfxRenderer::restoreFrameBufferAfterBuild() {
+  buildscratch::reclaim();
+  display.returnFrameBufferStorage();  // cannot fail: the allocation was never freed
+  frameBuffer = display.getFrameBuffer();
+  return frameBuffer != nullptr;
+}
+
+GfxRenderer::FrameBufferLoan::FrameBufferLoan(GfxRenderer& renderer) : renderer_(renderer) {
+  // Nesting guard: if the framebuffer is already lent out (an outer loan),
+  // stay inert so this end() cannot return storage the outer loan still owns.
+  if (!renderer_.hasFrameBuffer()) return;
+  renderer_.releaseFrameBufferForBuild();
+  active_ = true;
+}
+
+void GfxRenderer::FrameBufferLoan::end() {
+  if (!active_) return;
+  active_ = false;
+  if (!renderer_.restoreFrameBufferAfterBuild()) {
+    // Only reachable if the framebuffer never existed, which the constructor
+    // already guards against; kept as a backstop since running blind helps
+    // nobody.
+    LOG_ERR("GFX", "Framebuffer restore failed - restarting");
+    ESP.restart();
+  }
+}
 
 // unused
 // void GfxRenderer::grayscaleRevert() const { display.grayscaleRevert(); }
