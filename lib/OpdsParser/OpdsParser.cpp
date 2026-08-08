@@ -7,6 +7,34 @@
 #include <cstring>
 #include <utility>
 
+namespace {
+// Per-field length caps, matching upstream CrossPoint's oom-hardening commit
+// (3e627112). MAX_ENTRIES above bounds the number of entries a feed can add;
+// these bound the size of any ONE field within an entry that is otherwise
+// under that count -- a single feed-controlled <title> or href with no upper
+// bound is its own unbounded-growth vector into the same throwing operator new.
+constexpr size_t MAX_TITLE_CHARS = 160;
+constexpr size_t MAX_AUTHOR_CHARS = 120;
+constexpr size_t MAX_ID_CHARS = 128;
+constexpr size_t MAX_HREF_CHARS = 768;
+constexpr size_t MAX_SEARCH_TEMPLATE_CHARS = 768;
+constexpr size_t MAX_PAGE_URL_CHARS = 768;
+}  // namespace
+
+void OpdsParser::assignBounded(std::string& target, const char* value, const size_t maxLen) {
+  if (!value) {
+    target.clear();
+    return;
+  }
+  target.assign(value, strnlen(value, maxLen));
+}
+
+void OpdsParser::appendBounded(std::string& target, const char* value, const size_t len, const size_t maxLen) {
+  if (target.size() >= maxLen) return;
+  const size_t remaining = maxLen - target.size();
+  target.append(value, len < remaining ? len : remaining);
+}
+
 OpdsParser::OpdsParser() {
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
@@ -137,14 +165,13 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
       const char* type = findAttribute(atts, "type");
 
       if (rel && strcmp(rel, "search") == 0) {
-        std::string sHref(href);
-        if (sHref.find("{searchTerms}") != std::string::npos) {
-          self->searchTemplate = sHref;
+        if (strstr(href, "{searchTerms}") != nullptr) {
+          assignBounded(self->searchTemplate, href, MAX_SEARCH_TEMPLATE_CHARS);
         }
       } else if (rel && strcmp(rel, "next") == 0 && !self->inEntry) {
-        self->nextPageUrl = href;
+        assignBounded(self->nextPageUrl, href, MAX_PAGE_URL_CHARS);
       } else if (rel && strcmp(rel, "previous") == 0 && !self->inEntry) {
-        self->prevPageUrl = href;
+        assignBounded(self->prevPageUrl, href, MAX_PAGE_URL_CHARS);
       }
 
       if (self->inEntry) {
@@ -183,7 +210,7 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
           if (!keepExisting &&
               (self->currentEntry.type != OpdsEntryType::BOOK || (isPlainEpub && !alreadyHasPlainEpub))) {
             self->currentEntry.type = OpdsEntryType::BOOK;
-            self->currentEntry.href = href;
+            assignBounded(self->currentEntry.href, href, MAX_HREF_CHARS);
             // type may be absent now that the rel alone qualifies; nullptr into a
             // std::string is undefined, not empty.
             self->currentEntry.acquisitionType = type ? type : "";
@@ -191,14 +218,14 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
         } else if (type && strstr(type, "application/atom+xml") != nullptr) {
           if (self->currentEntry.type != OpdsEntryType::BOOK) {
             self->currentEntry.type = OpdsEntryType::NAVIGATION;
-            self->currentEntry.href = href;
+            assignBounded(self->currentEntry.href, href, MAX_HREF_CHARS);
           }
         } else if (rel && strstr(rel, "opds-spec.org/image") != nullptr) {
           // Matches both ".../image" and ".../image/thumbnail". Prefer the
           // thumbnail-specific link if one is present; first-seen otherwise.
           const bool isThumbnail = strstr(rel, "thumbnail") != nullptr;
           if (self->currentEntry.coverUrl.empty() || isThumbnail) {
-            self->currentEntry.coverUrl = href;
+            assignBounded(self->currentEntry.coverUrl, href, MAX_HREF_CHARS);
             self->currentEntry.coverType = type ? type : "";
           }
         }
@@ -279,7 +306,11 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
 
 void XMLCALL OpdsParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<OpdsParser*>(userData);
-  if (self->inTitle || self->inAuthorName || self->inId) {
-    self->currentText.append(s, len);
+  if (self->inTitle) {
+    appendBounded(self->currentText, s, len, MAX_TITLE_CHARS);
+  } else if (self->inAuthorName) {
+    appendBounded(self->currentText, s, len, MAX_AUTHOR_CHARS);
+  } else if (self->inId) {
+    appendBounded(self->currentText, s, len, MAX_ID_CHARS);
   }
 }
