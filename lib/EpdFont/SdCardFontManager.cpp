@@ -28,16 +28,13 @@ int SdCardFontManager::computeFontId(uint32_t contentHash, const char* familyNam
   return id != 0 ? id : 1;  // 0 is reserved as "not found" sentinel
 }
 
-bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t fontSizeEnum) {
+bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRenderer& renderer, uint8_t pointSize) {
   // Unload any previously loaded family first
   if (!loadedFamilyName_.empty()) {
     unloadAll(renderer);
   }
 
-  // Select the physical point size closest to the built-in reader sizes. Some
-  // CJK font packs only ship larger sizes, so ordinal selection can make
-  // MEDIUM load 18pt+ and produce oversized pages on small devices.
-  const SdCardFontFileInfo* selected = family.findClosestReaderSize(fontSizeEnum);
+  const SdCardFontFileInfo* selected = family.findNearestSize(pointSize);
   if (!selected) {
     LOG_ERR("SDMGR", "Family %s has no files to load", family.name.c_str());
     return false;
@@ -66,8 +63,8 @@ bool SdCardFontManager::loadFamily(const SdCardFontFamilyInfo& family, GfxRender
   renderer.registerSdCardFont(fontId, font);
   loaded_.push_back({font, fontId, selected->pointSize});
 
-  LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u (sizeEnum=%u)", selected->path.c_str(), selected->pointSize,
-          fontId, font->styleCount(), fontSizeEnum);
+  LOG_DBG("SDMGR", "Loaded %s size=%u id=%d styles=%u (wanted=%u)", selected->path.c_str(), selected->pointSize, fontId,
+          font->styleCount(), pointSize);
 
   EpdFontFamily fontFamily(font->getEpdFont(0), font->getEpdFont(1), font->getEpdFont(2), font->getEpdFont(3));
   renderer.insertFont(fontId, fontFamily);
