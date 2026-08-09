@@ -23,8 +23,15 @@ namespace RollingSdLog {
 // single call, fragmenting the heap further before the growth that aborted.
 constexpr uint32_t MIN_SAFE_HEAP_BYTES = 32768;
 
-inline void append(const char* path, const std::string& line, size_t maxLines) {
-  if (!DebugLogging::enabled() || maxLines == 0 || ESP.getFreeHeap() < MIN_SAFE_HEAP_BYTES) return;
+// force=true bypasses the debugLoggingEnabled gate (still subject to maxLines and the
+// heap-safety floor above). Mirrors CrossPointSettings::debugLoggingEnabled's own
+// carve-out for crash_report.txt: routine per-subsystem chatter stays opt-in so ordinary
+// users don't get SD clutter, but a one-shot event that heads off or explains an actual
+// crash must survive regardless -- those are exactly the sessions where nobody thought to
+// turn debug logging on ahead of time. Use sparingly: reserved for panic-adjacent
+// diagnostics (heap-guard trip points, crash summaries), not routine subsystem logging.
+inline void append(const char* path, const std::string& line, size_t maxLines, bool force = false) {
+  if ((!force && !DebugLogging::enabled()) || maxLines == 0 || ESP.getFreeHeap() < MIN_SAFE_HEAP_BYTES) return;
 
   const String existing = Storage.readFile(path);
   const char* data = existing.c_str();

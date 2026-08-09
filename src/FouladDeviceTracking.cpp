@@ -63,6 +63,16 @@ std::string displayName() { return std::string("Foulad eInk (") + (gpio.deviceIs
 // the SD card, the same way OPDS browsing/downloading already can.
 void diagLog(const std::string& line) { RollingSdLog::append(DebugLog::PATH, "[FDT] " + line, DebugLog::MAX_LINES); }
 
+// For the crash_report.txt upload/flush lifecycle specifically (see
+// flushPendingCrashReport()) -- forces through RollingSdLog's debugLoggingEnabled gate.
+// Routine FDT chatter (register/firmware-check/device-stats above) stays opt-in via
+// diagLog(), but these three lines are the only local record of an actual panic once
+// crash_report.txt itself is deleted, and per CrossPointSettings::debugLoggingEnabled's
+// own carve-out, crash reporting must survive regardless of the debug-logging preference.
+void criticalDiagLog(const std::string& line) {
+  RollingSdLog::append(DebugLog::PATH, "[FDT] " + line, DebugLog::MAX_LINES, /*force=*/true);
+}
+
 // Web (and on-device) Arabic font picker index -> actual stored
 // ARABIC_FONT_FAMILY value. NOT a 1:1 mapping: AMIRI(=1) was dropped from
 // flash and is skipped by both UIs (see SettingsList.h's
@@ -675,6 +685,34 @@ std::string readCrashReportVersion() {
   return head.substr(start, end == std::string::npos ? std::string::npos : end - start);
 }
 
+// Condenses the "Panic reason" and "Heap before panic" lines out of crash_report.txt
+// for the debug log -- readCrashReportVersion()'s technique (small bounded read, not
+// the full multi-KB report with its backtrace/last-logs sections). This is what lets
+// a "crash happened but I can't find crash_report.txt" report get diagnosed at all:
+// flushPendingCrashReport() deletes the SD copy once it's uploaded, which can be a
+// LATER boot than the one that crashed -- so a user checking the SD card afterward
+// finds nothing, even though the crash was real and the report made it to the server.
+// Logging this summary into debug_log.txt (the file users already pull off the device)
+// before deletion keeps the panic reason visible locally too.
+std::string readCrashReportSummary() {
+  HalFile f;
+  if (!Storage.openFileForRead(TAG, CRASH_REPORT_PATH, f)) return "(unreadable)";
+  char buf[512] = {};
+  const int read = f.read(reinterpret_cast<uint8_t*>(buf), sizeof(buf) - 1);
+  if (read <= 0) return "(unreadable)";
+  const std::string head(buf, static_cast<size_t>(read));
+
+  auto extractLine = [&](const char* prefix) -> std::string {
+    const size_t at = head.find(prefix);
+    if (at == std::string::npos) return "?";
+    const size_t start = at + strlen(prefix);
+    const size_t end = head.find_first_of("\r\n", start);
+    return head.substr(start, end == std::string::npos ? std::string::npos : end - start);
+  };
+
+  return "reason=[" + extractLine("Panic reason: ") + "] heap=[" + extractLine("Heap before panic: ") + "]";
+}
+
 bool uploadCrashReport(const std::string& username, const std::string& password) {
   if (!wifiConnected() || username.empty() || password.empty()) return false;
   if (!Storage.exists(CRASH_REPORT_PATH)) return false;
@@ -709,20 +747,24 @@ bool uploadCrashReport(const std::string& username, const std::string& password)
   }
   // Unlike uploadDebugLog(), diagLog() here is safe either way: this writes to
   // /debug_log.txt, a different file than the one just uploaded.
-  diagLog(ok ? "crash report upload -> ok"
-             : "crash report upload -> FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail));
+  criticalDiagLog(ok ? "crash report upload -> ok"
+                     : "crash report upload -> FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail));
   return ok;
 }
 
 void flushPendingCrashReport(const std::string& username, const std::string& password) {
   if (!Storage.exists(CRASH_REPORT_PATH)) return;  // nothing waiting
   if (!uploadCrashReport(username, password)) return;
+  // See readCrashReportSummary(): capture the panic reason locally before the SD
+  // copy is deleted below, since the upload+delete can happen on a boot after the
+  // one the user actually has eyes on.
+  criticalDiagLog("crash summary: " + readCrashReportSummary());
   // Delivered: drop the local copy so the next connection does not resend it.
   // Deliberately only on success -- a failed upload leaves the file for the next
   // attempt, which is the whole point of queueing it rather than requiring the
   // user to be looking at the crash screen at the moment they have WiFi.
   Storage.remove(CRASH_REPORT_PATH);
-  diagLog("crash report flushed and cleared");
+  criticalDiagLog("crash report flushed and cleared");
 }
 
 void reportDeviceStats(const std::string& username, const std::string& password) {
