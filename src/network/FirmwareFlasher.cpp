@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "OtaBootSwitch.h"
+#include "util/FirmwareDiagLog.h"
 
 namespace firmware_flash {
 
@@ -233,6 +234,7 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
   const esp_partition_t* dest = esp_ota_get_next_update_partition(nullptr);
   if (!dest) {
     LOG_ERR("FLASH", "no next-update partition");
+    FirmwareDiagLog::append("FLASH", "no next-update partition, src=" + std::string(sdPath));
     return Result::NO_PARTITION;
   }
 
@@ -244,6 +246,8 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
     const Result validateRes = validateImageFile(sdPath, dest->size);
     if (validateRes != Result::OK) {
       LOG_ERR("FLASH", "image validation failed: %s", resultName(validateRes));
+      FirmwareDiagLog::append(
+          "FLASH", "validation failed: " + std::string(resultName(validateRes)) + " src=" + std::string(sdPath));
       return validateRes;
     }
   }
@@ -251,6 +255,7 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
   HalFile file;
   if (!Storage.openFileForRead("FLASH", sdPath, file) || !file) {
     LOG_ERR("FLASH", "open failed: %s", sdPath);
+    FirmwareDiagLog::append("FLASH", "open failed: src=" + std::string(sdPath));
     return Result::OPEN_FAIL;
   }
 
@@ -261,6 +266,8 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
   auto buffer = std::unique_ptr<uint8_t[]>(new (std::nothrow) uint8_t[CHUNK]);
   if (!buffer) {
     LOG_ERR("FLASH", "OOM");
+    FirmwareDiagLog::append("FLASH", "OOM allocating chunk buffer: free=" + std::to_string(ESP.getFreeHeap()) +
+                                         " largest=" + std::to_string(ESP.getMaxAllocHeap()));
     file.close();
     return Result::OOM;
   }
@@ -277,6 +284,8 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
       if (esp_partition_erase_range(dest, streamPos, eraseLen) != ESP_OK) {
         LOG_ERR("FLASH", "erase @%u (len=%u) failed", static_cast<unsigned>(streamPos),
                 static_cast<unsigned>(eraseLen));
+        FirmwareDiagLog::append("FLASH", "erase failed @" + std::to_string(streamPos) + " len=" +
+                                             std::to_string(eraseLen) + " of " + std::to_string(firmwareSize));
         file.close();
         return Result::ERASE_FAIL;
       }
@@ -287,11 +296,15 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
     const int read = file.read(buffer.get(), want);
     if (read <= 0 || static_cast<size_t>(read) != want) {
       LOG_ERR("FLASH", "read @%u: got=%d want=%u", static_cast<unsigned>(streamPos), read, static_cast<unsigned>(want));
+      FirmwareDiagLog::append("FLASH", "read failed @" + std::to_string(streamPos) + " got=" + std::to_string(read) +
+                                           " want=" + std::to_string(want) + " of " + std::to_string(firmwareSize));
       file.close();
       return Result::READ_FAIL;
     }
     if (esp_partition_write(dest, streamPos, buffer.get(), want) != ESP_OK) {
       LOG_ERR("FLASH", "write @%u failed", static_cast<unsigned>(streamPos));
+      FirmwareDiagLog::append("FLASH",
+                              "write failed @" + std::to_string(streamPos) + " of " + std::to_string(firmwareSize));
       file.close();
       return Result::WRITE_FAIL;
     }
@@ -303,8 +316,12 @@ Result flashFromSdPath(const char* sdPath, ProgressCb onProgress, void* ctx, boo
 
   if (!ota_boot::switchTo(dest)) {
     LOG_ERR("FLASH", "otadata switch failed");
+    FirmwareDiagLog::append("FLASH", "otadata switch failed, dest=" + std::string(dest->label) +
+                                         " -- new image flashed but NOT selected to boot");
     return Result::OTADATA_FAIL;
   }
+  FirmwareDiagLog::append(
+      "FLASH", "flashed and switched: dest=" + std::string(dest->label) + " size=" + std::to_string(firmwareSize));
   return Result::OK;
 }
 

@@ -5,6 +5,7 @@
 #include <HalGPIO.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
@@ -30,6 +31,7 @@
 #include "html/SettingsPageHtml.generated.h"
 #include "html/js/jszip_minJs.generated.h"
 #include "util/BookCacheUtils.h"
+#include "util/WebDiagLog.h"
 
 namespace {
 // Folders/files to hide from the web interface file browser
@@ -188,9 +190,13 @@ void CrossPointWebServer::begin() {
 
   LOG_DBG("WEB", "[MEM] Free heap before begin: %d bytes", ESP.getFreeHeap());
   LOG_DBG("WEB", "Network mode: %s", apMode ? "AP" : "STA");
+  WebDiagLog::append("begin: free heap=" + std::to_string(ESP.getFreeHeap()) + " mode=" + (apMode ? "AP" : "STA"));
 
   LOG_DBG("WEB", "Creating web server on port %d...", port);
-  server.reset(new WebServer(port));
+  // Bare `new` under -fno-exceptions calls abort() on OOM instead of returning nullptr (see
+  // CLAUDE.md); the null check right below already existed, so this only needed the nothrow
+  // allocation to make that check reachable instead of the abort happening first.
+  server = makeUniqueNoThrow<WebServer>(port);
 
   // Disable WiFi sleep to improve responsiveness and prevent 'unreachable' errors.
   // This is critical for reliable web server operation on ESP32.
@@ -206,6 +212,8 @@ void CrossPointWebServer::begin() {
 
   if (!server) {
     LOG_ERR("WEB", "Failed to create WebServer!");
+    WebDiagLog::appendCritical("OOM creating WebServer: free=" + std::to_string(ESP.getFreeHeap()) +
+                               " largest=" + std::to_string(ESP.getMaxAllocHeap()));
     return;
   }
 
@@ -272,22 +280,43 @@ void CrossPointWebServer::begin() {
 
   server->onNotFound([this] { handleNotFound(); });
   LOG_DBG("WEB", "[MEM] Free heap after route setup: %d bytes", ESP.getFreeHeap());
+  WebDiagLog::append("free heap after route setup=" + std::to_string(ESP.getFreeHeap()));
 
   // Collect WebDAV headers and register handler
   const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout"};
   server->collectHeaders(davHeaders, 6);
-  server->addHandler(new WebDAVHandler());  // Note: WebDAVHandler will be deleted by WebServer when server is stopped
-  LOG_DBG("WEB", "WebDAV handler initialized");
+  // `new (std::nothrow)`, not makeUniqueNoThrow: addHandler() takes ownership and deletes
+  // this itself when the server stops (see the comment it used to carry), so a unique_ptr
+  // here would double-free. On OOM, skip registering WebDAV rather than crash -- the rest
+  // of the web server (file browser, settings, uploads) still works without it.
+  auto* davHandler = new (std::nothrow) WebDAVHandler();
+  if (davHandler) {
+    server->addHandler(davHandler);  // WebDAVHandler is deleted by WebServer when server is stopped
+    LOG_DBG("WEB", "WebDAV handler initialized");
+  } else {
+    LOG_ERR("WEB", "OOM creating WebDAVHandler, WebDAV routes unavailable this session");
+    WebDiagLog::appendCritical("OOM creating WebDAVHandler: free=" + std::to_string(ESP.getFreeHeap()) +
+                               " largest=" + std::to_string(ESP.getMaxAllocHeap()));
+  }
 
   server->begin();
 
   // Start WebSocket server for fast binary uploads
   LOG_DBG("WEB", "Starting WebSocket server on port %d...", wsPort);
-  wsServer.reset(new WebSocketsServer(wsPort));
-  wsInstance = const_cast<CrossPointWebServer*>(this);
-  wsServer->begin();
-  wsServer->onEvent(wsEventCallback);
-  LOG_DBG("WEB", "WebSocket server started");
+  // Same nothrow treatment as `server` above. On OOM, skip WebSocket setup rather than
+  // crash -- the REST/file-browser routes already registered above still work without the
+  // fast-binary-upload path.
+  wsServer = makeUniqueNoThrow<WebSocketsServer>(wsPort);
+  if (wsServer) {
+    wsInstance = const_cast<CrossPointWebServer*>(this);
+    wsServer->begin();
+    wsServer->onEvent(wsEventCallback);
+    LOG_DBG("WEB", "WebSocket server started");
+  } else {
+    LOG_ERR("WEB", "OOM creating WebSocketsServer, fast-upload path unavailable this session");
+    WebDiagLog::appendCritical("OOM creating WebSocketsServer: free=" + std::to_string(ESP.getFreeHeap()) +
+                               " largest=" + std::to_string(ESP.getMaxAllocHeap()));
+  }
 
   udpActive = udp.begin(LOCAL_UDP_PORT);
   LOG_DBG("WEB", "Discovery UDP %s on port %d", udpActive ? "enabled" : "failed", LOCAL_UDP_PORT);
@@ -300,6 +329,7 @@ void CrossPointWebServer::begin() {
   LOG_DBG("WEB", "Access at http://%s/", ipAddr.c_str());
   LOG_DBG("WEB", "WebSocket at ws://%s:%d/", ipAddr.c_str(), wsPort);
   LOG_DBG("WEB", "[MEM] Free heap after server.begin(): %d bytes", ESP.getFreeHeap());
+  WebDiagLog::append("started on port " + std::to_string(port) + ", free heap=" + std::to_string(ESP.getFreeHeap()));
 }
 
 void CrossPointWebServer::abortWsUpload(const char* tag) {
@@ -360,6 +390,7 @@ void CrossPointWebServer::stop() {
   server.reset();
   LOG_DBG("WEB", "Web server stopped and deleted");
   LOG_DBG("WEB", "[MEM] Free heap after delete server: %d bytes", ESP.getFreeHeap());
+  WebDiagLog::append("stopped, free heap=" + std::to_string(ESP.getFreeHeap()));
 
   // Note: Static upload variables (uploadFileName, uploadPath, uploadError) are declared
   // later in the file and will be cleared when they go out of scope or on next upload
@@ -714,6 +745,8 @@ static bool flushUploadBuffer(CrossPointWebServer::UploadState& state) {
 
     if (written != state.bufferPos) {
       LOG_DBG("WEB", "[UPLOAD] Buffer flush failed: expected %d, wrote %d", state.bufferPos, written);
+      WebDiagLog::appendCritical("upload buffer flush failed: expected=" + std::to_string(state.bufferPos) +
+                                 " wrote=" + std::to_string(written) + " file=" + std::string(state.fileName.c_str()));
       state.bufferPos = 0;
       return false;
     }
@@ -769,6 +802,8 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
 
     LOG_DBG("WEB", "[UPLOAD] START: %s to path: %s", state.fileName.c_str(), state.path.c_str());
     LOG_DBG("WEB", "[UPLOAD] Free heap: %d bytes", ESP.getFreeHeap());
+    WebDiagLog::append("upload start: " + std::string(state.fileName.c_str()) + " -> " +
+                       std::string(state.path.c_str()) + " free heap=" + std::to_string(ESP.getFreeHeap()));
 
     // Create file path
     String filePath = state.path;
@@ -788,6 +823,7 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     if (!Storage.openFileForWrite("WEB", filePath, state.file)) {
       state.error = "Failed to create file on SD card";
       LOG_DBG("WEB", "[UPLOAD] FAILED to create file: %s", filePath.c_str());
+      WebDiagLog::appendCritical("upload failed to create file: " + std::string(filePath.c_str()));
       return;
     }
     esp_task_wdt_reset();
@@ -847,6 +883,8 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
                 elapsed, avgKbps);
         LOG_DBG("WEB", "[UPLOAD] Diagnostics: %d writes, total write time: %lu ms (%.1f%%)", writeCount, totalWriteTime,
                 writePercent);
+        WebDiagLog::append("upload complete: " + std::string(state.fileName.c_str()) + " " +
+                           std::to_string(state.size) + " bytes in " + std::to_string(elapsed) + "ms");
 
         // Clear epub cache to prevent stale metadata issues when overwriting files
         String filePath = state.path;
