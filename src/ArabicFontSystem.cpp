@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include "CrossPointSettings.h"
+#include "I18n.h"
 #include "fontIds.h"
 
 namespace {
@@ -63,13 +64,23 @@ uint8_t arabicSizeEnumToPointSize(const uint8_t sizeEnum) {
 void applyArabicMappings(GfxRenderer& renderer, const int readingFontId) {
   renderer.clearArabicFontIdMappings();
   // matchLatinBaseline=true: UI labels sit on the requested Latin font's baseline so
-  // Arabic strings fit the fixed Latin-sized UI geometry (30px list rows, button
-  // hints, header) and align with adjacent Latin text -- essential for a fully-Arabic
-  // interface. The reading default stays unmatched: EPUB rows are sized for the
+  // Arabic-script strings fit the fixed Latin-sized UI geometry (30px list rows, button
+  // hints, header) and align with adjacent Latin text -- essential for a fully-Arabic-
+  // script interface. The reading default stays unmatched: EPUB rows are sized for the
   // full Arabic line height and book text carries diacritics needing that headroom.
-  renderer.setArabicFontIdForFontId(SMALL_FONT_ID, TAJAWAL_8_FONT_ID, /*matchLatinBaseline=*/true);
-  renderer.setArabicFontIdForFontId(UI_10_FONT_ID, TAJAWAL_10_FONT_ID, /*matchLatinBaseline=*/true);
-  renderer.setArabicFontIdForFontId(UI_12_FONT_ID, TAJAWAL_12_FONT_ID, /*matchLatinBaseline=*/true);
+  //
+  // Tajawal only covers 1 of 6 Persian-specific base letters (checked against the
+  // vendored TTF: PEH present, TCHEH/JEH/KEHEH/GAF/FARSI-YEH missing) -- per-language
+  // UI font choice, not per-script, so Farsi doesn't render common words with missing
+  // glyphs. Noto Sans Arabic (already loaded at these exact 8/10/12pt UI sizes for
+  // Arabic's own digit-fallback/banner-label use below) has full Persian coverage.
+  const bool uiFontIsTajawal = I18N.getLanguage() != Language::FA;
+  const int uiFont8 = uiFontIsTajawal ? TAJAWAL_8_FONT_ID : NOTOSANSARABIC_8_FONT_ID;
+  const int uiFont10 = uiFontIsTajawal ? TAJAWAL_10_FONT_ID : NOTOSANSARABIC_10_FONT_ID;
+  const int uiFont12 = uiFontIsTajawal ? TAJAWAL_12_FONT_ID : NOTOSANSARABIC_12_FONT_ID;
+  renderer.setArabicFontIdForFontId(SMALL_FONT_ID, uiFont8, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(UI_10_FONT_ID, uiFont10, /*matchLatinBaseline=*/true);
+  renderer.setArabicFontIdForFontId(UI_12_FONT_ID, uiFont12, /*matchLatinBaseline=*/true);
   renderer.setArabicFontId(readingFontId);
   // Ayah-marker digits always come from this built-in font, never readingFontId --
   // see setArabicDigitFallbackFontId's comment for why (some reading fonts simply

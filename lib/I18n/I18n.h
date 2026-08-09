@@ -21,10 +21,19 @@ class I18n {
   const char* operator[](StrId id) const { return get(id); }
 
   Language getLanguage() const { return _language; }
-  // True when the active UI language reads right-to-left (Arabic, Hebrew). Themes use
-  // this to mirror layout: titles/icons anchor to the right edge, values/options to the
-  // left, tab bars flow right-to-left. Per-string glyph ordering is already handled
+  // True when the active UI language reads right-to-left (Arabic, Hebrew, Farsi). Themes
+  // use this to mirror layout: titles/icons anchor to the right edge, values/options to
+  // the left, tab bars flow right-to-left. Per-string glyph ordering is already handled
   // inside GfxRenderer (MiniBidi / ArabicShaper); this flag only drives layout anchoring.
+  // Deliberately Arabic-only for now, NOT "any RTL-script language": simulator testing
+  // found that flipping this true for Farsi (script/text/font otherwise unchanged --
+  // isolated by testing Farsi content with this forced false, and separately with the
+  // UI font forced back to Tajawal) reproducibly put ~1480 draws out of the panel
+  // bounds during Home's boot render, all zero with this false. Some RTL-mirrored
+  // layout path has a hardcoded assumption that held only because Arabic has been the
+  // sole RTL language exercising it -- root cause not yet found. Farsi ships with
+  // correct text/font and LTR layout until that's tracked down; flipping this back to
+  // include FA without fixing the underlying bug WILL reproduce the corruption.
   bool isRtl() const { return _language == Language::AR; }
   void setLanguage(Language lang);
   const char* getLanguageName(Language lang) const;
