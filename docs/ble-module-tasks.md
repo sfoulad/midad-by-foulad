@@ -180,23 +180,41 @@ will show this as "sending," not "disconnected."
 
 ## Security
 
-**Correction (2026-08-09): this firmware has no `AppToken` concept —
-grep confirms zero references anywhere in `src/`/`lib/`.** The device's
-*actual* existing HTTPS credential, used everywhere it talks to the Foulad
-eBooks/Midad server (`FouladDeviceTracking.cpp`'s `registerDevice()`,
-`reportReadingStats()`, `uploadDebugLog()`, and every OPDS fetch in
-`OpdsBookBrowserActivity.cpp`), is a plain **username/password pair**,
-persisted on-device and passed straight through
-`HttpDownloader::postJson(url, body, username, password, response)`. There
-is no bearer-token layer in this firmware today. `AppToken` may well be a
-real thing on the Midad phone app / server side (this doc says the phone
-side is "an ongoing conversation," and I can't see that code) — but if so,
-it needs a device-side mapping onto something this firmware can actually
-store and present, since right now that's username/password. Below is
-written against what the device currently has; flag back to the phone/server
-conversation whether `AppToken` should become that mapping, or whether the
-device should keep presenting username/password over BLE the same way it
-already does over HTTPS.
+**Resolved (2026-08-09, phone/server conversation): a new, device-scoped
+BLE token — not `AppToken`, and not the account password.** The correction
+below (this firmware has no `AppToken` concept) stands as the finding that
+forced the decision; this is the decision.
+
+Sending the raw account password over BLE was considered and rejected: this
+project specifically moved the phone *off* raw passwords onto `AppToken` so
+the real password never has to live on a device repeatedly, and reusing the
+password here would undo that for the same device class it was meant to
+protect. Reusing `AppToken` itself doesn't work either, since nothing here
+can currently mint, store, or validate one.
+
+The resolution: foulad-ebooks mints a **separate, device-scoped BLE
+token** at provisioning time — same shape as `AppToken` (scoped,
+revocable, independent of the account password) but issued *to the
+device*, not the phone. The device persists it the same way it already
+persists its username/password today (new field, same storage pattern —
+no new persistence mechanism needed). The server also exposes the current
+value to the account's other phones (via `/api/app/devices` or
+equivalent), so a phone presenting it over the Auth characteristic is
+comparing against a value the device already has locally — **no live
+server round-trip needed at connect time**, which matters since BLE is
+supposed to work before Wi-Fi does. Foulad-ebooks work to track: mint +
+expose this token; not yet scoped or scheduled.
+
+**Original correction, preserved for context:** this firmware has no
+`AppToken` concept — grep confirms zero references anywhere in
+`src/`/`lib/`. The device's *actual* existing HTTPS credential, used
+everywhere it talks to the Foulad eBooks/Midad server
+(`FouladDeviceTracking.cpp`'s `registerDevice()`, `reportReadingStats()`,
+`uploadDebugLog()`, and every OPDS fetch in `OpdsBookBrowserActivity.cpp`),
+is a plain **username/password pair**, persisted on-device and passed
+straight through `HttpDownloader::postJson(url, body, username, password,
+response)`. That pattern is exactly what the new BLE token reuses —
+same storage shape, different credential.
 
 Two allowed connection states, nothing else:
 
@@ -205,15 +223,14 @@ Two allowed connection states, nothing else:
   request. Same trust boundary as today's QR sign-in; the account link is
   still approved server-side, BLE just replaces the camera as transport.
 - **Claimed device:** only a phone signed into *that same* account may send
-  commands. The phone presents the account credential over the BLE Auth
-  characteristic (username/password today, matching every other Foulad
-  eBooks HTTPS call this firmware already makes — see correction above);
-  the device checks it against the account it believes it's bound to. No
-  new credential system, and no plaintext-over-the-air concern beyond what
-  HTTPS already accepts today: BLE Secure Connections pairing (LE Secure
-  Connections, not Just Works — this exchange needs to resist a passive
-  eavesdropper, unlike the page-turner's HID reports) encrypts the link
-  before Auth is ever written.
+  commands. The phone presents the device-scoped BLE token (see Security
+  resolution above) over the BLE Auth characteristic; the device compares
+  it against the value it persisted at provisioning, locally, no server
+  round-trip needed. No plaintext-over-the-air concern beyond what HTTPS
+  already accepts today regardless: BLE Secure Connections pairing (LE
+  Secure Connections, not Just Works — this exchange needs to resist a
+  passive eavesdropper, unlike the page-turner's HID reports) encrypts the
+  link before Auth is ever written.
 
 A command from a mismatched or missing credential is dropped silently, same
 as an unauthenticated HTTP request is refused today.
@@ -328,6 +345,21 @@ components):
    [#2119](https://github.com/crosspoint-reader/crosspoint-reader/pull/2119)
    shipped OTA-over-BLE, closed as out-of-scope for CrossPoint's roadmap but
    measured at only ~15 s slower than the serial path — the mechanism works.)
+3a. **Status-bar indicator** — added 2026-08-09, per direction from the
+    Midad side: a small icon next to the battery indicator in
+    `BaseTheme::drawHeader()` (used by every non-reader screen — Apps,
+    Settings, Home, …; the reader's own `drawStatusBar()` is separate and
+    doesn't need this, since Reading state is BLE-central for the
+    page-turner, not the peripheral role this icon represents) whenever the
+    peripheral is actually advertising or connected. Tracks
+    `BlePeripheralManager`'s live state, not just
+    `CrossPointSettings::bleEnabled` — the setting can be on while the
+    radio is torn down (WiFi-active state, cool-down, Paused-low-memory),
+    and showing the icon then would contradict this doc's own "show PAUSED
+    honestly" principle. No `UIIcon` bitmap asset exists for Bluetooth;
+    hand-draw a small glyph the same way `drawBatteryLightningBolt()`
+    already hand-draws the charging bolt, rather than adding a new bitmap
+    to the icon asset pipeline for one small header glyph.
 3. **Settings toggle** — corrected 2026-08-09, per direction from the
    Midad side: goes under **Apps** (`AppsActivity`, `src/activities/apps/`),
    not general Settings — labeled **"Midad BLE"**, defaults **on**
@@ -399,6 +431,13 @@ starting on #1–3 above.
   in the field as `crosspoint-reader` PR
   [#2119](https://github.com/crosspoint-reader/crosspoint-reader/pull/2119)'s
   discussion suggests it was for at least one user.
+- A second future direction, same shape as the one above but the other
+  data: `sync.push` — the device hands its current reading position/stats
+  to the phone over BLE, and the phone relays them to the server, for a
+  device that has BLE-range to a phone but no working Wi-Fi of its own at
+  that moment. Not in scope now; the command/dispatcher design already
+  accommodates a device-initiated or phone-polled variant without changing
+  the envelope.
 
 **Added 2026-08-09, from reviewing this doc against the real codebase
 before starting Phase 1** (see the inline corrections above for the
@@ -409,10 +448,12 @@ reasoning behind each):
   the Midad phone side before Phase 1 is connectable end-to-end. Cheap to
   change on the device side until then; expensive once a phone build ships
   with them baked in.
-- **`AppToken` vs username/password for the Auth characteristic** — this
-  firmware has no `AppToken` code today (see Security section); needs a
-  decision on whether the device gains one, or presents its existing
-  HTTPS credential over BLE instead.
+- ~~`AppToken` vs username/password for the Auth characteristic~~ —
+  **resolved 2026-08-09**, see Security section: neither. A new
+  device-scoped BLE token, minted by foulad-ebooks at provisioning. That
+  server-side work isn't scoped or scheduled yet — flagging it as a real
+  dependency for Phase 1 to actually be usable end-to-end, not just for
+  the device side to compile.
 - **The Idle-state (~70 KB) vs Reading-state (~100 KB) heap-gate split**
   proposed in Hardware reality is reasoned from this doc's own numbers, not
   measured — flagging it explicitly so it doesn't quietly become "the"
