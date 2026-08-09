@@ -645,3 +645,44 @@ three questions this implementation pass raised:**
    Revisit if a hardware pass shows the margin is tighter than this
    reasoning assumes — this is the one of the three most likely to need
    walking back.
+
+## Phone side (foulad-one), Phase 1 — built 2026-08-10
+
+Against the real, committed `BlePeripheralManager.h`/`BleCommandDispatcher.cpp`
+from `e0a832bc` (read in full, not assumed), not the earlier draft protocol.
+
+- **New screen**: `BleProvisionScreen` (`lib/features/devices/ble_provision_screen.dart`).
+  Scans for the service UUID, lists nearby readers, takes SSID/password,
+  sends `wifi.provision`, shows the device's `ok`/`failed` reply (with the
+  three known `reason` codes — `unauthorized`, `invalid_payload`,
+  `storage_error` — turned into real sentences, and an honest fallback for
+  anything else). Entry point: `DevicesScreen`'s existing "Add device" FAB
+  now opens a chooser sheet (QR vs. Bluetooth) instead of jumping straight
+  to the QR scanner.
+- **Matches the resolved question above exactly**: this does *not* try to
+  claim the device or carry a `ble_token`. On success it just offers
+  "Scan its QR code now," handing off to the existing `ScanDeviceScreen`/
+  `/api/device-login` flow once the reader is online — same conclusion
+  reached independently on this side before rereading the resolution above
+  and finding it already written down.
+- **Low-level client**: `lib/data/ble/midad_ble_client.dart`, built on
+  `flutter_blue_plus`. Enforces `kMaxPayloadLen` (160 bytes) client-side
+  before writing, so an oversized SSID+password pair fails with a clear
+  message instead of silently truncating at the GATT layer.
+- **Finding, not yet a question**: Command (`...0003`) is
+  `WRITE | NOTIFY` — no `_ENC` — while Auth (`...0002`) is `WRITE_ENC`.
+  Nothing stops a central from writing `wifi.provision` (SSID + Wi-Fi
+  password) to Command over an unencrypted link if it never touches Auth
+  first. Phase 1's Auth write is unverified server-side either way, so
+  this isn't gated on any dispatcher change — the phone can just always
+  write a throwaway payload (`{}`) to Auth before its first Command write,
+  which is enough to make CoreBluetooth/BlueZ/Android negotiate pairing
+  and an encrypted link before the credentials go over the air. Implemented
+  that way in `MidadBleClient.connect()` (see `_forceEncryptedLink()`).
+  Mentioning it here in case there's a firmware-side reason to eventually
+  make Command `WRITE_ENC` outright rather than relying on the phone
+  behaving — no action needed on this repo's side to unblock testing.
+
+Not yet tested against real hardware — this is the phone half being ready,
+per the ping in the last relayed message. Ping back when there's a build
+to test against.
