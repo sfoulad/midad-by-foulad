@@ -850,6 +850,12 @@ void loop() {
   // (with the heap gate side by side, since that's the most likely reason begin()
   // silently refuses -- BlePeripheralManager's own LOG_DBG lines are serial-only and
   // stripped from RC builds entirely) and force a repaint the moment it changes.
+  static bool lastBleAllowedNow = false;
+  if (bleAllowedNow != lastBleAllowedNow) {
+    LOG_ERR("BLEDIAG", "bleAllowedNow %d -> %d (bleEnabled=%d wifiMode=%d isReader=%d)", lastBleAllowedNow,
+            bleAllowedNow, SETTINGS.bleEnabled, static_cast<int>(WiFi.getMode()), activityManager.isReaderActivity());
+    lastBleAllowedNow = bleAllowedNow;
+  }
   static BlePeripheralManager::State lastBleDiagState = BlePeripheralManager::State::Off;
   static unsigned long lastBleRefusalLogMs = 0;
   const auto bleStateNow = BlePeripheral.state();
@@ -860,6 +866,7 @@ void loop() {
              kBleStateNames[static_cast<int>(lastBleDiagState)], kBleStateNames[static_cast<int>(bleStateNow)],
              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes));
     BleDiagLog::append(bleBuf);
+    LOG_DBG("BLEDIAG", "%s", bleBuf);
     lastBleDiagState = bleStateNow;
     activityManager.requestUpdate();
   } else if (bleAllowedNow && bleStateNow == BlePeripheralManager::State::Off &&
@@ -871,6 +878,7 @@ void loop() {
     snprintf(bleBuf, sizeof(bleBuf), "still off after wanting to start: free heap=%u (gate=%u)",
              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes));
     BleDiagLog::append(bleBuf);
+    LOG_DBG("BLEDIAG", "%s", bleBuf);
   }
 #endif
 
@@ -893,6 +901,27 @@ void loop() {
         uint8_t* buf = display.getFrameBuffer();
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
+        // BLE_ON/BLE_OFF/BLE_STATUS: added during the Phase 1 hardware bring-up
+        // session (docs/ble-module-tasks.md) so BlePeripheralManager's lifecycle can be
+        // driven and inspected over serial without needing physical button presses/
+        // screen navigation -- kept as permanent tooling alongside SCREENSHOT above,
+        // same rationale (device-side testing that doesn't need eyes on the e-ink panel).
+      } else if (cmd == "BLE_ON") {
+        SETTINGS.bleEnabled = 1;
+        SETTINGS.saveToFile();
+        logSerial.printf("BLE_ON: bleEnabled now %d\n", SETTINGS.bleEnabled);
+      } else if (cmd == "BLE_OFF") {
+        SETTINGS.bleEnabled = 0;
+        SETTINGS.saveToFile();
+        logSerial.printf("BLE_OFF: bleEnabled now %d\n", SETTINGS.bleEnabled);
+      } else if (cmd == "BLE_STATUS") {
+#ifndef SIMULATOR
+        logSerial.printf(
+            "BLE_STATUS: activity=%s bleEnabled=%d wifiMode=%d isReader=%d freeHeap=%u gate=%u bleState=%d\n",
+            activityManager.currentActivityDebugName(), SETTINGS.bleEnabled, static_cast<int>(WiFi.getMode()),
+            activityManager.isReaderActivity(), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes), static_cast<int>(BlePeripheral.state()));
+#endif
       }
     }
   }

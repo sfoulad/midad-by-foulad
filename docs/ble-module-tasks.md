@@ -748,3 +748,73 @@ once advertised. Once names are unique, tapping the correct list entry
 functions as the confirmation step itself (comparable to pointing the
 camera at the right QR code) — no separate confirm-sheet needed unless a
 later review decides otherwise.
+
+## Live hardware debugging session (2026-08-10) — real bug found and fixed
+
+First real end-to-end debugging pass, on a real Xteink X3 connected via USB
+(`pio run -t upload` + a raw pyserial reader script, since `pio device
+monitor` needs an interactive TTY it doesn't have when scripted). Added
+`CMD:BLE_ON` / `CMD:BLE_OFF` / `CMD:BLE_STATUS` to `main.cpp`'s existing
+serial command handler (alongside `CMD:SCREENSHOT`) so `bleEnabled` and
+`BlePeripheralManager`'s live state can be driven and inspected over
+serial without touching the device's physical buttons — kept as permanent
+tooling, not removed after this session.
+
+**Symptom reported:** the Apps "Midad BLE" tile toggled on/off/on
+correctly, but the "BT" status-bar indicator never appeared.
+
+**Real bug found, not a false alarm:** `BlePeripheralManager::begin()`'s
+guard clause was `if (state_ != State::Off) return true;` — this treated
+`PausedLowMemory` (the state `poll()` enters after tearing down for low
+memory) the same as "already actively running," so it returned early
+without ever re-attempting. Once BLE paused for low memory once, it could
+**never retry again**, regardless of how long the cool-down ran or how
+much heap recovered afterward. Confirmed live: `CMD:BLE_STATUS` reported
+`bleState=3` (PausedLowMemory) sitting there indefinitely across multiple
+checks, heap unchanged, zero further attempts.
+
+**Fixed:** the guard now only short-circuits on `Advertising`/`Connected`
+(genuinely already running); `Off` and `PausedLowMemory` both fall through
+to the existing cool-down + heap-gate checks. Verified live, full cycle,
+after the fix: boot → brief early-boot success (heap momentarily above
+the gate before Home finishes loading its own resources) → `poll()`
+correctly tears down for low memory → `begin()` correctly refuses during
+the 30s cool-down (`[DBG] [BLE] begin() refused: cool-down active`,
+repeating every tick) → cool-down expires → `begin()` correctly falls
+through to the heap-gate check and refuses there instead
+(`[DBG] [BLE] begin() refused: heap gate not met (free=45136 < 71680)`) —
+every stage of the state machine now reachable and behaving as designed.
+No crash anywhere in this cycle; the whole point of the gate/cool-down/
+PAUSED design held up under real fragmentation, once the retry bug itself
+was fixed.
+
+Second real finding, answering this doc's own "unmeasured" heap-gate
+numbers for the first time: **on this X3, idle free heap depends heavily
+on which screen is showing.** Measured directly, not estimated:
+- **Home screen** (cover art + font caches resident): **~45 KB** free,
+  settled/stable across 100+ seconds of observation. Below both the
+  proposed ~70 KB Idle-state gate *and* NimBLE's own bare ~57 KB
+  requirement — BLE cannot run here except in the brief pre-load window
+  right after boot.
+- **Settings/Apps screens** (after navigating away from Home): **~77 KB**
+  free, also stable. Above the gate — BLE can run and stay up here.
+
+This means the ~70 KB gate isn't wrong in general, but it's not
+sufficient *on Home specifically* on this device — the "Idle state" this
+doc's state machine describes isn't heap-uniform across the screens that
+make it up. Not yet decided what to do about this (leave as-is, since
+"Midad BLE" itself lives on the Apps screen and a user toggling it is
+almost certainly not sitting on Home at that exact moment; or investigate
+whether Home's own resident footprint can shrink; or split the gate
+further by screen rather than just by Idle/Reading) — flagging it rather
+than picking one silently.
+
+The originally-reported symptom (no icon) is now fully explained by the
+combination of both findings: on a **fresh boot with `bleEnabled` already
+persisted true**, BLE started, immediately got torn down by the Home-heap
+finding above, and — before this fix — got permanently stuck in
+`PausedLowMemory` with no way back, so the icon (which only shows on
+`Advertising`/`Connected`) correctly never appeared. It wasn't the
+repaint-lag fix from earlier this same day that was insufficient; it was
+this deeper bug preventing the state from ever reaching `Advertising`
+again after the first pause.

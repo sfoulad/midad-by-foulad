@@ -108,7 +108,14 @@ BlePeripheralManager& BlePeripheralManager::getInstance() {
 }
 
 bool BlePeripheralManager::begin() {
-  if (state_ != State::Off) return true;  // already running
+  // Real-device bug, found live: this used to be `if (state_ != State::Off) return
+  // true;`, which treated PausedLowMemory the same as "already active" and returned
+  // early without ever re-attempting -- so once poll() paused for low memory, begin()
+  // could NEVER retry again, no matter how long the cool-down ran or how much heap
+  // recovered. Only Advertising/Connected are genuinely "already running, no-op";
+  // PausedLowMemory needs to fall through to the cool-down + heap-gate checks below,
+  // same as a fresh Off, so a real retry can actually happen once both clear.
+  if (state_ == State::Advertising || state_ == State::Connected) return true;
 
   if (coolingDown_) {
     if (millis() - lastLowMemoryTeardownMs_ < kCooldownMs) {
