@@ -12,6 +12,24 @@
 namespace {
 constexpr char CACHE_DIR[] = "/.crosspoint/opds_covers";
 constexpr char TEMP_PATH[] = "/.crosspoint/opds_covers/.tmp_cover";
+
+// Same thresholds as OpdsBookBrowserActivity.cpp's hasHeapForCoverWork() (that crash's
+// own diagnosis: a blank-panic report from 1.8.40-rc traced to an ordinary std::string
+// growth hitting the throwing global operator new under -fno-exceptions, which calls
+// std::terminate() directly -- no abort() message, hence no panic reason recorded).
+// That guard runs once per cover, before this whole function starts. It does not cover
+// THIS function's own multi-step sequence: HttpDownloader::downloadToFile() (HTTP/TLS
+// buffers) then the PNG/JPEG decoder (its own working buffers) each fragment the heap
+// further, and every std::string built in between -- including getOpdsCoverCachePath()
+// itself, called again below -- is exposed to the same failure mode regardless of how
+// healthy the heap looked when the caller's pre-loop check ran. Re-checking here, after
+// the download and before the decode, catches a heap that degraded during THIS cover's
+// own download rather than a previous one's.
+bool hasHeapForCoverDecode() {
+  constexpr uint32_t COVER_MIN_FREE_HEAP = 32 * 1024;
+  constexpr uint32_t COVER_MIN_FREE_BLOCK = 12 * 1024;
+  return ESP.getFreeHeap() > COVER_MIN_FREE_HEAP && ESP.getMaxAllocHeap() > COVER_MIN_FREE_BLOCK;
+}
 }  // namespace
 
 std::string getOpdsCoverCachePath(const std::string& entryId, int width, int height) {
@@ -44,6 +62,19 @@ bool ensureOpdsCoverCached(const OpdsEntry& entry, const std::string& username, 
       HttpDownloader::downloadToFile(entry.coverUrl, TEMP_PATH, nullptr, nullptr, username, password);
   if (downloadResult != HttpDownloader::OK) {
     LOG_ERR("OPDSCOVER", "Failed to download cover: %s", entry.coverUrl.c_str());
+    return false;
+  }
+
+  if (!hasHeapForCoverDecode()) {
+    // The download itself (HTTP/TLS buffers, chunked reads) can fragment the heap enough
+    // to make the decode below -- or even the string work already ahead of it -- unsafe,
+    // regardless of how healthy heap looked when the caller checked before starting this
+    // cover. Bail before touching the decoder; the downloaded temp file is discarded, and
+    // this cover is simply left uncached for a later, healthier visit (same trade
+    // loadGridPageCovers already makes for its own pre-loop check).
+    LOG_ERR("OPDSCOVER", "Skipping decode, low heap after download: free=%u largest=%u",
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    Storage.remove(TEMP_PATH);
     return false;
   }
 
