@@ -14,6 +14,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/WifiDiagLog.h"
 
 void WifiSelectionActivity::onEnter() {
   Activity::onEnter();
@@ -323,6 +324,7 @@ void WifiSelectionActivity::handleAutoConnectFailure() {
     if (tryNextSavedNetworkFromScan()) {
       return;
     }
+    WifiDiagLog::append("auto-connect exhausted all saved networks in scan, falling back to manual list");
     autoConnecting = false;
     state = WifiSelectionState::NETWORK_LIST;
     selectedNetworkIndex = 0;
@@ -354,6 +356,8 @@ void WifiSelectionActivity::attemptConnection() {
   connectionStartTime = millis();
   connectedIP.clear();
   connectionError.clear();
+  WifiDiagLog::append("connecting: ssid=" + selectedSSID + " auto=" + (autoConnecting ? "1" : "0") +
+                      " savedPassword=" + (usedSavedPassword ? "1" : "0"));
   // Paint "Connecting to <ssid>" before the radio work below, not after. requestUpdate()
   // only sets a flag consumed once ActivityManager::loop() regains control, so with
   // WiFi.mode() + disconnect + delay(100) + WiFi.begin() in between, the panel kept
@@ -403,6 +407,8 @@ void WifiSelectionActivity::checkConnectionStatus() {
     snprintf(ipStr, sizeof(ipStr), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
     connectedIP = ipStr;
     autoConnecting = false;
+    WifiDiagLog::append("connected: ssid=" + selectedSSID + " ip=" + std::string(ipStr) +
+                        " elapsedMs=" + std::to_string(millis() - connectionStartTime));
 
 // Guarded out of the simulator build: crosspoint-simulator's WiFiClass stub
 // doesn't implement BSSID()/channel() either.
@@ -473,6 +479,9 @@ void WifiSelectionActivity::checkConnectionStatus() {
     if (status == WL_NO_SSID_AVAIL) {
       connectionError = tr(STR_ERROR_NETWORK_NOT_FOUND);
     }
+    WifiDiagLog::append("failed: ssid=" + selectedSSID +
+                        " status=" + (status == WL_NO_SSID_AVAIL ? "NO_SSID_AVAIL" : "CONNECT_FAILED") +
+                        " auto=" + (autoConnecting ? "1" : "0"));
     if (autoConnecting) {
       handleAutoConnectFailure();
       return;
@@ -489,6 +498,8 @@ void WifiSelectionActivity::checkConnectionStatus() {
   if (millis() - connectionStartTime > timeoutMs) {
     WiFi.disconnect();
     connectionError = tr(STR_ERROR_CONNECTION_TIMEOUT);
+    WifiDiagLog::append("timeout: ssid=" + selectedSSID + " afterMs=" + std::to_string(timeoutMs) + " auto=" +
+                        (autoConnecting ? "1" : "0") + " lastStatus=" + std::to_string(static_cast<int>(status)));
     if (autoConnecting) {
       handleAutoConnectFailure();
       return;

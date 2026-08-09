@@ -42,6 +42,7 @@
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepDiagLog.h"
+#include "util/StackDiagLog.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -860,6 +861,17 @@ void loop() {
                millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS,
                activityManager.currentActivityDebugName());
       BatteryDiagLog::append(buf);
+    }
+  }
+
+  // Same cadence/rationale as the battery breadcrumb above, for the main loop task's own
+  // stack margin -- see StackDiagLog.h.
+  {
+    static unsigned long lastStackDiagLogMs = 0;
+    const unsigned long nowMs = millis();
+    if (nowMs - lastStackDiagLogMs >= 300000) {
+      lastStackDiagLogMs = nowMs;
+      StackDiagLog::append("main", uxTaskGetStackHighWaterMark(nullptr));
     }
   }
 

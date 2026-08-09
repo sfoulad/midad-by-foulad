@@ -15,10 +15,12 @@
 #include "network/HttpDownloader.h"
 #include "network/OtaUpdater.h"
 #include "reading/ReadingStatsStore.h"
+#include "util/FirmwareDiagLog.h"
 
 void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
     LOG_ERR("OTA", "WiFi connection failed, exiting");
+    FirmwareDiagLog::append("OTA", "aborted: WiFi connection failed");
     finish();
     return;
   }
@@ -36,6 +38,11 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
     const auto httpFailure = HttpDownloader::getLastFailure();
     LOG_DBG("OTA", "Update check failed: %d (free heap %u, largest block %u, http stage %u detail %d)", res,
             ESP.getFreeHeap(), ESP.getMaxAllocHeap(), static_cast<unsigned>(httpFailure.stage), httpFailure.detail);
+    FirmwareDiagLog::append("OTA", "check failed: res=" + std::to_string(res) +
+                                       " free=" + std::to_string(ESP.getFreeHeap()) +
+                                       " largest=" + std::to_string(ESP.getMaxAllocHeap()) +
+                                       " httpStage=" + std::to_string(static_cast<unsigned>(httpFailure.stage)) +
+                                       " httpDetail=" + std::to_string(httpFailure.detail));
     {
       RenderLock lock(*this);
       lastErrorCode = res;
@@ -255,6 +262,9 @@ void OtaUpdateActivity::beginInstall() {
 
   if (res != OtaUpdater::OK) {
     LOG_DBG("OTA", "Update failed: %d (free heap %u, largest block %u)", res, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    FirmwareDiagLog::append("OTA", "install failed: res=" + std::to_string(res) +
+                                       " free=" + std::to_string(ESP.getFreeHeap()) +
+                                       " largest=" + std::to_string(ESP.getMaxAllocHeap()));
     {
       RenderLock lock(*this);
       lastErrorCode = res;
@@ -266,6 +276,7 @@ void OtaUpdateActivity::beginInstall() {
     return;
   }
 
+  FirmwareDiagLog::append("OTA", "install succeeded, rebooting");
   {
     RenderLock lock(*this);
     state = FINISHED;

@@ -25,6 +25,7 @@
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "util/StackDiagLog.h"
 
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -54,6 +55,17 @@ void ActivityManager::renderTaskLoop() {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
       currentActivity->render(std::move(lock));
     }
+
+    // Same cadence/rationale as main.cpp's own main-task sample -- see StackDiagLog.h.
+    {
+      static unsigned long lastStackDiagLogMs = 0;
+      const unsigned long nowMs = millis();
+      if (nowMs - lastStackDiagLogMs >= 300000) {
+        lastStackDiagLogMs = nowMs;
+        StackDiagLog::append("render", uxTaskGetStackHighWaterMark(nullptr));
+      }
+    }
+
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
     taskENTER_CRITICAL(&activityManagerSpinlock);

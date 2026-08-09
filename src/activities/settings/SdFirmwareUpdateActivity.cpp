@@ -13,6 +13,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/FirmwareFlasher.h"
+#include "util/FirmwareDiagLog.h"
 
 void SdFirmwareUpdateActivity::onEnter() {
   Activity::onEnter();
@@ -99,6 +100,8 @@ bool SdFirmwareUpdateActivity::validateFirmware() {
   const auto vr = firmware_flash::validateImageFile(firmwarePath.c_str(), partitionLimit);
   if (vr != firmware_flash::Result::OK) {
     LOG_ERR("FW", "image validation failed: %s", firmware_flash::resultName(vr));
+    FirmwareDiagLog::append(
+        "FW", "SD update rejected: " + std::string(firmware_flash::resultName(vr)) + " path=" + firmwarePath);
     if (vr == firmware_flash::Result::TOO_LARGE) {
       errorMessage = tr(STR_FIRMWARE_TOO_LARGE);
     } else if (vr == firmware_flash::Result::TOO_SMALL) {
@@ -167,6 +170,8 @@ void SdFirmwareUpdateActivity::performUpdate() {
   const auto result = firmware_flash::flashFromSdPath(firmwarePath.c_str(), progressCb, this);
   if (result != firmware_flash::Result::OK) {
     LOG_ERR("FW", "flash failed: %s", firmware_flash::resultName(result));
+    FirmwareDiagLog::append(
+        "FW", "SD update failed: " + std::string(firmware_flash::resultName(result)) + " path=" + firmwarePath);
     errorMessage = tr(STR_FIRMWARE_WRITE_FAILED);
     RenderLock lock(*this);
     state = State::FAILED;
@@ -175,6 +180,7 @@ void SdFirmwareUpdateActivity::performUpdate() {
   }
 
   LOG_INF("FW", "SD firmware update complete, restarting");
+  FirmwareDiagLog::append("FW", "SD update complete, restarting: path=" + firmwarePath);
   {
     RenderLock lock(*this);
     state = State::SUCCESS;
