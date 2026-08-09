@@ -52,7 +52,9 @@
 #include "fontIds.h"
 #include "util/BookReaderSettings.h"
 #include "util/BookmarkUtil.h"
+#include "util/DebugLog.h"
 #include "util/ReaderPerfLog.h"
+#include "util/RollingSdLog.h"
 #include "util/ScreenshotUtil.h"
 
 namespace {
@@ -1662,7 +1664,22 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     // line below reports THIS chapter's SD I/O, not whatever leaked over from
     // the previous page turn's render-time prewarm.
     if (auto* fcmForBuildStats = renderer.getFontCacheManager()) fcmForBuildStats->resetStats();
-    section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
+    section = makeUniqueNoThrow<Section>(epub, currentSpineIndex, renderer);
+    if (!section) {
+      // Bare `new` under -fno-exceptions calls abort() on OOM instead of returning nullptr
+      // (see CLAUDE.md) -- this is the primary chapter-load path, crossed on every chapter
+      // transition, so it gets the same makeUniqueNoThrow treatment as every other fallible
+      // allocation. Leaving `section` null and returning lets the next render() tick retry
+      // once whatever fragmented the heap has cleared, the same trade already made by
+      // hasHeapForNavigation()/hasHeapForCoverWork() in the OPDS browser.
+      LOG_ERR("ERS", "OOM building Section for spine index %d: free=%u largest=%u", currentSpineIndex,
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      RollingSdLog::append(DebugLog::PATH,
+                           "[ERS] OOM building Section spine=" + std::to_string(currentSpineIndex) + " free=" +
+                               std::to_string(ESP.getFreeHeap()) + " largest=" + std::to_string(ESP.getMaxAllocHeap()),
+                           DebugLog::MAX_LINES, /*force=*/true);
+      return;
+    }
 
     // A finalized cache serves every page as-is. A partial cache (suspended build from a
     // previous session) serves its pages instantly too, but a build must still run to lay

@@ -4,6 +4,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
 #include <esp_wifi.h>
@@ -24,6 +25,8 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/DebugLog.h"
+#include "util/RollingSdLog.h"
 
 namespace {
 DocumentMatchMethod alternateMatchMethod(const DocumentMatchMethod method) {
@@ -64,7 +67,21 @@ void syncTimeWithNTP() {
 void KOReaderSyncActivity::ensureEpubLoaded() {
   if (!epub) {
     LOG_DBG("KOSync", "Loading epub for progress mapping (heap: %u)", (unsigned)ESP.getFreeHeap());
-    epub = std::make_shared<Epub>(epubPath, "/.crosspoint");
+    // Bare `new` under -fno-exceptions calls abort() on OOM instead of returning nullptr (see
+    // CLAUDE.md) -- std::make_shared<Epub>(...) is exactly that. ReaderActivity::loadEpub()
+    // already uses makeUniqueNoThrow<Epub>() for this same constructor; this member happens to
+    // be a shared_ptr (converts implicitly from the unique_ptr makeUniqueNoThrow returns) but
+    // needs the identical OOM guard.
+    epub = makeUniqueNoThrow<Epub>(epubPath, "/.crosspoint");
+    if (!epub) {
+      LOG_ERR("KOSync", "OOM allocating Epub for progress mapping: free=%u largest=%u",
+              static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+      RollingSdLog::append(DebugLog::PATH,
+                           "[KOSync] OOM allocating Epub: free=" + std::to_string(ESP.getFreeHeap()) +
+                               " largest=" + std::to_string(ESP.getMaxAllocHeap()),
+                           DebugLog::MAX_LINES, /*force=*/true);
+      return;
+    }
     epub->setupCacheDir();
     // Load metadata only (no CSS needed for progress mapping, don't rebuild if cache is missing).
     if (!epub->load(false, true)) {
