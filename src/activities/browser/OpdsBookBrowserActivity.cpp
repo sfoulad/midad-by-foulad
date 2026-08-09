@@ -97,13 +97,22 @@ int moveVerticalInGrid(const int currentIndex, const int totalItems, const int c
 // (see util/DebugLog.h). Lets the user grab a diagnostic log via File
 // Browser/File Transfer without needing a live serial connection, the same way
 // they already can for a crash.
-void saveOpdsDiagnosticLog(const std::string& context) {
-  if (!DebugLogging::enabled()) return;
+//
+// force=true bypasses the debugLoggingEnabled gate (see RollingSdLog::append) --
+// reserved for the heap-guard trip points below (hasHeapForCoverWork/
+// hasHeapForNavigation), which are the exact defense that heads off the
+// throwing-`new`-under-`-fno-exceptions` crash class documented at
+// hasHeapForNavigation()'s definition. A near-miss save is as diagnostically
+// valuable as the crash it prevented, and the sessions that need it most are
+// the ones where nobody thought to turn debug logging on ahead of time. Routine
+// fetch/parse/auth failures below stay opt-in.
+void saveOpdsDiagnosticLog(const std::string& context, bool force = false) {
+  if (!force && !DebugLogging::enabled()) return;
   std::string info = "[OPDS-ERROR] CrossPoint version: " CROSSPOINT_VERSION;
   info += " | Context: " + context;
   info += "\nLast logs:\n" + getLastLogs();
 
-  RollingSdLog::append(DebugLog::PATH, info, DebugLog::MAX_LINES);
+  RollingSdLog::append(DebugLog::PATH, info, DebugLog::MAX_LINES, force);
   LOG_INF("OPDS", "Saved diagnostic log to %s", DebugLog::PATH);
 }
 
@@ -901,8 +910,9 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
         // chance to abort. The uncached covers stay uncached and are picked up on a
         // later visit, when the walk that fragmented the heap is behind us.
         saveOpdsDiagnosticLog("Cover fetch stopped early, low heap: free=" + std::to_string(ESP.getFreeHeap()) +
-                              " largest=" + std::to_string(ESP.getMaxAllocHeap()) + " at book " +
-                              std::to_string(i - pageStart + 1) + "/" + std::to_string(totalToProcess));
+                                  " largest=" + std::to_string(ESP.getMaxAllocHeap()) + " at book " +
+                                  std::to_string(i - pageStart + 1) + "/" + std::to_string(totalToProcess),
+                              /*force=*/true);
         LOG_ERR("OPDS", "Cover fetch stopped early (free heap %u)", static_cast<unsigned>(ESP.getFreeHeap()));
         break;
       }
@@ -1107,6 +1117,9 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
               " prev=" + (feedPrevUrl.empty() ? "-" : feedPrevUrl));
   } else {
     LOG_ERR("OPDS", "Skipped FETCH diagnostic log, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
+    saveOpdsDiagnosticLog(
+        "Skipped FETCH diagnostic log, low heap: free=" + std::to_string(ESP.getFreeHeap()) + " url=" + url,
+        /*force=*/true);
   }
   requestUpdate();
 }
@@ -1117,6 +1130,9 @@ void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
   // the way explicit buffers do. Declining up front beats a silent abort mid-navigation.
   if (!hasHeapForNavigation()) {
     LOG_ERR("OPDS", "Navigation stopped early, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
+    saveOpdsDiagnosticLog(
+        "Navigation stopped early, low heap: free=" + std::to_string(ESP.getFreeHeap()) + " entry=" + entry.id,
+        /*force=*/true);
     state = BrowserState::ERROR;
     errorMessage = tr(STR_MEMORY_ERROR);
     requestUpdate();

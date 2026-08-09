@@ -8,6 +8,8 @@
 #include <PngToBmpConverter.h>
 
 #include "network/HttpDownloader.h"
+#include "util/DebugLog.h"
+#include "util/RollingSdLog.h"
 
 namespace {
 constexpr char CACHE_DIR[] = "/.crosspoint/opds_covers";
@@ -74,6 +76,15 @@ bool ensureOpdsCoverCached(const OpdsEntry& entry, const std::string& username, 
     // loadGridPageCovers already makes for its own pre-loop check).
     LOG_ERR("OPDSCOVER", "Skipping decode, low heap after download: free=%u largest=%u",
             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+    // Forced through the debugLoggingEnabled gate (see RollingSdLog::append) -- this is
+    // the exact defensive bail this fix exists for (OpdsBookBrowserActivity.cpp's
+    // hasHeapForNavigation()/hasHeapForCoverWork() comments have the full crash history),
+    // and a near-miss save is worth as much locally as the crash it prevented.
+    RollingSdLog::append(
+        DebugLog::PATH,
+        "[OPDSCOVER] Skipping decode, low heap after download: free=" + std::to_string(ESP.getFreeHeap()) +
+            " largest=" + std::to_string(ESP.getMaxAllocHeap()) + " url=" + entry.coverUrl,
+        DebugLog::MAX_LINES, /*force=*/true);
     Storage.remove(TEMP_PATH);
     return false;
   }
