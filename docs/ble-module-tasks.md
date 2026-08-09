@@ -686,3 +686,17 @@ from `e0a832bc` (read in full, not assumed), not the earlier draft protocol.
 Not yet tested against real hardware — this is the phone half being ready,
 per the ping in the last relayed message. Ping back when there's a build
 to test against.
+
+## Hardware validation (2026-08-10)
+
+Tested end-to-end on a real Xteink X3: scan, connect, Auth-then-Command
+(forced encrypted link), `wifi.provision` send, `ok` reply, device joins
+the network. Reported as working normally — no failure details given, so
+treat this as "the happy path holds," not as covering the `unauthorized`/
+`invalid_payload`/`storage_error` reply paths or the no-Wi-Fi-in-range
+case, none of which have been exercised against real hardware yet.
+
+Phase 1 (Wi-Fi provisioning) is validated end-to-end on this model. Open
+next: same test on other Xteink models if their BLE stack differs, and
+the Phase 2 work above (`wifi_last_attempt` status field, the device-scoped
+BLE token once foulad-ebooks mints it).
