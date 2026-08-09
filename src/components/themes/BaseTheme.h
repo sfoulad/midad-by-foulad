@@ -230,6 +230,11 @@ class BaseTheme {
                                const char* btn4) const;
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   virtual int getListPageItems(int contentHeight, bool hasSubtitle) const;
+  // Pixel height of one drawList() row -- the same value getListPageItems() divides
+  // contentHeight by, exposed on its own for touch hit-testing (MappedInputManager's
+  // list-touch helpers need it to turn a tap Y into a row index without duplicating
+  // this metric lookup).
+  virtual int getListRowStep(bool hasSubtitle) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                         const std::function<std::string(int index)>& rowTitle,
                         const std::function<std::string(int index)>& rowSubtitle = nullptr,
@@ -248,6 +253,11 @@ class BaseTheme {
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<std::string(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;
+  // Given a point already known to be a tap/touch-down (logical screen coordinates,
+  // e.g. from MappedInputManager::wasScreenTapped), resolves which drawButtonMenu() item
+  // it lands on, or -1 for none. Each override MUST mirror its own drawButtonMenu()'s
+  // geometry exactly -- the two are a layout/hit-test pair, keep them in sync.
+  virtual int hitTestButtonMenu(const GfxRenderer& renderer, Rect rect, int buttonCount, int x, int y) const;
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
   virtual void drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
                                int selectedIndex) const;

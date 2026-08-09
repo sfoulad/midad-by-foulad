@@ -566,3 +566,30 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
     }
   }
 }
+
+int FouladTheme::hitTestButtonMenu(const GfxRenderer& renderer, Rect rect, const int buttonCount, const int x,
+                                   const int y) const {
+  if (buttonCount <= 0) return -1;
+  // Mirrors drawButtonMenu() above line for line -- keep barY/tileWidth/slotIndex in sync
+  // with it exactly. kGlyphStripHeight is that function's own local constant, duplicated
+  // here since it is not file-scope there.
+  constexpr int kGlyphStripHeight = 20;
+  const int barY = renderer.getScreenHeight() - kMenuBandHeight - kGlyphStripHeight;
+  if (y < barY || y >= barY + kMenuBandHeight) return -1;
+
+  const int totalGaps = kMenuGap * (buttonCount - 1);
+  const int tileWidth = (rect.width - kMenuPadding * 2 - totalGaps) / buttonCount;
+  const int step = tileWidth + kMenuGap;
+  if (step <= 0) return -1;
+
+  const int barLeft = rect.x + kMenuPadding;
+  if (x < barLeft) return -1;
+  const int offset = x - barLeft;
+  const int slot = offset / step;
+  if (slot < 0 || slot >= buttonCount) return -1;
+  if (offset % step >= tileWidth) return -1;  // in the inter-tile gap
+
+  // Invert drawButtonMenu()'s slotIndex = rtl ? buttonCount - 1 - i : i -- the mapping is
+  // its own inverse, so the same expression converts a hit slot back to the logical index.
+  return I18N.isRtl() ? buttonCount - 1 - slot : slot;
+}

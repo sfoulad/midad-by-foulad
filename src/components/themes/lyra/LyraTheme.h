@@ -93,6 +93,8 @@ class LyraTheme : public BaseTheme {
   void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                   bool selected) const override;
   int getListPageItems(int contentHeight, bool hasSubtitle) const override;
+  int getListRowStep(bool hasSubtitle) const override;
+  int hitTestButtonMenu(const GfxRenderer& renderer, Rect rect, int buttonCount, int x, int y) const override;
   void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                 const std::function<std::string(int index)>& rowTitle,
                 const std::function<std::string(int index)>& rowSubtitle,
