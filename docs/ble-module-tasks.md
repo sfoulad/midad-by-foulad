@@ -424,20 +424,32 @@ starting on #1–3 above.
   and the dictionary/theme/game features also present — do the CrossPoint
   numbers actually hold here, or does this firmware's larger feature set
   move the gate?
-- Whether `book.transfer_direct` (small text-only books straight over BLE,
-  as a fallback when Wi-Fi has failed repeatedly) is worth adding later —
-  not in scope now, but the command envelope already has room for it if
-  Wi-Fi reliability on this hardware turns out to be as much of a problem
-  in the field as `crosspoint-reader` PR
-  [#2119](https://github.com/crosspoint-reader/crosspoint-reader/pull/2119)'s
-  discussion suggests it was for at least one user.
-- A second future direction, same shape as the one above but the other
-  data: `sync.push` — the device hands its current reading position/stats
-  to the phone over BLE, and the phone relays them to the server, for a
-  device that has BLE-range to a phone but no working Wi-Fi of its own at
-  that moment. Not in scope now; the command/dispatcher design already
-  accommodates a device-initiated or phone-polled variant without changing
-  the envelope.
+- **The phone as a relay, generally — not just two special cases.**
+  `book.transfer_direct` (small text-only books straight over BLE, as a
+  fallback when Wi-Fi has failed repeatedly) and `sync.push` (the device
+  hands reading position/stats to the phone, which relays them to the
+  server) were noted separately below, but they're the same shape: a
+  device with BLE-range to a phone but no working Wi-Fi of its own right
+  then, using the phone's already-working connection instead of its own.
+  The BLE-token auth mechanism above is already the first real instance of
+  this — the phone fetches a server-verified value and hands it to the
+  device over BLE — so the pattern isn't hypothetical, it's already load-
+  bearing for Phase 1. Worth considering, later, as one general capability
+  (e.g. a `relay.request` command carrying an HTTP method/path/body for the
+  phone to execute against the server on the device's behalf and hand the
+  response back) rather than a growing list of one-off relay commands —
+  not scoped now, and needs its own security thinking before it is (a
+  general relay is a bigger trust surface than either specific case), but
+  worth naming as the direction rather than rediscovering it piecemeal
+  each time a new "device has no Wi-Fi" case shows up.
+  - `book.transfer_direct`: not in scope now, but the command envelope
+    already has room for it if Wi-Fi reliability on this hardware turns
+    out to be as much of a problem in the field as `crosspoint-reader` PR
+    [#2119](https://github.com/crosspoint-reader/crosspoint-reader/pull/2119)'s
+    discussion suggests it was for at least one user.
+  - `sync.push`: not in scope now; the command/dispatcher design already
+    accommodates a device-initiated or phone-polled variant without
+    changing the envelope.
 
 **Added 2026-08-09, from reviewing this doc against the real codebase
 before starting Phase 1** (see the inline corrections above for the
