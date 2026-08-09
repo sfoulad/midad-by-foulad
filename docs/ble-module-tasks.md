@@ -706,3 +706,45 @@ Open next: the actual phone-to-device test (foulad-one's Add device → Set
 up over Bluetooth screen, against an X3 with no saved Wi-Fi), then the
 Phase 2 work above (`wifi_last_attempt` status field, the device-scoped
 BLE token once foulad-ebooks mints it).
+
+## New task: per-device advertised name (multi-device households)
+
+Raised by Sameh: with more than one Xteink nearby, foulad-one's scan list
+is currently useless for telling them apart. Confirmed why —
+`NimBLEDevice::init("Midad")` at `lib/hal/BlePeripheralManager.cpp:141`
+advertises the literal string `"Midad"`, identical on every device. No
+serial, no MAC, nothing — and the Status characteristic (`...0004`)
+doesn't carry one either; nothing in Phase 1 writes to it with identifying
+info. Two readers in range render as two indistinguishable "Midad" rows.
+This is a real regression from the QR flow, which shows the actual serial
+for confirmation (`ConfirmDeviceSheet`) before pairing — over BLE right
+now there's no equivalent check, so tapping the wrong entry (e.g. a
+neighbor's unclaimed reader in an apartment) would hand it your Wi-Fi
+password.
+
+**Decided (Sameh, 2026-08-10): fix it at the source — advertise a unique
+per-device name**, not a phone-side workaround (RSSI-sorting was on the
+table and explicitly turned down in favor of the real fix).
+
+Suggested approach, anchored to what already exists rather than inventing
+a new scheme: `FouladDeviceTracking.cpp:443`'s `getSerialNumber()` already
+derives `"XTE-" + WiFi.macAddress()` (colons stripped) for the QR-confirm
+serial and server registration. Advertise `"Midad-" + <last 4-6 hex chars
+of that same MAC>` instead of the bare `"Midad"` literal, so the BLE name
+correlates with the serial a user may already recognize from Devices/QR
+elsewhere, rather than being a second, unrelated identifier.
+
+One thing to verify while building this, not assumed here: whether
+`WiFi.macAddress()` reads cleanly from `begin()`'s context when the device
+is in Idle → BLE-peripheral state with Wi-Fi intentionally off (this
+doc's mutual-exclusion design). On ESP32 the MAC is normally readable from
+efuse regardless of radio state, but that's worth confirming against this
+codebase's actual `WiFi.macAddress()` behavior rather than assumed.
+
+No phone-side change needed to consume this — `BleProvisionScreen`
+already prefers `device.platformName` / `advertisementData.advName` over
+a hardcoded fallback, so a real per-device name shows up automatically
+once advertised. Once names are unique, tapping the correct list entry
+functions as the confirmation step itself (comparable to pointing the
+camera at the right QR code) — no separate confirm-sheet needed unless a
+later review decides otherwise.
