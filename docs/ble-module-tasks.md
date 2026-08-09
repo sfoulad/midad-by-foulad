@@ -818,3 +818,146 @@ finding above, and — before this fix — got permanently stuck in
 repaint-lag fix from earlier this same day that was insufficient; it was
 this deeper bug preventing the state from ever reaching `Advertising`
 again after the first pause.
+
+## Second live debugging session (2026-08-10) — the real blocker: NimBLE's own init cost
+
+Follow-up session, same USB/serial setup, this time navigating deliberately
+to Settings > Apps (per the Home-vs-Settings finding above) and attempting
+an actual phone pairing test from foulad-one on iPhone. Symptom: still no
+"BT" icon, and the iPhone's Bluetooth scan never found the device at all —
+a different, deeper problem than the `PausedLowMemory` retry bug fixed
+earlier today.
+
+**Root cause, confirmed from the live log** (two occurrences, identical):
+
+```
+[466625] [DBG] [BLE] begin(): advertising (free heap=12768)
+[466625] [ERR] [BLE] poll(): heap dropped below gate while running (free=12768), tearing down
+[466635] [DBG] [BLE] end(): torn down (free heap=71412)
+```
+
+`begin()`'s heap-gate check (`BlePeripheralManager.cpp:128`) runs *before*
+`NimBLEDevice::init()`. At that point free heap was ~77-80 KB (Settings/Apps,
+per the finding above) — comfortably over the 71680-byte gate, so the check
+passes. But everything `begin()` does next —
+`NimBLEDevice::init()` + `createServer()` + `createService()` + three
+characteristics + `advertising->start()` — itself allocates roughly
+**65 KB of heap**, which is not accounted for anywhere in the pre-flight
+check. By the time `state_` is set to `Advertising` and the "advertising"
+log line fires, free heap has already collapsed to ~12.8 KB. The very next
+`poll()` call, same tick (10ms later per the timestamps above), sees that
+12.8 KB is under the gate and tears everything down immediately.
+
+So the state machine's own logic worked exactly as designed at every step
+— the problem is that `Advertising` never lasts longer than a single main
+loop iteration. That's under any realistic BLE scan window on either
+platform, which is why the phone never saw the device, and why the "BT"
+icon (drawn only on a repaint, which for e-ink takes 1-2s) never had a
+chance to appear before the state reverted.
+
+**Why the earlier +27.6 KB estimate didn't catch this**: that number (see
+"Phase 1 implementation status" below) was measured as NimBLE-Arduino's
+*static link-time* footprint (`.data`/`.bss` added to the binary), not its
+*runtime heap* allocation once `init()` actually spins up the host task,
+GATT tables, ATT buffers, and advertising payload. Those are two different
+costs; only the second one matters for this gate, and it was never
+directly measured until this session.
+
+**The problem this creates for the whole gate design**: `kHeapGateBytes`
+(71680) is used both as the pre-flight threshold in `begin()` and as the
+"still safe while running" floor in `poll()` — but a single number can't
+correctly serve both roles once there's a ~65 KB step-cost in between them.
+Raising the constant doesn't fix this by itself: the pre-flight check would
+need something on the order of *(safe running floor) + (NimBLE's own
+~65 KB init cost) + margin* — call it 100 KB+ free heap ISO *before*
+`begin()` even runs. The highest free heap measured anywhere on this
+device so far, including Settings/Apps, is ~77-80 KB. There is currently
+no screen on this device where a correctly-sized pre-flight check would
+ever pass.
+
+**Not yet attempted**: whether NimBLE-Arduino's ~65 KB runtime footprint
+can be reduced via `sdkconfig` tuning (`CONFIG_BT_NIMBLE_MAX_CONNECTIONS`,
+bonding/pairing store size, disabling unused extended-advertising or mesh
+options, ATT buffer counts) rather than by finding 100 KB+ of free heap
+elsewhere on a 380 KB-RAM device, which is very unlikely to be won back
+from other subsystems. This is flagged here rather than fixed blind —
+shrinking NimBLE's own memory use is a real investigation, not a
+one-line constant change, and deserves its own session before more device
+time is spent on it.
+
+## Research: NimBLE-Arduino memory tuning options (2026-08-10, from Midad side)
+
+Requested by Sameh -- searched for what's actually available to attack the
+~65 KB runtime init cost above, since the `MAX_CONNECTIONS=1` /
+`ATT_PREFERRED_MTU=185` change already in flight in `platformio.ini` is
+real but partial (connection-context and MTU buffers are only part of
+NimBLE's allocation). One correction up front: **the option names in raw
+ESP-IDF's `Kconfig.in` (`idf.py menuconfig`) aren't all directly usable
+here.** This project builds NimBLE through `h2zero/NimBLE-Arduino`'s own
+config surface (`src/nimconfig.h`, overridable via `-D` in
+`platformio.ini`'s `build_flags` -- same mechanism as the two flags
+already added), which exposes a narrower set of the same-named
+`CONFIG_BT_NIMBLE_*` macros. Everything below is checked against that
+actual file
+([nimconfig.h](https://github.com/h2zero/NimBLE-Arduino/blob/release/1.4/src/nimconfig.h)),
+not the raw ESP-IDF Kconfig -- a couple of Kconfig options that looked
+promising (`BT_NIMBLE_MEMPOOL_RUNTIME_ALLOC`, which per its own ESP-IDF
+help text "can significantly reduce memory consumption after mempool
+initialization" -- almost exactly this bug) aren't exposed through
+NimBLE-Arduino's wrapper at all, and it's unconfirmed whether they're
+reachable some other way in this build. Worth a search of its own if the
+options below don't get far enough.
+
+**Additional candidates, layered on top of the two flags already added:**
+
+- **`CONFIG_BT_NIMBLE_MSYS1_BLOCK_COUNT`** (default 12, ~256 B/block ≈
+  3 KB total). Per NimBLE-Arduino's own comment, this pool backs "prepare
+  write & prepare responses" and only needs raising for large data over a
+  low MTU. Neither BLE role here does that -- `wifi.provision`'s payload
+  (≤160 B) fits in a single MTU-185 write, no GATT long-write chunking
+  anywhere in this protocol. A candidate to shrink (e.g. to 2-4), though
+  the safe floor isn't documented -- NimBLE may use msys_1 for other
+  internal purposes beyond app-level prepare-writes, so this needs testing
+  down incrementally, not dropped to the minimum blind.
+- **`CONFIG_BT_NIMBLE_ROLE_OBSERVER_DISABLED`** / **`_BROADCASTER_DISABLED`**
+  / **`_CENTRAL_DISABLED`** -- per-role compile-outs, each documented by
+  the library itself as a **flash** saving (~26 KB / ~5 KB / ~7 KB
+  respectively) rather than a confirmed heap one, though disabling unused
+  subsystems (e.g. observer's scan-result handling) plausibly trims some
+  runtime buffers too -- unconfirmed, would need measuring on-device
+  either way. **Real tension worth flagging before touching these**:
+  `BlePeripheralManager` only needs Peripheral+Broadcaster (advertising),
+  but this firmware's *other* BLE consumer -- `BleKeyboardHost`
+  (freeink-sdk, Phase 4's page-turner, currently capability-gated off) --
+  needs Central+Observer, and Kconfig/nimconfig role flags are compiled
+  into one binary, not switchable per the runtime Idle-vs-Reading state
+  this doc's design already splits BLE into. Disabling Central/Observer
+  now (while Phase 4 is dormant) is a real, honest win today, but it's
+  borrowed against Phase 4 -- re-enabling both roles when
+  `FREEINK_CAP_BLE_HID_HOST` actually turns on will give this exact
+  runtime-heap number back. Don't let a win measured with Phase 4 disabled
+  quietly become the assumed number once Phase 4 ships.
+- **`CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE`** (default 4096 B) -- a
+  FreeRTOS task stack allocated once at `NimBLEDevice::init()`, so it's
+  part of the exact ~65 KB step-cost this bug is about, not a separate
+  concern. Real candidate, but the riskiest one on this list to get wrong:
+  under-sizing it doesn't fail cleanly like the other options here, it
+  stack-overflows at some unpredictable point during operation -- worse
+  than the current honest teardown. If tried, needs incremental reduction
+  with real headroom margin, not a single guessed cut.
+- **`CONFIG_BT_NIMBLE_MAX_BONDS`** / **`_MAX_CCCDS`** (defaults 3 / 8) --
+  small, NVS-backed, minor expected win. Note `MAX_BONDS` shouldn't drop
+  to 1 blindly: multiple phones on the same Midad account are expected to
+  each bond with a device over time (per the "same account" security
+  model earlier in this doc), even though only one is connected at once.
+- **`CONFIG_BT_NIMBLE_LOG_LEVEL`** -- already defaults to `5` (NONE) in
+  NimBLE-Arduino's own header. Already at the minimum; no further win
+  available here, mentioning only so it's not re-investigated.
+- **PSRAM-backed allocation** (`CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL`)
+  -- moot, this doc's own Hardware Reality section already established no
+  PSRAM on this board.
+
+None of this is measured against real hardware yet -- these are candidates
+to test incrementally (one flag, one measurement, repeat) against the
+same live serial rig the two findings above already used, not a batch of
+changes to land at once.
