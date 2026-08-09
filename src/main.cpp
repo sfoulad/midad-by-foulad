@@ -12,6 +12,13 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
+#ifndef SIMULATOR
+// No simulator-side counterpart exists for this brand-new HAL component (unlike
+// HalStorage.h/HalGPIO.h/etc. above, which the simulator provides its own versions
+// of under the same names) -- lib_ignore=hal for the simulator env means this
+// wouldn't resolve there. See docs/ble-module-tasks.md.
+#include <BlePeripheralManager.h>
+#endif
 #include <SPI.h>
 #include <WiFi.h>
 #include <builtinFonts/all.h>
@@ -19,6 +26,7 @@
 #include <cstring>
 
 #include "ArabicFontSystem.h"
+#include "BleCommandDispatcher.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "GameHighScoresStore.h"
@@ -443,6 +451,21 @@ void enterDeepSleep(bool fromTimeout = false) {
     WiFi.mode(WIFI_OFF);
   }
 
+#ifndef SIMULATOR
+  // Leaving a BLE remote/central connected into device sleep crashes the device
+  // (CrumBLE issue #44, see docs/ble-module-tasks.md) -- tear down here, before sleep,
+  // not after sleep entry trips over it. The main loop's own bleAllowedNow check (see
+  // loop() above) already stops advertising once the Sleep activity takes over, so this
+  // firing at all means that didn't happen fast enough -- same "worth a permanent
+  // record" reasoning as the WiFi backstop just above.
+  if (BlePeripheral.isActive()) {
+    char bleBuf[96];
+    snprintf(bleBuf, sizeof(bleBuf), "%lu BLE still on at sleep entry -- backstop disconnect", millis());
+    BatteryDiagLog::append(bleBuf);
+    BlePeripheral.end();
+  }
+#endif
+
   {
     char buf[96];
     snprintf(buf, sizeof(buf), "%lu entering deep sleep battery=%u%% fromTimeout=%d", millis(),
@@ -796,6 +819,25 @@ void loop() {
     HalSystem::noteHeap(ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     lastHeapSample = millis();
   }
+
+#ifndef SIMULATOR
+  // Midad BLE peripheral (phone control -- see docs/ble-module-tasks.md's device state
+  // machine): only ever runs in Idle state -- WiFi definitively off (the doc's mutual-
+  // exclusion design; checking WiFi.getMode() here rather than hooking every WiFi-
+  // activation call site catches all of them uniformly) and not the reader (Reading
+  // state is reserved for Phase 4's BLE-central page-turner). begin()/end() are cheap
+  // no-ops when already in the right state, so polling this every tick is fine --
+  // BlePeripheral.begin() itself enforces the heap gate and cool-down.
+  const bool bleAllowedNow =
+      SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
+  if (bleAllowedNow) {
+    BlePeripheral.begin();
+  } else if (BlePeripheral.isActive()) {
+    BlePeripheral.end();
+  }
+  BlePeripheral.poll();
+  BleCommandDispatcher::pump();
+#endif
 
   if (Serial && millis() - lastMemPrint >= 10000) {
     LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),

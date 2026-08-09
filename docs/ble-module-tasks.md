@@ -281,9 +281,15 @@ negotiated yet, and can change freely until a phone build depends on them.
   the device while scanning).
 - **Auth characteristic** — `...0002`. Write-only (no read, no notify: a
   credential has no reason to be readable back, and nothing async happens
-  here — the result comes back over Status). Payload:
-  `{"username": "...", "password": "..."}` today (see Security section's
-  correction above re: `AppToken`).
+  here — the result comes back over Status). Payload, per the Security
+  section's resolution: `{"ble_token": "..."}` for a claimed device (the
+  device-scoped token minted by foulad-ebooks at provisioning, compared
+  locally against what the device persisted then). **Not yet meaningful for
+  Phase 1**, which only ever runs against an unclaimed device (no token
+  exists to check yet) -- this characteristic exists in the GATT layout
+  from day one per the doc's own "never a new characteristic" design goal,
+  but Phase 1's dispatcher doesn't consume a write to it (see the
+  implementation-status section at the bottom).
 - **Command characteristic** — `...0003`. Write (phone → device commands)
   + Notify (device → phone: progress and final state, per the JSON shapes
   above). One characteristic both directions, matching "one characteristic
@@ -407,16 +413,19 @@ components):
 
 ## What to expect from the phone side
 
-Midad already has the pieces this depends on: `AppToken`-based auth on the
-phone/server side, and a client architecture that can take a new BLE
-dependency. Whether that `AppToken` becomes what's sent over the Auth
-characteristic, or the device keeps presenting the username/password it
-already uses over HTTPS (see the Security section's correction above), is
-the actual open question to resolve in that conversation — "same mechanism,
-not new" is true of the phone side today, not yet confirmed as true
-end-to-end. The phone-side BLE integration is comparatively small and can
-follow once there's a device to actually connect to — it doesn't block you
-starting on #1–3 above.
+Midad already has the pieces Phase 1 depends on: `AppToken`-based auth for
+its own HTTPS calls, and a client architecture that can take a new BLE
+dependency. Per the Security section's resolution, the BLE Auth
+characteristic itself uses neither `AppToken` nor the account
+password -- a new device-scoped BLE token, which foulad-ebooks needs to
+mint and expose (e.g. via `/api/app/devices` or equivalent) before a
+*claimed*-device flow (Phase 2's `settings.push` and beyond) is usable
+end-to-end. That server-side work isn't scoped or scheduled yet. It does
+NOT block Phase 1: provisioning only ever runs against an *unclaimed*
+device, which the Security section's two-state design already exempts from
+any Auth check at all. The phone-side BLE integration is comparatively
+small and can follow once there's a device to actually connect to — it
+doesn't block starting on #1–3 above.
 
 ## Open questions to flag back
 
@@ -473,3 +482,149 @@ reasoning behind each):
 - **MTU target (185 bytes, proposed in the GATT layout section)** is a
   starting guess balancing JSON payload size against NimBLE's per-connection
   buffer cost — untested on this specific radio/controller combination.
+
+## Phase 1 implementation status (2026-08-09)
+
+Code complete and **compile-verified only** — `pio run -e default` (0
+warnings/errors), `pio check` (cppcheck, no defects), `pio run -e simulator`
+(the X4 desktop target) all clean. **Not device-tested**: no real BLE
+hardware or a Midad phone build to connect against exists in this session,
+so nothing about actual advertising behavior, connection handling, the heap
+gate/cool-down under real fragmentation, or the phone-side protocol has
+been exercised. Same discipline this repo already applies to PR #122/#123/
+#126 (ESP32-S3 foundation, SDK bump, touch input) — do not treat this as
+shippable without a real device + phone pass.
+
+**What shipped**: `lib/hal/BlePeripheralManager.{h,cpp}` (GATT server,
+heap gate, cool-down, Off/Advertising/Connected/PausedLowMemory state),
+`src/BleCommandDispatcher.{h,cpp}` (routes Command writes by `cmd`,
+currently just `wifi.provision`), `CrossPointSettings::bleEnabled` (Apps ->
+Midad BLE toggle, on by default, also a live-toggle `AppsActivity` tile),
+a "BT" status-bar indicator in `BaseTheme::drawHeader()`, and lifecycle
+wiring in `main.cpp` (start/stop gated on `WiFi.getMode() == WIFI_MODE_NULL`
++ not-reading, checked every loop tick rather than hooking every WiFi-
+activation call site; teardown-before-sleep in `enterDeepSleep()`, mirroring
+the existing WiFi backstop-disconnect pattern there).
+
+**Real findings from actually building this, not present anywhere above
+before now:**
+
+- **`^2.3.8` resolved to NimBLE-Arduino 2.5.1** (a real `pio pkg install`,
+  not assumed) — the caret range works as expected, no pin conflict.
+  Verified the real v2.5.1 API directly from the fetched library source
+  before writing any dependent code (`NimBLEServerCallbacks::onConnect/
+  onDisconnect` and `NimBLECharacteristicCallbacks::onWrite` all take a
+  `NimBLEConnInfo&` in this version; `NIMBLE_PROPERTY::WRITE_ENC` exists and
+  is what Auth uses to require an encrypted link at the GATT layer, not just
+  an app-level check; `getValue()` returns a `NimBLEAttValue` with
+  `data()`/`size()`; advertising interval setters are 0.625ms units).
+- **A previously-unmeasured static RAM cost, separate from NimBLE's own
+  documented ~57 KB *dynamic* (runtime `init()`) cost**: merely linking
+  NimBLE-Arduino into the firmware — before it's ever initialized, even
+  with `bleEnabled` off — adds a **fixed +~27.6 KB to link-time DRAM**
+  (bss+data, measured via `pio run`'s own memory summary: 116219 -> 143885
+  bytes total DRAM used, before vs. after this branch) and **+~240 KB to
+  flash** (4486335 -> 4716573 bytes). This is a permanent tax on every
+  build that includes the dependency at all, regardless of whether any
+  given user ever turns BLE on — worth weighing if a build variant
+  (`slim`?) should exclude it later; not done here since `slim` already
+  builds clean with it included and nothing in this doc asked for that
+  split.
+- **`lib/hal/` never includes `src/` headers anywhere in this codebase**
+  (checked directly: zero matches). `BlePeripheralManager` initially tried
+  to call `src/BleCommandDispatcher.h` directly from its NimBLE write
+  callbacks — wrong layering, and likely wouldn't have resolved under this
+  project's default (non-simulator) LDF mode anyway. Redesigned as a poll/
+  drain handoff instead (`takePendingAuth()`/`takePendingCommand()`/
+  `sendCommandReply()`, spinlock-guarded fixed buffers), the same shape
+  `BleKeyboardHost` already uses for its own NimBLE-host-task ->
+  main-task boundary (there: a ring of decoded key events drained by
+  `popKey()`; here: a single pending write, since Auth/Command are
+  request/response, not a continuous stream).
+- **The simulator needs an explicit exclusion, not just a guarded
+  include.** `src/BleCommandDispatcher.cpp` has no host-backed shim (unlike
+  `network/CrossPointWebServer.cpp` etc., which fall back to the
+  simulator's own implementations) — BLE peripheral advertising has no
+  meaningful desktop equivalent to shim. Added
+  `-<BleCommandDispatcher.cpp>` to `[env:simulator]`/`[env:simulator_x3]`'s
+  `build_src_filter`, matching the existing network-file exclusion pattern.
+  `main.cpp` and `BaseTheme.cpp` each need their own `#ifndef SIMULATOR`
+  around the `<BlePeripheralManager.h>` include specifically (unlike
+  `HalStorage.h`/`HalGPIO.h`/etc., the simulator has no vendored
+  counterpart for this brand-new HAL header under the same name, so
+  `lib_ignore=hal` alone isn't enough — it would just fail to resolve).
+- **`[env:simulator_x3]` currently fails to build for an unrelated,
+  pre-existing reason**: `HalClock::isSystemTimeValid()` is missing from
+  that environment's own vendored simulator copy, surfacing in
+  `EpubReaderActivity.cpp` (a file this work never touched).
+  `[env:simulator]` (X4, the CLAUDE.md testing checklist's primary
+  simulator target) builds clean and was used for verification here; the
+  X3 simulator gap needs its own local patch per the existing "Local
+  simulator patches" convention and is not a BLE regression.
+- **"Claimed device" needed a concrete definition Phase 1 could compile
+  against**: implemented as "a saved Foulad eBooks `OpdsServer` entry
+  exists" (`std::find_if` on `FOULAD_EBOOKS_URL` — the exact pattern
+  `OpdsBookBrowserActivity`/`ActivityManager`/etc. already use throughout
+  this codebase to locate that one entry). `wifi.provision` refuses
+  outright (`reason: unauthorized`) on a claimed device rather than
+  attempting the BLE-token check the Security section's resolution
+  describes — that check is Phase 2 (`settings.push`) work, not built
+  here, and half-building it against a token foulad-ebooks hasn't minted
+  yet would be worse than an honest refusal.
+- **`wifi.provision`'s payload is `{"ssid", "password"}` only** — it does
+  NOT yet carry the device-scoped BLE token the Security section's
+  resolution describes minting "at provisioning time," since foulad-ebooks
+  doesn't mint one yet (that work is explicitly "not yet scoped or
+  scheduled" per that section). Once it exists server-side, the payload
+  likely needs a third field (e.g. `ble_token`) for the device to persist
+  alongside the Wi-Fi credential in the same write. Flagged here rather
+  than guessed at now.
+- **`wifi.provision` only saves the credential; it does not drive a
+  connection attempt.** Actually testing it would tear down BLE (this
+  doc's mutual-exclusion design) before a reply could reach the phone —
+  there's no way to report "connected" back over a radio that's already
+  off. The reply means "saved," not "verified reachable." Relies on this
+  codebase's existing `WifiSelectionActivity::tryAutoConnectCredential`/
+  `tryNextSavedNetworkFromScan` auto-connect-saved-networks flow to
+  actually use the credential the next time Wi-Fi comes up. How the phone
+  ever learns definitive connect success (vs. a bad password that fails
+  silently later) is a real open question, added below.
+- **The status-bar indicator is plain "BT" text, not a hand-drawn
+  Bluetooth glyph**, despite the "hand-draw it like `drawBatteryLightningBolt()`"
+  note added earlier in this doc. Reason found while actually implementing
+  it: that bolt glyph is a simple triangle, hand-verifiable by eye in the
+  diff; the Bluetooth bind-rune is intricate enough (merged Hagall + Berkanan
+  runes) that getting it subtly wrong produces an unrecognizable zigzag
+  instead of a slightly-off logo, and nothing in this session can render
+  and visually inspect it (no hardware, and the simulator's framebuffer
+  isn't accessible from here). Text is unambiguous and correct by
+  construction; a proper glyph is a fine follow-up once someone can
+  actually look at it on a screen.
+- **`bleEnabled` is registered in `SettingsList.h`'s generic settings
+  table** (`SettingInfo::Toggle`), not just as the special-cased
+  `AppsActivity` tile — same as every other app's enable flag
+  (`gymEnabled`, `tasbihEnabled`, etc.), for the same free persistence and
+  server-settings-push handling (`FouladDeviceTracking.cpp`'s
+  `applyToggle`) those already get. The live-toggle Apps tile is
+  additional UI on top of that, not a replacement for it.
+
+**Added to "Open questions to flag back," from this implementation pass:**
+
+- How does the phone learn a `wifi.provision`'d credential actually
+  connects, given the device becomes BLE-unreachable the moment it steps
+  into Wi-Fi-active state to test it? (See "only saves the credential"
+  finding above.) Options not yet evaluated: the device could re-advertise
+  once back in Idle state and the phone polls Status for a "last Wi-Fi
+  attempt" field; or accept "saved" as the only signal Phase 1 gives and
+  let the user discover a bad password the same way they would today (the
+  device just doesn't come online).
+- Once foulad-ebooks mints the device-scoped BLE token, does
+  `wifi.provision`'s payload gain a `ble_token` field (persisted alongside
+  the Wi-Fi credential in the same write), or does claiming become a
+  separate command/step? Not decided; the doc doesn't currently name a
+  `device.claim` command at all.
+- The measured +27.6 KB static DRAM / +240 KB flash cost of merely linking
+  NimBLE-Arduino (see above) applies to every build that includes it, BLE
+  on or off. Worth a product decision on whether that's acceptable as a
+  permanent tax across the fleet, or whether a build-time opt-out is
+  worth the maintenance cost of a second matrix of build variants.

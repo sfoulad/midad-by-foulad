@@ -16,6 +16,11 @@
 #include "components/UITheme.h"
 #include "components/icons/bookmark.h"
 #include "fontIds.h"
+#ifndef SIMULATOR
+// No simulator-side counterpart exists for this brand-new HAL component -- see
+// main.cpp's own guarded include of this same header, and docs/ble-module-tasks.md.
+#include <BlePeripheralManager.h>
+#endif
 
 // Internal constants
 namespace {
@@ -381,10 +386,26 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 }
 
 void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle) const {
-  // Hide last battery draw
+  // Hide last battery draw. Unconditionally erases the max width this header ever
+  // uses, including the BLE indicator strip below -- erasing only the currently-
+  // active width would leave a stale "BT" glyph on screen if BLE turned off between
+  // renders (see docs/ble-module-tasks.md's status-bar-indicator design note: this
+  // tracks BlePeripheralManager's live state, which can change between any two
+  // renders of the same screen).
   constexpr int maxBatteryWidth = 80;
-  renderer.fillRect(rect.x + rect.width - maxBatteryWidth, rect.y + 5, maxBatteryWidth,
+  // "BT" text, not a hand-drawn glyph -- see docs/ble-module-tasks.md's note on why:
+  // this can't be visually verified against real e-ink hardware or even the simulator
+  // (no framebuffer access from here), and a subtly-wrong hand-drawn Bluetooth glyph
+  // reads worse than a plain, unambiguous two-letter label.
+  constexpr int bleIndicatorWidth = 26;
+  constexpr int maxReservedWidth = maxBatteryWidth + bleIndicatorWidth;
+  renderer.fillRect(rect.x + rect.width - maxReservedWidth, rect.y + 5, maxReservedWidth,
                     BaseMetrics::values.batteryHeight + 10, false);
+
+  bool bleActive = false;
+#ifndef SIMULATOR
+  bleActive = BlePeripheral.isActive();
+#endif
 
   const bool rtl = I18N.isRtl();
   const bool showBatteryPercentage =
@@ -395,6 +416,13 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
                     Rect{rect.x + 12, rect.y + 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
                     showBatteryPercentage);
     padding = 12 + BaseMetrics::values.batteryWidth;
+    if (bleActive) {
+      // Own dedicated strip at the far edge of the erase region, not positioned
+      // relative to the (variable-width) percentage text -- avoids depending on
+      // exactly how wide "100%" etc. renders.
+      renderer.drawText(SMALL_FONT_ID, rect.x + maxReservedWidth - renderer.getTextWidth(SMALL_FONT_ID, "BT") - 4,
+                        rect.y + 6, "BT");
+    }
   } else {
     // Position icon at right edge, drawBatteryRight will place text to the left
     const int batteryX = rect.x + rect.width - 12 - BaseMetrics::values.batteryWidth;
@@ -402,7 +430,11 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
                      Rect{batteryX, rect.y + 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
                      showBatteryPercentage);
     padding = rect.width - batteryX + BaseMetrics::values.batteryWidth;
+    if (bleActive) {
+      renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - maxReservedWidth + 4, rect.y + 6, "BT");
+    }
   }
+  if (bleActive) padding += bleIndicatorWidth;
 
   if (title) {
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title,

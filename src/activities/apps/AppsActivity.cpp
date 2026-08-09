@@ -51,6 +51,9 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
       {AppId::Stopwatch, StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled},
       {AppId::Pomodoro, StrId::STR_POMODORO, &CrossPointSettings::pomodoroEnabled},
       {AppId::Gym, StrId::STR_GYM, &CrossPointSettings::gymEnabled},
+      // Live toggle, not a launcher -- see AppEntry's enableFlag comment and
+      // launch()/render()'s AppId::MidadBle special cases.
+      {AppId::MidadBle, StrId::STR_MIDAD_BLE, &CrossPointSettings::bleEnabled},
   };
   return kEntries;
 }
@@ -62,6 +65,15 @@ void AppsActivity::onEnter() {
 }
 
 bool AppsActivity::launch(const AppEntry& entry) {
+  // Midad BLE is a live radio switch, not a destination -- flip it in place and stay
+  // here (returning false makes the caller's `if (!launch(...)) requestUpdate();`
+  // repaint the tile with the new state, the same as every other "stayed here" path).
+  if (entry.id == AppId::MidadBle) {
+    SETTINGS.bleEnabled = SETTINGS.bleEnabled ? 0 : 1;
+    SETTINGS.saveToFile();
+    return false;
+  }
+
   // Turn the app on if it is off. This is what makes listing every app safe: the
   // screen shows what the device can do, and pressing one is the whole opt-in --
   // no round trip through Settings to find out an app was there all along.
@@ -113,6 +125,8 @@ bool AppsActivity::launch(const AppEntry& entry) {
     case AppId::Gym:
       startActivityForResult(std::make_unique<GymActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       return true;
+    case AppId::MidadBle:
+      return false;  // handled by the early return above; kept for switch exhaustiveness
   }
   return false;
 }
@@ -190,7 +204,15 @@ void AppsActivity::render(RenderLock&&) {
 
     // Same designed name-tile the news feeds and collection tiles use, rather
     // than eight new icons: the label IS the thing being identified here.
-    drawTileCover(renderer, cellX, cellY, tileWidth, tileHeight, I18N.get(entry.label));
+    // Midad BLE shows its live on/off state in the label itself -- see
+    // AppEntry's enableFlag comment for why this one entry needs a computed label
+    // instead of the static I18N.get() every other entry uses.
+    std::string tileLabel = I18N.get(entry.label);
+    if (entry.id == AppId::MidadBle) {
+      tileLabel += ": ";
+      tileLabel += I18N.get(SETTINGS.bleEnabled ? StrId::STR_ON : StrId::STR_OFF);
+    }
+    drawTileCover(renderer, cellX, cellY, tileWidth, tileHeight, tileLabel.c_str());
     if (idx == selectorIndex) {
       // Matches the OPDS grid's selection frame -- a 1px outline is hard to find
       // at a glance on e-ink across a multi-column grid.
