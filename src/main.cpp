@@ -47,6 +47,7 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "util/BatteryDiagLog.h"
+#include "util/BleDiagLog.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepDiagLog.h"
@@ -837,6 +838,40 @@ void loop() {
   }
   BlePeripheral.poll();
   BleCommandDispatcher::pump();
+
+  // Diagnostic + repaint nudge, added after a first real-device report: the Apps
+  // screen's Midad BLE tile only reflects SETTINGS.bleEnabled (the persisted toggle),
+  // never BlePeripheral's own live state -- toggling on/off/on there proves nothing
+  // about whether the radio actually started. The "BT" indicator in
+  // BaseTheme::drawHeader() DOES read live state, but e-ink screens don't repaint on a
+  // timer -- without an explicit nudge here, a header already on screen when the radio
+  // finishes starting (a few ticks after the toggle, once begin() succeeds) would sit
+  // stale until some UNRELATED repaint happened to occur. Log every state transition
+  // (with the heap gate side by side, since that's the most likely reason begin()
+  // silently refuses -- BlePeripheralManager's own LOG_DBG lines are serial-only and
+  // stripped from RC builds entirely) and force a repaint the moment it changes.
+  static BlePeripheralManager::State lastBleDiagState = BlePeripheralManager::State::Off;
+  static unsigned long lastBleRefusalLogMs = 0;
+  const auto bleStateNow = BlePeripheral.state();
+  if (bleStateNow != lastBleDiagState) {
+    static const char* const kBleStateNames[] = {"off", "advertising", "connected", "paused_low_memory"};
+    char bleBuf[96];
+    snprintf(bleBuf, sizeof(bleBuf), "state %s -> %s, free heap=%u (gate=%u)",
+             kBleStateNames[static_cast<int>(lastBleDiagState)], kBleStateNames[static_cast<int>(bleStateNow)],
+             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes));
+    BleDiagLog::append(bleBuf);
+    lastBleDiagState = bleStateNow;
+    activityManager.requestUpdate();
+  } else if (bleAllowedNow && bleStateNow == BlePeripheralManager::State::Off &&
+             millis() - lastBleRefusalLogMs >= 60000) {
+    // Wanted to run for at least 60s straight but hasn't -- one line per minute while
+    // stuck, not every tick, so this doesn't flood the shared log.
+    lastBleRefusalLogMs = millis();
+    char bleBuf[96];
+    snprintf(bleBuf, sizeof(bleBuf), "still off after wanting to start: free heap=%u (gate=%u)",
+             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes));
+    BleDiagLog::append(bleBuf);
+  }
 #endif
 
   if (Serial && millis() - lastMemPrint >= 10000) {
