@@ -687,16 +687,22 @@ Not yet tested against real hardware — this is the phone half being ready,
 per the ping in the last relayed message. Ping back when there's a build
 to test against.
 
-## Hardware validation (2026-08-10)
+## Hardware validation (2026-08-10) — device side only, corrected
 
-Tested end-to-end on a real Xteink X3: scan, connect, Auth-then-Command
-(forced encrypted link), `wifi.provision` send, `ok` reply, device joins
-the network. Reported as working normally — no failure details given, so
-treat this as "the happy path holds," not as covering the `unauthorized`/
-`invalid_payload`/`storage_error` reply paths or the no-Wi-Fi-in-range
-case, none of which have been exercised against real hardware yet.
+**Originally logged here as "validated end-to-end," which overclaimed —
+correcting before anyone builds on it.** What was actually tested on a
+real Xteink X3: the firmware's own side only — device performance with
+BLE running, and the "Midad BLE" on/off toggle (`AppsActivity`'s live
+tile / `bleEnabled` setting). Both reported as working normally.
 
-Phase 1 (Wi-Fi provisioning) is validated end-to-end on this model. Open
-next: same test on other Xteink models if their BLE stack differs, and
-the Phase 2 work above (`wifi_last_attempt` status field, the device-scoped
+**Not yet tested, on any hardware:** the phone side at all.
+`MidadBleClient`/`BleProvisionScreen` in foulad-one have not been run
+against a real device — no scan, no connect, no `wifi.provision` send, no
+`ok`/`failed` reply, nothing. The "Phase 1 validated end-to-end" claim
+above was wrong; strike it. Phase 1's phone↔firmware handshake is still
+unverified beyond code review of both sides.
+
+Open next: the actual phone-to-device test (foulad-one's Add device → Set
+up over Bluetooth screen, against an X3 with no saved Wi-Fi), then the
+Phase 2 work above (`wifi_last_attempt` status field, the device-scoped
 BLE token once foulad-ebooks mints it).
