@@ -401,7 +401,11 @@ components):
 ## Suggested order
 
 1. Provisioning — the entry point, and the clearest standalone win (no more
-   fumbling Wi-Fi credentials onto this screen with no keyboard).
+   fumbling Wi-Fi credentials onto this screen with no keyboard). **Code
+   complete, compile-verified, not device-tested** — see "Phase 1
+   implementation status" below. The connect-feedback field this needs
+   (`wifi_last_attempt` on Status) is resolved but not yet built; add it
+   before calling Phase 1 finished, not as part of Phase 2.
 2. Settings push — small, low-risk, proves the peripheral/GATT plumbing and
    the account-token check end to end.
 3. Book-fetch command — exercises the Idle → Wi-Fi → Idle transition for
@@ -608,23 +612,36 @@ before now:**
   `applyToggle`) those already get. The live-toggle Apps tile is
   additional UI on top of that, not a replacement for it.
 
-**Added to "Open questions to flag back," from this implementation pass:**
+**Resolved (2026-08-10), from the phone/server conversation, against the
+three questions this implementation pass raised:**
 
-- How does the phone learn a `wifi.provision`'d credential actually
-  connects, given the device becomes BLE-unreachable the moment it steps
-  into Wi-Fi-active state to test it? (See "only saves the credential"
-  finding above.) Options not yet evaluated: the device could re-advertise
-  once back in Idle state and the phone polls Status for a "last Wi-Fi
-  attempt" field; or accept "saved" as the only signal Phase 1 gives and
-  let the user discover a bad password the same way they would today (the
-  device just doesn't come online).
-- Once foulad-ebooks mints the device-scoped BLE token, does
-  `wifi.provision`'s payload gain a `ble_token` field (persisted alongside
-  the Wi-Fi credential in the same write), or does claiming become a
-  separate command/step? Not decided; the doc doesn't currently name a
-  `device.claim` command at all.
-- The measured +27.6 KB static DRAM / +240 KB flash cost of merely linking
-  NimBLE-Arduino (see above) applies to every build that includes it, BLE
-  on or off. Worth a product decision on whether that's acceptable as a
-  permanent tax across the fleet, or whether a build-time opt-out is
-  worth the maintenance cost of a second matrix of build variants.
+1. **Wi-Fi connect feedback:** build the re-advertise-and-poll version, not
+   silent "saved." The device goes back to Idle → BLE-peripheral after a
+   connect attempt either way (success or failure both return it to Idle,
+   per the state machine); Status should carry the outcome of the last
+   attempt (e.g. add a `wifi_last_attempt` field: `"ok"` / `"failed"` /
+   `null` if none yet) so the phone can poll after reconnecting rather than
+   guessing from silence. A provisioning flow that regresses below what
+   today's QR flow already does (a live poll-until-approved loop) isn't
+   worth shipping to save the extra state field. Phase 2 work, not a
+   Phase 1 blocker — Phase 1's "saved" reply is a legitimate stepping
+   stone, not a dead end to redo.
+2. **`ble_token` delivery:** not through `wifi.provision`. Once the device
+   is online (the whole point of provisioning), account-claiming and the
+   token go through the *existing* HTTP device-login flow — the same one
+   today's QR sign-in already uses, `/api/device-login/start` +
+   `/poll`/`approve` (see foulad-eink's own `FouladDeviceLogin.cpp`). No
+   new BLE payload field, no new `device.claim` command. `wifi.provision`
+   stays exactly what's already built: get the device onto Wi-Fi, nothing
+   more. The token becomes part of whatever that existing exchange already
+   returns once foulad-ebooks mints it — a foulad-ebooks/foulad-eink
+   question for whenever that work is scoped, not a BLE-protocol one.
+3. **The +27.6 KB DRAM / +240 KB flash static tax:** accept it fleet-wide
+   for now, not a build-variant split. BLE-by-default was already a
+   deliberate call — "reachability is the point of the feature" — and
+   ~7% of the ~380 KB RAM ceiling, while real, isn't disqualifying on its
+   own. Explicitly **not settled with confidence**: this is a judgment
+   call made without real device flash/RAM headroom numbers in hand.
+   Revisit if a hardware pass shows the margin is tighter than this
+   reasoning assumes — this is the one of the three most likely to need
+   walking back.
