@@ -14,6 +14,7 @@
 #include "I18n.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
+#include "components/icons/bluetooth.h"
 #include "components/icons/bookmark.h"
 #include "fontIds.h"
 #ifndef SIMULATOR
@@ -393,11 +394,14 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   // tracks BlePeripheralManager's live state, which can change between any two
   // renders of the same screen).
   constexpr int maxBatteryWidth = 80;
-  // "BT" text, not a hand-drawn glyph -- see docs/ble-module-tasks.md's note on why:
-  // this can't be visually verified against real e-ink hardware or even the simulator
-  // (no framebuffer access from here), and a subtly-wrong hand-drawn Bluetooth glyph
-  // reads worse than a plain, unambiguous two-letter label.
-  constexpr int bleIndicatorWidth = 26;
+  // Lucide-derived 14x14 glyph (components/icons/bluetooth.h), not hand-drawn -- see
+  // docs/ble-module-tasks.md's note on why a hand-drawn rune was rejected earlier
+  // (couldn't be visually verified against real e-ink without risking a subtly-wrong
+  // glyph). This one traces the same Lucide "bluetooth" path the SDK's Icons library
+  // already ships (freeink-sdk/libs/assets/Icons/lucide/icons/bluetooth.svg), so it's
+  // a known-correct shape, not a guess.
+  constexpr int kBleIconSize = 14;
+  constexpr int bleIndicatorWidth = kBleIconSize + 6;
   constexpr int maxReservedWidth = maxBatteryWidth + bleIndicatorWidth;
   renderer.fillRect(rect.x + rect.width - maxReservedWidth, rect.y + 5, maxReservedWidth,
                     BaseMetrics::values.batteryHeight + 10, false);
@@ -420,8 +424,7 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
       // Own dedicated strip at the far edge of the erase region, not positioned
       // relative to the (variable-width) percentage text -- avoids depending on
       // exactly how wide "100%" etc. renders.
-      renderer.drawText(SMALL_FONT_ID, rect.x + maxReservedWidth - renderer.getTextWidth(SMALL_FONT_ID, "BT") - 4,
-                        rect.y + 6, "BT");
+      renderer.drawIcon(BluetoothIcon, rect.x + maxReservedWidth - kBleIconSize - 4, rect.y + 4, kBleIconSize);
     }
   } else {
     // Position icon at right edge, drawBatteryRight will place text to the left
@@ -431,7 +434,7 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
                      showBatteryPercentage);
     padding = rect.width - batteryX + BaseMetrics::values.batteryWidth;
     if (bleActive) {
-      renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - maxReservedWidth + 4, rect.y + 6, "BT");
+      renderer.drawIcon(BluetoothIcon, rect.x + rect.width - maxReservedWidth + 4, rect.y + 4, kBleIconSize);
     }
   }
   if (bleActive) padding += bleIndicatorWidth;

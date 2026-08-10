@@ -14,6 +14,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/apps.h"
+#include "components/icons/bluetooth.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/bookmark.h"
@@ -32,6 +33,11 @@
 #include "components/icons/transfer24.h"
 #include "components/icons/wifi.h"
 #include "fontIds.h"
+#ifndef SIMULATOR
+// No simulator-side counterpart exists for this brand-new HAL component -- see
+// main.cpp's own guarded include of this same header, and docs/ble-module-tasks.md.
+#include <BlePeripheralManager.h>
+#endif
 
 // Internal constants
 namespace {
@@ -124,16 +130,58 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   const bool rtl = I18N.isRtl();
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+
+  bool bleActive = false;
+#ifndef SIMULATOR
+  bleActive = BlePeripheral.isActive();
+#endif
+  // FouladTheme -- the firmware's single active theme (CrossPointSettings.h:
+  // "single-theme firmware: always Foulad") -- extends this class and never
+  // overrides drawHeader, so THIS is the one that actually runs on every screen.
+  // An earlier attempt added the same indicator to BaseTheme::drawHeader, which
+  // is dead code here: FouladTheme's inheritance chain never reaches it. Live-
+  // debugged 2026-08-10 (never saw the indicator despite BLE being connected).
+  // 20x20, matched to (not equal to -- battery is 16x12, non-square) the battery
+  // indicator's visual weight; the original 14x14 read as a blur on real e-ink
+  // through a phone camera. Vertically centered on the battery's ACTUAL drawn
+  // position, not the Rect passed into drawBatteryLeft/Right: that call passes
+  // rect.y+5, but drawBatteryLeft/Right (BaseTheme.cpp) add another +6 internally
+  // before drawing the outline, so the battery really sits at rect.y+11..+23
+  // (center rect.y+17) even though the call site says +5. Using +5 (or the +4
+  // this used originally) put the icon visibly above the battery -- reported
+  // live 2026-08-10 as "going up" out of alignment.
+  constexpr int kBleIconSize = 20;
+  constexpr int kBleIconY = 17 - kBleIconSize / 2;
+  // Battery draws its own "100%" text alongside the icon (drawBatteryLeft/Right,
+  // BaseTheme.cpp) at a WIDTH THAT VARIES with the percentage digits -- a fixed
+  // offset here collides with that text instead of clearing it. Live-debugged
+  // 2026-08-10 from a real photo: the icon was rendering, just on top of the "%"
+  // glyph at "100%". Compute the same text-width BaseTheme's own battery drawing
+  // does (see drawBatteryRight/Left) so the icon always lands past it.
+  int batteryTextWidth = 0;
+  if (showBatteryPercentage) {
+    const uint16_t percentage = powerManager.getBatteryPercentage();
+    batteryTextWidth =
+        batteryPercentSpacing + renderer.getTextWidth(SMALL_FONT_ID, (std::to_string(percentage) + "%").c_str());
+  }
+  const int bleIndicatorWidth = kBleIconSize + 4 + batteryTextWidth;
   if (rtl) {
     drawBatteryLeft(renderer,
                     Rect{rect.x + 12, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
                     showBatteryPercentage);
+    if (bleActive) {
+      renderer.drawIcon(BluetoothIcon, rect.x + 12 + LyraMetrics::values.batteryWidth + 4 + batteryTextWidth,
+                        rect.y + kBleIconY, kBleIconSize);
+    }
   } else {
     // Position icon at right edge, drawBatteryRight will place text to the left
     const int batteryX = rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth;
     drawBatteryRight(renderer,
                      Rect{batteryX, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight},
                      showBatteryPercentage);
+    if (bleActive) {
+      renderer.drawIcon(BluetoothIcon, batteryX - bleIndicatorWidth, rect.y + kBleIconY, kBleIconSize);
+    }
   }
 
   int maxTitleWidth = title != nullptr ? renderer.getTextWidth(UI_12_FONT_ID, title, EpdFontFamily::BOLD) : 0;

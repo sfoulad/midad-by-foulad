@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
+#include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <ScriptDetector.h>
@@ -15,6 +16,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/apps.h"
+#include "components/icons/bluetooth.h"
 #include "components/icons/cover.h"
 #include "components/icons/folder.h"
 #include "components/icons/library.h"
@@ -24,6 +26,11 @@
 #include "components/icons/transfer.h"
 #include "fontIds.h"
 #include "reading/ReadingStatsStore.h"
+#ifndef SIMULATOR
+// No simulator-side counterpart exists for this brand-new HAL component -- see
+// main.cpp's own guarded include of this same header, and docs/ble-module-tasks.md.
+#include <BlePeripheralManager.h>
+#endif
 
 // Home layout ported from aalu (github.com/dawsonfi/aalu) HomeRenderer: top status
 // line, 200x300 hero cover with a metadata column (title / author / rounded pill
@@ -296,16 +303,47 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
       }
     }
     renderer.drawCenteredText(SMALL_FONT_ID, rect.y, tr(STR_BRAND_MIDAD), true, EpdFontFamily::BOLD);
+
+    bool bleActive = false;
+#ifndef SIMULATOR
+    bleActive = BlePeripheral.isActive();
+#endif
+    // Same asset/rotation-fix and text-width-clearing logic as LyraTheme::drawHeader
+    // (which every OTHER screen uses) -- Home draws its own status line instead of
+    // calling that shared header (see this block's own comment above), so it never
+    // got the indicator by inheritance. Added by request 2026-08-10 after confirming
+    // the header version worked correctly.
+    constexpr int kBleIconSize = 20;
+    // drawBatteryLeft/Right (BaseTheme.cpp) draw the battery outline at (passed
+    // rect.y)+6; the call below passes rect.y-5, so the battery really sits at
+    // rect.y+1..+13 (center rect.y+7) -- same "actual vs passed" gap documented in
+    // LyraTheme::drawHeader.
+    constexpr int kBleIconY = 7 - kBleIconSize / 2;
+    int batteryTextWidth = 0;
+    if (showBatteryPct) {
+      const uint16_t percentage = powerManager.getBatteryPercentage();
+      batteryTextWidth =
+          batteryPercentSpacing + renderer.getTextWidth(SMALL_FONT_ID, (std::to_string(percentage) + "%").c_str());
+    }
+    const int bleIndicatorWidth = kBleIconSize + 4 + batteryTextWidth;
     if (rtl) {
       drawBatteryLeft(renderer,
                       Rect{rect.x + kHeroPadding, rect.y - 5, FouladMetrics::values.batteryWidth,
                            FouladMetrics::values.batteryHeight},
                       showBatteryPct);
+      if (bleActive) {
+        renderer.drawIcon(BluetoothIcon,
+                          rect.x + kHeroPadding + FouladMetrics::values.batteryWidth + 4 + batteryTextWidth,
+                          rect.y + kBleIconY, kBleIconSize);
+      }
     } else {
       const int batteryX = rect.x + rect.width - kHeroPadding - FouladMetrics::values.batteryWidth;
       drawBatteryRight(
           renderer, Rect{batteryX, rect.y - 5, FouladMetrics::values.batteryWidth, FouladMetrics::values.batteryHeight},
           showBatteryPct);
+      if (bleActive) {
+        renderer.drawIcon(BluetoothIcon, batteryX - bleIndicatorWidth, rect.y + kBleIconY, kBleIconSize);
+      }
     }
   }
 
