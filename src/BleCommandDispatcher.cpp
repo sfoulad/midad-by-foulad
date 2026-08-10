@@ -173,6 +173,16 @@ void pumpFirmwareCheck() {
       g_fwCheckState = FirmwareCheckState::Idle;
       return;
     }
+    // WifiCredentialStore is lazily loaded -- PersistableStore::getInstance() does
+    // NOT auto-load from disk; only WifiSelectionActivity::onEnter() calls
+    // loadFromFile() today. On a boot where that screen is never visited (the norm
+    // for a BLE-only session -- confirmed live 2026-08-11: WIFI_STORE read as 0
+    // credentials in RAM while wifi.json on disk correctly had 2), this would
+    // silently see no saved network at all despite one genuinely being saved. Every
+    // WifiCredentialStore mutator persists immediately (addCredential/
+    // setLastConnectedSsid/etc.), so a fresh reload here is always safe -- it can
+    // only pick up state, never lose any (nothing unsaved could exist to overwrite).
+    WIFI_STORE.loadFromFile();
     const std::string& ssid = WIFI_STORE.getLastConnectedSsid();
     const WifiCredential* cred = ssid.empty() ? nullptr : WIFI_STORE.findCredential(ssid);
     if (!cred) {
@@ -289,6 +299,15 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
     return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
   }
 
+  // WifiCredentialStore is lazily loaded (see pumpFirmwareCheck()'s comment on the
+  // same issue, confirmed live 2026-08-11): if this device already has OTHER saved
+  // networks from the on-device Settings UI, and WifiSelectionActivity was never
+  // visited this boot, WIFI_STORE's in-RAM state would be empty here -- and
+  // addCredential() below persists whatever's currently in RAM, so without this
+  // reload it would silently overwrite wifi.json with ONLY this one new credential,
+  // losing every previously-saved network. Always safe to reload first: every
+  // mutator already persists immediately, so nothing unsaved could exist to lose.
+  WIFI_STORE.loadFromFile();
   if (!WIFI_STORE.addCredential(ssid, password)) {
     LOG_ERR(TAG, "wifi.provision: addCredential failed for ssid=%s", ssid);
     return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");

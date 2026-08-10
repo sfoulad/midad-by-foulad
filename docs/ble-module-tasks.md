@@ -2122,3 +2122,135 @@ measured it.
 
 **`sync.pull`/`sync.ack` next** -- picking up the phone side now that it's
 built.
+
+## Ninth session (2026-08-11): real WiFi + real account testing -- one bug fixed, one bug found and blocked
+
+Device now has a real saved network ("Green") and a real claimed Foulad
+eBooks account (`drfoulad`), so every "real-work path untested" gap flagged
+in the eighth session could finally be exercised for real instead of just
+at the protocol level. Test harness: `CMD:BLE_TEST_AUTH_REAL` injects the
+device's own already-stored credential straight into `onAuthWritten()`
+(reads `OPDS_STORE` on-device; the password never reaches this session's
+tools or logs), plus a handful of other `CMD:BLE_TEST_*`/`BLE_SCREEN`
+serial commands to drive real navigation and read back state without
+physical button access.
+
+### Bug found and fixed: `WifiCredentialStore` never auto-loads
+
+`PersistableStore::getInstance()` (`lib/Serialization/PersistableStore.h`)
+never reads from disk on its own -- `WifiSelectionActivity::onEnter()` was
+the **only** call site of `WIFI_STORE.loadFromFile()` in the whole
+codebase. Any BLE-only session (the entire point of `wifi.provision` is to
+configure WiFi *without* visiting that screen) saw a permanently-empty
+in-RAM credential list regardless of what `wifi.json` actually held on SD.
+
+Confirmed live: `BLE_TEST_WIFI_STORE` reported 0 credentials while a new
+`BLE_TEST_CATFILE:/.crosspoint/wifi.json` command proved the file on disk
+correctly had both saved networks and the right `lastConnectedSsid`. This
+is also why the eighth session's `firmware.update` test still said "no
+saved network to connect to" even after the user had a working WiFi
+connection on-device -- not a `firmware.update` bug, a store bug.
+
+Worse latent bug from the same root cause: `handleWifiProvision()`'s
+`WIFI_STORE.addCredential(...)` persists the *entire current in-RAM state*
+unconditionally. On a fresh boot with other real networks already saved
+but never loaded, a `wifi.provision` call would have silently overwritten
+`wifi.json` with only the one new credential -- permanent data loss of
+every previously-saved network. Hadn't actually triggered yet (lucky
+ordering in this test session), but was live and waiting to happen.
+
+**Fix**: added `WIFI_STORE.loadFromFile()` as the first line of both
+`finishFirmwareCheck()`'s network lookup and `handleWifiProvision()`'s
+save path. Safe unconditionally -- every `WifiCredentialStore` mutator
+(`addCredential`/`removeCredential`/`setLastConnectedSsid`/`clearAll`)
+already calls `saveToFile()` synchronously (confirmed by reading
+`WifiCredentialStore.cpp` in full), so a reload here can only pick up
+state that's genuinely on disk, never lose something unsaved. Verified
+live after rebuild+reflash: log now shows `[WCS] Loaded 2 WiFi credentials
+from file` followed by a full successful connect.
+
+### Verified live for the first time: `firmware.update`, `settings.push`
+
+With the store fix in, `firmware.update` ran its full real path end to
+end: WIFI_STORE load -> BLE teardown -> real `WiFi.begin()` on "Green" ->
+real `OtaUpdater::checkForUpdate()` HTTPS call to GitHub -> graceful
+failure handling -> BLE resumed. The HTTPS call itself failed
+(`mbedtls_ssl_setup returned -0x7F00` at ~40KB free heap) -- a pre-existing
+OTA/TLS heap constraint, not a BLE bug; the BLE code's own handling of that
+failure (log, clean up WiFi, resume BLE) was correct.
+
+`settings.push` verified by round-trip: pushed `darkModeEnabled: 1` over
+BLE, read it back with a new `CMD:BLE_TEST_DARKMODE` serial command,
+confirmed persisted.
+
+### Bug found, root-caused, and now blocked on a server endpoint: `book.fetch`'s real download
+
+Queued `book.fetch` with a fake id (`999999`) first -- 404'd, as expected.
+Then re-tested with a **real, currently-owned** `fouladBookId` pulled
+straight from this account's own `/.crosspoint/recent.json` (`935`, "Two
+Can Play" by Ali Hazelwood) to rule out "fake id" as the explanation.
+**Also 404'd, identically.** That ruled out a bad-id theory and pointed at
+the URL construction itself in `flushPendingBleBookFetch()`
+(`FouladDeviceTracking.cpp:652`).
+
+Sent the finding across to foulad-ebooks (see
+`foulad-ebooks/replies/2026-08-11-eink-book-fetch-signed-url.md`); their
+answer confirmed it's worse than one bug:
+
+1. **Wrong path.** `http://midad.one/books/{id}/download` isn't a real
+   route at all -- the actual path is `/opds/books/{book}/download`
+   (`routes/opds.php:67`). This alone is why the fake id and the real id
+   404'd identically: neither request ever reached routing logic that
+   could tell them apart.
+2. **The real bug, and the one that actually matters**: `download_url` is
+   a Laravel temporary signed URL (`URL::temporarySignedRoute(...,
+   now()->addDays(30), ['book' => $id, 'user' => $userId])`,
+   `BookResource.php:108-115`) -- an HMAC over the full query string
+   including `expires`/`user`. There is no way to construct a valid one
+   client-side from a bare id, full stop. Fixing bug #1 alone would not
+   have made this work.
+
+`GET /api/app/books/{id}` already returns exactly this shape, but that
+route group is deliberately walled off from device tokens
+(`RejectDeviceTokenAuth`) -- correctly so, since it also covers
+account/password/email management a reader has no business touching. No
+existing endpoint a BLE-claimed device's `DeviceToken` can call for this
+today.
+
+**Status: blocked on a proposed new endpoint**, `GET /opds/books/{book}`,
+confirmed workable shape:
+
+```json
+{"title": "...", "format": "epub", "download_url": "https://midad.one/opds/books/935/download?signature=...&expires=..."}
+```
+
+Requested `format` as a bare extension string (`epub`/`xtc`/`xtch`), not a
+MIME type -- matches `hasEpubExtension`/`hasXtcExtension`
+(`lib/FsHelpers/FsHelpers.cpp:166-174`) exactly, so
+`"/book_" + id + "." + format` slots in directly and finally closes the
+"always assumes `.epub`" v1 limitation this doc already flagged (Foulad's
+XTC-only books were silently downloading with the wrong extension before
+now -- moot until this endpoint exists, since nothing downloads at all
+yet). `title` closes the "generic Book #<id> library entry" gap the same
+way. Also asked for `author` if it's cheap, to fill the field
+`RECENT_BOOKS.addBook()` already has but this path currently leaves empty.
+
+Not patching the `/opds` path prefix as a standalone stopgap -- bug #2
+makes the endpoint non-functional either way, so `book.fetch`'s real
+download path stays correctly blocked (queue-and-retry-forever, same as
+before) until the new lookup lands, at which point `flushPendingBleBookFetch()`
+gets rewritten to call it rather than hand-build a URL at all.
+
+### WiFi-disconnect-after-task, re-confirmed
+
+The eighth session's phone-side entry above already raised and answered
+this from reading the code; re-confirmed independently this session by
+grep, not just re-reading: `finishWifiVerify()`
+(`BleCommandDispatcher.cpp:77-81`) and `finishFirmwareCheck()`
+(`BleCommandDispatcher.cpp:162-164`) are the only two BLE flows that open
+their own WiFi session, and both call `WiFi.disconnect(true);
+WiFi.mode(WIFI_MODE_NULL);` the moment their task ends. `book.fetch` never
+opens a session of its own -- it only piggybacks on whatever WiFi session
+`OpdsBookBrowserActivity` already has open for normal browsing
+(`reportDeviceTrackingOnConnect()`), so its radio lifecycle isn't BLE's to
+manage. `sync.pull`/`sync.ack` don't touch WiFi at all. Nothing to fix.

@@ -36,6 +36,7 @@
 #include "MappedInputManager.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
+#include "WifiCredentialStore.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
@@ -941,6 +942,27 @@ void loop() {
         // whole BLE pairing flow without physical button access.
         activityManager.goToBluetooth();
         logSerial.printf("BLE_SCREEN: navigated to Bluetooth activity\n");
+      } else if (cmd == "BLE_TEST_WIFI_STORE") {
+        // Temporary debug tooling: inspects WifiCredentialStore state (credential
+        // count + lastConnectedSsid) without printing any password.
+        const auto& creds = WIFI_STORE.getCredentials();
+        logSerial.printf("BLE_TEST_WIFI_STORE: %u saved credential(s), lastConnectedSsid='%s'\n",
+                          static_cast<unsigned>(creds.size()), WIFI_STORE.getLastConnectedSsid().c_str());
+        for (const auto& c : creds) {
+          logSerial.printf("  ssid='%s'\n", c.ssid.c_str());
+        }
+      } else if (cmd == "BLE_TEST_DARKMODE") {
+        // Temporary debug tooling: reads back SETTINGS.darkModeEnabled to verify
+        // settings.push actually persisted a real change, not just replied "ok".
+        logSerial.printf("BLE_TEST_DARKMODE: darkModeEnabled=%d\n", SETTINGS.darkModeEnabled);
+      } else if (cmd == "BLE_TEST_GOTO_FOULAD") {
+        // Temporary debug tooling: drives the real navigation path into Foulad
+        // eBooks browsing (activityManager.goToFouladEbooks()), which connects real
+        // WiFi and calls OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() --
+        // the only thing that actually runs flushPendingBleBookFetch(). Exercises
+        // book.fetch's real download path without needing physical navigation.
+        activityManager.goToFouladEbooks();
+        logSerial.printf("BLE_TEST_GOTO_FOULAD: navigated to Foulad eBooks\n");
       } else if (cmd == "BLE_TEST_BOOKFETCH_STATUS") {
         // Permanent debug tooling: inspects/clears book.fetch's queued state
         // (CrossPointState::pendingBleBookFetchId) without needing a real Foulad
@@ -982,6 +1004,45 @@ void loop() {
         BlePeripheral.onAuthWritten(reinterpret_cast<const uint8_t*>(json.c_str()), json.length());
         logSerial.printf("BLE_TEST_AUTH: injected %u bytes\n", static_cast<unsigned>(json.length()));
 #endif
+      } else if (cmd == "BLE_TEST_AUTH_REAL") {
+#ifndef SIMULATOR
+        // Temporary debug tooling: same injection as BLE_TEST_AUTH: above, but reads
+        // the device's own already-stored Foulad eBooks credential (OPDS_STORE)
+        // instead of a caller-supplied test one, for testing a real claimed account
+        // without that account's token ever appearing in a serial log, a test
+        // script, or this command's own output.
+        const auto& servers = OPDS_STORE.getServers();
+        const OpdsServer* server = nullptr;
+        for (const auto& s : servers) {
+          if (s.url == FOULAD_EBOOKS_URL) {
+            server = &s;
+            break;
+          }
+        }
+        if (!server) {
+          logSerial.printf("BLE_TEST_AUTH_REAL: no claimed Foulad eBooks account found\n");
+        } else {
+          JsonDocument doc;
+          doc["username"] = server->username;
+          doc["token"] = server->password;
+          std::string json;
+          serializeJson(doc, json);
+          BlePeripheral.onAuthWritten(reinterpret_cast<const uint8_t*>(json.c_str()), json.length());
+          logSerial.printf("BLE_TEST_AUTH_REAL: injected real credential for username=%s\n", server->username.c_str());
+        }
+#endif
+      } else if (cmd.startsWith("BLE_TEST_CATFILE:")) {
+        // Temporary debug tooling: dumps an arbitrary SD file to serial, same
+        // rationale as CRASHLOG below but for any path -- currently debugging
+        // whether WifiCredentialStore's /.crosspoint/wifi.json is actually being
+        // persisted. Safe to dump: passwords are XOR-obfuscated + base64-encoded on
+        // disk (WifiCredentialStore.h's own class comment), never plaintext.
+        const String path = cmd.substring(strlen("BLE_TEST_CATFILE:"));
+        logSerial.printf("BLE_TEST_CATFILE_START:%s\n", path.c_str());
+        if (!Storage.readFileToStream(path.c_str(), logSerial)) {
+          logSerial.printf("BLE_TEST_CATFILE_READ_FAILED\n");
+        }
+        logSerial.printf("\nBLE_TEST_CATFILE_END\n");
       } else if (cmd == "CRASHLOG") {
         // Temporary debug tooling -- dumps /crash_report.txt (HalSystem::checkPanic(),
         // written on the boot after a panic) straight to serial so a raw stack dump can
