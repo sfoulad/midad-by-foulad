@@ -1451,3 +1451,35 @@ Command authentication has to land before `settings.push`/`book.fetch`/
 other security model. The account-claim proposal and this doc's Auth
 design share the same underlying primitive (`DeviceToken`), so building
 them together is likely more efficient than sequentially.
+
+### Implementation requirement for every command above (not optional)
+
+Called out explicitly because it already broke once: the "Something went
+wrong: ?" bug earlier in this doc was exactly this failure mode — the
+phone listened on a stream that also echoed its own outgoing write, took
+the echo for the device's reply, and moved on without ever seeing the
+real one. For `device.info`, `account.claim`, and every command in this
+section, the phone-side implementation must:
+
+- Actually wait for and read the device's reply before treating a command
+  as done — never assume success from the write completing. The write
+  succeeding only means the bytes reached the characteristic, not that the
+  device processed them.
+- Listen on a stream that *only* carries real notifications (`onValueReceived`
+  in `flutter_blue_plus`, per the existing fix in `MidadBleClient`), never
+  one that also echoes outgoing writes.
+- Check `state` on every reply before proceeding, not just for
+  `wifi.provision` — `device.info`'s serial has to come from an actual
+  `"ok"` reply before it's shown in the confirmation step, not assumed
+  present just because a reply of some kind arrived.
+- Extract and use every field the reply actually carries — `device.info`'s
+  full `{serial, model, firmware_version}`, not just whichever one field a
+  particular screen happens to display first; `account.claim`'s outcome
+  fully before disconnecting, not fire-and-forget right before tearing
+  down the connection.
+- Handle the no-reply case explicitly (timeout), same as
+  `MidadBleClient.sendCommand()` already does — a hung wait is worse than
+  a clear failure message.
+
+This isn't new design, just making an already-learned lesson load-bearing
+for every command this doc specs, not only the one that already broke.
