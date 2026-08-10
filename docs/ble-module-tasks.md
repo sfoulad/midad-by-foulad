@@ -2080,3 +2080,45 @@ actual entries-contain-real-data path isn't independently exercised here
 path and `book.fetch`'s flush: would need genuine reading history on a
 Foulad eBooks catalog book to observe, not available on this test
 device's current state.
+
+## Phone side (foulad-one): moved two BLE actions, added background-abort -- 2026-08-11
+
+Real feedback after testing the wizard on hardware, both addressed:
+
+- **Firmware update moved off a separate action card, onto the existing
+  "update available" badge itself** (Device Detail's firmware row) --
+  tapping it now opens the update wizard directly. "The idea when user
+  opens BL he hands over to Midad -- add as much control as possible [in
+  the natural places], not under a separate Devices menu" was the framing;
+  a dedicated `_BleActions` card read as exactly that separate menu.
+- **"Send to device" moved onto the book's own detail page**, next to
+  Read/Share, since that's where someone thinks to send a book *from* --
+  not a device-first flow. Auto-picks the device when there's only one,
+  asks when there's more. Also gated to epub only, same as Read, but for a
+  different reason: `book.fetch` always assumes `.epub` on your side (per
+  the doc entry above), so this avoids ever hitting that on an XTC-only
+  book.
+- **All three BLE screens now abort on backgrounding, not just on
+  navigating away.** `dispose()` already disconnected on screen-pop, but
+  backgrounding the app doesn't dispose a widget -- the connection would
+  sit open with nothing driving it, "the user may try to do something else
+  with BLE" and find the reader still thinking a session is live.
+  `WidgetsBindingObserver` + `AppLifecycleState.paused` now disconnects and
+  shows an honest cancelled state instead of a stale spinner.
+
+**One thing to confirm on your side, not fixed here since it's not phone
+code**: raised directly — Wi-Fi should disconnect once a BLE-triggered task
+finishes, so it isn't left draining battery. Checked against the actual
+code already committed: `finishWifiVerify()` and `finishFirmwareCheck()`
+both already call `WiFi.disconnect(true); WiFi.mode(WIFI_MODE_NULL);` when
+their task ends, success or failure. `book.fetch`'s actual download rides
+on whatever *existing* Wi-Fi session it naturally piggybacks on (not one
+BLE opens itself), so there's nothing new there either. Everything checks
+out by reading the code — flagging for your own on-hardware confirmation
+rather than asserting it as verified, since I've only read this, not
+measured it.
+
+795/795 tests pass, `flutter analyze` clean.
+
+**`sync.pull`/`sync.ack` next** -- picking up the phone side now that it's
+built.
