@@ -1115,7 +1115,7 @@ bug surfaced and was fixed to get there, and one app bug remains:
   third-party app on either platform, so that half of the original ask
   isn't achievable at all, not just deferred.
 
-## New phase, scoped after real use: BLE-driven account claim (no QR)
+## New phase, scoped after real use: BLE-driven account claim, alongside QR
 
 After actually using Phase 1, Sameh's reaction: why does claiming the
 device still need a separate QR scan, when the phone already has a live
@@ -1124,6 +1124,13 @@ cut (see "Resolved (2026-08-10)" #2 above: `wifi.provision` only gets the
 reader online, account-claiming stays on the existing QR/HTTP flow), not
 an oversight. Revisiting it now that the friction is real. **Decided:
 plan it as a real phase**, not build it silently.
+
+**Later decision (2026-08-10): "we need to have both."** This isn't a
+replacement for QR — QR stays exactly as it is today, unconditionally.
+BLE claiming is a second, additional option offered right alongside it.
+Full detail (and where this landed after a real security review) is in
+foulad-ebooks' `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md`, kept current there;
+this section is the historical why, not the latest shape.
 
 **Checked foulad-ebooks' actual claiming flow before designing this**,
 rather than assume the shape from memory (an earlier note in this doc
