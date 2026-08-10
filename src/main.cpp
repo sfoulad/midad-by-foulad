@@ -941,6 +941,16 @@ void loop() {
         // whole BLE pairing flow without physical button access.
         activityManager.goToBluetooth();
         logSerial.printf("BLE_SCREEN: navigated to Bluetooth activity\n");
+      } else if (cmd == "BLE_TEST_BOOKFETCH_STATUS") {
+        // Permanent debug tooling: inspects/clears book.fetch's queued state
+        // (CrossPointState::pendingBleBookFetchId) without needing a real Foulad
+        // eBooks account + WiFi to exercise flushPendingBleBookFetch() end to end.
+        logSerial.printf("BLE_TEST_BOOKFETCH_STATUS: pending='%s'\n", APP_STATE.pendingBleBookFetchId.c_str());
+        if (!APP_STATE.pendingBleBookFetchId.empty()) {
+          APP_STATE.pendingBleBookFetchId.clear();
+          APP_STATE.saveToFile();
+          logSerial.printf("BLE_TEST_BOOKFETCH_STATUS: cleared\n");
+        }
       } else if (cmd == "BLE_TEST_UNCLAIM") {
         // Permanent debug tooling: undoes whatever a live account.claim BLE test
         // just saved, so testing that command repeatedly doesn't leave permanent

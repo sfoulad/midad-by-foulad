@@ -81,6 +81,17 @@ void flushPendingReadingStats(const std::string& username, const std::string& pa
 // entry is dropped in that last case rather than retried forever).
 void flushPendingKOReaderSync();
 
+// Delivers a book queued by a BLE book.fetch command (see
+// BleCommandDispatcher::handleBookFetch(), CrossPointState::pendingBleBookFetchId)
+// -- BLE only ever records the intent; this does the actual download, the same
+// "device reconnected for some other reason" moment as flushPendingReadingStats()
+// above. Downloads directly by ID, not through the catalog-browsing download path,
+// so v1 always assumes .epub and the RECENT_BOOKS entry gets a generic title, not
+// the real one -- see FouladDeviceTracking.cpp for the full reasoning. No-op when
+// nothing is queued or WiFi is down; left queued (retried every future reconnect,
+// no attempt cap) on failure.
+void flushPendingBleBookFetch(const std::string& username, const std::string& password);
+
 // Uploads the on-SD shared debug log (see util/DebugLog.h) to the server,
 // where it's visible to Foulad eBooks admins only -- never to the device's
 // own owner -- so a report of "the reader crashed" or "covers won't load"

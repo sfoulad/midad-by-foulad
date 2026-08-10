@@ -1376,6 +1376,9 @@ void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
   // Device/reading-stats snapshot for the "My Devices" web page's Device
   // Stats / Reading Stats tabs -- same reliable-moment reasoning.
   FouladDeviceTracking::reportDeviceStats(server.username, server.password);
+  // Delivers a book queued by a BLE book.fetch command, if any -- same
+  // reliable-moment reasoning as everything else in this function.
+  FouladDeviceTracking::flushPendingBleBookFetch(server.username, server.password);
 }
 
 // Once per boot, not once per Library entry: declining should stick for the session

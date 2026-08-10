@@ -1880,3 +1880,83 @@ now that there's more in it (verified live: a real branch-name build
 still fits, `firmware_version` truncated harder than before to make
 room). The wizard already codes both fields as nullable per that same
 entry, so this needs no phone-side change to take effect.
+
+## Eighth session (2026-08-10): `book.fetch` built -- the last of the "Suggested order" list
+
+Closes out every command from this doc's original "Suggested order" and
+the account-claim follow-on: `wifi.provision`, `device.info`,
+`account.claim`, `device.challenge`, `wifi.scan`, `settings.push`,
+`firmware.update`, and now `book.fetch` are all built and verified live.
+`book.transfer_direct` and `sync.pull` remain deliberately deferred (see
+their own sections above -- not lack of time, a recommendation not to
+build them speculatively).
+
+### The real gap found building this one
+
+`OpdsBookBrowserActivity::downloadBook()` -- the code this command was
+supposed to reuse, same spirit as `settings.push` reusing
+`applySettingsFromServer()` -- turns out to need `title`/`author`/
+`acquisitionType` from a parsed `OpdsEntry`, none of which a bare
+`book_id` carries. Checked the actual function before assuming reuse was
+possible (`downloadBook()`'s exact needs, `OpdsEntry`'s fields), same
+evidence-based approach as this whole doc, rather than allowing "delivers
+intent, existing logic fetches it" to gloss over the gap the earlier
+`Suggested order`/full-spec sections didn't anticipate.
+
+**Real download URL confirmed, not guessed**: `FouladEbooksConfig.h`'s
+own comment on `FOULAD_EBOOKS_HOST` documents `/books/{id}/download` as
+one of the paths needing the device-serial header -- direct evidence a
+by-ID download endpoint exists, so `book.fetch` builds the URL from the
+ID directly rather than needing a feed lookup first.
+
+**Two scope decisions confirmed with the user rather than assumed**,
+since they're real product tradeoffs, not technical unknowns:
+
+- Always assumes `.epub`. A generic-by-ID download has no acquisition
+  MIME type to pick the right extension from the way `downloadBook()`
+  does -- Foulad's XTC-only books (Arabic/PDF-sourced) would download
+  with the wrong extension and likely fail to open. Accepted as a known
+  v1 limitation rather than adding a feed-search step to resolve the type
+  first.
+- Failed downloads retry on every future reconnect, forever, no attempt
+  cap -- matches `flushPendingReadingStats()`/`flushPendingKOReaderSync()`'s
+  existing behavior exactly, at the cost of a bad/deleted ID retrying
+  silently forever with no phone-visible failure state.
+
+### Design: queue now, download later -- not a new WiFi bring-up
+
+Unlike `firmware.update`, `book.fetch` has **no async connect-then-act
+state machine** in `BleCommandDispatcher.cpp`. Deliberately -- the doc's
+own wording ("existing WiFi/OPDS-sync logic fetches it next time it's
+online") means the BLE handler only ever persists intent
+(`CrossPointState::pendingBleBookFetchId`, a new field, JSON-only --
+`toJson()`/`fromJson()`, not the legacy binary migration path, matching
+how every other field in that struct was already added) and replies
+immediately. The actual download
+(`FouladDeviceTracking::flushPendingBleBookFetch()`) runs headless via
+`HttpDownloader::downloadToFile()` directly (not through the Activity's
+own progress-UI-coupled `downloadBook()`), hooked into
+`OpdsBookBrowserActivity::reportDeviceTrackingOnConnect()` -- the exact
+same "device reconnected for some other reason" moment
+`flushPendingReadingStats()`/`flushPendingKOReaderSync()`/
+`flushPendingCrashReport()` already use, Foulad-eBooks-gated the same way.
+On success, registers with `RECENT_BOOKS.addBook()` using a generic
+`"Book #<id>"` title/no author/no cover (the metadata `downloadBook()`
+would have had, unavailable here) so it's at least visible in My
+Books/Home, not just sitting on the SD card invisibly.
+
+Verified live: Auth-gated like `settings.push`/`firmware.update`
+(`unauthorized` before Auth, `invalid_payload` for a missing `book_id`,
+`ok` once queued), and the queued ID survives a reflash + reboot
+(confirmed via a temporary `CMD:BLE_TEST_BOOKFETCH_STATUS` serial
+command, since reading a `CrossPointState` field otherwise needs a real
+BLE round-trip this doc has no command for). The actual download
+(`flushPendingBleBookFetch()` itself, on a real reconnect) is not
+independently verified end-to-end here, same limitation as
+`firmware.update`'s connect-then-check path: this test device has no
+real Foulad eBooks account signed in nor a real saved WiFi network from
+this session's testing (every `wifi.provision` test used a deliberately
+fake SSID). The download call reuses `HttpDownloader::downloadToFile()`
+exactly as `downloadBook()`/the cover-fetch path already do elsewhere in
+this codebase -- not new risk surface, just not independently re-proven
+here.

@@ -48,6 +48,13 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   int16_t pendingSyncJumpSpine = -1;
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
+  // BLE book.fetch's queued intent (docs/ble-module-tasks.md): the raw Foulad book
+  // ID from a phone's book.fetch command, empty = nothing pending. BLE delivers
+  // intent only -- FouladDeviceTracking::flushPendingBleBookFetch() does the actual
+  // download, the next time the device is online for some other reason (same
+  // "queue it, flush on next natural reconnect" pattern as pendingSyncJumpPercent/
+  // PendingKOReaderSync), not from a WiFi session BLE brings up itself.
+  std::string pendingBleBookFetchId;
 
   // Returns true if idx was shown within the last checkCount picks.
   // Walks backwards from the most recently written slot.

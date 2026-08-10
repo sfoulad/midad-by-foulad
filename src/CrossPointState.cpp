@@ -24,6 +24,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["pendingSyncJumpSpine"] = pendingSyncJumpSpine;
   doc["lastSleepFromReader"] = lastSleepFromReader;
   doc["showBootScreen"] = showBootScreen;
+  doc["pendingBleBookFetchId"] = pendingBleBookFetchId;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -49,6 +50,9 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   pendingSyncJumpSpine = doc["pendingSyncJumpSpine"] | static_cast<int16_t>(-1);
   lastSleepFromReader = doc["lastSleepFromReader"] | false;
   showBootScreen = doc["showBootScreen"] | true;
+  // Absent on a state file written before book.fetch existed; empty means nothing
+  // pending, same convention as pendingSyncJumpPercent's 0 above.
+  pendingBleBookFetchId = doc["pendingBleBookFetchId"] | "";
   return true;
 }
 

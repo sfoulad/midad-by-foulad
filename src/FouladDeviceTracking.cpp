@@ -10,6 +10,7 @@
 #include <cstdlib>
 
 #include "CrossPointSettings.h"
+#include "CrossPointState.h"
 #include "FouladEbooksConfig.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncClient.h"
@@ -629,6 +630,46 @@ void flushPendingKOReaderSync() {
   }
   // Failure (offline mid-request, server error): leave it queued for the next
   // reconnect, same as every other flushPending* function here.
+}
+
+// BLE book.fetch's deferred half -- see docs/ble-module-tasks.md and
+// BleCommandDispatcher::handleBookFetch(), which only ever persists the intent
+// (APP_STATE.pendingBleBookFetchId). This is the "existing WiFi/OPDS-sync logic
+// fetches it next time it's online" the doc promises: called from
+// OpdsBookBrowserActivity::reportDeviceTrackingOnConnect(), the same "device
+// reconnected for some other reason" moment every other flushPending* here uses.
+//
+// Downloads directly by ID (FOULAD_EBOOKS_HOST + "/books/" + id + "/download", the
+// same acquisition-link path documented in FouladEbooksConfig.h's FOULAD_EBOOKS_HOST
+// comment), not through OpdsBookBrowserActivity::downloadBook() -- that needs a
+// parsed OpdsEntry (title/author/acquisition type) this headless path was never
+// going to have from a bare BLE-delivered ID. Two deliberate, documented v1
+// limitations that follow from that, confirmed with the user rather than guessed:
+// always assumes .epub (Foulad's XTC-only books would download with the wrong
+// extension and likely fail to open -- narrow enough to accept for now), and the
+// library entry gets a generic "Book #<id>" title/no author/no cover, not the real
+// metadata (unavailable without a feed fetch this path deliberately skips).
+void flushPendingBleBookFetch(const std::string& username, const std::string& password) {
+  if (!wifiConnected()) return;
+  if (APP_STATE.pendingBleBookFetchId.empty()) return;
+
+  const std::string bookId = APP_STATE.pendingBleBookFetchId;
+  const std::string downloadUrl = std::string("http://") + FOULAD_EBOOKS_HOST + "/books/" + bookId + "/download";
+  const std::string filename = "/book_" + bookId + ".epub";
+
+  const auto result = HttpDownloader::downloadToFile(downloadUrl, filename, nullptr, nullptr, username, password);
+  if (result == HttpDownloader::OK) {
+    RECENT_BOOKS.addBook(filename, "Book #" + bookId, "", "", bookId);
+    APP_STATE.pendingBleBookFetchId.clear();
+    APP_STATE.saveToFile();
+    diagLog("ble book.fetch: downloaded book_id=" + bookId);
+  } else {
+    // Left queued -- retried on every future reconnect until it succeeds, same
+    // policy as every other flushPending* function here (confirmed with the user
+    // rather than assumed: a bad/deleted ID retries silently forever in this v1,
+    // no attempt cap).
+    diagLog("ble book.fetch: download FAILED for book_id=" + bookId + ", will retry next reconnect");
+  }
 }
 
 void uploadDebugLog(const std::string& username, const std::string& password) {

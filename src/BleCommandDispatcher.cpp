@@ -13,6 +13,7 @@
 
 #include "BleWifiScanCache.h"
 #include "CrossPointSettings.h"
+#include "CrossPointState.h"
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
@@ -482,6 +483,26 @@ size_t handleFirmwareUpdate(JsonVariantConst payload, char* outBuf, size_t outBu
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
+// book.fetch -- see docs/ble-module-tasks.md's spec. BLE delivers intent only, same
+// pattern as wifi.provision: persist the book_id to APP_STATE.pendingBleBookFetchId
+// (CrossPointState.h) and reply immediately. The actual download happens later,
+// headlessly, via FouladDeviceTracking::flushPendingBleBookFetch() -- whenever the
+// device is next online for some other reason (browsing/registering with Foulad
+// eBooks), not from a WiFi session this command brings up itself. No connect/act
+// state machine here unlike firmware.update -- deliberately: this queues for the
+// *next natural* reconnect, it doesn't force one.
+size_t handleBookFetch(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "book.fetch";
+  const char* bookId = payload["book_id"] | "";
+  if (!bookId || bookId[0] == '\0') {
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+  }
+  APP_STATE.pendingBleBookFetchId = bookId;
+  APP_STATE.saveToFile();
+  LOG_DBG(TAG, "book.fetch: queued book_id=%s", bookId);
+  return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   // Unclaimed-device commands -- physical-possession security model, no Auth check
   // (there's no credential to check against yet on a device with no account). See
@@ -512,6 +533,9 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
   }
   if (strcmp(cmd, "firmware.update") == 0) {
     return handleFirmwareUpdate(payload, outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "book.fetch") == 0) {
+    return handleBookFetch(payload, outBuf, outBufLen);
   }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
