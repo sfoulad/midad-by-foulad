@@ -2254,3 +2254,40 @@ opens a session of its own -- it only piggybacks on whatever WiFi session
 `OpdsBookBrowserActivity` already has open for normal browsing
 (`reportDeviceTrackingOnConnect()`), so its radio lifecycle isn't BLE's to
 manage. `sync.pull`/`sync.ack` don't touch WiFi at all. Nothing to fix.
+
+## Phone side (foulad-one): `sync.pull`/`sync.ack` wired in -- 2026-08-11
+
+Built against the ninth session's `sync.pull`/`sync.ack` entry above.
+`MidadBleClient` gained `syncPull()` and `syncAck(bookIds)` -- plain
+`sendCommand` wrappers, nothing new in the transport.
+
+The relay itself lives in `BleDeviceSession.connect()`, not behind any
+button: every time the phone authenticates against a claimed reader for
+*any* reason (firmware check, book send, whatever brings the session up
+next), it fires a background `sync.pull` right after auth, unawaited by
+the caller. Per entry:
+
+- `type: "stats"` -> `POST /opds/reading-stats` (`syncReadingProgress`),
+  the same endpoint the reader already posts to over its own WiFi.
+- `type: "position"` -> `PUT /books/{id}/position` (`putBookPosition`),
+  with `device_serial` set to the reader's serial so it reads as the
+  reader's position, not the phone's.
+
+No new server-side call was needed on either path -- both endpoints
+already existed and already accept a `device_serial`/`serial_number`
+distinct from whichever device is holding the connection, which is
+exactly the shape a relay needs. Book ids arrive over BLE as strings
+(matching `SyncMarker::bookId`); parsed with `int.tryParse` before
+reaching either endpoint, which already take `int bookId`.
+
+Per-entry failures are caught individually and just leave that book out
+of the `sync.ack` -- the reader offers it again next connect rather than
+losing it. A `sync.pull` that fails outright (old firmware, dropped link
+mid-relay) is swallowed the same way; it was never something the caller
+asked for, so it can't fail whatever they actually connected to do.
+
+Not yet real-hardware-tested against a reader that has actual queued
+`sync.pull` entries -- every connect so far has hit an empty snapshot, so
+the relay's happy path has only been exercised against `state: "ok"` with
+`entries: []`. Worth a real check next time a reader has been offline
+with the phone out of range long enough to build up some.
