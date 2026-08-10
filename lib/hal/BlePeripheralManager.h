@@ -97,6 +97,15 @@ class BlePeripheralManager {
   State state() const { return state_; }
   bool isActive() const { return state_ == State::Advertising || state_ == State::Connected; }
 
+  // Whether the user has asked for BLE right now -- set by BluetoothActivity's
+  // onEnter()/onExit() (the only place BLE is ever requested; there is no
+  // persistent "always on" setting anymore, see docs/ble-module-tasks.md's
+  // dedicated-screen redesign). main.cpp's bleAllowedNow gate reads this alongside
+  // the existing WiFi/reader mutual-exclusion checks. Not persisted on purpose:
+  // BLE should never come back on by itself after a reboot.
+  void setUserRequested(bool requested) { userRequested_ = requested; }
+  bool isUserRequested() const { return userRequested_; }
+
   // Copies the most recent Auth-characteristic write into `outBuf` (capacity
   // `maxLen`), sets `outLen`, and returns true -- or returns false if nothing is
   // pending. A write that arrives before the previous one is drained overwrites it
@@ -129,6 +138,7 @@ class BlePeripheralManager {
   BlePeripheralManager& operator=(const BlePeripheralManager&) = delete;
 
   volatile State state_ = State::Off;
+  bool userRequested_ = false;
   uint32_t lastLowMemoryTeardownMs_ = 0;
   bool coolingDown_ = false;
   // millis() when poll() first saw the zombie signature; 0 = not currently seen.

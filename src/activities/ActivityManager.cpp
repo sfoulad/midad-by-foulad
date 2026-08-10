@@ -23,6 +23,9 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#ifndef SIMULATOR
+#include "network/BluetoothActivity.h"
+#endif
 #include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
@@ -211,6 +214,12 @@ void ActivityManager::goToFileTransfer() {
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToGym() { replaceActivity(std::make_unique<GymActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToBluetooth() {
+#ifndef SIMULATOR
+  replaceActivity(std::make_unique<BluetoothActivity>(renderer, mappedInput));
+#endif
+}
 
 void ActivityManager::goToDictionary() { replaceActivity(std::make_unique<DictionaryActivity>(renderer, mappedInput)); }
 

@@ -282,6 +282,24 @@ void HomeActivity::loop() {
     requestUpdate();
   }
 
+  // After a long-press has fired, swallow input until Confirm is physically
+  // released (so the release doesn't ALSO act as a normal Confirm tap; re-arm
+  // only once the button is up) -- same pattern RecentBooksActivity uses.
+  if (bleLongPressFired) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+      bleLongPressFired = false;
+    }
+    return;
+  }
+
+  // Hold Confirm anywhere on Home to open BLE pairing -- see BluetoothActivity's
+  // own header comment for why this is a hold gesture rather than a menu item.
+  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= kBleLongPressMs) {
+    bleLongPressFired = true;
+    activityManager.goToBluetooth();
+    return;
+  }
+
   const int menuCount = getMenuItemCount();
 
   buttonNavigator.onNext([this, menuCount] {

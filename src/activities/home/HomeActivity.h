@@ -42,6 +42,13 @@ class HomeActivity final : public Activity {
     int h = 0;
   };
   CoverSlot coverSlots[kCoverSlotCount];
+  // Holding Confirm anywhere on Home opens BluetoothActivity (see its own header
+  // comment for why this is BLE's only entry point) -- confirmed free/unused on
+  // this screen before adding (grep across HomeActivity.cpp found no existing
+  // getHeldTime()/hold logic). Same threshold and fired-flag-swallows-the-release
+  // pattern as RecentBooksActivity's long-press-to-remove.
+  static constexpr unsigned long kBleLongPressMs = 1000;
+  bool bleLongPressFired = false;
   std::vector<RecentBook> recentBooks;
   const HomeMenuItem initialMenuItem;
 

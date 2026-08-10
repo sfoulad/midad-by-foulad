@@ -823,14 +823,16 @@ void loop() {
 
 #ifndef SIMULATOR
   // Midad BLE peripheral (phone control -- see docs/ble-module-tasks.md's device state
-  // machine): only ever runs in Idle state -- WiFi definitively off (the doc's mutual-
-  // exclusion design; checking WiFi.getMode() here rather than hooking every WiFi-
-  // activation call site catches all of them uniformly) and not the reader (Reading
-  // state is reserved for Phase 4's BLE-central page-turner). begin()/end() are cheap
-  // no-ops when already in the right state, so polling this every tick is fine --
-  // BlePeripheral.begin() itself enforces the heap gate and cool-down.
+  // machine): only ever runs while BluetoothActivity is on screen (isUserRequested(),
+  // set by that activity's onEnter()/onExit() -- there is no persistent "always on"
+  // setting anymore) AND WiFi is definitively off (the doc's mutual-exclusion design;
+  // checking WiFi.getMode() here rather than hooking every WiFi-activation call site
+  // catches all of them uniformly) AND not the reader (Reading state is reserved for
+  // Phase 4's BLE-central page-turner). begin()/end() are cheap no-ops when already in
+  // the right state, so polling this every tick is fine -- BlePeripheral.begin() itself
+  // enforces the heap gate and cool-down.
   const bool bleAllowedNow =
-      SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
+      BlePeripheral.isUserRequested() && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
   if (bleAllowedNow) {
     BlePeripheral.begin();
   } else if (BlePeripheral.isActive()) {
@@ -839,21 +841,18 @@ void loop() {
   BlePeripheral.poll();
   BleCommandDispatcher::pump();
 
-  // Diagnostic + repaint nudge, added after a first real-device report: the Apps
-  // screen's Midad BLE tile only reflects SETTINGS.bleEnabled (the persisted toggle),
-  // never BlePeripheral's own live state -- toggling on/off/on there proves nothing
-  // about whether the radio actually started. The "BT" indicator in
-  // BaseTheme::drawHeader() DOES read live state, but e-ink screens don't repaint on a
-  // timer -- without an explicit nudge here, a header already on screen when the radio
-  // finishes starting (a few ticks after the toggle, once begin() succeeds) would sit
+  // Diagnostic + repaint nudge: the "BT" indicator in LyraTheme::drawHeader() reads
+  // live state, but e-ink screens don't repaint on a timer -- without an explicit
+  // nudge here, a header already on screen when the radio finishes starting would sit
   // stale until some UNRELATED repaint happened to occur. Log every state transition
   // (with the heap gate side by side, since that's the most likely reason begin()
   // silently refuses -- BlePeripheralManager's own LOG_DBG lines are serial-only and
   // stripped from RC builds entirely) and force a repaint the moment it changes.
   static bool lastBleAllowedNow = false;
   if (bleAllowedNow != lastBleAllowedNow) {
-    LOG_ERR("BLEDIAG", "bleAllowedNow %d -> %d (bleEnabled=%d wifiMode=%d isReader=%d)", lastBleAllowedNow,
-            bleAllowedNow, SETTINGS.bleEnabled, static_cast<int>(WiFi.getMode()), activityManager.isReaderActivity());
+    LOG_ERR("BLEDIAG", "bleAllowedNow %d -> %d (userRequested=%d wifiMode=%d isReader=%d)", lastBleAllowedNow,
+            bleAllowedNow, BlePeripheral.isUserRequested(), static_cast<int>(WiFi.getMode()),
+            activityManager.isReaderActivity());
     lastBleAllowedNow = bleAllowedNow;
   }
   static BlePeripheralManager::State lastBleDiagState = BlePeripheralManager::State::Off;
@@ -907,20 +906,26 @@ void loop() {
         // screen navigation -- kept as permanent tooling alongside SCREENSHOT above,
         // same rationale (device-side testing that doesn't need eyes on the e-ink panel).
       } else if (cmd == "BLE_ON") {
-        SETTINGS.bleEnabled = 1;
-        SETTINGS.saveToFile();
-        logSerial.printf("BLE_ON: bleEnabled now %d\n", SETTINGS.bleEnabled);
+#ifndef SIMULATOR
+        // Drives the same userRequested_ flag BluetoothActivity's onEnter() sets --
+        // no persisted setting anymore (see docs/ble-module-tasks.md's dedicated-
+        // screen redesign), so this no longer touches SETTINGS/SPIFFS at all.
+        BlePeripheral.setUserRequested(true);
+        logSerial.printf("BLE_ON: userRequested now %d\n", BlePeripheral.isUserRequested());
+#endif
       } else if (cmd == "BLE_OFF") {
-        SETTINGS.bleEnabled = 0;
-        SETTINGS.saveToFile();
-        logSerial.printf("BLE_OFF: bleEnabled now %d\n", SETTINGS.bleEnabled);
+#ifndef SIMULATOR
+        BlePeripheral.setUserRequested(false);
+        logSerial.printf("BLE_OFF: userRequested now %d\n", BlePeripheral.isUserRequested());
+#endif
       } else if (cmd == "BLE_STATUS") {
 #ifndef SIMULATOR
         logSerial.printf(
-            "BLE_STATUS: activity=%s bleEnabled=%d wifiMode=%d isReader=%d freeHeap=%u gate=%u bleState=%d\n",
-            activityManager.currentActivityDebugName(), SETTINGS.bleEnabled, static_cast<int>(WiFi.getMode()),
-            activityManager.isReaderActivity(), static_cast<unsigned>(ESP.getFreeHeap()),
-            static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes), static_cast<int>(BlePeripheral.state()));
+            "BLE_STATUS: activity=%s userRequested=%d wifiMode=%d isReader=%d freeHeap=%u gate=%u bleState=%d\n",
+            activityManager.currentActivityDebugName(), BlePeripheral.isUserRequested(),
+            static_cast<int>(WiFi.getMode()), activityManager.isReaderActivity(),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
+            static_cast<int>(BlePeripheral.state()));
 #endif
       } else if (cmd == "RESTART") {
         // Permanent debug tooling like the BLE_* commands above: lets a scripted USB

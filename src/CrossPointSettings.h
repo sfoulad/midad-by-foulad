@@ -401,18 +401,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   enum GYM_WEIGHT_UNIT { GYM_WEIGHT_KG = 0, GYM_WEIGHT_LB = 1, GYM_WEIGHT_UNIT_COUNT };
   uint8_t gymWeightUnit = GYM_WEIGHT_KG;
 
-  // Apps -> Midad BLE: whether the BLE peripheral (phone control -- Wi-Fi
-  // provisioning today, more in later phases; see docs/ble-module-tasks.md) is
-  // allowed to advertise while the device is Idle. Defaults on: it only ever runs
-  // in Idle state (home/menus/sleep screen, never while reading or on Wi-Fi), is
-  // gated by its own heap floor and cool-down (BlePeripheralManager) regardless of
-  // this setting, and the whole point of Phase 1 is a phone finding the device
-  // without the user doing anything first -- an opt-in toggle would defeat that.
-  // Unlike the AppsActivity launcher tiles above, this is a live radio switch, not
-  // something to "open": AppsActivity special-cases it to flip this flag directly
-  // rather than navigating anywhere.
-  uint8_t bleEnabled = 1;
-
   // Settings -> Apps -> Debug: gates whether ANY diagnostic entries get
   // written to the single shared SD log (/debug_log.txt -- see
   // src/util/DebugLog.h and src/util/DebugLogging.h) by Gym, Sleep, Battery,

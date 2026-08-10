@@ -408,13 +408,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.push_back(SettingInfo::Enum(StrId::STR_GYM_WEIGHT_UNIT, &CrossPointSettings::gymWeightUnit,
                                   {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB}, "gymWeightUnit",
                                   StrId::STR_CAT_APPS));
-    // Midad BLE toggle: also the live-switch AppsActivity tile's backing flag (see
-    // CrossPointSettings::bleEnabled and AppsActivity's special-cased Midad BLE entry)
-    // -- registering it here gets the same free persistence and server-push handling
-    // every other app toggle already has (see FouladDeviceTracking.cpp's applyToggle),
-    // in addition to that tile.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_MIDAD_BLE, &CrossPointSettings::bleEnabled, "bleEnabled", StrId::STR_CAT_APPS));
+    // Midad BLE is no longer a persistent toggle here -- it's a dedicated screen
+    // (BluetoothActivity, opened by holding Confirm on Home) that only requests the
+    // radio while it's on screen, see docs/ble-module-tasks.md's dedicated-screen
+    // redesign. There is nothing to persist: it never comes back on by itself.
     // KOReader Sync itself is a device-only ACTION appended in
     // SettingsActivity::rebuildSettingsLists() (web-only, uses
     // KOReaderCredentialStore) -- see the comment further below.

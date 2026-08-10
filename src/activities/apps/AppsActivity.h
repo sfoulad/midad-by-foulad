@@ -34,18 +34,14 @@ class AppsActivity final : public Activity {
   // Identity rather than a path sentinel. My Books had to use fake paths
   // ("/Pomodoro") because it was a list of books and an app had to pass for one;
   // a screen that is only ever apps can just say which app it is.
-  enum class AppId : uint8_t { Files, Quran, Games, Tasbih, News, Stopwatch, Pomodoro, Gym, MidadBle };
+  enum class AppId : uint8_t { Files, Quran, Games, Tasbih, News, Stopwatch, Pomodoro, Gym };
 
   struct AppEntry {
     AppId id;
     StrId label;
     // The Settings -> Apps toggle behind this app, or nullptr for the ones that
     // have none (Files is always available). Opening an app whose flag is off
-    // turns it on first -- see launch(). MidadBle is the one exception: it's a
-    // live radio switch, not a destination to open, so launch()/render() special-
-    // case it by AppId to flip CrossPointSettings::bleEnabled directly and show
-    // its current state in the tile label, instead of using this field the way
-    // every other entry does.
+    // turns it on first -- see launch().
     uint8_t CrossPointSettings::* enableFlag;
   };
 

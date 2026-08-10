@@ -138,6 +138,9 @@ class ActivityManager {
   // Apps -> News: the OPDS browser rooted at the account's feed subscriptions.
   void goToNews();
   void goToGym();
+  // Home's hold-Confirm shortcut (see HomeActivity's kBleLongPressMs) -- the only
+  // entry point to BLE pairing, see BluetoothActivity's own header comment.
+  void goToBluetooth();
   void goToDictionary();
   void goToReader(std::string path);
   void goToSleep(bool fromTimeout = false);
