@@ -1810,3 +1810,73 @@ like `claim-by-serial`/`credential` -- read directly from
 `DeviceClaimController::startChallenge()` before coding against it, since
 the two shapes differ and guessing wrong would only have surfaced at
 runtime.
+
+## Seventh session (2026-08-10): `firmware.update` built; `device.info`'s flagged gap closed same day
+
+Built `firmware.update` per this doc's own spec above, and closed the
+`wifi_connected`/`claimed` gap the phone wizard session flagged in the
+"Phone side... full wizard" entry just above -- both small enough to do
+in the same pass as everything else today.
+
+### `firmware.update`
+
+New async state machine in `BleCommandDispatcher.cpp`
+(`FirmwareCheckState`/`pumpFirmwareCheck()`), same shape as
+`pumpWifiVerify()`: grace delay so the reply notify transmits, tear BLE
+down synchronously (same race this doc's Fourth session already found and
+fixed for `wifi.provision`), connect, act, hand the radio back. Two real
+scope decisions made while building it, both following the doc's own
+wording rather than expanding it:
+
+- **Calls `OtaUpdater::checkForUpdate()` only, never `installUpdate()`.**
+  Checked the actual function first rather than assuming: `checkForUpdate()`
+  is a metadata-only release-JSON fetch (no firmware bytes touched);
+  installing is a *separate*, explicit call
+  (`OtaUpdater::installUpdate(ProgressCallback, void*)`), only ever
+  reached today through `OtaUpdateActivity`'s on-device confirmation
+  screen. The doc's own "BLE is only ever the trigger, never a new update
+  mechanism" reading is a hard line, not just a preference: an actual
+  flash-and-reboot is categorically more consequential than a version
+  check, and nothing here changes who has to be standing at the device to
+  confirm one.
+- **`{"channel":"stable"|"rc"}` never touches the persisted setting.**
+  `checkForUpdate()` reads `SETTINGS.otaPrereleaseEnabled` directly, with
+  no per-call override parameter. Rather than add one (a real
+  `OtaUpdater.cpp` change) or call `SETTINGS.saveToFile()` for what the
+  doc calls "for just this check," the handler flips
+  `SETTINGS.otaPrereleaseEnabled` in memory only, calls
+  `checkForUpdate()`, then restores the original value -- never persisted,
+  exactly matching "just this check."
+- Connects using `WIFI_STORE.getLastConnectedSsid()` + `findCredential()`
+  (the device's own known-good network) -- `firmware.update`'s payload
+  carries no SSID/password the way `wifi.provision` does, so there is
+  nothing else to connect with. Abandons cleanly (no attempt, no hang) if
+  nothing is saved yet.
+
+Verified live: Auth-gated like `settings.push` (`unauthorized` before
+Auth, `invalid_payload` for an unrecognized `channel` value, `ok` once
+triggered), and the async sequence actually runs -- confirmed via serial
+log 3s after the trigger reply, correctly detecting no saved network on
+this particular test device (`"firmware check: no saved network to
+connect to, abandoning"`) and returning cleanly to advertising with no
+hang. The connect-then-check path itself (a real saved network leading
+into an actual `checkForUpdate()` call) reuses `WiFi.begin()` exactly as
+`pumpWifiVerify()` already proved reliable, and `checkForUpdate()` is
+existing, unmodified code -- not independently re-verified end-to-end
+here for lack of a real saved network on the test device, but not new
+risk surface either.
+
+### `device.info`: `wifi_connected`/`claimed` added
+
+The exact gap the "Phone side... full wizard" entry above flagged, closed
+the same day: `handleDeviceInfo()` now includes
+`"wifi_connected": WiFi.status() == WL_CONNECTED` and
+`"claimed": deviceIsClaimed()` (the same helper `wifi.provision`/
+`account.claim` already use). Added *before* the `firmware_version`
+truncation loop, not after -- the loop measures the whole document to
+decide how much to cut, and these two fields needed to already be present
+for that measurement to still leave the reply under the 160-byte budget
+now that there's more in it (verified live: a real branch-name build
+still fits, `firmware_version` truncated harder than before to make
+room). The wizard already codes both fields as nullable per that same
+entry, so this needs no phone-side change to take effect.

@@ -12,10 +12,12 @@
 #include <string>
 
 #include "BleWifiScanCache.h"
+#include "CrossPointSettings.h"
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "WifiCredentialStore.h"
+#include "network/OtaUpdater.h"
 
 namespace BleCommandDispatcher {
 
@@ -125,6 +127,94 @@ void pumpWifiVerify() {
              millis() - g_verifyStartMs > kVerifyTimeoutMs) {
     finishWifiVerify(false);
   }
+}
+
+// Headless firmware.update -- see docs/ble-module-tasks.md's spec: "Triggers the
+// *existing* OtaUpdater::checkForUpdate() path... so BLE is only ever the trigger,
+// never a new update mechanism." Deliberately calls ONLY checkForUpdate() (a release-
+// metadata fetch), never installUpdate() -- the actual flash-and-reboot stays behind
+// the existing on-device confirmation UI (OtaUpdateActivity), unchanged. This state
+// machine only gets the device online long enough for that one metadata check, on
+// whatever network it already has saved (WIFI_STORE's last-connected SSID) -- there's
+// no credential in firmware.update's payload the way wifi.provision has one.
+// Same shape as WifiVerifyState above (grace delay, then connect, then act, then hand
+// the radio back) -- see that state machine's comments for the BLE-teardown-race
+// rationale, identical here.
+enum class FirmwareCheckState : uint8_t { Idle, PendingStart, Connecting, Checking };
+FirmwareCheckState g_fwCheckState = FirmwareCheckState::Idle;
+// Set from the {"channel":"stable"|"rc"} payload field, if present -- applied to
+// SETTINGS.otaPrereleaseEnabled only in-memory for the duration of this one check,
+// then restored, never SETTINGS.saveToFile()'d. "Override... for just this check"
+// (the doc's own wording) means exactly that: never touching the persisted setting.
+bool g_fwCheckHasChannelOverride = false;
+bool g_fwCheckForcePrerelease = false;
+constexpr unsigned long kFwCheckGraceMs = 3000;  // matches kVerifyGraceMs's own rationale
+unsigned long g_fwCheckReadyAtMs = 0;
+unsigned long g_fwCheckConnectStartMs = 0;
+// Generous connect timeout (matches CONNECTION_TIMEOUT_MS in WifiSelectionActivity,
+// not the shorter auto-connect one -- this is the device's own known-good network,
+// not an untried saved credential, so it's worth waiting the longer timeout for).
+constexpr unsigned long kFwCheckConnectTimeoutMs = 15000;
+
+void finishFirmwareCheck() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_MODE_NULL);
+  g_fwCheckState = FirmwareCheckState::Idle;
+}
+
+void pumpFirmwareCheck() {
+  if (g_fwCheckState == FirmwareCheckState::PendingStart) {
+    if (millis() < g_fwCheckReadyAtMs) return;
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      LOG_DBG(TAG, "firmware check: abandoned, radio already in use (mode=%d)", static_cast<int>(WiFi.getMode()));
+      g_fwCheckState = FirmwareCheckState::Idle;
+      return;
+    }
+    const std::string& ssid = WIFI_STORE.getLastConnectedSsid();
+    const WifiCredential* cred = ssid.empty() ? nullptr : WIFI_STORE.findCredential(ssid);
+    if (!cred) {
+      LOG_DBG(TAG, "firmware check: no saved network to connect to, abandoning");
+      g_fwCheckState = FirmwareCheckState::Idle;
+      return;
+    }
+    // Same synchronous BLE teardown as pumpWifiVerify() above, same reason.
+    if (BlePeripheral.isActive()) {
+      LOG_DBG(TAG, "firmware check: tearing down BLE before grabbing the radio for WiFi");
+      BlePeripheral.end();
+    }
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(cred->ssid.c_str(), cred->password.c_str());
+    g_fwCheckConnectStartMs = millis();
+    g_fwCheckState = FirmwareCheckState::Connecting;
+    return;
+  }
+
+  if (g_fwCheckState == FirmwareCheckState::Connecting) {
+    const wl_status_t status = WiFi.status();
+    if (status == WL_CONNECTED) {
+      g_fwCheckState = FirmwareCheckState::Checking;
+    } else if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL ||
+               millis() - g_fwCheckConnectStartMs > kFwCheckConnectTimeoutMs) {
+      LOG_DBG(TAG, "firmware check: wifi connect failed/timed out");
+      finishFirmwareCheck();
+    }
+    return;
+  }
+
+  if (g_fwCheckState != FirmwareCheckState::Checking) return;
+
+  // checkForUpdate() is a single blocking HTTPS fetch (not itself async/polled --
+  // matches how OtaUpdateActivity calls it) -- fine to call inline here since WiFi is
+  // already confirmed connected; this isn't a repeated poll like the Connecting state
+  // above.
+  const uint8_t savedPrerelease = SETTINGS.otaPrereleaseEnabled;
+  if (g_fwCheckHasChannelOverride) SETTINGS.otaPrereleaseEnabled = g_fwCheckForcePrerelease ? 1 : 0;
+  OtaUpdater updater;
+  const auto result = updater.checkForUpdate();
+  if (g_fwCheckHasChannelOverride) SETTINGS.otaPrereleaseEnabled = savedPrerelease;
+  LOG_DBG(TAG, "firmware check: result=%d newer=%d latest=%s", static_cast<int>(result), updater.isUpdateNewer(),
+          updater.getLatestVersion().c_str());
+  finishFirmwareCheck();
 }
 
 size_t formatReply(char* outBuf, size_t outBufLen, const char* cmd, const char* state, const char* reason) {
@@ -245,13 +335,20 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
   }
   doc["model"] = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
   doc["firmware_version"] = CROSSPOINT_VERSION;
+  // Added after foulad-one's real wizard build flagged the gap (2026-08-10, see doc):
+  // the wizard skips its own Wi-Fi/claim steps when these say so
+  // (DeviceInfo.wifiConnected == true, etc.), already coded null-safe against their
+  // absence -- so this was never blocking, just picked up free once added.
+  doc["wifi_connected"] = WiFi.status() == WL_CONNECTED;
+  doc["claimed"] = deviceIsClaimed();
 
   // CROSSPOINT_VERSION embeds the branch name + short SHA on dev/RC builds
   // (scripts/git_branch.py) and can run long enough to blow the 160-byte BLE
   // payload budget together with serial+model -- measured 158/160 live with a
-  // real branch name this session. Truncate just this field rather than dropping
-  // the whole reply: the phone only needs enough to identify the base version,
-  // not the exact dev tag, in this fallback case.
+  // real branch name this session, before wifi_connected/claimed existed to make it
+  // tighter still. Truncate just this field rather than dropping the whole reply:
+  // the phone only needs enough to identify the base version, not the exact dev tag,
+  // in this fallback case.
   while (measureJson(doc) > outBufLen) {
     std::string fw = doc["firmware_version"].as<std::string>();
     if (fw.size() <= 1) break;  // give up rather than loop forever
@@ -361,6 +458,30 @@ size_t handleSettingsPush(JsonVariantConst payload, char* outBuf, size_t outBufL
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
+// firmware.update -- see docs/ble-module-tasks.md's spec and pumpFirmwareCheck()'s own
+// comment above for the full design. Payload {} or {"channel":"stable"|"rc"}. Reply
+// means "trigger accepted," not "update finished" -- see the doc.
+size_t handleFirmwareUpdate(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "firmware.update";
+  const char* channel = payload["channel"] | "";
+  if (channel[0] != '\0') {
+    if (strcmp(channel, "stable") == 0) {
+      g_fwCheckHasChannelOverride = true;
+      g_fwCheckForcePrerelease = false;
+    } else if (strcmp(channel, "rc") == 0) {
+      g_fwCheckHasChannelOverride = true;
+      g_fwCheckForcePrerelease = true;
+    } else {
+      return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+    }
+  } else {
+    g_fwCheckHasChannelOverride = false;
+  }
+  g_fwCheckReadyAtMs = millis() + kFwCheckGraceMs;
+  g_fwCheckState = FirmwareCheckState::PendingStart;
+  return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   // Unclaimed-device commands -- physical-possession security model, no Auth check
   // (there's no credential to check against yet on a device with no account). See
@@ -389,6 +510,9 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
   if (strcmp(cmd, "settings.push") == 0) {
     return handleSettingsPush(payload, outBuf, outBufLen);
   }
+  if (strcmp(cmd, "firmware.update") == 0) {
+    return handleFirmwareUpdate(payload, outBuf, outBufLen);
+  }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
   // command-protocol section.
@@ -398,6 +522,7 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
 
 void pump() {
   pumpWifiVerify();
+  pumpFirmwareCheck();
 
   // Session-scoped auth (see checkAuth()'s comment): cleared on every tick the
   // connection isn't Connected, so a phone must write Auth again on every new
