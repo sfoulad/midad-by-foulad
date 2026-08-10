@@ -1990,3 +1990,93 @@ entries, waiting on a combined test pass.
 That's everything from the original command list now built on both sides
 except `sync.pull` and the page-turner (Phase 4) -- neither blocking the
 other, both still open.
+
+## Ninth session (2026-08-10): `sync.pull`/`sync.ack` built; page-turner frozen
+
+**Page-turner explicitly frozen, not deferred by inference**: the user
+has no BLE page-turner remote to test against yet, so `BleKeyboardHost`
+wiring stays untouched until hardware is in hand -- writing central-role
+BLE code with zero way to verify it responds to a real button press isn't
+worth the risk this doc's whole approach has been built around avoiding
+(see every "verified live" claim above). Revisit once hardware exists.
+
+### `sync.pull`/`sync.ack`: scope narrowed before building, then the build revealed more scope to narrow
+
+The doc's own "reading-position/stats deltas" wording turned out to name
+up to **four separate, non-overlapping data models** already in this
+codebase, none sharing a queue: `ReadingStatsStore`/`reportDeviceStats`
+(dashboard stats, resends full snapshot every call, no dirty tracking),
+`reportReadingStats` (single-book absolute progress), `FouladReadingPosition`
+(account-level cross-device position, explicitly documented as *not*
+overlapping with the stats path), and KOReader/MidadReader Sync (a
+*third-party* server via the user's own credentials, not Foulad eBooks at
+all). Confirmed with the user which of these v1 should cover:
+**reading stats + cross-device position**, explicitly not KOReader (that
+one targets a server the phone may know nothing about, unlike Foulad
+eBooks which the doc's "phone as relay" framing assumes it's already
+authenticated to).
+
+**A real risk found once inside the build, not before**: making
+`sync.ack` meaningful (per the doc: "so the device can clear only those")
+seemed to need per-book tracking of what's already been synced. The
+obvious place, `ReadingBookStats`, turned out to use a **hand-rolled
+binary format** (`reading_stats.bin`, not JSON/`PersistableStore` like
+every other store this doc's commands have touched) -- and it's a
+heavily-used, correctness-sensitive structure (reading history, streaks,
+the home hero card). Modifying its binary layout for this felt like the
+wrong risk to take for a phone-relay convenience feature. Checked before
+assuming reuse was possible, same as `book.fetch`'s `downloadBook()` gap
+above.
+
+**Resolution, chosen without a further round of questions** (the user's
+"you decide" on which command to build next extended reasonably to this
+implementation-level call, unlike the earlier product-scope questions):
+every existing WiFi sync path in this codebase already resends *absolute*
+values unconditionally on every reconnect, explicitly because that's
+safe to retry (`reportReadingStats`'s own doc comment: "ABSOLUTE totals,
+never deltas... a retried/duplicated request must not double-count").
+That same property means `sync.pull`'s dedup tracking doesn't need to
+survive a reboot to be correct -- only to avoid *wasting* a round-trip
+resending something already synced. So the sync markers
+(`g_syncMarkers` in `BleCommandDispatcher.cpp`: per-book last-synced
+reading time + progress) live **in memory only**, never touching
+`ReadingStatsStore`. Three deliberate deviations from the doc's literal
+wording, each documented in the code, not just here:
+
+- **No persisted entry queue.** `sync.pull` snapshots
+  `READING_STATS.getBooks()` live on every call (skipping books whose
+  `totalReadingMs`/`lastProgressPercent` match the in-memory marker),
+  rather than draining a queue built up over time.
+- **Markers reset on reboot.** Worst case after a restart: one book's
+  already-synced entry gets resent once, harmless given the
+  idempotent-absolute-value property above.
+- **`sync.ack` works at book-id granularity**, not truly per-entry
+  (stats vs. position). `{"book_ids":[...]}` marks *both* synced for a
+  named book. In practice they change together anyway --
+  `ReadingStatsStore::endSession()` updates `totalReadingMs` and
+  `lastProgressPercent` in the same call -- so this loses little in
+  practice while avoiding a more complex per-type ack shape.
+
+**Entry shapes**, each mirroring an *existing* WiFi payload exactly, so
+the phone can relay unchanged to the endpoint it already knows how to
+call rather than needing new server-side work:
+`{"type":"stats","book_id","progress_percent","seconds_read"}` (matches
+`reportReadingStats`'s fields minus `last_position`, which
+`ReadingStatsStore` doesn't track) and
+`{"type":"position","book_id","progress_percent"}` (matches
+`FouladReadingPosition::sync()`'s required field; `page`/`total_pages`/
+`spine_index` are optional there and aren't persisted anywhere outside an
+active reader session -- which BLE can never be active during, per the
+existing `!isReaderActivity()` gate -- so they're simply omitted, not a
+compromise). Same "stop before exceeding the 160-byte budget" pattern as
+`wifi.scan`, newest-book-first so a truncated list favors recent activity.
+
+Verified live: both commands Auth-gated like the rest of the claimed-
+device surface, `sync.pull` returns `{"entries":[]}` correctly on this
+test device (no reading history with a `fouladBookId` set), `sync.ack`
+validates its payload shape and silently ignores unknown book ids. The
+actual entries-contain-real-data path isn't independently exercised here
+-- same category of limitation as `firmware.update`'s connect-then-check
+path and `book.fetch`'s flush: would need genuine reading history on a
+Foulad eBooks catalog book to observe, not available on this test
+device's current state.

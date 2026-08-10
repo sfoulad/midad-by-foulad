@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "BleWifiScanCache.h"
 #include "CrossPointSettings.h"
@@ -19,6 +20,7 @@
 #include "OpdsServerStore.h"
 #include "WifiCredentialStore.h"
 #include "network/OtaUpdater.h"
+#include "reading/ReadingStatsStore.h"
 
 namespace BleCommandDispatcher {
 
@@ -503,6 +505,119 @@ size_t handleBookFetch(JsonVariantConst payload, char* outBuf, size_t outBufLen)
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
+// sync.pull/sync.ack -- see docs/ble-module-tasks.md's spec, scoped to "reading stats
+// + cross-device position" (confirmed with the user; the doc's own open question was
+// whether to also cover KOReader sync, deliberately left out here since that targets
+// an arbitrary third-party server the phone may know nothing about, not Foulad
+// eBooks). Deviates from the doc's literal wording in ways documented in the doc
+// itself, not silently: no persisted entry queue (READING_STATS.getBooks() is
+// snapshotted live on each pull, not drained from a queue -- avoids adding new fields
+// to ReadingStatsStore's hand-rolled binary format, a heavily-used structure not
+// worth the risk for this), and sync.ack works at book-id granularity (marks both
+// stats and position synced together for a book), not truly per-entry -- the two
+// almost always change together anyway (endSession() updates totalReadingMs and
+// lastProgressPercent in the same call).
+//
+// g_syncMarkers is intentionally NOT persisted: the values it guards
+// (progress_percent, seconds_read) are the same idempotent absolute totals every
+// other WiFi sync path in this codebase already sends unconditionally on every
+// reconnect -- resending one after a reboot resets this is harmless, just a wasted
+// entry slot once, not a correctness bug.
+struct SyncMarker {
+  std::string bookId;
+  uint64_t lastSyncedReadingMs = 0;
+  uint8_t lastSyncedProgressPercent = 0;
+};
+std::vector<SyncMarker> g_syncMarkers;
+
+const SyncMarker* findSyncMarker(const std::string& bookId) {
+  for (const auto& m : g_syncMarkers) {
+    if (m.bookId == bookId) return &m;
+  }
+  return nullptr;
+}
+
+SyncMarker& findOrCreateSyncMarker(const std::string& bookId) {
+  for (auto& m : g_syncMarkers) {
+    if (m.bookId == bookId) return m;
+  }
+  g_syncMarkers.push_back(SyncMarker{bookId, 0, 0});
+  return g_syncMarkers.back();
+}
+
+size_t handleSyncPull(char* outBuf, size_t outBufLen) {
+  JsonDocument doc;
+  doc["cmd"] = "sync.pull";
+  doc["state"] = "ok";
+  JsonArray entries = doc["entries"].to<JsonArray>();
+
+  // Newest-first (READING_STATS.getBooks()'s own order) -- if the payload budget
+  // cuts the list short, the most recently active books are the ones that survive,
+  // not an arbitrary tail.
+  for (const auto& book : READING_STATS.getBooks()) {
+    if (book.fouladBookId.empty()) continue;  // side-loaded, nothing to relay
+    const SyncMarker* marker = findSyncMarker(book.fouladBookId);
+    const uint64_t syncedMs = marker ? marker->lastSyncedReadingMs : 0;
+    const uint8_t syncedPct = marker ? marker->lastSyncedProgressPercent : 0;
+
+    if (book.totalReadingMs > syncedMs) {
+      JsonObject e = entries.add<JsonObject>();
+      e["type"] = "stats";
+      e["book_id"] = book.fouladBookId;
+      e["progress_percent"] = book.lastProgressPercent;
+      e["seconds_read"] = static_cast<uint32_t>(book.totalReadingMs / 1000);
+      // Same "stop before exceeding the budget" pattern as wifi.scan -- SSID/title
+      // length varies too much for a fixed entry-count cap to be both safe and not
+      // wasteful.
+      if (measureJson(doc) > outBufLen) {
+        entries.remove(entries.size() - 1);
+        break;
+      }
+    }
+    if (book.lastProgressPercent != syncedPct) {
+      JsonObject e = entries.add<JsonObject>();
+      e["type"] = "position";
+      e["book_id"] = book.fouladBookId;
+      e["progress_percent"] = book.lastProgressPercent;
+      if (measureJson(doc) > outBufLen) {
+        entries.remove(entries.size() - 1);
+        break;
+      }
+    }
+  }
+
+  return serializeJson(doc, outBuf, outBufLen);
+}
+
+// Payload {"book_ids":["...",...]} -- the phone names which books it successfully
+// relayed both entry types for (see this section's header comment on book-id-level
+// granularity). Unknown ids are silently ignored, matching this doc's general
+// tolerance for unrecognized values elsewhere (e.g. applySettingsFromServer()).
+size_t handleSyncAck(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "sync.ack";
+  const JsonVariantConst bookIds = payload["book_ids"];
+  if (!bookIds.is<JsonArrayConst>()) {
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+  }
+
+  for (JsonVariantConst idVar : bookIds.as<JsonArrayConst>()) {
+    const char* bookId = idVar.as<const char*>();
+    if (!bookId || bookId[0] == '\0') continue;
+    const ReadingBookStats* book = nullptr;
+    for (const auto& b : READING_STATS.getBooks()) {
+      if (b.fouladBookId == bookId) {
+        book = &b;
+        break;
+      }
+    }
+    if (!book) continue;  // evicted/unknown -- nothing to mark synced against
+    SyncMarker& marker = findOrCreateSyncMarker(bookId);
+    marker.lastSyncedReadingMs = book->totalReadingMs;
+    marker.lastSyncedProgressPercent = book->lastProgressPercent;
+  }
+  return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   // Unclaimed-device commands -- physical-possession security model, no Auth check
   // (there's no credential to check against yet on a device with no account). See
@@ -536,6 +651,12 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
   }
   if (strcmp(cmd, "book.fetch") == 0) {
     return handleBookFetch(payload, outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "sync.pull") == 0) {
+    return handleSyncPull(outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "sync.ack") == 0) {
+    return handleSyncAck(payload, outBuf, outBufLen);
   }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
