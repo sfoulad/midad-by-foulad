@@ -1059,3 +1059,38 @@ Supporting changes in the same pass:
   shave the gate a couple KB.
 - Phone-side (foulad-one) pairing against this now-working device side:
   still the next real test; the Mac client proved the device end only.
+
+## Phone-validated (2026-08-10, later the same day): real foulad-one flow completed
+
+The real app on a real iPhone completed the full Phase 1 provisioning flow
+against the device: found "Midad" in its scan, connected, wrote the auth
+token over the encrypted link, sent `wifi.provision` with the user's real
+home SSID, and the device parsed and saved the credential
+(`saved credential for ssid=green` in the live serial log). One firmware
+bug surfaced and was fixed to get there, and one app bug remains:
+
+- **Fixed (firmware):** the Auth characteristic was created with
+  `NIMBLE_PROPERTY::WRITE_ENC` alone. That's only the requires-encryption
+  flag — without the `WRITE` property bit, the characteristic declaration
+  tells clients writing is unsupported, and the app failed with "The WRITE
+  property is not supported by this BLE characteristic" before ever
+  attempting. Now `WRITE | WRITE_ENC`. (The Mac-client e2e test missed
+  this because it only wrote to the Command characteristic; the app
+  correctly writes Auth first, per this doc's own protocol.)
+- **Open (foulad-one side):** after the device saves the credential and
+  notifies the JSON success reply on the Command characteristic, the app
+  shows "Something went wrong: ?". The device provably sends the reply
+  (the Mac client receives it with identical firmware), so the app either
+  isn't subscribing to the Command characteristic's notifications before
+  writing, or isn't parsing the reply. The dispatcher now logs
+  "reply notified" vs "reply NOT delivered (no subscriber?)" specifically
+  to make the next app-side debug session unambiguous. Relay to Midad:
+  subscribe to `...0003` notifications BEFORE writing the command; expect
+  `{"cmd":"wifi.provision","state":"ok"}`.
+- Also relay to Midad as UX context: the SSID field stays manual-entry by
+  necessity — iOS doesn't allow apps to scan for nearby Wi-Fi networks
+  (pre-filling the phone's *current* SSID via NEHotspotNetwork is the
+  realistic improvement), and the reader can't scan Wi-Fi while a BLE
+  session is up (one radio). Also, the reader intentionally does not
+  appear in iOS Settings > Bluetooth > My Devices — the session is
+  app-managed and transient, like most BLE accessories.
