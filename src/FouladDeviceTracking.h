@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ArduinoJson.h>
+
 #include <cstdint>
 #include <string>
 
@@ -20,6 +22,14 @@ namespace FouladDeviceTracking {
 // optional manufacturing eFuse serial some units lack), and stable across
 // reboots/firmware updates for the same physical unit.
 std::string getSerialNumber();
+
+// Applies a settings-push payload through the exact same code path
+// registerDevice()'s server response already uses (see FouladDeviceTracking.cpp)
+// -- exposed here so BleCommandDispatcher.cpp's settings.push command can reuse it
+// rather than duplicating the key/type mapping. Silently skips unknown/out-of-range
+// keys (same tolerance as the server-push path); persists only if something
+// actually changed.
+void applySettingsFromServer(JsonObjectConst settings);
 
 // True when a station connection is up. Anything that may reach HttpDownloader must
 // check this first: driving esp_wifi with no station asserts inside IDF.

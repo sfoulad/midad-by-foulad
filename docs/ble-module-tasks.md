@@ -1362,8 +1362,13 @@ no credential to check against yet on an unclaimed device). Once a device
   new crypto is needed, just a comparison. A phone writes the same
   `{"username": "...", "token": "..."}` shape to Auth; the dispatcher
   checks it matches what's stored before running any command handler
-  except `wifi.provision`/`device.info`/`account.claim`, which keep their
-  existing unclaimed-device / possession-based rules unchanged.
+  except `wifi.provision`/`device.info`/`account.claim`/`device.challenge`, which
+  keep their existing unclaimed-device / possession-based rules unchanged
+  (this list was missing `device.challenge` in an earlier draft of this
+  section -- corrected once building it live surfaced the gap: gating it
+  behind Auth would make it unreachable on the unclaimed device it's
+  actually for, since Auth can only ever verify against a credential a
+  claimed device already has).
 - **foulad-ebooks**: a device's `DeviceToken` is currently only ever
   *minted* (QR approval, or the new `claim-by-serial`), never *fetched* by
   a second phone on the same account. New endpoint needed:
@@ -1730,3 +1735,50 @@ reliable way to compute the same value, not a new one.
 unchanged: it's the device's real server-side identity for already-
 registered units, and only ever runs today from contexts where WiFi is
 genuinely connected, so it was never actually broken outside BLE.
+
+## Sixth session (2026-08-10): command authentication + `settings.push` built
+
+Closed the "Prerequisite: command authentication" gap and built the first
+command that needs it, per the doc's own framing ("Settings push — small,
+low-risk, proves the peripheral/GATT plumbing and the account-token check
+end to end").
+
+- **Auth verification**: `BleCommandDispatcher::checkAuth()` compares a
+  phone-written `{"username","token"}` on the Auth characteristic against
+  `OPDS_STORE`'s Foulad eBooks entry (the same `DeviceToken` the device
+  already sends as HTTP Basic Auth). `dispatch()` gates every command
+  except the four unclaimed-device ones (see the exemption-list fix
+  above) behind the result. Session-scoped, not persisted:
+  `BleCommandDispatcher::pump()` clears it on every tick the connection
+  isn't `Connected`, so a phone must write Auth again on every new
+  connection.
+- **`settings.push`**: reuses `FouladDeviceTracking::applySettingsFromServer()`
+  verbatim -- the exact function the existing server-driven settings push
+  already calls, moved out of `FouladDeviceTracking.cpp`'s anonymous
+  namespace and declared in the header so `BleCommandDispatcher.cpp` can
+  call it too, rather than duplicating ~180 lines of key/type mapping.
+  Payload `{"settings":{...}}`; replies `"invalid_payload"` if `settings`
+  isn't an object, `"ok"` otherwise (matching the underlying function's
+  own tolerant "unknown/out-of-range keys are silently skipped" behavior
+  -- no attempt made to synthesize a `"invalid_setting"` reason the
+  underlying function has no way to report).
+
+### Test-tooling note: Auth is `WRITE_ENC`, which macOS's Python BLE client can't drive headlessly
+
+Verifying this live hit a real gap in this session's usual Mac-client
+testing approach, not a firmware bug: writing to Auth requires an
+encrypted link, and the real foulad-one iPhone app already proven to pair
+transparently (see "Phone-validated" above) has no headless equivalent on
+macOS -- `bleak`'s CoreBluetooth backend raises `"Pairing is not available
+in Core Bluetooth"` the moment `client.pair()` is called, and a direct
+`write_gatt_char()` to Auth fails with `"Encryption is insufficient."`
+before ever reaching the device. Added a temporary serial command,
+`CMD:BLE_TEST_AUTH:<json>`, that calls `BlePeripheralManager::onAuthWritten()`
+directly -- the exact downstream entry point a real encrypted write
+reaches, just skipping the transport layer this Mac test setup can't
+drive. Verified live: unauthorized before any Auth write, unauthorized
+with a wrong credential (`"auth write: 58 bytes -> rejected"` in the
+device log), authorized with the matching one, and unauthorized again
+after a fresh reconnect (confirming the per-connection reset). Real
+end-to-end Auth-over-actual-encryption is already proven via the iPhone
+app; this just verifies the verification logic itself.

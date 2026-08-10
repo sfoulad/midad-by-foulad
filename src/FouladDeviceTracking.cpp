@@ -167,6 +167,85 @@ void addSettingsReport(JsonObject settings) {
   settings["koMatchMethod"] = static_cast<uint8_t>(KOREADER_STORE.getMatchMethod());
 }
 
+// Single attempt, no 404 handling -- reportReadingStats() (below) is the only
+// caller and owns the retry-after-register decision.
+bool postReadingStatsOnce(const std::string& username, const std::string& password, const std::string& fouladBookId,
+                          const int progressPercent, const std::string& lastPosition, const uint32_t secondsRead) {
+  JsonDocument doc;
+  doc["serial_number"] = getSerialNumber();
+  doc["book_id"] = atoi(fouladBookId.c_str());
+  doc["progress_percent"] = progressPercent;
+  if (!lastPosition.empty()) doc["last_position"] = lastPosition;
+  doc["seconds_read"] = secondsRead;
+  std::string body;
+  serializeJson(doc, body);
+
+  std::string response;
+  const bool ok =
+      HttpDownloader::postJson(readingStatsEndpoint(), body, username, password, response) == HttpDownloader::OK;
+  diagLog("reading-stats book=" + fouladBookId + " progress=" + std::to_string(progressPercent) +
+          " seconds=" + std::to_string(secondsRead) + " -> " +
+          (ok ? "ok" : "FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail)));
+  return ok;
+}
+
+// Single attempt, no 404 handling -- reportDeviceStats() owns the
+// retry-after-register decision, same convention as postReadingStatsOnce().
+// includeReading false sends `device` telemetry alone (unchanged since last
+// send, or heap too tight for the larger arrays right now).
+bool postDeviceStatsOnce(const std::string& username, const std::string& password, const bool includeReading) {
+  JsonDocument doc;
+  doc["serial_number"] = getSerialNumber();
+
+  JsonObject device = doc["device"].to<JsonObject>();
+  device["battery_percent"] = powerManager.getBatteryPercentage();
+  device["wifi_rssi"] = WiFi.RSSI();
+  device["free_heap_bytes"] = ESP.getFreeHeap();
+  device["uptime_seconds"] = millis() / 1000;
+
+  if (includeReading) {
+    JsonObject reading = doc["reading"].to<JsonObject>();
+    reading["current_streak_days"] = READING_STATS.getCurrentStreakDays();
+    reading["max_streak_days"] = READING_STATS.getMaxStreakDays();
+    reading["today_reading_seconds"] = static_cast<uint32_t>(READING_STATS.getTodayReadingMs() / 1000);
+    reading["total_reading_seconds"] = static_cast<uint32_t>(READING_STATS.getTotalReadingMs() / 1000);
+    reading["books_started"] = READING_STATS.getBooksStartedCount();
+    reading["books_finished"] = READING_STATS.getBooksFinishedCount();
+
+    // book.title empty fallback matches StatsActivity's own bookTitle().
+    JsonArray books = reading["books"].to<JsonArray>();
+    for (const auto& book : READING_STATS.getBooks()) {
+      JsonObject b = books.add<JsonObject>();
+      b["title"] = book.title.empty() ? book.path : book.title;
+      b["author"] = book.author;
+      b["total_reading_seconds"] = static_cast<uint32_t>(book.totalReadingMs / 1000);
+      b["sessions"] = book.sessions;
+      b["progress_percent"] = book.lastProgressPercent;
+      b["completed"] = book.completed;
+      b["last_read_at"] = book.lastReadAt;
+      b["estimated_time_left_seconds"] = book.estimatedTimeLeftSeconds;
+    }
+
+    JsonArray days = reading["reading_days"].to<JsonArray>();
+    for (const auto& day : READING_STATS.getReadingDays()) {
+      JsonObject d = days.add<JsonObject>();
+      d["day_ordinal"] = day.dayOrdinal;
+      d["reading_seconds"] = day.readingMs / 1000;
+    }
+  }
+
+  std::string body;
+  serializeJson(doc, body);
+
+  std::string response;
+  const bool ok =
+      HttpDownloader::postJson(deviceStatsEndpoint(), body, username, password, response) == HttpDownloader::OK;
+  diagLog(std::string("device-stats upload (reading=") + (includeReading ? "yes" : "no") + ") -> " +
+          (ok ? "ok" : "FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail)));
+  return ok;
+}
+}  // namespace
+
 // Applies whatever the user configured via the "My Devices" web page (EINK_SETTINGS_
 // SYNC_TASKS.md PART 2), from the same POST /opds/device response. `settings` is {}
 // (no keys) until the user saves that page at least once -- every per-field lookup
@@ -176,6 +255,10 @@ void addSettingsReport(JsonObject settings) {
 // KOReaderCredentialStore::saveToFile() for ko* keys) only if something actually
 // changed -- mirrors this project's usual SPIFFS/SD write-throttling convention,
 // even though this only runs once per Foulad eBooks connection, not per keystroke.
+//
+// Given external linkage (declared in FouladDeviceTracking.h) so BleCommandDispatcher.cpp
+// can reuse the exact same apply path for settings.push -- moved out of the anonymous
+// namespace above for that reason, otherwise unchanged.
 void applySettingsFromServer(JsonObjectConst settings) {
   if (settings.isNull()) return;
 
@@ -360,85 +443,6 @@ void applySettingsFromServer(JsonObjectConst settings) {
     diagLog("applied pushed KOReader settings from server");
   }
 }
-
-// Single attempt, no 404 handling -- reportReadingStats() (below) is the only
-// caller and owns the retry-after-register decision.
-bool postReadingStatsOnce(const std::string& username, const std::string& password, const std::string& fouladBookId,
-                          const int progressPercent, const std::string& lastPosition, const uint32_t secondsRead) {
-  JsonDocument doc;
-  doc["serial_number"] = getSerialNumber();
-  doc["book_id"] = atoi(fouladBookId.c_str());
-  doc["progress_percent"] = progressPercent;
-  if (!lastPosition.empty()) doc["last_position"] = lastPosition;
-  doc["seconds_read"] = secondsRead;
-  std::string body;
-  serializeJson(doc, body);
-
-  std::string response;
-  const bool ok =
-      HttpDownloader::postJson(readingStatsEndpoint(), body, username, password, response) == HttpDownloader::OK;
-  diagLog("reading-stats book=" + fouladBookId + " progress=" + std::to_string(progressPercent) +
-          " seconds=" + std::to_string(secondsRead) + " -> " +
-          (ok ? "ok" : "FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail)));
-  return ok;
-}
-
-// Single attempt, no 404 handling -- reportDeviceStats() owns the
-// retry-after-register decision, same convention as postReadingStatsOnce().
-// includeReading false sends `device` telemetry alone (unchanged since last
-// send, or heap too tight for the larger arrays right now).
-bool postDeviceStatsOnce(const std::string& username, const std::string& password, const bool includeReading) {
-  JsonDocument doc;
-  doc["serial_number"] = getSerialNumber();
-
-  JsonObject device = doc["device"].to<JsonObject>();
-  device["battery_percent"] = powerManager.getBatteryPercentage();
-  device["wifi_rssi"] = WiFi.RSSI();
-  device["free_heap_bytes"] = ESP.getFreeHeap();
-  device["uptime_seconds"] = millis() / 1000;
-
-  if (includeReading) {
-    JsonObject reading = doc["reading"].to<JsonObject>();
-    reading["current_streak_days"] = READING_STATS.getCurrentStreakDays();
-    reading["max_streak_days"] = READING_STATS.getMaxStreakDays();
-    reading["today_reading_seconds"] = static_cast<uint32_t>(READING_STATS.getTodayReadingMs() / 1000);
-    reading["total_reading_seconds"] = static_cast<uint32_t>(READING_STATS.getTotalReadingMs() / 1000);
-    reading["books_started"] = READING_STATS.getBooksStartedCount();
-    reading["books_finished"] = READING_STATS.getBooksFinishedCount();
-
-    // book.title empty fallback matches StatsActivity's own bookTitle().
-    JsonArray books = reading["books"].to<JsonArray>();
-    for (const auto& book : READING_STATS.getBooks()) {
-      JsonObject b = books.add<JsonObject>();
-      b["title"] = book.title.empty() ? book.path : book.title;
-      b["author"] = book.author;
-      b["total_reading_seconds"] = static_cast<uint32_t>(book.totalReadingMs / 1000);
-      b["sessions"] = book.sessions;
-      b["progress_percent"] = book.lastProgressPercent;
-      b["completed"] = book.completed;
-      b["last_read_at"] = book.lastReadAt;
-      b["estimated_time_left_seconds"] = book.estimatedTimeLeftSeconds;
-    }
-
-    JsonArray days = reading["reading_days"].to<JsonArray>();
-    for (const auto& day : READING_STATS.getReadingDays()) {
-      JsonObject d = days.add<JsonObject>();
-      d["day_ordinal"] = day.dayOrdinal;
-      d["reading_seconds"] = day.readingMs / 1000;
-    }
-  }
-
-  std::string body;
-  serializeJson(doc, body);
-
-  std::string response;
-  const bool ok =
-      HttpDownloader::postJson(deviceStatsEndpoint(), body, username, password, response) == HttpDownloader::OK;
-  diagLog(std::string("device-stats upload (reading=") + (includeReading ? "yes" : "no") + ") -> " +
-          (ok ? "ok" : "FAIL status=" + std::to_string(HttpDownloader::getLastFailure().detail)));
-  return ok;
-}
-}  // namespace
 
 std::string getSerialNumber() {
   String mac = WiFi.macAddress();

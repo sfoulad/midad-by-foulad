@@ -12,6 +12,7 @@
 #include <string>
 
 #include "BleWifiScanCache.h"
+#include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "WifiCredentialStore.h"
@@ -21,19 +22,24 @@ namespace BleCommandDispatcher {
 namespace {
 constexpr char TAG[] = "BLECMD";
 
-// "Claimed" mirrors docs/ble-module-tasks.md's Security section: this device already
-// has a saved Foulad eBooks credential (the same std::find_if-on-FOULAD_EBOOKS_URL
-// pattern OpdsBookBrowserActivity/ActivityManager/etc. already use throughout this
-// codebase to locate that one entry among OPDS_STORE's servers). Phase 1 only needs
-// the "unclaimed" side of this check -- wifi.provision is for a brand-new reader with
-// no account yet; a claimed device has nothing in this phase's scope to authorize
-// against, so it's refused outright rather than half-implementing the Auth-credential
-// verification that's actually Phase 2 (settings.push)'s job to build out.
-bool deviceIsClaimed() {
+// Same std::find_if-on-FOULAD_EBOOKS_URL pattern OpdsBookBrowserActivity/
+// ActivityManager/etc. already use throughout this codebase to locate that one
+// entry among OPDS_STORE's servers. Shared by deviceIsClaimed() (below) and
+// checkAuth() (further down): "is there a claimed account" and "does this
+// credential match it" are the same lookup.
+auto findFouladEbooksServer() {
   const auto& servers = OPDS_STORE.getServers();
-  return std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; }) !=
-         servers.end();
+  return std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
 }
+
+// "Claimed" mirrors docs/ble-module-tasks.md's Security section: this device already
+// has a saved Foulad eBooks credential. wifi.provision/device.info/account.claim/
+// device.challenge only need this "unclaimed" side -- they're for a brand-new reader
+// with no account yet; a claimed device has nothing in that phase's scope to
+// authorize against, so they're refused outright. Everything else needs the real
+// Auth-characteristic check (checkAuth() below), added once account.claim existed to
+// authorize against.
+bool deviceIsClaimed() { return findFouladEbooksServer() != OPDS_STORE.getServers().end(); }
 
 // Headless post-provisioning connect-and-verify -- see docs/ble-module-tasks.md's
 // resolved "Wi-Fi connect feedback" question: wifi.provision only SAVES a credential
@@ -129,6 +135,44 @@ size_t formatReply(char* outBuf, size_t outBufLen, const char* cmd, const char* 
     written = snprintf(outBuf, outBufLen, "{\"cmd\":\"%s\",\"state\":\"%s\"}", cmd, state);
   }
   return (written > 0 && static_cast<size_t>(written) < outBufLen) ? static_cast<size_t>(written) : 0;
+}
+
+// Command authentication -- see docs/ble-module-tasks.md's "Prerequisite: command
+// authentication" section. The device already holds its own {username, token}
+// (DeviceToken, via OPDS_STORE's Foulad eBooks entry) in plaintext locally -- that's
+// what it sends as HTTP Basic Auth today, so no new crypto is needed here, just a
+// comparison. A phone writes the same {"username","token"} shape to the Auth
+// characteristic; g_authenticated gates every command except the unclaimed-device
+// ones (wifi.provision/device.info/account.claim/device.challenge), which keep their
+// existing physical-possession rules unchanged.
+//
+// Session-scoped, not persisted: reset to false whenever the connection isn't in the
+// Connected state (pump()'s first line, every tick) so a phone must re-auth on every
+// new connection -- no stale auth carried across a disconnect/reconnect.
+bool g_authenticated = false;
+
+void checkAuth(const uint8_t* authBuf, size_t authLen) {
+  char jsonBuf[BlePeripheralManager::kMaxPayloadLen + 1];
+  memcpy(jsonBuf, authBuf, authLen);
+  jsonBuf[authLen] = '\0';
+
+  JsonDocument doc;
+  if (deserializeJson(doc, jsonBuf) != DeserializationError::Ok) {
+    LOG_ERR(TAG, "auth write: malformed JSON (%u bytes)", static_cast<unsigned>(authLen));
+    return;
+  }
+  const char* username = doc["username"] | "";
+  const char* token = doc["token"] | "";
+
+  const auto& servers = OPDS_STORE.getServers();
+  const auto it = findFouladEbooksServer();
+  // Password field holds the DeviceToken, not a real account password -- see
+  // FouladQrLoginActivity.cpp's Approved case / account.claim's handler, both of
+  // which write it there the same way.
+  const bool matches = it != servers.end() && it->username == username && it->password == token;
+  g_authenticated = matches;
+  // Logged length only, not content -- it's a credential either way.
+  LOG_DBG(TAG, "auth write: %u bytes -> %s", static_cast<unsigned>(authLen), matches ? "verified" : "rejected");
 }
 
 // Hands Wi-Fi credentials to WifiCredentialStore -- see docs/ble-module-tasks.md's
@@ -301,7 +345,26 @@ size_t handleWifiScan(char* outBuf, size_t outBufLen) {
   return serializeJson(doc, outBuf, outBufLen);
 }
 
+// settings.push -- see docs/ble-module-tasks.md's spec. Reuses whatever shape the
+// existing server-driven settings push already uses
+// (FouladDeviceTracking::applySettingsFromServer(), FouladDeviceTracking.cpp's
+// `applyToggle`, SettingsList.h's SettingInfo::Toggle), applied through the exact
+// same code path -- this is a new *source* for values that code already knows how
+// to apply, not new apply logic. Requires the Auth check (dispatch() below).
+size_t handleSettingsPush(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "settings.push";
+  const JsonVariantConst settings = payload["settings"];
+  if (!settings.is<JsonObjectConst>()) {
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+  }
+  FouladDeviceTracking::applySettingsFromServer(settings.as<JsonObjectConst>());
+  return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  // Unclaimed-device commands -- physical-possession security model, no Auth check
+  // (there's no credential to check against yet on a device with no account). See
+  // docs/ble-module-tasks.md's "Prerequisite: command authentication" section.
   if (strcmp(cmd, "wifi.provision") == 0) {
     return handleWifiProvision(payload, outBuf, outBufLen);
   }
@@ -317,6 +380,15 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
   if (strcmp(cmd, "wifi.scan") == 0) {
     return handleWifiScan(outBuf, outBufLen);
   }
+
+  // Everything past this point acts on an already-claimed device and requires the
+  // real Auth-characteristic check (checkAuth(), set from the Auth write in pump()).
+  if (!g_authenticated) {
+    return formatReply(outBuf, outBufLen, cmd, "failed", "unauthorized");
+  }
+  if (strcmp(cmd, "settings.push") == 0) {
+    return handleSettingsPush(payload, outBuf, outBufLen);
+  }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
   // command-protocol section.
@@ -327,14 +399,19 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
 void pump() {
   pumpWifiVerify();
 
+  // Session-scoped auth (see checkAuth()'s comment): cleared on every tick the
+  // connection isn't Connected, so a phone must write Auth again on every new
+  // connection. Checked before takePendingAuth() so a disconnect mid-command-
+  // sequence clears it even on the very next connect's first tick, before any new
+  // Auth write has had a chance to arrive.
+  if (BlePeripheral.state() != BlePeripheralManager::State::Connected) {
+    g_authenticated = false;
+  }
+
   uint8_t authBuf[BlePeripheralManager::kMaxPayloadLen];
   size_t authLen = 0;
   if (BlePeripheral.takePendingAuth(authBuf, sizeof(authBuf), authLen)) {
-    // Stored/verified starting in Phase 2 (settings.push, the doc's own "proves the
-    // account-token check end to end" phase) -- Phase 1's wifi.provision runs entirely
-    // on the unclaimed-device path and doesn't consult this. Logged length only, not
-    // content: it's a credential.
-    LOG_DBG(TAG, "auth write received, %u bytes (not yet verified -- Phase 2 work)", static_cast<unsigned>(authLen));
+    checkAuth(authBuf, authLen);
   }
 
   uint8_t cmdBuf[BlePeripheralManager::kMaxPayloadLen];

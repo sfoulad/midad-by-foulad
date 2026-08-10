@@ -956,6 +956,22 @@ void loop() {
         }
         logSerial.printf("BLE_TEST_UNCLAIM: removed=%d remaining=%u\n", removed,
                           static_cast<unsigned>(OPDS_STORE.getServers().size()));
+      } else if (cmd.startsWith("BLE_TEST_AUTH:")) {
+#ifndef SIMULATOR
+        // Temporary debug tooling: injects a fake Auth-characteristic write directly
+        // via BlePeripheralManager::onAuthWritten(), bypassing the actual encrypted
+        // BLE transport (Auth is WRITE_ENC -- a real phone pairs transparently, but
+        // scripted desktop BLE clients like bleak/CoreBluetooth on macOS can't
+        // initiate pairing headlessly: "Pairing is not available in Core Bluetooth").
+        // Exercises the exact same downstream path (BleCommandDispatcher::pump()'s
+        // takePendingAuth()/checkAuth()) a real encrypted write would, just skipping
+        // the transport layer, which the real-iPhone test earlier in
+        // docs/ble-module-tasks.md already proved works. Usage:
+        // CMD:BLE_TEST_AUTH:{"username":"x","token":"y"}
+        const String json = cmd.substring(strlen("BLE_TEST_AUTH:"));
+        BlePeripheral.onAuthWritten(reinterpret_cast<const uint8_t*>(json.c_str()), json.length());
+        logSerial.printf("BLE_TEST_AUTH: injected %u bytes\n", static_cast<unsigned>(json.length()));
+#endif
       } else if (cmd == "CRASHLOG") {
         // Temporary debug tooling -- dumps /crash_report.txt (HalSystem::checkPanic(),
         // written on the boot after a panic) straight to serial so a raw stack dump can
