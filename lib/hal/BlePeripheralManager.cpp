@@ -4,6 +4,7 @@
 #include <HalPowerManager.h>
 #include <Logging.h>
 #include <NimBLEDevice.h>
+#include <esp_mac.h>
 
 #include <cstring>
 
@@ -36,6 +37,7 @@ NimBLEServer* g_server = nullptr;
 NimBLECharacteristic* g_commandChar = nullptr;
 NimBLECharacteristic* g_statusChar = nullptr;
 
+
 // Writes the current state as a compact JSON status line into `outBuf` (fixed-size,
 // caller-owned -- see docs/ble-module-tasks.md's "no heap churn on the command hot
 // path" principle) and returns its length, or 0 if it didn't fit.
@@ -55,7 +57,24 @@ size_t formatStatusJson(BlePeripheralManager::State state, char* outBuf, size_t 
       stateStr = "paused_low_memory";
       break;
   }
-  const int written = snprintf(outBuf, outBufLen, "{\"state\":\"%s\"}", stateStr);
+  // "ok" / "failed" / JSON null if no post-provisioning verify attempt has run yet --
+  // see docs/ble-module-tasks.md's resolved "Wi-Fi connect feedback" question. A raw
+  // (unquoted) `null` here is deliberate JSON, not a placeholder -- distinguishes
+  // "nothing attempted" from a real outcome for whatever parses this.
+  const char* wifiAttemptStr = "null";
+  switch (BlePeripheral.wifiLastAttemptResult()) {
+    case BlePeripheralManager::WifiAttemptResult::Ok:
+      wifiAttemptStr = "\"ok\"";
+      break;
+    case BlePeripheralManager::WifiAttemptResult::Failed:
+      wifiAttemptStr = "\"failed\"";
+      break;
+    case BlePeripheralManager::WifiAttemptResult::None:
+      wifiAttemptStr = "null";
+      break;
+  }
+  const int written =
+      snprintf(outBuf, outBufLen, "{\"state\":\"%s\",\"wifi_last_attempt\":%s}", stateStr, wifiAttemptStr);
   return (written > 0 && static_cast<size_t>(written) < outBufLen) ? static_cast<size_t>(written) : 0;
 }
 
@@ -107,6 +126,31 @@ BlePeripheralManager& BlePeripheralManager::getInstance() {
   return instance;
 }
 
+// "Midad-<last 6 hex chars of the MAC>" instead of the bare literal "Midad" every
+// device used to advertise identically -- see docs/ble-module-tasks.md's "per-device
+// advertised name" task. Conceptually the same suffix FouladDeviceTracking.cpp's
+// getSerialNumber() derives ("XTE-" + colon-stripped MAC), so the BLE name correlates
+// with the serial a user may already recognize from Devices/QR elsewhere -- can't call
+// getSerialNumber() itself (lib/hal/ never includes src/ headers in this codebase), so
+// this derives the suffix independently.
+//
+// NOT via WiFi.macAddress(): the doc flagged whether that works here (WiFi.mode() ==
+// WIFI_MODE_NULL, Idle -> BLE-peripheral state) as worth confirming rather than
+// assumed, and checking live on device 2026-08-10 found it does NOT -- it returned
+// "00:00:00:00:00:00" every time, because Arduino-ESP32's WiFi.macAddress() reads the
+// MAC through the WiFi driver (esp_wifi_get_mac()), which needs the driver initialized
+// at least once this boot (WiFi.mode() set to something other than NULL) to have a
+// value to return; Idle -> BLE-peripheral state by design never does that. Fixed with
+// esp_efuse_mac_get_default() instead (esp_mac.h) -- reads the factory-programmed MAC
+// straight from eFuse, no driver state needed at all. Already proven in this exact
+// codebase for the same reason: lib/Serialization/ObfuscationUtils.cpp's getHwKey()
+// uses the identical call.
+void BlePeripheralManager::getAdvertisedName(char* outBuf, size_t outBufLen) {
+  uint8_t mac[6] = {};
+  esp_efuse_mac_get_default(mac);
+  snprintf(outBuf, outBufLen, "Midad-%02X%02X%02X", mac[3], mac[4], mac[5]);
+}
+
 bool BlePeripheralManager::begin() {
   // Real-device bug, found live: this used to be `if (state_ != State::Off) return
   // true;`, which treated PausedLowMemory the same as "already active" and returned
@@ -145,7 +189,10 @@ bool BlePeripheralManager::begin() {
     NimBLEDevice::deinit(true);
   }
 
-  if (!NimBLEDevice::init("Midad")) {
+  char advertisedName[24];
+  getAdvertisedName(advertisedName, sizeof(advertisedName));
+
+  if (!NimBLEDevice::init(advertisedName)) {
     LOG_ERR(TAG, "begin(): NimBLEDevice::init() failed");
     return false;
   }
@@ -197,7 +244,7 @@ bool BlePeripheralManager::begin() {
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(kServiceUuid);
-  advertising->setName("Midad");
+  advertising->setName(advertisedName);
   advertising->setMinInterval(kAdvIntervalUnits);
   advertising->setMaxInterval(kAdvIntervalUnits);
   // start() has real failure paths (GATT server start, adv-data set, ble_gap_adv_start

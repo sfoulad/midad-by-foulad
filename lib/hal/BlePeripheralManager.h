@@ -74,6 +74,16 @@ class BlePeripheralManager {
 
   static BlePeripheralManager& getInstance();
 
+  // Writes "Midad-<last 6 hex chars of the MAC>" into outBuf (caller-owned, no heap
+  // churn) -- the actual advertised name begin() uses, exposed publicly so callers
+  // (BluetoothActivity's on-screen display, the BLE_STATUS serial command) can show
+  // the SAME name a phone's scan list would show, letting a user visually confirm
+  // which physical device they're pairing with -- the multi-device-household gap
+  // docs/ble-module-tasks.md's "per-device advertised name" task exists to close.
+  // Safe to call regardless of BLE state (doesn't touch NimBLE at all, just reads
+  // WiFi.macAddress() -- confirmed live to work even with WiFi off).
+  static void getAdvertisedName(char* outBuf, size_t outBufLen);
+
   // Starts advertising if the heap gate and cool-down both allow it. Returns false
   // (and logs why) otherwise -- the caller must not retry in a tight loop; back off and
   // let the caller's own poll cadence try again later. Safe to call when already
@@ -105,6 +115,18 @@ class BlePeripheralManager {
   // BLE should never come back on by itself after a reboot.
   void setUserRequested(bool requested) { userRequested_ = requested; }
   bool isUserRequested() const { return userRequested_; }
+
+  // Outcome of the most recent post-provisioning connect-and-verify attempt (see
+  // docs/ble-module-tasks.md's "Resolved... Wi-Fi connect feedback" -- the phone
+  // can't watch a live connect happen (BLE tears down the moment WiFi comes up, per
+  // the mutual-exclusion design), so it polls Status after reconnecting instead).
+  // None until the first attempt; set by src/BleCommandDispatcher.cpp's headless
+  // verify state machine, not by this class -- lib/hal/ owns none of the actual
+  // WiFi-connect logic, just carries the result for the Status characteristic to
+  // report (see formatStatusJson() in the .cpp).
+  enum class WifiAttemptResult : uint8_t { None, Ok, Failed };
+  void setWifiLastAttemptResult(bool ok) { wifiLastAttempt_ = ok ? WifiAttemptResult::Ok : WifiAttemptResult::Failed; }
+  WifiAttemptResult wifiLastAttemptResult() const { return wifiLastAttempt_; }
 
   // Copies the most recent Auth-characteristic write into `outBuf` (capacity
   // `maxLen`), sets `outLen`, and returns true -- or returns false if nothing is
@@ -139,6 +161,7 @@ class BlePeripheralManager {
 
   volatile State state_ = State::Off;
   bool userRequested_ = false;
+  WifiAttemptResult wifiLastAttempt_ = WifiAttemptResult::None;
   uint32_t lastLowMemoryTeardownMs_ = 0;
   bool coolingDown_ = false;
   // millis() when poll() first saw the zombie signature; 0 = not currently seen.

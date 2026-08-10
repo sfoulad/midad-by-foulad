@@ -3,9 +3,11 @@
 #include <ArduinoJson.h>
 #include <BlePeripheralManager.h>
 #include <Logging.h>
+#include <WiFi.h>
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
@@ -30,6 +32,92 @@ bool deviceIsClaimed() {
          servers.end();
 }
 
+// Headless post-provisioning connect-and-verify -- see docs/ble-module-tasks.md's
+// resolved "Wi-Fi connect feedback" question: wifi.provision only SAVES a credential
+// (handleWifiProvision() below never itself connects, since that would tear BLE down
+// -- the doc's mutual-exclusion design -- before the "ok" reply could reach the
+// phone). This is the deferred half: once the reply has had time to actually transmit,
+// try the just-saved network for real, record ok/failed on BlePeripheralManager (which
+// Status reports as wifi_last_attempt), and hand the radio back to WIFI_MODE_NULL
+// either way so BLE's own bleAllowedNow gate (main.cpp) naturally resumes advertising.
+// Not reusing WifiSelectionActivity::tryAutoConnectCredential() -- that's tightly
+// coupled to its own screen's UI state (paints "Connecting to X" itself, tracks
+// several member fields); this needs to run with no screen at all, from whatever
+// activity happens to be showing when the timer fires.
+enum class WifiVerifyState : uint8_t { Idle, PendingStart, Connecting };
+WifiVerifyState g_verifyState = WifiVerifyState::Idle;
+std::string g_verifySsid;
+std::string g_verifyPassword;
+// Grace delay before WiFi.begin() -- gives the BLE Command-characteristic notify()
+// time to actually reach the phone before the radio switches away from it. NimBLE
+// queues the notify near-instantly, but the real over-the-air delivery + the phone's
+// own processing aren't instant either; 3s is generous against everything measured
+// live this session (round-trips consistently well under 1s).
+constexpr unsigned long kVerifyGraceMs = 3000;
+unsigned long g_verifyReadyAtMs = 0;
+unsigned long g_verifyStartMs = 0;
+// Matches WifiSelectionActivity::AUTO_CONNECTION_TIMEOUT_MS -- this IS an
+// auto-connect attempt, just one with no screen watching it.
+constexpr unsigned long kVerifyTimeoutMs = 7000;
+
+void finishWifiVerify(bool ok) {
+  BlePeripheral.setWifiLastAttemptResult(ok);
+  if (ok) WIFI_STORE.setLastConnectedSsid(g_verifySsid);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_MODE_NULL);
+  g_verifyState = WifiVerifyState::Idle;
+  LOG_DBG(TAG, "wifi verify: ssid=%s -> %s", g_verifySsid.c_str(), ok ? "ok" : "failed");
+}
+
+void pumpWifiVerify() {
+  if (g_verifyState == WifiVerifyState::PendingStart) {
+    if (millis() < g_verifyReadyAtMs) return;
+    // Something else already grabbed the radio in the meantime (e.g. the user
+    // navigated to a screen that needs WiFi on its own before this timer fired) --
+    // abandon rather than fight over it. Leaves wifi_last_attempt as it was (still
+    // "null" if this was the first-ever attempt) since a connection genuinely
+    // wasn't tried this time, not "failed".
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      LOG_DBG(TAG, "wifi verify: abandoned, radio already in use (mode=%d)", static_cast<int>(WiFi.getMode()));
+      g_verifyState = WifiVerifyState::Idle;
+      return;
+    }
+    // Tear BLE down synchronously here rather than trusting main.cpp's bleAllowedNow
+    // gate to notice next tick -- that check runs BEFORE this pump() in loop(), so on
+    // this exact iteration it still sees the old WIFI_MODE_NULL and leaves BLE up.
+    // WiFi.mode(WIFI_STA) below would then grab the single shared 2.4GHz radio while
+    // NimBLE is still mid-advertise/teardown, which hangs the radio driver long enough
+    // to trip the task watchdog -- confirmed live 2026-08-10 (crash_report.txt: empty
+    // panic reason, meaning a WDT reset, not a real abort -- see
+    // HalSystem::isRebootFromPanic()). Same root cause as the sleep-entry BLE backstop
+    // above in main.cpp (CrumBLE issue #44): the gate reacting one loop late isn't
+    // fast enough when something is about to touch the radio in this same tick.
+    if (BlePeripheral.isActive()) {
+      LOG_DBG(TAG, "wifi verify: tearing down BLE before grabbing the radio for WiFi");
+      BlePeripheral.end();
+    }
+    WiFi.mode(WIFI_STA);
+    if (!g_verifyPassword.empty()) {
+      WiFi.begin(g_verifySsid.c_str(), g_verifyPassword.c_str());
+    } else {
+      WiFi.begin(g_verifySsid.c_str());
+    }
+    g_verifyStartMs = millis();
+    g_verifyState = WifiVerifyState::Connecting;
+    return;
+  }
+
+  if (g_verifyState != WifiVerifyState::Connecting) return;
+
+  const wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) {
+    finishWifiVerify(true);
+  } else if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL ||
+             millis() - g_verifyStartMs > kVerifyTimeoutMs) {
+    finishWifiVerify(false);
+  }
+}
+
 size_t formatReply(char* outBuf, size_t outBufLen, const char* cmd, const char* state, const char* reason) {
   int written;
   if (reason) {
@@ -41,14 +129,13 @@ size_t formatReply(char* outBuf, size_t outBufLen, const char* cmd, const char* 
 }
 
 // Hands Wi-Fi credentials to WifiCredentialStore -- see docs/ble-module-tasks.md's
-// "Suggested order" item 1. Deliberately does NOT itself drive a connection attempt:
-// doing so would tear down BLE (the doc's mutual-exclusion design) before a reply could
-// reach the phone, and this codebase's existing auto-connect-saved-networks flow
-// (WifiSelectionActivity::tryAutoConnectCredential/tryNextSavedNetworkFromScan) already
-// picks up newly-saved credentials the next time Wi-Fi is needed. The reply here means
-// "credential saved," not "verified reachable" -- flagged in
-// docs/ble-module-tasks.md as an open question (how the phone learns definitive
-// connect success once BLE is unreachable during the Wi-Fi-active state).
+// "Suggested order" item 1. Deliberately does NOT itself drive a connection attempt
+// (doing so would tear down BLE -- the doc's mutual-exclusion design -- before this
+// reply could reach the phone): it schedules pumpWifiVerify() to try it a few seconds
+// later instead. The reply here means "credential saved, verifying" -- the phone
+// polls Status's wifi_last_attempt (formatStatusJson(), BlePeripheralManager.cpp)
+// after reconnecting to learn whether it actually worked, per the doc's resolved
+// "Wi-Fi connect feedback" question.
 size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   constexpr char kCmd[] = "wifi.provision";
   if (deviceIsClaimed()) {
@@ -68,6 +155,10 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
   }
 
   LOG_DBG(TAG, "wifi.provision: saved credential for ssid=%s", ssid);
+  g_verifySsid = ssid;
+  g_verifyPassword = password;
+  g_verifyReadyAtMs = millis() + kVerifyGraceMs;
+  g_verifyState = WifiVerifyState::PendingStart;
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
@@ -83,6 +174,8 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
 }  // namespace
 
 void pump() {
+  pumpWifiVerify();
+
   uint8_t authBuf[BlePeripheralManager::kMaxPayloadLen];
   size_t authLen = 0;
   if (BlePeripheral.takePendingAuth(authBuf, sizeof(authBuf), authLen)) {

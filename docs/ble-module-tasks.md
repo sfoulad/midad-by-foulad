@@ -1483,3 +1483,111 @@ section, the phone-side implementation must:
 
 This isn't new design, just making an already-learned lesson load-bearing
 for every command this doc specs, not only the one that already broke.
+
+## Fourth live debugging session (2026-08-10): per-device name + `wifi_last_attempt`, plus a real crash
+
+Closed the two remaining Phase 1 doc items from the "New task: per-device
+advertised name" section (line ~718) and the resolved "Wi-Fi connect
+feedback" question (line ~623): the advertised BLE name is now
+per-device, and `wifi.provision` now actually verifies the credential and
+reports the outcome. Finding and fixing the name bug was quick; the
+`wifi_last_attempt` feature crashed the device on first live test, and
+that took a second pass to root-cause.
+
+### Per-device advertised name
+
+`BlePeripheralManager::getAdvertisedName()` builds `"Midad-XXXXXX"` from
+the last 3 MAC bytes. First attempt used `WiFi.macAddress()`, which
+returns `"00:00:00:00:00:00"` here — the WiFi driver is never initialized
+on the Idle→BLE-peripheral boot path, so Arduino's WiFi stack has no MAC
+to report yet. Fixed by reading straight from eFuse via
+`esp_efuse_mac_get_default()` (`esp_mac.h`), matching the existing
+precedent in `lib/Serialization/ObfuscationUtils.cpp`'s `getHwKey()`.
+Verified live: `BLE_STATUS` (a new permanent serial debug command, see
+below) reports `name=Midad-E1D840`, independent of whether BLE is
+actually running — proving the fix doesn't depend on BLE having already
+touched the radio.
+
+### `wifi_last_attempt`
+
+`wifi.provision` (`BleCommandDispatcher.cpp`) only ever saved the
+credential; it never told the phone whether the network actually worked.
+Added a small non-blocking state machine (`WifiVerifyState::
+Idle/PendingStart/Connecting`, `pumpWifiVerify()`) that runs after every
+successful save:
+
+1. Wait `kVerifyGraceMs` (3000ms) so the BLE reply notify has time to
+   actually reach the phone before the radio gets reassigned to WiFi.
+2. Attempt `WiFi.begin()` with the saved credential, polling
+   `WiFi.status()` non-blockingly (`kVerifyTimeoutMs` = 7000ms, matching
+   `WifiSelectionActivity::AUTO_CONNECTION_TIMEOUT_MS`).
+3. Record the outcome via `BlePeripheral.setWifiLastAttemptResult()` and
+   hand the radio back to `WIFI_MODE_NULL`, letting `main.cpp`'s existing
+   `bleAllowedNow` gate resume BLE advertising on its own.
+4. `BlePeripheralManager::formatStatusJson()` now includes
+   `wifi_last_attempt: "ok"|"failed"|null` in the Status characteristic.
+
+### The crash: BLE/WiFi radio coexistence race
+
+First live test (fake SSID, to exercise the failure path) rebooted the
+device mid-attempt. `HalSystem::checkPanic()` writes a full report to
+`/crash_report.txt` on the SD card on the boot after any panic *or*
+watchdog reset (`isRebootFromPanic()` also fires on `ESP_RST_TASK_WDT`
+etc. — see `lib/hal/HalSystem.cpp`). Added a temporary `CMD:CRASHLOG`
+serial command (`src/main.cpp`, reads the file via
+`Storage.readFileToStream()`) to pull it without touching the SD card by
+hand. The report's `Panic reason:` field was **empty** — meaningful,
+since that field is only populated by the `__wrap_panic_abort` hook on a
+real abort/exception; an empty reason with a panic-boot means this was
+specifically a **task watchdog timeout** (something hung >5s), not a
+crash/assert.
+
+Root cause: `pumpWifiVerify()`'s `PendingStart` branch called
+`WiFi.mode(WIFI_STA)` directly once the grace timer elapsed, without
+first tearing BLE down. `main.cpp`'s `loop()` evaluates the
+`bleAllowedNow` gate (line ~834, `... && WiFi.getMode() == WIFI_MODE_NULL
+...`) *before* `BleCommandDispatcher::pump()` runs later in the same
+iteration (line ~842) — so on the exact tick where `pumpWifiVerify()`
+flips WiFi mode, the gate had already seen the *old* `WIFI_MODE_NULL` and
+left BLE running. `WiFi.mode(WIFI_STA)`/`esp_wifi_start()` then grabbed
+the ESP32-C3's single shared 2.4GHz radio out from under a still-active
+NimBLE controller, hanging long enough to trip the task watchdog. The
+gate only would have called `BlePeripheral.end()` on the *next* loop
+iteration — one tick too late.
+
+This is the same failure class already documented and backstopped
+elsewhere in this codebase: `main.cpp`'s sleep-entry code (~line 462)
+force-disconnects BLE before sleep specifically because "leaving a BLE
+remote/central connected into device sleep crashes the device" (CrumBLE
+issue #44), with the comment noting the *exact* same root cause — "the
+main loop's own bleAllowedNow check already stops advertising ...
+so this firing at all means that didn't happen fast enough." Same gate,
+same one-tick-late race, different trigger.
+
+**Fix**: `pumpWifiVerify()` now calls `BlePeripheral.end()` synchronously
+(it's a blocking call — `NimBLEDevice::deinit(true)` under the hood) as
+the last thing before `WiFi.mode(WIFI_STA)`, in the same tick, rather
+than trusting the gate to notice next loop. Verified live afterward with
+the same fake-SSID test that crashed before: BLE tears down cleanly
+(`end(): torn down, free heap=103080`), WiFi genuinely tries and fails
+(`wifi verify: ssid=... -> failed`), BLE resumes advertising on its own
+via the existing gate (`bleAllowedNow 0 -> 1`), and a fresh BLE reconnect
+confirms `{"state":"connected","wifi_last_attempt":"failed"}` — no
+crash, no watchdog reset.
+
+**Lesson for any future code that touches `WiFi.mode()`/`WiFi.begin()`
+from outside a screen's own `onEnter()`**: never assume `main.cpp`'s
+`bleAllowedNow` gate will tear BLE down in time. If your code is about to
+grab the radio in the same tick it decided to, explicitly call
+`BlePeripheral.end()` (checking `BlePeripheral.isActive()` first) right
+before you do.
+
+### New permanent/temporary serial debug commands (`src/main.cpp`)
+
+- `CMD:BLE_STATUS` — now also reports the advertised name
+  (`getAdvertisedName()`), useful for confirming the MAC-read fix without
+  BLE actually running.
+- `CMD:CRASHLOG` — **temporary**, not listed alongside the permanent
+  `BLE_*`/`RESTART` tooling above. Dumps `/crash_report.txt` to serial.
+  Fine to remove once this crash class stops recurring, but cheap enough
+  to leave in for the next one.

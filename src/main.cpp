@@ -920,13 +920,26 @@ void loop() {
 #endif
       } else if (cmd == "BLE_STATUS") {
 #ifndef SIMULATOR
+        char advName[24];
+        BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
         logSerial.printf(
-            "BLE_STATUS: activity=%s userRequested=%d wifiMode=%d isReader=%d freeHeap=%u gate=%u bleState=%d\n",
+            "BLE_STATUS: activity=%s userRequested=%d wifiMode=%d isReader=%d freeHeap=%u gate=%u bleState=%d "
+            "name=%s\n",
             activityManager.currentActivityDebugName(), BlePeripheral.isUserRequested(),
             static_cast<int>(WiFi.getMode()), activityManager.isReaderActivity(),
             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
-            static_cast<int>(BlePeripheral.state()));
+            static_cast<int>(BlePeripheral.state()), advName);
 #endif
+      } else if (cmd == "CRASHLOG") {
+        // Temporary debug tooling -- dumps /crash_report.txt (HalSystem::checkPanic(),
+        // written on the boot after a panic) straight to serial so a raw stack dump can
+        // be read without pulling the SD card. Not listed as permanent alongside
+        // BLE_*/RESTART above since nothing else needs it once this crash is diagnosed.
+        logSerial.printf("CRASHLOG_START\n");
+        if (!Storage.readFileToStream("/crash_report.txt", logSerial)) {
+          logSerial.printf("CRASHLOG_READ_FAILED\n");
+        }
+        logSerial.printf("\nCRASHLOG_END\n");
       } else if (cmd == "RESTART") {
         // Permanent debug tooling like the BLE_* commands above: lets a scripted USB
         // test harness reboot the device to exercise boot-path behavior (e.g. the

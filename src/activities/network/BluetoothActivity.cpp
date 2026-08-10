@@ -71,8 +71,19 @@ void BluetoothActivity::render(RenderLock&&) {
   const int iconY = pageHeight / 2 - iconSize - 20;
   renderer.drawIcon(Bluetooth64Icon, iconX, iconY, iconSize);
 
-  const int titleY = iconY + iconSize + 24;
-  renderer.drawCenteredText(UI_12_FONT_ID, titleY, tr(STR_MIDAD_BLE), true, EpdFontFamily::BOLD);
+  const int labelY = iconY + iconSize + 20;
+  renderer.drawCenteredText(SMALL_FONT_ID, labelY, tr(STR_MIDAD_BLE), true);
+
+  // The actual advertised name, not just the static "Midad BLE" label above -- this is
+  // what a phone's scan list shows too, so displaying it here is the BLE-sourced
+  // equivalent of the QR flow's serial-number confirmation (see
+  // docs/ble-module-tasks.md's "per-device advertised name" task): with more than one
+  // reader nearby, the user can cross-check this screen against what they tap in
+  // foulad-one before trusting it with a Wi-Fi password.
+  char advName[24];
+  BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
+  const int titleY = labelY + renderer.getLineHeight(SMALL_FONT_ID) + 4;
+  renderer.drawCenteredText(UI_12_FONT_ID, titleY, advName, true, EpdFontFamily::BOLD);
 
   const bool connected = BlePeripheral.state() == BlePeripheralManager::State::Connected;
   const char* statusText = connected ? tr(STR_CONNECTED) : tr(STR_BLUETOOTH_WAITING);
