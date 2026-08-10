@@ -961,3 +961,101 @@ None of this is measured against real hardware yet -- these are candidates
 to test incrementally (one flag, one measurement, repeat) against the
 same live serial rig the two findings above already used, not a batch of
 changes to land at once.
+
+## Third live debugging session (2026-08-10): end-to-end WORKING — full root-cause chain
+
+Same USB rig, plus a new capability: **the Mac itself acted as the phone**
+(python + `bleak` over CoreBluetooth), so the entire client side ran
+scripted with zero phone involvement. Outcome first: **the complete Phase 1
+flow now works end-to-end on real hardware** — scan finds "Midad" with the
+correct service UUID, connect succeeds, Status characteristic reads
+`{"state":"connected"}`, a `wifi.provision` command written to the Command
+characteristic gets a real dispatcher-built JSON reply notified back, and
+disconnect returns the device to advertising (`advertiseOnDisconnect`
+confirmed working). Verified against both a mid-session `begin()` and a
+normal boot-time session.
+
+It took **four stacked root causes** to get there, each masking the next.
+In the order found:
+
+1. **One heap number doing two jobs** (fixed earlier this session, above):
+   `poll()` now judges a running session against `kRunningFloorBytes`
+   (8 KB), not the 70 KB pre-flight gate. Without this, every successful
+   start tore itself down within 10 ms.
+
+2. **10 MHz idle clock kills BLE RF while the controller keeps claiming
+   it's advertising.** `HalPowerManager::LOW_POWER_FREQ` is 10 MHz;
+   Espressif requires ≥80 MHz for RF. After 3 s of no buttons the main
+   loop dropped the CPU to 10 MHz and the radio went silent — but
+   `ble_gap_adv_active()` still returned true, so nothing device-side
+   looked wrong. This is why the device was visible to a phone only while
+   someone was actively pressing buttons, and invisible to every scan run
+   while it sat idle. Fix: `main.cpp`'s idle branch never engages
+   power-saving while `BlePeripheral.isActive()`. (Upstream
+   `crosspoint-reader-ble` has the same 10 MHz constant but is
+   central-role — scanning/connected during active reading — so they
+   never had an idle advertising session to lose.)
+
+3. **NimBLE 2.x does not put the device name in the advertisement by
+   itself.** `NimBLEDevice::init("Midad")` only sets the GATT device-name
+   characteristic. Until `advertising->setName("Midad")` was added, the
+   advertisement carried no name — early phone sightings showed an
+   anonymous device. Also added `NimBLEDevice::setPower(ESP_PWR_LVL_P9)`
+   (upstream parity; not proven load-bearing on its own but kept).
+
+4. **The zombie guard added to catch #2 then killed real connections.**
+   A central's CONNECT_IND stops advertising instantly, milliseconds
+   before the host task delivers the connect event that moves `state_` to
+   Connected. The first guard saw "Advertising + radio idle" in that
+   window and tore the stack down mid-handshake (NimBLE:
+   `ble_hs_stop_terminate_timeout_cb, 1 connection(s) still up`). Fix:
+   zombie requires **no live connections AND 3 s persistence**
+   (`kZombiePersistMs`) before teardown.
+
+Supporting changes in the same pass:
+- **`ActivityManager` tears BLE down before every activity `onEnter()`**
+  (guarded `#ifndef SIMULATOR`) so a heavy screen (Home's cover art)
+  never allocates against a heap NimBLE has already claimed; `main.cpp`'s
+  existing lifecycle restarts BLE on the new screen if its heap clears
+  the gate. Measured consequence, by design: on Home with BLE resident,
+  one 42 KB cover buffer fails gracefully (`[HOME] OOM: cover buffer`,
+  logged and skipped) — same graceful-degradation stance upstream takes
+  in its reader (`EpubReaderActivity.cpp`'s AA-fallback comment).
+- **`CMD:RESTART` serial command** (permanent, alongside
+  `BLE_ON/OFF/STATUS`): scripted reboot so boot-path behavior is testable
+  without physical access.
+- **`platformio.ini`: the `-DCONFIG_BT_NIMBLE_*` flags were removed** —
+  measured zero effect (post-init 12752 vs 12768–12916 baseline). Root
+  cause confirmed in source: the framework's pre-generated `sdkconfig.h`
+  redefines those macros after any command-line `-D` (the build even
+  warns), and NimBLE-Arduino's `nimconfig.h` includes `sdkconfig.h`
+  before its own `#ifndef` defaults, so framework values win everywhere.
+  The research section above stands, but every candidate routed through
+  `-D` flags on this framework will be clobbered the same way — a
+  different delivery mechanism (framework sdkconfig rebuild) would be
+  needed, which changes that cost/benefit sharply.
+
+**Known issues left open, deliberately:**
+- **Flash-reset boots only (dev bench, not field):** a boot immediately
+  following `esptool`'s RTS reset comes up with the same
+  claims-advertising-but-silent radio signature. A clean `ESP.restart()`
+  or normal power-on boots into a fully visible session. Not chased
+  further — field devices never boot via RTS reset.
+- **`deviceIsClaimed()` returned false on the test device** so
+  `wifi.provision` accepted and saved a test credential
+  (`e2e-test-ssid` — Sameh: forget it in Wi-Fi settings). The device
+  appears genuinely logged out of Foulad eBooks, so this is likely
+  *correct* behavior, but the claimed-refusal path has therefore never
+  been exercised on hardware — test it after logging the device back in.
+- **Home cover-OOM repaint loop:** when a cover buffer fails, Home
+  repaints roughly every 1.6 s indefinitely (e-ink wear + battery).
+  Needs a give-up-after-first-failure latch in HomeActivity.
+- **Wi-Fi stays on after leaving network screens**, which keeps BLE off
+  (`bleAllowedNow` requires `WIFI_MODE_NULL`) until reboot. Pre-existing
+  behavior, now user-visible because BLE advertises its absence.
+- **Gate margin is razor-thin on this device:** post-teardown free heap
+  on Settings/Apps measured 71.1–83 KB against a 71680-byte gate — one
+  refusal was observed at 540 bytes short. If field devices flap here,
+  shave the gate a couple KB.
+- Phone-side (foulad-one) pairing against this now-working device side:
+  still the next real test; the Mac client proved the device end only.

@@ -39,15 +39,31 @@ class BlePeripheralManager {
                       // drop -- see docs/ble-module-tasks.md's PAUSED state design.
   };
 
-  // ~70 KB Idle-state gate from docs/ble-module-tasks.md's Hardware reality section:
-  // NimBLE's ~57 KB resident cost plus a flat safety margin, no EPUB-headroom term --
-  // that term is specific to Phase 4's Reading-state (BLE-central-while-reading)
-  // scenario, not this Idle-state peripheral role. Unmeasured on this codebase's real
-  // feature set yet; see the doc for the reasoning and what would revise it.
+  // ~70 KB Idle-state PRE-FLIGHT gate from docs/ble-module-tasks.md's Hardware reality
+  // section. Measured live 2026-08-10: NimBLE init itself consumes ~65 KB of heap
+  // (77-80 KB free before begin() -> 12.7 KB free after), so this number is what
+  // begin() needs to see BEFORE init for the device to still have a workable floor
+  // left AFTER init. It is deliberately NOT the while-running floor -- using one
+  // number for both jobs was the bug that made every successful start tear itself
+  // down on the very next poll() (see the doc's second live-debug session).
   static constexpr uint32_t kHeapGateBytes = 70 * 1024;
+  // While-RUNNING floor for poll(): once NimBLE is resident its ~65 KB is already
+  // spent, and the question changes from "can we afford to start?" to "is the rest
+  // of the system being starved?". Measured live: a healthy just-started session
+  // sits at ~12.7 KB free, so the floor must be below that or nothing survives.
+  // 8 KB leaves the Idle screens' small allocations (repaints, input, status JSON)
+  // working while still catching a real downward spiral before malloc failures
+  // cascade. Reading state never sees this floor -- the lifecycle in main.cpp tears
+  // BLE down before the reader opens.
+  static constexpr uint32_t kRunningFloorBytes = 8 * 1024;
   // Cool-down after a low-memory teardown, so a caller retrying begin() can't spin the
   // radio on/off (PR #2527's field-crash finding, see the doc).
   static constexpr uint32_t kCooldownMs = 30000;
+  // How long poll()'s zombie check (state Advertising, radio idle, no connection)
+  // must persist before teardown. Must comfortably exceed the controller-accepts-
+  // CONNECT_IND -> host-delivers-connect-event window, or the guard kills real
+  // inbound connections mid-handshake (live-debugged 2026-08-10).
+  static constexpr uint32_t kZombiePersistMs = 3000;
   // JSON payload budget for the Auth/Command/Status characteristics -- see the doc's
   // GATT layout MTU note (185-byte target MTU, minus ATT header and JSON framing
   // overhead). A write larger than this is truncated at the GATT layer (NimBLE's own
@@ -115,6 +131,8 @@ class BlePeripheralManager {
   volatile State state_ = State::Off;
   uint32_t lastLowMemoryTeardownMs_ = 0;
   bool coolingDown_ = false;
+  // millis() when poll() first saw the zombie signature; 0 = not currently seen.
+  unsigned long zombieSinceMs_ = 0;
 
   uint8_t pendingAuth_[kMaxPayloadLen] = {};
   size_t pendingAuthLen_ = 0;

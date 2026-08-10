@@ -150,6 +150,11 @@ bool BlePeripheralManager::begin() {
     return false;
   }
   NimBLEDevice::setMTU(kTargetMtu);
+  // Explicit TX power, same as crosspoint-reader-ble's enable() (+9 dBm). Do not rely
+  // on the default: live-debugged 2026-08-10 -- with no setPower() call the controller
+  // reported advertising-active while two independent scanners at desk range saw
+  // nothing over the air.
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
   g_server = NimBLEDevice::createServer();
   if (!g_server) {
@@ -188,9 +193,21 @@ bool BlePeripheralManager::begin() {
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(kServiceUuid);
+  advertising->setName("Midad");
   advertising->setMinInterval(kAdvIntervalUnits);
   advertising->setMaxInterval(kAdvIntervalUnits);
-  advertising->start();
+  // start() has real failure paths (GATT server start, adv-data set, ble_gap_adv_start
+  // rc) -- ignoring its result is how this class once sat in Advertising state with a
+  // silent radio for a whole session (live-debugged 2026-08-10: phone and a Mac-side
+  // scanner both saw nothing while bleState said 1). Fail begin() honestly instead.
+  if (!advertising->start() || !advertising->isAdvertising()) {
+    LOG_ERR(TAG, "begin(): advertising failed to start (free heap=%u)", static_cast<unsigned>(ESP.getFreeHeap()));
+    NimBLEDevice::deinit(true);
+    g_server = nullptr;
+    g_commandChar = nullptr;
+    g_statusChar = nullptr;
+    return false;
+  }
 
   state_ = State::Advertising;
   publishStatus();
@@ -222,8 +239,44 @@ void BlePeripheralManager::end() {
 void BlePeripheralManager::poll() {
   if (state_ != State::Advertising && state_ != State::Connected) return;
 
-  if (ESP.getFreeHeap() < kHeapGateBytes) {
-    LOG_ERR(TAG, "poll(): heap dropped below gate while running (free=%u), tearing down",
+  // Zombie guard: state says Advertising but the controller isn't actually
+  // transmitting (seen live 2026-08-10 -- phone + Mac scanners both blind while
+  // bleState claimed Advertising). Tear down so the caller's normal begin() cadence
+  // brings it back for real; no cool-down, this isn't memory pressure.
+  //
+  // MUST be lazy about it: adv-inactive is also the perfectly normal signature of a
+  // central mid-connect (the controller stops advertising the instant it accepts
+  // CONNECT_IND, milliseconds before the host delivers the connect event that moves
+  // state_ to Connected). First version of this guard had no tolerance and killed a
+  // real inbound connection mid-handshake, live-debugged 2026-08-10 (NimBLE:
+  // "ble_hs_stop_terminate_timeout_cb, 1 connection(s) still up"). So: never a
+  // zombie if a connection exists, and the radio-idle condition must persist
+  // kZombiePersistMs before teardown.
+  if (state_ == State::Advertising) {
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    const bool radioIdle = advertising && !advertising->isAdvertising();
+    const bool hasConnection = g_server && g_server->getConnectedCount() > 0;
+    if (radioIdle && !hasConnection) {
+      if (zombieSinceMs_ == 0) {
+        zombieSinceMs_ = millis();
+      } else if (millis() - zombieSinceMs_ >= kZombiePersistMs) {
+        LOG_ERR(TAG, "poll(): zombie state -- Advertising but radio idle for %lus, tearing down for retry",
+                static_cast<unsigned long>(kZombiePersistMs / 1000));
+        zombieSinceMs_ = 0;
+        end();
+        return;
+      }
+    } else {
+      zombieSinceMs_ = 0;
+    }
+  }
+
+  // kRunningFloorBytes, NOT kHeapGateBytes: init already spent its ~65 KB, so
+  // judging a running session against the pre-flight number tears down every
+  // successful start on the next poll -- the exact live-debugged failure in
+  // docs/ble-module-tasks.md's second session.
+  if (ESP.getFreeHeap() < kRunningFloorBytes) {
+    LOG_ERR(TAG, "poll(): heap dropped below running floor (free=%u), tearing down",
             static_cast<unsigned>(ESP.getFreeHeap()));
     end();
     state_ = State::PausedLowMemory;

@@ -922,6 +922,15 @@ void loop() {
             activityManager.isReaderActivity(), static_cast<unsigned>(ESP.getFreeHeap()),
             static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes), static_cast<int>(BlePeripheral.state()));
 #endif
+      } else if (cmd == "RESTART") {
+        // Permanent debug tooling like the BLE_* commands above: lets a scripted USB
+        // test harness reboot the device to exercise boot-path behavior (e.g. the
+        // boot-time BLE session) without physical access. ESP.restart() is normally
+        // reserved for recovery paths (see CLAUDE.md), but a serial debug command is
+        // an explicit operator request, same as the power button.
+        logSerial.printf("RESTART: rebooting now\n");
+        logSerial.flush();
+        ESP.restart();
       }
     }
   }
@@ -1060,8 +1069,20 @@ void loop() {
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
     if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
-      // If we've been inactive for a while, increase the delay to save power
-      powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
+      // If we've been inactive for a while, increase the delay to save power.
+      // NEVER while BLE is up: LOW_POWER_FREQ is 10 MHz and Espressif requires
+      // >=80 MHz for RF -- at 10 MHz the BLE controller keeps claiming
+      // "advertising" (ble_gap_adv_active() stays true) while physically
+      // transmitting nothing. Live-debugged 2026-08-10: the device was visible
+      // to a phone only while buttons were being pressed (normal frequency) and
+      // vanished from two independent scanners whenever it idled. See
+      // docs/ble-module-tasks.md.
+#ifndef SIMULATOR
+      const bool blePreventsLowPower = BlePeripheral.isActive();
+#else
+      const bool blePreventsLowPower = false;
+#endif
+      powerManager.setPowerSaving(!blePreventsLowPower);
       delay(50);
     } else {
       // Short delay to prevent tight loop while still being responsive
