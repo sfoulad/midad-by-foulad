@@ -1782,3 +1782,31 @@ device log), authorized with the matching one, and unauthorized again
 after a fresh reconnect (confirming the per-connection reset). Real
 end-to-end Auth-over-actual-encryption is already proven via the iPhone
 app; this just verifies the verification logic itself.
+
+## Phone side (foulad-one), full wizard -- built 2026-08-10
+
+Built against the real committed `BleCommandDispatcher.cpp` (read in full,
+not the proposal doc alone) and foulad-ebooks' real `DeviceClaimController.php`.
+`BleProvisionScreen` is now the complete flow: scan → connect → confirm the
+physical device (`device.info`) → pick Wi-Fi from `wifi.scan`'s list or enter
+one manually → send it → claim (`claim/start` → `device.challenge` → verify
+the echo matches → `claim-by-serial` → `account.claim`) → done. 795/795
+tests pass, `flutter analyze` clean.
+
+**One gap found reading the real code, not assumed from the doc**:
+`handleDeviceInfo()`'s reply is `{serial, model, firmware_version}` only --
+no `wifi_connected`/`claimed`, which this doc's account-claim proposal
+(and the wizard's skip-a-step design) called for. Not blocking anything:
+the phone codes both fields as nullable and only skips a step when the
+device actually says so (`DeviceInfo.wifiConnected == true`, etc.) --
+today that's always null, so every step shows, same as if the fields
+never existed. If either gets added later, the wizard picks it up with
+zero phone-side changes. Worth adding when convenient, not urgent --
+raised here so it doesn't get lost, not as a blocker.
+
+**Also verified, not just assumed**: `POST /api/app/devices/claim/start`'s
+response is a bare `{"challenge": "..."}`, not wrapped in `{"ok": true, ...}`
+like `claim-by-serial`/`credential` -- read directly from
+`DeviceClaimController::startChallenge()` before coding against it, since
+the two shapes differ and guessing wrong would only have surfaced at
+runtime.
