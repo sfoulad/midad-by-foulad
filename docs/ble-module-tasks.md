@@ -1300,3 +1300,147 @@ advertises and the phone found "Midad," teardown on Back is clean, and a
 second open/close cycle behaved identically. The one hiccup during testing
 was a scan-timing miss on the human side (closing the page before a Mac-side
 verification scan could run) — not a device or app bug.
+
+## Full command-surface spec for the remaining use cases (2026-08-10)
+
+Requested: finish designing every use case from the original list, not
+just Phase 1 and the account claim. This covers the rest of "Suggested
+order" above (settings push, book-fetch, firmware update) plus the two
+relay cases noted separately (`book.transfer_direct`, `sync.push`), and
+folds in one thing none of them can work without yet: **command
+authentication is still unbuilt.** Everything below assumes it exists.
+
+**One framing change from the redesign directly above, worth carrying into
+all of these**: since BLE is now a dedicated `BluetoothActivity` entered by
+holding Confirm on Home, every use case below is a "someone is standing at
+the reader, holding it in this mode, doing something on their phone during
+that window" flow — not ambient background reachability. That's a
+narrower promise than "push settings to a nearby reader instantly" implied
+at the very start of this doc, but it's the right tradeoff (see the
+redesign section above for why background BLE didn't work), and it doesn't
+change any of the protocol designs below, just when a person would
+realistically use them.
+
+### Prerequisite: command authentication (nothing below works without this)
+
+Still exactly the gap this doc flagged before Phase 1 even started ("that
+server-side work isn't scoped or scheduled yet") and the account-claim
+proposal deliberately didn't solve (`device.info`/`account.claim` use
+physical-possession as their security model instead, since the device has
+no credential to check against yet on an unclaimed device). Once a device
+*is* claimed, everything past that point needs a real check.
+
+- **foulad-eink**: the Auth characteristic write becomes meaningful. The
+  device already holds its own `{username, token}` (`DeviceToken`) in
+  plaintext locally — that's what it sends as HTTP Basic Auth today, so no
+  new crypto is needed, just a comparison. A phone writes the same
+  `{"username": "...", "token": "..."}` shape to Auth; the dispatcher
+  checks it matches what's stored before running any command handler
+  except `wifi.provision`/`device.info`/`account.claim`, which keep their
+  existing unclaimed-device / possession-based rules unchanged.
+- **foulad-ebooks**: a device's `DeviceToken` is currently only ever
+  *minted* (QR approval, or the new `claim-by-serial`), never *fetched* by
+  a second phone on the same account. New endpoint needed:
+  `GET /api/app/devices/{id}/credential` (authenticated, must own the
+  device) returning `{username, token}`, so any phone on the account —
+  not just whichever one originally claimed it — can authenticate BLE
+  commands. Not a new trust boundary: an account-holder able to hit this
+  can already remove/rename the device via the existing `/api/app/devices`
+  surface, so this doesn't expose anything account access didn't already
+  imply.
+- **foulad-one**: after connecting, before any command other than
+  `wifi.provision`/`device.info`/`account.claim`, fetch the credential
+  (from wherever `account.claim` last stored it locally, or via the new
+  endpoint above if this phone didn't do the claiming itself) and write it
+  to Auth. `sendCommand()`'s existing shape doesn't change — this is
+  purely about what happens before the first "real" command goes out.
+
+### `settings.push`
+
+Payload: `{"settings": {"<key>": <value>, ...}}` — reuses whatever shape
+the *existing* server-driven settings push already uses
+(`FouladDeviceTracking.cpp`'s `applyToggle`, `SettingsList.h`'s
+`SettingInfo::Toggle`), applied through the same code path, so this is a
+new *source* for values that code already knows how to apply, not new
+apply logic. Requires the Auth check above. Reply: `{"cmd":"settings.push",
+"state":"ok"}`, or `"failed"` with `reason: "unauthorized"` (Auth didn't
+match) or `"invalid_setting"` (unknown key/value — same validation the
+server-push path already does, just surfaced back over BLE instead of
+logged).
+
+### `book.fetch`
+
+Payload: `{"book_id": "..."}` (whatever ID the OPDS catalog already uses).
+Same pattern as `wifi.provision`: BLE delivers *intent*, not bytes — the
+device queues the book and its existing WiFi/OPDS-sync logic fetches it
+next time it's online, same as if the user had triggered it from the
+catalog directly. Reply: `{"cmd":"book.fetch","state":"ok"}` means
+"queued," not "downloaded" — actual completion isn't visible over this
+now-closed BLE session, and isn't specced to become visible synchronously,
+since Wi-Fi and BLE can't run at once here. Follow-up is a phone-side UI
+question (e.g. a "queued" badge next to the device in Devices, similar to
+the existing `firmwareOutdated`/`UpdateBadge` pattern), not a protocol one
+— not designing that UI now, just flagging it's the natural place for it.
+
+### `book.transfer_direct` — designed, recommend deferring
+
+The actual-bytes-over-BLE fallback for repeated Wi-Fi failure, as
+originally scoped. Chunked transfer needed since a book won't fit in one
+160-byte payload: `book.transfer_direct.start` (total size + checksum),
+repeated `.chunk` writes up to the MTU, `.end` to finalize and verify.
+Straightforward to spec, but flagging honestly rather than overbuilding it:
+at MTU 185 without connection-interval/2M-PHY tuning, realistic BLE
+throughput is on the order of a few KB/s, so this is only viable for
+genuinely small, plain-text books — not the general file-transfer
+replacement its name might suggest. Recommend not building this until
+there's a real case for it (someone actually hitting repeated Wi-Fi
+failure with a small book to move) rather than speculatively — the
+complexity (new chunking sub-protocol, partial-transfer resume/retry
+handling) is real and `book.fetch` covers the common case for free once
+Wi-Fi works at all.
+
+### `firmware.update`
+
+Payload: `{}`, or `{"channel": "stable"|"rc"}` to override the device's
+existing OTA channel setting for just this check. Triggers the *existing*
+`OtaUpdater::checkForUpdate()` path — the same one the on-device "Check for
+Update" menu item already calls — so BLE is only ever the trigger, never a
+new update mechanism. Reply: `{"cmd":"firmware.update","state":"ok"}`
+acknowledges the trigger was accepted, not that an update finished — OTA
+needs Wi-Fi and takes minutes, incompatible with keeping BLE up, so
+(same as `book.fetch`) the device drops BLE to actually do the work.
+Completion is visible the normal way, once it checks back in: the existing
+firmware-version field in `/api/app/devices` and the `UpdateBadge`/
+`firmwareOutdated` UI already built for that.
+
+### `sync.pull` (relay direction, device → phone → server)
+
+The `sync.push` name from earlier in this doc undersold the actual shape:
+a BLE peripheral can only reply to a write, not push unsolicited data, so
+this has to be phone-initiated like everything else here, not
+device-initiated. Phone sends `sync.pull` (empty payload); device replies
+with whatever reading-position/stats deltas it has queued
+(`{"cmd":"sync.pull","state":"ok","entries":[...]}`, possibly needing more
+than one round-trip if there's a backlog, given the payload cap). Phone
+relays each entry to the server through its own already-authenticated
+connection, then sends `sync.ack` naming which entries landed, so the
+device can clear only those. This is the concrete first instance of the
+"phone as relay" principle this doc named early on — worth keeping the
+naming (`sync.pull`/`sync.ack`, not `sync.push`) if this gets built, so the
+protocol name matches which side is actually asking.
+
+### Remote page-turner (Phase 4) — no new design needed here
+
+Already fully specified earlier in this doc (see "What's actually new work
+here," item 4) and doesn't touch the command envelope at all — it's
+`BleKeyboardHost` (already in `freeink-sdk`, MIT-licensed, HID central
+role) getting enabled and wired into the Reading-state lifecycle. Ready to
+build independently of everything above; not re-specifying it here.
+
+### Sequencing note
+
+Command authentication has to land before `settings.push`/`book.fetch`/
+`firmware.update`/`sync.pull` are usable at all — none of them have any
+other security model. The account-claim proposal and this doc's Auth
+design share the same underlying primitive (`DeviceToken`), so building
+them together is likely more efficient than sequentially.
