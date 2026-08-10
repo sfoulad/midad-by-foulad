@@ -114,7 +114,14 @@ void pump() {
   char replyBuf[BlePeripheralManager::kMaxPayloadLen];
   const size_t replyLen = dispatch(cmd, doc["payload"], replyBuf, sizeof(replyBuf));
   if (replyLen > 0) {
-    BlePeripheral.sendCommandReply(reinterpret_cast<const uint8_t*>(replyBuf), replyLen);
+    // Log delivery, not just intent: notify() returns false when no client has
+    // subscribed to the Command characteristic's CCCD -- exactly the phone-side bug
+    // seen live 2026-08-10 (app wrote the command without subscribing first, its
+    // "Something went wrong" was a reply it never arranged to receive). This line is
+    // what distinguishes "device never replied" from "app never listened".
+    const bool delivered = BlePeripheral.sendCommandReply(reinterpret_cast<const uint8_t*>(replyBuf), replyLen);
+    LOG_DBG(TAG, "reply %s: %.*s", delivered ? "notified" : "NOT delivered (no subscriber?)",
+            static_cast<int>(replyLen), replyBuf);
   }
 }
 

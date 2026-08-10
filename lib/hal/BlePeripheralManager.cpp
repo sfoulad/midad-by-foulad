@@ -175,10 +175,14 @@ bool BlePeripheralManager::begin() {
     return false;
   }
 
-  // WRITE_ENC: requires an encrypted link before a write is accepted -- see
-  // docs/ble-module-tasks.md's Security section (LE Secure Connections, not Just
-  // Works, since this exchange needs to resist a passive eavesdropper).
-  NimBLECharacteristic* authChar = service->createCharacteristic(kAuthCharUuid, NIMBLE_PROPERTY::WRITE_ENC);
+  // WRITE | WRITE_ENC: WRITE_ENC alone is only the requires-encryption flag -- without
+  // the WRITE property bit the characteristic declaration tells clients writing is
+  // unsupported at all, and phone BLE stacks refuse before even attempting ("The WRITE
+  // property is not supported by this BLE characteristic", live-debugged 2026-08-10
+  // against the real foulad-one app). Encryption is still enforced: WRITE_ENC gates
+  // the write on an encrypted link per docs/ble-module-tasks.md's Security section.
+  NimBLECharacteristic* authChar =
+      service->createCharacteristic(kAuthCharUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
   authChar->setCallbacks(&g_authCallbacks);
 
   g_commandChar = service->createCharacteristic(kCommandCharUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
