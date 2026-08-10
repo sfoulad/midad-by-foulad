@@ -1202,6 +1202,14 @@ same doc the way Phase 1 was. No firmware or server code should change
 for this without confirming the shape here first, given it touches
 account-claiming security.
 
+**Update (2026-08-10): foulad-eink side built.** `device.info` and
+`account.claim` (plus `device.challenge` and `wifi.scan`, specced in
+foulad-ebooks' `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md`) are implemented and
+verified live over real BLE — see "Fifth session" below for the full
+story, including two real device hangs found and fixed along the way.
+foulad-ebooks' `claim-by-serial` endpoint and foulad-one's phone-side flow
+are still the open half.
+
 **Update (2026-08-10): moved and reviewed on the foulad-ebooks side.**
 The full proposal (plus a real security review that found and fixed a
 physical-possession gap in the original `claim-by-serial` design, and
@@ -1591,3 +1599,123 @@ before you do.
   `BLE_*`/`RESTART` tooling above. Dumps `/crash_report.txt` to serial.
   Fine to remove once this crash class stops recurring, but cheap enough
   to leave in for the next one.
+
+## Fifth session (2026-08-10): account-claim commands built, two more real bugs found and fixed
+
+Built the four commands the account-claim flow needs beyond `wifi.provision`
+(contract pinned in foulad-ebooks' `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md`,
+relayed into this doc after a naming mismatch -- `device.challenge` and
+`wifi.scan` were specced there, not here, and hadn't been cross-posted):
+
+- **`device.info`** — replies `{"cmd":"device.info","state":"ok","serial":
+  "XTE-<mac>","model":"Xteink X3"|"Xteink X4","firmware_version":"..."}`.
+- **`account.claim`** — payload `{"username","token"}`, refuses
+  (`"unauthorized"`) if already claimed (same `deviceIsClaimed()` gate as
+  `wifi.provision`), otherwise saves via the exact sink the QR flow already
+  writes to (`OpdsServer{url=FOULAD_EBOOKS_URL, isDeviceToken=true}` via
+  `OPDS_STORE.addServer()`). Deliberately does **not** restart the device
+  the way the QR flow's `silentRestartToFouladEbooks()` does -- that flow
+  restarts because it's mid-screen-transition into browsing; this is a BLE
+  command mid-session, and a forced reboot here would kill the reply notify
+  and anything else the phone still means to send (`wifi.provision` commonly
+  follows in the same session). The device picks up the credential naturally
+  next time it navigates to Foulad eBooks.
+- **`device.challenge`** — payload `{"nonce"}`, replies
+  `{"...,"echo":"<same nonce, verbatim>"}`. Pure proof-of-possession, no
+  crypto -- the phone forwards the echo to `claim-by-serial`'s challenge
+  check server-side.
+- **`wifi.scan`** — replies `{"...","networks":[{"ssid","rssi"},...]}`.
+  Not a scan-on-request (BLE's already up, single shared radio): a new
+  module, `BleWifiScanCache`, scans and caches the strongest few networks
+  during `BluetoothActivity`'s own startup, before BLE is requested;
+  `wifi.scan` just reads the cached snapshot back. All four share the same
+  unclaimed-device / physical-possession security model as `wifi.provision`
+  (see the doc's "Prerequisite: command authentication" section) --
+  `settings.push` and friends still need the real Auth-characteristic check,
+  not built here.
+
+All four verified live over real BLE (Python `bleak`), including
+`account.claim`'s refuse-on-reclaim path.
+
+### Bug found and fixed: `wifi.scan`'s scan hung the device (twice, two different bugs)
+
+**First hang**: the initial implementation scanned synchronously
+(`WiFi.scanNetworks(false)`) once from `BluetoothActivity::onEnter()`.
+This hung the device solid -- no watchdog reset, no serial response, for
+minutes, confirmed live. Root cause: `WiFiScanClass`'s sync path
+(`WiFiScan.cpp`) waits on an event-group bit with a **60-second internal
+timeout** (`WiFiScanClass::_scanTimeout`), which blocks whichever task
+calls it for however long that takes. Unlike a tight busy-loop this
+doesn't starve other tasks, so nothing forces it to give up -- and
+whatever underlying condition kept the scan-done event from firing meant
+it never did. Every other WiFi-scan use in this codebase
+(`WifiSelectionActivity`) already uses the async form
+(`scanNetworks(true)` + poll `scanComplete()`) for exactly this reason;
+`BleWifiScanCache` should have matched it from the start. Fixed by
+rewriting it to the same async/poll pattern, with an 8-second internal
+give-up so a slow/stuck scan can never block BLE pairing indefinitely.
+
+**Second hang, after that fix**: still hung, intermittently (roughly half
+the time), always at/immediately after `WiFi.mode(WIFI_STA)` -- regardless
+of whether that call ran from `onEnter()`, from `loop()`'s first tick, or
+even standalone from a serial command handler with no activity system
+involved at all (a temporary `CMD:WIFI_MODE_TEST`/`CMD:WIFI_SCAN_TEST`
+pair, since removed, proved the bare calls work in isolation). Diagnosed
+by adding `pcTaskGetName()` logging to `HalPowerManager::Lock` (temporary,
+since removed) and finding the real mechanism: `ActivityManager`'s render
+task holds a `HalPowerManager::Lock` for the whole duration of a render
+(`ActivityManager.cpp`'s `renderTaskLoop()` -- it forces full CPU speed
+before the E-ink refresh, releases after). `BluetoothActivity::onEnter()`
+called `requestUpdate()` (fire-and-forget) and returned; `loop()`'s very
+next tick called `BleWifiScanCache::startScan()` -- which could run on the
+main task **while the render task was still mid-frequency-change on the
+other task**, confirmed live via task-tagged logs showing
+`WiFi.mode(WIFI_STA)` starting inside that exact window. Every run where
+incidental logging overhead happened to add enough delay before the WiFi
+call (letting the render's Lock fully release first) succeeded -- a
+classic timing-dependent bug that stopped reproducing under its own
+diagnostics, which is itself what pointed at the real mechanism rather
+than something WiFi-driver-specific.
+
+**Fix**: `BluetoothActivity::onEnter()` now calls `requestUpdateAndWait()`
+instead of `requestUpdate()` -- the same pattern
+`WifiSelectionActivity::startWifiScan()` already uses for the identical
+reason (block until the screen is actually on-panel before starting a
+slow operation). This guarantees the render task's `Lock` has fully
+released, and thus the CPU frequency change has settled, before `loop()`
+ever gets a chance to touch WiFi. Verified with 28 consecutive live trials
+after the fix (automated RESTART → BLE_SCREEN → check-advertising loop,
+`ble_screen_stress_test.py`) — zero hangs, versus roughly 50% before it.
+If `WiFi.mode()`/`WiFi.begin()` is ever called from a *new* code path
+outside an activity's own `loop()` tick (i.e. not already naturally
+serialized after a completed render), re-check this same hazard.
+
+### Bug found and fixed: `device.info`'s serial reported all-zeros (again)
+
+Confirmed live over real BLE: `device.info` returned
+`"serial":"XTE-000000000000"`. Same root *class* of bug as the advertised-
+BLE-name fix from the fourth session (`WiFi.macAddress()` unreliable), but
+a different trigger: `FouladDeviceTracking::getSerialNumber()` calls
+`WiFi.macAddress()`, which reads the STA network interface's MAC via
+`esp_netif_get_mac()` (`NetworkInterface.cpp`) -- valid only while that
+netif exists. It doesn't just start invalid (the earlier bug); calling
+`WiFi.mode(WIFI_MODE_NULL)` tears the STA netif back down, which is
+exactly what `BleWifiScanCache`'s scan-cleanup does once its scan
+completes, right before BLE starts advertising. So by the time a phone
+can actually reach `device.info` over an active BLE connection, the netif
+is long gone again.
+
+**Fix**: `handleDeviceInfo()` no longer calls
+`FouladDeviceTracking::getSerialNumber()` at all. It computes the same
+`"XTE-<mac>"` value directly from `esp_efuse_mac_get_default()` (same
+eFuse read as `BlePeripheralManager::getAdvertisedName()`), which has no
+netif dependency. This is **not a different device identity** --
+ESP32-C3's per-interface MAC scheme derives STA's MAC from the base eFuse
+MAC at offset 0, so `WiFi.macAddress()` and `esp_efuse_mac_get_default()`
+return the identical bytes whenever WiFi is genuinely online (the
+existing, real registration path's normal case) -- this is a more
+reliable way to compute the same value, not a new one.
+`FouladDeviceTracking::getSerialNumber()` itself was deliberately left
+unchanged: it's the device's real server-side identity for already-
+registered units, and only ever runs today from contexts where WiFi is
+genuinely connected, so it was never actually broken outside BLE.

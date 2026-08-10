@@ -34,6 +34,7 @@
 #include "GymPlanStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
+#include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
@@ -930,6 +931,31 @@ void loop() {
             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
             static_cast<int>(BlePeripheral.state()), advName);
 #endif
+      } else if (cmd == "BLE_SCREEN") {
+        // Permanent debug tooling like the BLE_* commands above: drives the REAL
+        // navigation path into BluetoothActivity (activityManager.goToBluetooth()),
+        // unlike BLE_ON above which only flips userRequested_ directly and skips
+        // onEnter()/loop() entirely -- that matters for testing wifi.scan, since the
+        // scan-and-cache step only runs from BluetoothActivity's own lifecycle, not
+        // from the bleAllowedNow gate. Lets a scripted USB test harness exercise the
+        // whole BLE pairing flow without physical button access.
+        activityManager.goToBluetooth();
+        logSerial.printf("BLE_SCREEN: navigated to Bluetooth activity\n");
+      } else if (cmd == "BLE_TEST_UNCLAIM") {
+        // Permanent debug tooling: undoes whatever a live account.claim BLE test
+        // just saved, so testing that command repeatedly doesn't leave permanent
+        // junk credentials in OPDS_STORE on a real device.
+        const auto& servers = OPDS_STORE.getServers();
+        bool removed = false;
+        for (size_t i = 0; i < servers.size(); i++) {
+          if (servers[i].url == FOULAD_EBOOKS_URL) {
+            OPDS_STORE.removeServer(i);
+            removed = true;
+            break;
+          }
+        }
+        logSerial.printf("BLE_TEST_UNCLAIM: removed=%d remaining=%u\n", removed,
+                          static_cast<unsigned>(OPDS_STORE.getServers().size()));
       } else if (cmd == "CRASHLOG") {
         // Temporary debug tooling -- dumps /crash_report.txt (HalSystem::checkPanic(),
         // written on the boot after a panic) straight to serial so a raw stack dump can

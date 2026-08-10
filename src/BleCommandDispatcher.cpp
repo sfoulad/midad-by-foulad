@@ -2,13 +2,16 @@
 
 #include <ArduinoJson.h>
 #include <BlePeripheralManager.h>
+#include <HalGPIO.h>
 #include <Logging.h>
 #include <WiFi.h>
+#include <esp_mac.h>
 
 #include <algorithm>
 #include <cstring>
 #include <string>
 
+#include "BleWifiScanCache.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "WifiCredentialStore.h"
@@ -162,9 +165,157 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
+// device.info/account.claim/device.challenge -- the BLE account-claim flow from
+// docs/ble-module-tasks.md's "New phase, scoped after real use" section, contract
+// pinned in foulad-ebooks' docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md. Like wifi.provision,
+// these run entirely on the unclaimed-device path: physical possession of the reader
+// (it's sitting there, in BluetoothActivity, advertising) is the security model, not
+// a credential check -- there is nothing to check against yet on a device with no
+// account. Once claimed, everything past this point needs the real Auth-characteristic
+// check this doc's "Prerequisite: command authentication" section specs (not yet
+// built -- deliberately out of scope here).
+
+size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
+  JsonDocument doc;
+  doc["cmd"] = "device.info";
+  doc["state"] = "ok";
+  // Deliberately NOT FouladDeviceTracking::getSerialNumber() -- it derives from
+  // WiFi.macAddress(), which reads the STA netif's MAC via esp_netif_get_mac() and
+  // is only valid while that netif actually exists. It doesn't just start invalid
+  // (the bug the advertised-BLE-name fix hit) -- WiFi.mode(WIFI_MODE_NULL) tears the
+  // STA netif down again, which is exactly what BleWifiScanCache::finalizeScan()
+  // does once its scan completes, right before BLE starts advertising. Confirmed
+  // live 2026-08-10: device.info returned serial "XTE-000000000000" over a real BLE
+  // connection. esp_efuse_mac_get_default() reads the same base MAC directly from
+  // eFuse, with no netif dependency -- and on ESP32-C3 the STA MAC equals the base
+  // eFuse MAC unmodified (offset 0 in Espressif's per-interface MAC scheme), so this
+  // produces the exact same "XTE-<mac>" value FouladDeviceTracking::getSerialNumber()
+  // would when WiFi is genuinely online -- not a different identity, just a reliable
+  // way to compute the same one.
+  {
+    uint8_t mac[6] = {};
+    esp_efuse_mac_get_default(mac);
+    char serial[18];
+    snprintf(serial, sizeof(serial), "XTE-%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    doc["serial"] = serial;
+  }
+  doc["model"] = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
+  doc["firmware_version"] = CROSSPOINT_VERSION;
+
+  // CROSSPOINT_VERSION embeds the branch name + short SHA on dev/RC builds
+  // (scripts/git_branch.py) and can run long enough to blow the 160-byte BLE
+  // payload budget together with serial+model -- measured 158/160 live with a
+  // real branch name this session. Truncate just this field rather than dropping
+  // the whole reply: the phone only needs enough to identify the base version,
+  // not the exact dev tag, in this fallback case.
+  while (measureJson(doc) > outBufLen) {
+    std::string fw = doc["firmware_version"].as<std::string>();
+    if (fw.size() <= 1) break;  // give up rather than loop forever
+    fw.resize(fw.size() - 1);
+    doc["firmware_version"] = fw;
+  }
+
+  return serializeJson(doc, outBuf, outBufLen);
+}
+
+size_t handleAccountClaim(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "account.claim";
+  // Same unclaimed-device gate as wifi.provision -- a device that already has a
+  // Foulad eBooks account must not have it silently overwritten by anyone who
+  // picks it up and holds Confirm.
+  if (deviceIsClaimed()) {
+    LOG_DBG(TAG, "account.claim refused: device already claimed");
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "unauthorized");
+  }
+
+  const char* username = payload["username"] | "";
+  const char* token = payload["token"] | "";
+  if (!username || username[0] == '\0' || !token || token[0] == '\0') {
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+  }
+
+  // Same sink the QR flow writes to (FouladQrLoginActivity.cpp's Approved case) --
+  // every existing OPDS call keeps working unchanged, no new credential type.
+  OpdsServer server;
+  server.name = FOULAD_EBOOKS_NAME;
+  server.url = FOULAD_EBOOKS_URL;
+  server.username = username;
+  server.password = token;
+  server.isDeviceToken = true;
+  if (!OPDS_STORE.addServer(server)) {
+    LOG_ERR(TAG, "account.claim: addServer failed for username=%s", username);
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");
+  }
+
+  // Deliberately no restart here (unlike the QR flow's silentRestartToFouladEbooks()):
+  // that flow restarts because it's mid-screen-transition into browsing the catalog;
+  // this is a BLE command mid-session, and forcing a reboot here would kill the reply
+  // notify and any further commands the phone still means to send (e.g. this is
+  // commonly followed by wifi.provision in the same session). The device picks the
+  // credential up naturally next time it navigates to Foulad eBooks.
+  LOG_INF(TAG, "account.claim: signed in as '%s'", username);
+  return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
+}
+
+size_t handleDeviceChallenge(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "device.challenge";
+  const char* nonce = payload["nonce"] | "";
+  if (!nonce || nonce[0] == '\0') {
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+  }
+  // Pure proof-of-possession -- no crypto, just echo the server-issued nonce back
+  // verbatim so the phone can forward it to claim-by-serial. See foulad-ebooks'
+  // docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md for why this alone is a sufficient check
+  // (the nonce is single-use, 60s TTL, and only reaches this device over an
+  // already-connected BLE session with whoever is physically holding it).
+  JsonDocument doc;
+  doc["cmd"] = kCmd;
+  doc["state"] = "ok";
+  doc["echo"] = nonce;
+  return serializeJson(doc, outBuf, outBufLen);
+}
+
+size_t handleWifiScan(char* outBuf, size_t outBufLen) {
+  JsonDocument doc;
+  doc["cmd"] = "wifi.scan";
+  doc["state"] = "ok";
+  JsonArray networks = doc["networks"].to<JsonArray>();
+
+  const size_t available = BleWifiScanCache::count();
+  const BleWifiScanCache::Network* cached = BleWifiScanCache::networks();
+  for (size_t i = 0; i < available; i++) {
+    JsonObject entry = networks.add<JsonObject>();
+    entry["ssid"] = cached[i].ssid;
+    entry["rssi"] = cached[i].rssi;
+    // Stop as soon as adding one more would exceed the characteristic's payload
+    // budget, rather than guessing a safe network count up front -- SSID length
+    // varies too much for a fixed cap to be both safe and not wasteful. cached[]
+    // is already strongest-first (BleWifiScanCache::scanAndCache()), so this keeps
+    // the strongest networks that fit, dropping only the weakest tail.
+    if (measureJson(doc) > outBufLen) {
+      networks.remove(networks.size() - 1);
+      break;
+    }
+  }
+
+  return serializeJson(doc, outBuf, outBufLen);
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   if (strcmp(cmd, "wifi.provision") == 0) {
     return handleWifiProvision(payload, outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "device.info") == 0) {
+    return handleDeviceInfo(outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "account.claim") == 0) {
+    return handleAccountClaim(payload, outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "device.challenge") == 0) {
+    return handleDeviceChallenge(payload, outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "wifi.scan") == 0) {
+    return handleWifiScan(outBuf, outBufLen);
   }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
