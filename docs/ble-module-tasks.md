@@ -366,7 +366,12 @@ components):
     hand-draw a small glyph the same way `drawBatteryLightningBolt()`
     already hand-draws the charging bolt, rather than adding a new bitmap
     to the icon asset pipeline for one small header glyph.
-3. **Settings toggle** — corrected 2026-08-09, per direction from the
+3. **Settings toggle — SUPERSEDED 2026-08-10, see "Redesign" section near the
+   end of this doc.** The persistent `bleEnabled` setting and this AppsActivity
+   tile were both removed; BLE is requested only while a new dedicated
+   `BluetoothActivity` screen is open. Left below as the historical record of
+   the original design, not current behavior. Original text (corrected
+   2026-08-09, per direction from the
    Midad side: goes under **Apps** (`AppsActivity`, `src/activities/apps/`),
    not general Settings — labeled **"Midad BLE"**, defaults **on**
    (`CrossPointSettings::bleEnabled`, `uint8_t = 1`, matching the existing
@@ -502,8 +507,10 @@ shippable without a real device + phone pass.
 **What shipped**: `lib/hal/BlePeripheralManager.{h,cpp}` (GATT server,
 heap gate, cool-down, Off/Advertising/Connected/PausedLowMemory state),
 `src/BleCommandDispatcher.{h,cpp}` (routes Command writes by `cmd`,
-currently just `wifi.provision`), `CrossPointSettings::bleEnabled` (Apps ->
-Midad BLE toggle, on by default, also a live-toggle `AppsActivity` tile),
+currently just `wifi.provision`), ~~`CrossPointSettings::bleEnabled` (Apps ->
+Midad BLE toggle, on by default, also a live-toggle `AppsActivity` tile)~~
+**removed 2026-08-10 — see the "Redesign" section near the end of this doc;
+BLE is requested by `BluetoothActivity` alone now, no persisted setting**,
 a "BT" status-bar indicator in `BaseTheme::drawHeader()`, and lifecycle
 wiring in `main.cpp` (start/stop gated on `WiFi.getMode() == WIFI_MODE_NULL`
 + not-reading, checked every loop tick rather than hooking every WiFi-
@@ -594,23 +601,24 @@ before now:**
   ever learns definitive connect success (vs. a bad password that fails
   silently later) is a real open question, added below.
 - **The status-bar indicator is plain "BT" text, not a hand-drawn
-  Bluetooth glyph**, despite the "hand-draw it like `drawBatteryLightningBolt()`"
-  note added earlier in this doc. Reason found while actually implementing
-  it: that bolt glyph is a simple triangle, hand-verifiable by eye in the
-  diff; the Bluetooth bind-rune is intricate enough (merged Hagall + Berkanan
-  runes) that getting it subtly wrong produces an unrecognizable zigzag
-  instead of a slightly-off logo, and nothing in this session can render
-  and visually inspect it (no hardware, and the simulator's framebuffer
-  isn't accessible from here). Text is unambiguous and correct by
-  construction; a proper glyph is a fine follow-up once someone can
-  actually look at it on a screen.
+  Bluetooth glyph** — **superseded, later the same day (2026-08-10)**: once
+  real hardware was available this was replaced with an actual Lucide-traced
+  icon (`components/icons/bluetooth.h`), after live-debugging it through
+  three real bugs (wrong theme class, colliding with the battery percentage
+  text, and a 90-degree rotation `GfxRenderer::drawIcon` applies internally)
+  documented in the "Live debugging" sessions below. The reasoning that follows
+  (no hardware available yet to verify a hand-drawn glyph by eye) was correct
+  for the moment it was written, just overtaken by events — kept for the
+  record, not because it's still the reasoning that applies.
 - **`bleEnabled` is registered in `SettingsList.h`'s generic settings
-  table** (`SettingInfo::Toggle`), not just as the special-cased
-  `AppsActivity` tile — same as every other app's enable flag
-  (`gymEnabled`, `tasbihEnabled`, etc.), for the same free persistence and
+  table** — **removed 2026-08-10**, see the "Redesign" section near the end
+  of this doc. Left below as the historical record of the original design:
+  ~~(`SettingInfo::Toggle`), not just as the special-cased `AppsActivity`
+  tile — same as every other app's enable flag (`gymEnabled`,
+  `tasbihEnabled`, etc.), for the same free persistence and
   server-settings-push handling (`FouladDeviceTracking.cpp`'s
   `applyToggle`) those already get. The live-toggle Apps tile is
-  additional UI on top of that, not a replacement for it.
+  additional UI on top of that, not a replacement for it.~~
 
 **Resolved (2026-08-10), from the phone/server conversation, against the
 three questions this implementation pass raised:**
@@ -1195,3 +1203,100 @@ lives at `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md` in foulad-ebooks — kept as
 a standalone file there rather than duplicated here, since it's mainly
 server-side review. This doc stays the summary/pointer; that one has the
 actual back-and-forth.
+
+## Redesign (2026-08-10): dedicated Bluetooth screen replaces the persistent toggle
+
+Same day as the two live-debugging sessions above, after real hardware
+testing (this time with the actual foulad-one app, not just the Mac
+stand-in client) surfaced a problem those sessions didn't: the persistent
+`bleEnabled`-always-on design meant BLE was competing for heap with
+whatever screen the user happened to be on, at a time neither the user nor
+the firmware chose. On Home specifically, that competition made the
+selector visibly slow (root-caused separately, see the "Home selector
+slowness" work below) — full BLE availability and full Home performance
+were fighting over the same ~65-70KB of headroom.
+
+**The fix wasn't to tune a number, it was to stop trying to run BLE in the
+background of an arbitrary screen at all.** WiFi in this firmware never
+faces this problem, and not because it's cheaper — `CrossPointWebServerActivity`
+(the WiFi file-transfer/hotspot screen) does a full **silent reboot**
+(`silentRestart()`) on exit specifically to defragment the heap WiFi's own
+stack leaves behind (`CrossPointWebServerActivity.cpp:93-114`, comment:
+*"plain WiFi.disconnect isn't enough... the whole point is a fresh boot"*).
+WiFi gets a clean, empty ~380KB every time it runs because it's *always* a
+dedicated screen, never asked to coexist with Home's cover cache or
+anything else memory-hungry. BLE's design just hadn't caught up to that
+pattern yet.
+
+**What changed:**
+
+- **New `BluetoothActivity`** (`src/activities/network/BluetoothActivity.{h,cpp}`):
+  a minimal full-page screen — 64x64 Bluetooth icon
+  (`components/icons/bluetooth64.h`, same Lucide trace + pre-rotation as the
+  20x20 header icon), device name, live status text reading
+  `BlePeripheral.state()` ("Waiting for a phone to connect…" / "Connected!"),
+  exit hint. This is now the **only** place BLE is ever requested.
+- **`onEnter()` aggressively frees every reclaimable cache** this simple a
+  page has no use for, before requesting the radio: `READING_STATS.releaseMemory()`
+  and `renderer.getFontCacheManager()->clearCache()` — both proven safe to
+  call cross-activity already (global singletons; `OtaUpdateActivity.cpp`
+  uses the identical pair before its own memory-heavy operation). **Measured
+  live: free heap right before `begin()` hit ~107-108 KB** — far beyond even
+  Settings/Apps' usual ~77-83 KB, the most headroom BLE has had on any
+  screen this whole project. Post-init heap settled around ~43 KB, comfortably
+  clear of both the pre-flight gate and the running floor.
+- **`BlePeripheralManager` gains a `userRequested_` flag**
+  (`setUserRequested()`/`isUserRequested()`, `lib/hal/BlePeripheralManager.h`)
+  instead of reading `CrossPointSettings::bleEnabled`. Not persisted, on
+  purpose: BLE never comes back on by itself after a reboot now. `main.cpp`'s
+  `bleAllowedNow` gate reads this instead of the settings flag; the
+  `CMD:BLE_ON`/`BLE_OFF`/`BLE_STATUS` serial debug commands were updated to
+  match (still permanent tooling, just driving the new flag).
+- **No reboot needed on exit**, unlike WiFi's `silentRestart()`:
+  `BlePeripheralManager::end()` has been torn down and restarted dozens of
+  times across this whole session's testing with no measured fragmentation
+  or degradation, so `BluetoothActivity::onExit()` just clears the flag and
+  lets `main.cpp`'s existing lifecycle react next tick.
+- **Reached by holding Confirm on Home for 1 second**
+  (`HomeActivity::kBleLongPressMs`), not a menu item or icon tile. Confirmed
+  free/unused on Home before adding (grepped `HomeActivity.cpp` for any
+  existing `getHeldTime()` use — none) and follows the same
+  hold-threshold + `fired`-flag-swallows-the-release pattern
+  `RecentBooksActivity`'s long-press-to-remove already established
+  (`RecentBooksActivity.cpp:210-215`). A visible on-screen icon was considered
+  first (see the discarded design notes below) but the hold gesture avoids
+  every problem that approach ran into.
+- **Removed entirely**: `AppsActivity`'s "Midad BLE: On/Off" tile
+  (`AppId::MidadBle`, its `AppEntry`, `launch()`/`render()` special cases),
+  `CrossPointSettings::bleEnabled`, and its `SettingsList.h` registration.
+  Nothing to persist anymore. Verified clean removal: `grep -rn "MidadBle\|bleEnabled" src/ lib/`
+  returns nothing.
+- **Simulator**: `BluetoothActivity.cpp` excluded from both
+  `[env:simulator]`/`[env:simulator_x3]` `build_src_filter`s, same reasoning
+  as the existing `BleCommandDispatcher.cpp` exclusion (no host-backed BLE
+  peripheral shim exists). `ActivityManager::goToBluetooth()` and `main.cpp`'s
+  `BLE_ON`/`BLE_OFF` command bodies are guarded `#ifndef SIMULATOR` to match.
+
+**Discarded design: a visible icon on Home instead of a hold gesture.** Explored
+first, in order:
+1. A 5th bottom-menu-bar icon — rejected, the row's layout math is sized for
+   exactly 4 tiles.
+2. A tile in the blank space next to the hero cover's metadata column (a real
+   photo of the device was used to mark the spot) — ran into a genuine
+   selector-order problem: anything appended after the existing menu items is
+   only reachable by wrapping backward past Settings, completely disconnected
+   from where it visually sits near the top of the screen. Fixing that
+   properly meant inserting a non-book stop into the middle of
+   `HomeActivity`'s "covers, then menu items" index scheme — a real
+   restructuring of the selection model just to place one icon.
+3. **Hold Confirm on Home** — sidesteps all of the above: no icon asset
+   placement decision, no selector-index restructuring, and (per the
+   `RecentBooksActivity` precedent) a well-established pattern in this
+   codebase already. Chosen instead of (2).
+
+**Verified live, end-to-end, with the real foulad-one app** (not just the
+Mac stand-in client used earlier): hold-Confirm opens the page, BLE
+advertises and the phone found "Midad," teardown on Back is clean, and a
+second open/close cycle behaved identically. The one hiccup during testing
+was a scan-timing miss on the human side (closing the page before a Mac-side
+verification scan could run) — not a device or app bug.

@@ -49,9 +49,9 @@ void BluetoothActivity::loop() {
   // Redraw whenever the radio's own state has moved on since the last paint --
   // main.cpp's global state-transition nudge already calls requestUpdate() on any
   // active activity when this happens, but checking here too means this activity
-  // repaints correctly even if that nudge is ever missed, and costs nothing when it
-  // isn't (requestUpdate() no-ops if nothing changed record-to-record isn't true --
-  // it always schedules a render, so only call it on an actual change).
+  // repaints correctly even if that nudge is ever missed. Compares against
+  // lastRenderedState_ (set in render()), not a separate "did it change" flag, so
+  // this only fires on an actual transition, not every loop() tick.
   const int currentState = static_cast<int>(BlePeripheral.state());
   if (currentState != lastRenderedState_) {
     requestUpdate();
