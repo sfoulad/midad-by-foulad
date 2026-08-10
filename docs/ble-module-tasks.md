@@ -1106,3 +1106,83 @@ bug surfaced and was fixed to get there, and one app bug remains:
   there's no API to read or share a saved Wi-Fi password with a
   third-party app on either platform, so that half of the original ask
   isn't achievable at all, not just deferred.
+
+## New phase, scoped after real use: BLE-driven account claim (no QR)
+
+After actually using Phase 1, Sameh's reaction: why does claiming the
+device still need a separate QR scan, when the phone already has a live
+BLE session to it? Fair question — this was a deliberate Phase 1 scope
+cut (see "Resolved (2026-08-10)" #2 above: `wifi.provision` only gets the
+reader online, account-claiming stays on the existing QR/HTTP flow), not
+an oversight. Revisiting it now that the friction is real. **Decided:
+plan it as a real phase**, not build it silently.
+
+**Checked foulad-ebooks' actual claiming flow before designing this**,
+rather than assume the shape from memory (an earlier note in this doc
+claimed the device only has raw username/password with zero token
+concept — that was wrong, corrected below):
+
+- Current QR flow: `DeviceLoginController::start()` mints a
+  `DeviceLoginSession` (`pairing_code` for the QR, `session_token` for the
+  device's own poll loop). The phone approves
+  (`POST /api/app/device-login/approve`), which calls
+  `DeviceToken::issue($user, $name, $serialNumber)` — a 48-char random
+  string, stored only sha256-hashed, **already a device-scoped credential
+  distinct from both the account password and the phone's own
+  `AppToken`**. The device ends up storing `{username, token}` and sends
+  it as HTTP Basic Auth (`OpdsBasicAuth` checks
+  `DeviceToken::findByPlainToken()` before falling back to a real
+  password). So the "device-scoped BLE token, not AppToken, not raw
+  password" security requirement from earlier in this doc is **already
+  built** as `DeviceToken` — no new credential type needed, just a new way
+  to deliver one.
+- `serial_number` is the device's global identity server-side (unique DB
+  constraint, looked up the same way in both the OPDS device-registration
+  path and the QR-approval path). Format is barely validated
+  (`^[A-Za-z0-9_-]+$`, max 100 chars) — this codebase's own `XTE-<mac>`
+  format already satisfies it, nothing to change there.
+- `GET /api/app/devices` does **not** expose the DeviceToken (an earlier
+  note in this doc implied it might — wrong, corrected). Not relevant to
+  this design either way, just flagging the correction.
+
+**Proposed shape**, reusing `DeviceToken::issue()` rather than a new
+credential path:
+
+1. **foulad-eink**: two more commands on the existing envelope, no new
+   characteristics.
+   - `device.info` — replies `{"serial": "...", "model": "...",
+     "firmware_version": "..."}`. Doubles as this flow's confirmation
+     step (see below) *and* as a second, independent fix for the
+     multi-device scan-list problem above: even without the per-device
+     advertised-name fix, once connected the phone can show the real
+     serial, not just "Midad". The two fixes overlap in value but solve
+     different moments (before connecting vs. after) — worth doing both,
+     but this one alone makes BLE claiming reasonably safe even if the
+     advertised-name fix slips.
+   - `account.claim`, payload `{"username": "...", "token": "..."}` —
+     saved exactly the way manually-entered or QR-issued credentials
+     already are today. Nothing new to build here; it's the same sink.
+2. **foulad-ebooks**: one new authenticated endpoint,
+   `POST /api/app/devices/claim-by-serial`, body
+   `{serial_number, model?, firmware_version?, device_name?}`. Does what
+   `DeviceLoginController::approve()` already does (claim-uniqueness
+   checks, `Device` row upsert, `DeviceToken::issue()`), just
+   phone-initiated instead of session/poll-initiated — because BLE lets
+   the phone hand the result straight to the device itself, so there's no
+   async device-side polling to design around. Returns
+   `{username, token}` synchronously.
+3. **foulad-one**: after `wifi.provision` (same connection, before
+   disconnecting — the device is about to lose BLE the moment it joins
+   Wi-Fi, so both need to happen in one session): send `device.info`,
+   show the user "Register [model] · [serial] to your account?" as the
+   explicit confirmation step — the BLE-sourced replacement for QR's
+   implicit "you're looking at the right physical device" check, not a
+   dropped safeguard — then call `claim-by-serial`, then send
+   `account.claim` with what it returns.
+
+**Not yet built anywhere** — this is the plan, not the implementation.
+Sequencing question left open: whether foulad-ebooks' side gets built by
+whichever session/person picks up that repo, coordinated through this
+same doc the way Phase 1 was. No firmware or server code should change
+for this without confirming the shape here first, given it touches
+account-claiming security.
