@@ -89,11 +89,20 @@ constexpr char FOULAD_EBOOKS_READING_POSITION_URL[] = "http://midad.one/opds/rea
 
 constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://midad.one/api/app/devices";
 
+// BLE book.fetch's lookup step (FouladDeviceTracking::flushPendingBleBookFetch):
+// GET this + book id -> {title, author, format, download_url}. download_url is a
+// 30-day Laravel temporary signed URL, not derivable from the id alone -- there is
+// no fixed download path a device can hand-build (confirmed with foulad-ebooks
+// 2026-08-11; /api/app/books/{id} returns the same shape but is walled off from
+// device tokens by RejectDeviceTokenAuth). format/download_url are both null if
+// the book has no acquisition link yet (e.g. still converting).
+constexpr char FOULAD_EBOOKS_BOOK_LOOKUP_URL_PREFIX[] = "http://midad.one/opds/books/";
+
 // The one host every URL above points at. Matched on the host rather than on a
 // URL prefix because the requests that must carry the device serial header are
-// spread across several path roots -- /opds/*, /books/{id}/download, /xtc, cover
-// images -- and the acquisition/cover links additionally arrive as absolute URLs
-// straight out of the feed (some carrying ?signature=), so no single prefix
+// spread across several path roots -- /opds/*, /opds/books/{id}/download, /xtc,
+// cover images -- and the acquisition/cover links additionally arrive as absolute
+// URLs straight out of the feed (some carrying ?signature=), so no single prefix
 // covers them. Kept scheme-agnostic so this keeps working when the beta http://
 // above goes back to https:// (see FOULAD_EBOOKS_URL).
 constexpr char FOULAD_EBOOKS_HOST[] = "midad.one";

@@ -2291,3 +2291,73 @@ Not yet real-hardware-tested against a reader that has actual queued
 the relay's happy path has only been exercised against `state: "ok"` with
 `entries: []`. Worth a real check next time a reader has been offline
 with the phone out of range long enough to build up some.
+
+## `book.fetch` unblocked: `GET /opds/books/{book}` live, rewired, verified -- 2026-08-11
+
+foulad-ebooks shipped the lookup this session
+(`foulad-ebooks/replies/2026-08-11-eink-opds-books-lookup-live.md`),
+confirmed against the exact book this doc's root-cause section tested
+with (935). Confirmed shape:
+
+```json
+{"title":"Two Can Play","author":"Ali Hazelwood","format":"epub",
+ "download_url":"http://midad.one/opds/books/935/download?expires=...&user=10&signature=..."}
+```
+
+`format` is a bare extension (`epub`/`xtc` only -- no `xtch` case exists
+server-side), `download_url` a 30-day absolute signed URL. 404 (not 403)
+for a book id that doesn't exist or isn't visible to the account; `format`
+and `download_url` both `null` if the book has no acquisition link yet
+(mid-conversion), same as the OPDS feed's own convention for that case.
+
+Rewired `flushPendingBleBookFetch()` (`FouladDeviceTracking.cpp:652`) to
+call `FOULAD_EBOOKS_BOOK_LOOKUP_URL_PREFIX + id` first
+(`FouladEbooksConfig.h`) instead of hand-building a download URL: parses
+`{title, author, format, download_url}`, treats a null `format`/
+`download_url` as "not ready yet, leave queued" the same way a network
+failure is handled, then downloads `download_url` to
+`"/book_" + id + "." + format` exactly as before. Also corrected the
+stale `/books/{id}/download` path in `FOULAD_EBOOKS_HOST`'s own comment,
+which foulad-ebooks' reply flagged as never having been a real route.
+
+**Verified live end to end against production, real account, book 935**:
+
+```
+[61004] [DBG] [HTTP] Fetching: http://midad.one/opds/books/935
+[61414] [DBG] [HTTP] Downloading: http://midad.one/opds/books/935/download?expires=1788995158&user=10&signature=... -> /book_935.epub
+```
+
+`recent.json` afterward:
+`{"path":"/book_935.epub","title":"Two Can Play","author":"Ali Hazelwood",...,"fouladBookId":"935"}`
+-- real title and author came through, `pendingBleBookFetchId` cleared.
+Both documented v1 limitations (generic "Book #<id>" title/no author,
+hardcoded `.epub` extension) are closed as a side effect of fixing the
+URL itself; the `.xtc` extension branch is reasoned-correct (same
+`"." + format` construction, `hasXtcExtension()` already recognizes it)
+but not yet measured against an actual XTC-only book, since none of this
+account's `fouladBookId`-tagged library entries are XTC.
+
+**Observation, not a regression**: the reconnect that triggers this flush
+also fires KOSync progress, `registerDevice()`, debug-log upload, and
+device-stats in the same burst (all pre-existing, `book.fetch` just
+piggybacks on it per the design in the root-cause section above) --
+watched free heap dip to a 2416-byte minimum partway through this
+particular run before recovering. Device stayed up and the download still
+completed, so not blocking, but narrow enough to be worth knowing about if
+a future OOM ever traces back to this reconnect burst on a lower-memory
+moment.
+
+**Also observed, not yet explained**: `registerDevice()`'s POST to
+`/opds/device` still returned `status=422` in this same test run, *after*
+foulad-ebooks' `device_logs` UTF-8 fix was confirmed deployed (their
+reply said this exact device's 422 should be explained by that fix, "gone
+going forward"). Rebuilt-and-reflashed firmware, so not a stale-binary
+artifact on this end. Flagging for foulad-ebooks rather than guessing
+further -- the register endpoint's request body is plain structured JSON
+(serial/name/model/firmware/settings), not raw debug-log bytes, so if
+this really is the same root cause the two must share something less
+direct than "same request" (e.g. a shared audit-log side effect), and if
+it isn't, the original 422 still has no confirmed explanation.
+
+`book.fetch` is now fully unblocked: queue -> lookup -> download -> real
+metadata, all live-verified against production.

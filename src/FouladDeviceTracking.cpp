@@ -639,27 +639,55 @@ void flushPendingKOReaderSync() {
 // OpdsBookBrowserActivity::reportDeviceTrackingOnConnect(), the same "device
 // reconnected for some other reason" moment every other flushPending* here uses.
 //
-// Downloads directly by ID (FOULAD_EBOOKS_HOST + "/books/" + id + "/download", the
-// same acquisition-link path documented in FouladEbooksConfig.h's FOULAD_EBOOKS_HOST
-// comment), not through OpdsBookBrowserActivity::downloadBook() -- that needs a
-// parsed OpdsEntry (title/author/acquisition type) this headless path was never
-// going to have from a bare BLE-delivered ID. Two deliberate, documented v1
-// limitations that follow from that, confirmed with the user rather than guessed:
-// always assumes .epub (Foulad's XTC-only books would download with the wrong
-// extension and likely fail to open -- narrow enough to accept for now), and the
-// library entry gets a generic "Book #<id>" title/no author/no cover, not the real
-// metadata (unavailable without a feed fetch this path deliberately skips).
+// Looks up FOULAD_EBOOKS_BOOK_LOOKUP_URL_PREFIX + id first (see that constant's
+// comment) to get the real signed download_url plus title/author/format, then
+// downloads that -- not through OpdsBookBrowserActivity::downloadBook(), which
+// needs a parsed OpdsEntry from a feed fetch this headless path still doesn't do.
+// v1's original design hand-built a download URL from the bare ID and skipped the
+// lookup entirely; that turned out not to work at all (confirmed 2026-08-11: the
+// real download link is a 30-day signed URL, and no fixed path a device can
+// construct exists), which is what motivated adding this lookup step.
 void flushPendingBleBookFetch(const std::string& username, const std::string& password) {
   if (!wifiConnected()) return;
   if (APP_STATE.pendingBleBookFetchId.empty()) return;
 
   const std::string bookId = APP_STATE.pendingBleBookFetchId;
-  const std::string downloadUrl = std::string("http://") + FOULAD_EBOOKS_HOST + "/books/" + bookId + "/download";
-  const std::string filename = "/book_" + bookId + ".epub";
+  const std::string lookupUrl = std::string(FOULAD_EBOOKS_BOOK_LOOKUP_URL_PREFIX) + bookId;
+
+  std::string lookupResponse;
+  if (!HttpDownloader::fetchUrl(lookupUrl, lookupResponse, username, password)) {
+    // Covers both "book id doesn't exist / not visible to this account" (404,
+    // won't ever succeed) and a transient network failure (will). No attempt cap
+    // in this v1, same as every other flushPending* here -- left queued either way.
+    diagLog("ble book.fetch: lookup FAILED for book_id=" + bookId + " (status=" +
+            std::to_string(HttpDownloader::getLastFailure().detail) + "), will retry next reconnect");
+    return;
+  }
+
+  JsonDocument lookupDoc;
+  if (deserializeJson(lookupDoc, lookupResponse)) {
+    diagLog("ble book.fetch: lookup response unparsable for book_id=" + bookId);
+    return;
+  }
+
+  const JsonVariantConst formatV = lookupDoc["format"];
+  const JsonVariantConst downloadUrlV = lookupDoc["download_url"];
+  if (!formatV.is<const char*>() || !downloadUrlV.is<const char*>()) {
+    // No acquisition link yet (e.g. still converting) -- same shape the OPDS feed
+    // itself uses for this case. Left queued; retried next reconnect.
+    diagLog("ble book.fetch: no acquisition link yet for book_id=" + bookId + ", will retry next reconnect");
+    return;
+  }
+  const std::string format = formatV.as<const char*>();
+  const std::string downloadUrl = downloadUrlV.as<const char*>();
+  const std::string title = lookupDoc["title"].is<const char*>() ? lookupDoc["title"].as<const char*>()
+                                                                   : "Book #" + bookId;
+  const std::string author = lookupDoc["author"].is<const char*>() ? lookupDoc["author"].as<const char*>() : "";
+  const std::string filename = "/book_" + bookId + "." + format;
 
   const auto result = HttpDownloader::downloadToFile(downloadUrl, filename, nullptr, nullptr, username, password);
   if (result == HttpDownloader::OK) {
-    RECENT_BOOKS.addBook(filename, "Book #" + bookId, "", "", bookId);
+    RECENT_BOOKS.addBook(filename, title, author, "", bookId);
     APP_STATE.pendingBleBookFetchId.clear();
     APP_STATE.saveToFile();
     diagLog("ble book.fetch: downloaded book_id=" + bookId);
