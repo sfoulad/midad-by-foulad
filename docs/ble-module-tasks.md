@@ -1186,3 +1186,12 @@ whichever session/person picks up that repo, coordinated through this
 same doc the way Phase 1 was. No firmware or server code should change
 for this without confirming the shape here first, given it touches
 account-claiming security.
+
+**Update (2026-08-10): moved and reviewed on the foulad-ebooks side.**
+The full proposal (plus a real security review that found and fixed a
+physical-possession gap in the original `claim-by-serial` design, and
+flagged a separate pre-existing issue in the live QR-approval flow) now
+lives at `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md` in foulad-ebooks — kept as
+a standalone file there rather than duplicated here, since it's mainly
+server-side review. This doc stays the summary/pointer; that one has the
+actual back-and-forth.
