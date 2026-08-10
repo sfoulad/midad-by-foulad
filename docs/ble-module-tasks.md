@@ -1207,8 +1207,6 @@ account-claiming security.
 foulad-ebooks' `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md`) are implemented and
 verified live over real BLE — see "Fifth session" below for the full
 story, including two real device hangs found and fixed along the way.
-foulad-ebooks' `claim-by-serial` endpoint and foulad-one's phone-side flow
-are still the open half.
 
 **Update (2026-08-10): moved and reviewed on the foulad-ebooks side.**
 The full proposal (plus a real security review that found and fixed a
@@ -1218,6 +1216,19 @@ lives at `docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md` in foulad-ebooks — kept as
 a standalone file there rather than duplicated here, since it's mainly
 server-side review. This doc stays the summary/pointer; that one has the
 actual back-and-forth.
+
+**Update (2026-08-10): foulad-ebooks side built and live too.**
+`claim/start`, `claim-by-serial`, and the credential-fetch endpoint are
+built, tested (15/15 locally), merged (PR #126), migrated, and live —
+`POST https://midad.one/api/app/devices/claim-by-serial` confirmed
+directly (returns 401 unauthenticated, as expected for an unauthenticated
+request). Note this repo (foulad-eink) never calls those endpoints
+directly — the phone does, after collecting `device.info`/
+`device.challenge`'s replies over BLE — so their landing doesn't unblock
+any *firmware* work that was waiting on them; it wasn't. The one genuinely
+open piece across all three repos now is foulad-one's phone-side flow
+(scan → `device.info` → confirm → `claim-by-serial` → `device.challenge`
+→ `account.claim`, per the proposal doc).
 
 ## Redesign (2026-08-10): dedicated Bluetooth screen replaces the persistent toggle
 
