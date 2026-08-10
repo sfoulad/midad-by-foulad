@@ -518,8 +518,13 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 }
 
 void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                    const int selectorIndex, const std::function<bool(int)>& restoreCoverSlot,
+                                    const std::function<bool(int, int, int, int, int)>& storeCoverSlot) const {
+  // Single cover slot (index 0) -- this theme only ever caches one region. Not
+  // reachable in the shipped firmware (FouladTheme always overrides this for the
+  // single active theme, see CrossPointSettings.h), kept compiling/behaviorally
+  // equivalent to its pre-multi-slot-cache form rather than dead-code-deleted.
+  bool coverRendered = restoreCoverSlot(0);
   const int tileWidth = rect.width - 2 * LyraMetrics::values.contentSidePadding;
   const int tileHeight = rect.height;
   const int tileY = rect.y;
@@ -569,8 +574,8 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
         renderer.drawIcon(CoverIcon, tileX + hPaddingInSelection + 24, tileY + hPaddingInSelection + 24, 32);
       }
 
-      coverBufferStored = storeCoverBuffer();
-      coverRendered = coverBufferStored;  // Only consider it rendered if we successfully stored the buffer
+      coverRendered = storeCoverSlot(0, tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
+                                     LyraMetrics::values.homeCoverHeight);
     }
 
     bool bookSelected = (selectorIndex == 0);

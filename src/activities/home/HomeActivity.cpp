@@ -56,8 +56,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   bool showingLoading = false;
   Rect popupRect;
 
-  // If any cover actually needs generating, release the ~38KB home-cover frame
-  // snapshot (storeCoverBuffer) first: the JPEG/PNG cover converters need large
+  // If any cover actually needs generating, release the home-cover slot
+  // snapshots (storeCoverSlot) first: the JPEG/PNG cover converters need large
   // contiguous heap blocks (the PNG inflate ring buffer alone is 32KB), and with
   // the snapshot held, generation reliably failed HERE while succeeding for the
   // SAME book at the SAME size from the My Books grid, which holds no such
@@ -76,13 +76,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   }
 
   if (anyToGenerate) {
-    // Free the ~38KB frame snapshot and the reading-stats vectors before
+    // Free the cover slot snapshots and the reading-stats vectors before
     // converting: after a cache clear, generation means a FULL EPUB metadata
     // re-parse (content.opf/expat/BookMetadataCache) on top of the image decode
     // (PNG's inflate ring buffer alone is 32KB), and Home needs every spare
     // block for it. Both are rebuilt/reloaded on demand afterward.
-    freeCoverBuffer();
-    coverRendered = false;
+    freeCoverSlots();
     READING_STATS.releaseMemory();
   }
 
@@ -155,7 +154,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             // see the isValidCachedBmp comment above for why a retry must stay
             // possible instead of being disabled forever.
             generated = epub.generateThumbBmp(coverHeight);
-            coverRendered = false;
+            freeCoverSlots();
             requestUpdate();
           }
           CoverThumbs::diagLog(std::string("HOME epub load=") + (loaded ? "1" : "0") + " built=" + (built ? "1" : "0") +
@@ -173,7 +172,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
             generated = xtc.generateThumbBmp(coverHeight);
-            coverRendered = false;
+            freeCoverSlots();
             requestUpdate();
           }
           CoverThumbs::diagLog(std::string("HOME xtc load=") + (loaded ? "1" : "0") +
@@ -212,44 +211,60 @@ void HomeActivity::onEnter() {
 void HomeActivity::onExit() {
   Activity::onExit();
 
-  // Free the stored cover buffer if any
-  freeCoverBuffer();
+  // Free every slot's stored buffer, if any
+  freeCoverSlots();
 }
 
-bool HomeActivity::storeCoverBuffer() {
-  // render() must have already set the cover rect; without it we'd be back to
-  // cloning the whole framebuffer.
-  if (coverRectW <= 0 || coverRectH <= 0) return false;
-  freeCoverBuffer();
-  const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
+bool HomeActivity::storeCoverSlot(int slot, int x, int y, int w, int h) {
+  if (w <= 0 || h <= 0) return false;
+  CoverSlot& s = coverSlots[slot];
+  if (s.buffer) {
+    free(s.buffer);
+    s.buffer = nullptr;
+    s.stored = false;
+  }
+  const size_t needed = renderer.getRegionByteSize(x, y, w, h);
   if (needed == 0) return false;
-  coverBuffer = static_cast<uint8_t*>(malloc(needed));
-  if (!coverBuffer) {
-    LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", (unsigned)needed);
+  s.buffer = static_cast<uint8_t*>(malloc(needed));
+  if (!s.buffer) {
+    // Expected and handled, not just logged: under memory pressure (BLE resident,
+    // etc.) this slot simply stays uncached and gets redrawn from SD next render
+    // too -- see BaseTheme.h's comment. Splitting into slots means a squeeze that
+    // used to fail the ENTIRE 42KB buffer now only costs re-decoding whichever
+    // slot(s) didn't fit, not every cover on screen.
+    LOG_ERR("HOME", "OOM: cover slot %d buffer (%u bytes)", slot, (unsigned)needed);
     return false;
   }
-  coverBufferSize = needed;
-  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize)) {
-    free(coverBuffer);
-    coverBuffer = nullptr;
-    coverBufferSize = 0;
+  s.bufferSize = needed;
+  if (!renderer.copyRegionToBuffer(x, y, w, h, s.buffer, s.bufferSize)) {
+    free(s.buffer);
+    s.buffer = nullptr;
+    s.bufferSize = 0;
     return false;
   }
+  s.x = x;
+  s.y = y;
+  s.w = w;
+  s.h = h;
+  s.stored = true;
   return true;
 }
 
-bool HomeActivity::restoreCoverBuffer() {
-  if (!coverBuffer || coverRectW <= 0 || coverRectH <= 0) return false;
-  return renderer.copyBufferToRegion(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize);
+bool HomeActivity::restoreCoverSlot(int slot) {
+  CoverSlot& s = coverSlots[slot];
+  if (!s.stored || !s.buffer) return false;
+  return renderer.copyBufferToRegion(s.x, s.y, s.w, s.h, s.buffer, s.bufferSize);
 }
 
-void HomeActivity::freeCoverBuffer() {
-  if (coverBuffer) {
-    free(coverBuffer);
-    coverBuffer = nullptr;
+void HomeActivity::freeCoverSlots() {
+  for (CoverSlot& s : coverSlots) {
+    if (s.buffer) {
+      free(s.buffer);
+      s.buffer = nullptr;
+    }
+    s.bufferSize = 0;
+    s.stored = false;
   }
-  coverBufferSize = 0;
-  coverBufferStored = false;
 }
 
 void HomeActivity::loop() {
@@ -322,23 +337,18 @@ void HomeActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
 
   renderer.clearScreen();
-  bool bufferRestored = coverBufferStored && restoreCoverBuffer();
 
   // No GUI.drawHeader here: the Foulad theme draws its own status line (clock /
   // app name / battery) inside the cover tile. Drawing the standard header too
   // duplicated the battery indicator at the top of the screen.
 
-  // Record the tile rect so storeCoverBuffer (called from the theme) knows
-  // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
-  // instead of the 48 KB full framebuffer the previous bind captured.
-  coverRectX = 0;
-  coverRectY = metrics.homeTopPadding;
-  coverRectW = pageWidth;
-  coverRectH = metrics.homeCoverTileHeight;
-
-  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
-                          std::bind(&HomeActivity::storeCoverBuffer, this));
+  // Restore/store per-slot now happen inside drawRecentBookCover itself (hero and
+  // thumbnails cached independently -- see HomeActivity.h's CoverSlot comment),
+  // not pre-restored here against one combined rect like the old single buffer.
+  GUI.drawRecentBookCover(
+      renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight}, recentBooks, selectorIndex,
+      [this](int slot) { return restoreCoverSlot(slot); },
+      [this](int slot, int x, int y, int w, int h) { return storeCoverSlot(slot, x, y, w, h); });
 
   // Order: eBooks, Stats, Files, Settings -- matches menuItemToIndex/indexToMenuItem.
   // Short labels chosen to fit the bottom icon bar tiles. Recent Books has no

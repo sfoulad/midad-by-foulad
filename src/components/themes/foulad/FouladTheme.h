@@ -27,9 +27,10 @@ constexpr ThemeMetrics values = [] {
 
 class FouladTheme : public LyraTheme {
  public:
-  void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                           int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer) const override;
+  void drawRecentBookCover(
+      GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks, int selectorIndex,
+      const std::function<bool(int slot)>& restoreCoverSlot,
+      const std::function<bool(int slot, int x, int y, int w, int h)>& storeCoverSlot) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;

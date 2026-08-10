@@ -242,9 +242,19 @@ class BaseTheme {
                              const char* rightLabel = nullptr) const;
   virtual void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
                           bool selected) const;
-  virtual void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                   const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                   bool& bufferRestored, std::function<bool()> storeCoverBuffer) const;
+  // Cover slots (plain int index, 0-based, meaning owned by each override -- see
+  // FouladTheme.cpp's kCoverSlotHero/kCoverSlotThumbs) let HomeActivity cache
+  // multiple small regions independently instead of one big combined buffer. Each
+  // region's malloc is small enough to succeed on its own even when something else
+  // (e.g. BlePeripheralManager) is holding a large chunk of heap, where one 40+KB
+  // combined buffer reliably fails and forces a full SD re-decode every render.
+  // Live-debugged 2026-08-10: Home's selector was slow specifically because BLE's
+  // ~65KB resident cost left too little heap for the old single buffer, so every
+  // selector move re-decoded every cover from SD instead of a cheap RAM restore.
+  virtual void drawRecentBookCover(
+      GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks, int selectorIndex,
+      const std::function<bool(int slot)>& restoreCoverSlot,
+      const std::function<bool(int slot, int x, int y, int w, int h)>& storeCoverSlot) const;
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<std::string(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;

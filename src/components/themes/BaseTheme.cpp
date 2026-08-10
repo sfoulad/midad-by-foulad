@@ -532,8 +532,14 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
 // Draw the "Recent Book" cover card on the home screen
 // TODO: Refactor method to make it cleaner, split into smaller methods
 void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                    const int selectorIndex, const std::function<bool(int)>& restoreCoverSlot,
+                                    const std::function<bool(int, int, int, int, int)>& storeCoverSlot) const {
+  // Single cover slot (index 0) -- this theme only ever caches one region. Not
+  // reachable in the shipped firmware (FouladTheme always overrides this for the
+  // single active theme, see CrossPointSettings.h), kept compiling/behaviorally
+  // equivalent to its pre-multi-slot-cache form rather than dead-code-deleted.
+  bool bufferRestored = restoreCoverSlot(0);
+  bool coverRendered = bufferRestored;
   const bool hasContinueReading = !recentBooks.empty();
   const bool bookSelected = hasContinueReading && selectorIndex == 0;
 
@@ -615,8 +621,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
           // No bookmark ribbon when cover is shown - it would just cover the art
 
           // Store the buffer with cover image for fast navigation
-          coverBufferStored = storeCoverBuffer();
-          coverRendered = coverBufferStored;  // Only consider it rendered if we successfully stored the buffer
+          coverRendered = storeCoverSlot(0, bookX, bookY, bookWidth, bookHeight);
 
           // First render: if selected, draw selection indicators now
           if (bookSelected) {

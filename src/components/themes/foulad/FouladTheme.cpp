@@ -227,9 +227,24 @@ void drawCoverSelection(const GfxRenderer& renderer, const int x, const int y, c
 }
 }  // namespace
 
+namespace {
+// Two independent cache slots instead of one combined ~42KB buffer for the whole
+// status-line+hero+divider+thumbs tile -- see BaseTheme.h's drawRecentBookCover
+// comment for why. Only the cover ARTWORK needs caching (image decode is the
+// expensive part); the status line, divider text, badges, and progress bars are
+// cheap and already get redrawn fresh every render regardless, so they're
+// deliberately excluded from both slots' bounds.
+constexpr int kCoverSlotHero = 0;
+// One slot per thumbnail (kThumbsCount of them), not one for the whole row -- see
+// the thumbnail loop's own comment for why (a combined-row buffer still didn't
+// fit under real BLE memory pressure; per-thumbnail slots degrade gracefully
+// instead of failing all three together).
+constexpr int kCoverSlotThumbBase = 1;
+}  // namespace
+
 void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
-                                      const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                      bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                      const int selectorIndex, const std::function<bool(int)>& restoreCoverSlot,
+                                      const std::function<bool(int, int, int, int, int)>& storeCoverSlot) const {
   // Full RTL mirroring under the Arabic UI: hero cover moves to the right with
   // the metadata column on the left (text right-aligned), the thumbnail slots
   // and the Read/Est.Left columns flow right-to-left, badges/stacks mirror to
@@ -270,12 +285,27 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
   const int thumbsTotalW = kThumbsCount * kThumbWidth + (kThumbsCount - 1) * kThumbGap;
   const int thumbsX = rect.x + (rect.width - thumbsTotalW) / 2;
 
-  // --- Static covers, drawn once and captured into the stored frame buffer ---
-  if (!coverRendered && !recentBooks.empty()) {
+  // --- Hero cover: independent slot so a full BLE-pressure heap doesn't force
+  // this AND the thumbnails to redecode from SD on every selector move just
+  // because ONE combined buffer couldn't fit -- see BaseTheme.h's comment. ---
+  if (!recentBooks.empty() && !restoreCoverSlot(kCoverSlotHero)) {
     drawCoverAt(renderer, recentBooks[0].coverBmpPath, heroCoverX, heroCoverY, kHeroCoverWidth, kHeroHeight,
                 kHeroHeight);
+    storeCoverSlot(kCoverSlotHero, heroCoverX, heroCoverY, kHeroCoverWidth, kHeroHeight);
+  }
+
+  // --- Thumbnails: ONE slot per thumbnail, not one slot for the whole row.
+  // Measured live 2026-08-10: under real BLE memory pressure (~15KB free, tighter
+  // than the ~24KB this was first sized against), the combined 3-thumb row
+  // (14448 bytes) still didn't fit and failed on EVERY render -- a heap squeeze
+  // that should only cost the thumbnail(s) that don't fit was costing all three
+  // together, because they shared one allocation. Per-thumbnail slots (~4.8KB
+  // each) mean a squeeze this size still lets most or all of them stay cached. ---
+  if (shownRecents > 0) {
     const int totalRecents = static_cast<int>(RECENT_BOOKS.getBooks().size());
     for (int i = 0; i < shownRecents; i++) {
+      const int cacheSlot = kCoverSlotThumbBase + i;
+      if (restoreCoverSlot(cacheSlot)) continue;
       const int slot = rtl ? kThumbsCount - 1 - i : i;
       const int x = thumbsX + slot * (kThumbWidth + kThumbGap);
       const bool isStackTile = (i == kThumbsCount - 1) && totalRecents - 1 > kThumbsCount;
@@ -284,9 +314,16 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
                       std::min(2, totalRecents - 1 - kThumbsCount), rtl);
       }
       drawCoverAt(renderer, recentBooks[i + 1].coverBmpPath, x, thumbsY, kThumbWidth, kThumbCoverHeight, kHeroHeight);
+      // Ghost-stack padding only on the actual stack tile, and only toward its
+      // overflow side (drawBackStack offsets left in RTL, right in LTR) -- the
+      // other (non-stack) thumbnails need no padding at all.
+      constexpr int kGhostStackMargin = 10;
+      const int padLeft = isStackTile && rtl ? kGhostStackMargin : 0;
+      const int padRight = isStackTile && !rtl ? kGhostStackMargin : 0;
+      const int padTop = isStackTile ? kGhostStackMargin : 0;
+      storeCoverSlot(cacheSlot, x - padLeft, thumbsY - padTop, kThumbWidth + padLeft + padRight,
+                     kThumbCoverHeight + padTop);
     }
-    coverBufferStored = storeCoverBuffer();
-    coverRendered = coverBufferStored;
   }
 
   // --- Status line: clock left, app name centered, battery drawn by drawHeader

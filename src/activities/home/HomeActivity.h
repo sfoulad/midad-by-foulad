@@ -20,17 +20,28 @@ class HomeActivity final : public Activity {
   // (HALF refresh) to clear accumulated e-ink fade instead of a FAST pass
   // that skips unchanged pixels. Cleared in render().
   bool idleWhitenPending = false;
-  bool coverRendered = false;      // Track if cover has been rendered once
-  bool coverBufferStored = false;  // Track if cover buffer is stored
-  uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
-  size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer
-  // Logical rect last passed to drawRecentBookCover. The cover snapshot only
-  // needs to cover this region, not the entire framebuffer, so we cache the
-  // tile instead of all 48 KB. Set in render() before the call.
-  int coverRectX = 0;
-  int coverRectY = 0;
-  int coverRectW = 0;
-  int coverRectH = 0;
+  // Independent cache slots -- hero cover + one per thumbnail (FouladTheme's own
+  // kThumbsCount, currently 3) -- instead of one combined ~42KB buffer, see
+  // BaseTheme.h's drawRecentBookCover comment. Each slot's malloc is small enough
+  // (a few KB) to succeed on its own even when BlePeripheralManager or similar is
+  // holding a large chunk of heap. Live-debugged 2026-08-10 in two rounds: the
+  // original single 40+KB buffer reliably failed and forced a full SD re-decode
+  // of every cover on every selector move; splitting into 2 slots (hero + one
+  // combined thumbnail row) still left the 14KB thumbnail-row slot failing under
+  // real measured ~15KB-free BLE pressure, so it's split further into one slot
+  // per thumbnail (~4.8KB each) so a squeeze only costs whichever thumbnail(s)
+  // actually don't fit.
+  static constexpr int kCoverSlotCount = 4;
+  struct CoverSlot {
+    uint8_t* buffer = nullptr;
+    size_t bufferSize = 0;
+    bool stored = false;
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+  };
+  CoverSlot coverSlots[kCoverSlotCount];
   std::vector<RecentBook> recentBooks;
   const HomeMenuItem initialMenuItem;
 
@@ -67,9 +78,9 @@ class HomeActivity final : public Activity {
   void onFouladEbooksOpen();
 
   int getMenuItemCount() const;
-  bool storeCoverBuffer();    // Store frame buffer for cover image
-  bool restoreCoverBuffer();  // Restore frame buffer from stored cover
-  void freeCoverBuffer();     // Free the stored cover buffer
+  bool storeCoverSlot(int slot, int x, int y, int w, int h);  // Snapshot a region into the given slot
+  bool restoreCoverSlot(int slot);                            // Blit a slot's snapshot back, if it has one
+  void freeCoverSlots();                                      // Free every slot's buffer
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
 
