@@ -1077,16 +1077,22 @@ bug surfaced and was fixed to get there, and one app bug remains:
   attempting. Now `WRITE | WRITE_ENC`. (The Mac-client e2e test missed
   this because it only wrote to the Command characteristic; the app
   correctly writes Auth first, per this doc's own protocol.)
-- **Open (foulad-one side):** after the device saves the credential and
-  notifies the JSON success reply on the Command characteristic, the app
-  shows "Something went wrong: ?". The device provably sends the reply
-  (the Mac client receives it with identical firmware), so the app either
-  isn't subscribing to the Command characteristic's notifications before
-  writing, or isn't parsing the reply. The dispatcher now logs
-  "reply notified" vs "reply NOT delivered (no subscriber?)" specifically
-  to make the next app-side debug session unambiguous. Relay to Midad:
-  subscribe to `...0003` notifications BEFORE writing the command; expect
-  `{"cmd":"wifi.provision","state":"ok"}`.
+- **Fixed (foulad-one side, from the Midad conversation):** the app was
+  already subscribing to `...0003` before writing -- that part was right.
+  The actual bug was *which* stream it read the reply from.
+  `flutter_blue_plus`'s `lastValueStream` merges two event sources: real
+  notifications, **and an echo of the characteristic's own outgoing
+  writes**. The app's own `wifi.provision` request (written to the same
+  Command characteristic it was listening on) satisfied its reply filter
+  -- valid JSON, matching `cmd` -- and `.first` resolved on that self-echo
+  before the device's real notification ever arrived over the air. Since
+  the echoed request has no `state` field, it decoded as
+  `state: "", reason: null`, which is exactly "Something went wrong: ?".
+  Fix: listen on `onValueReceived` instead (notifications/reads only, no
+  write-echo). So the dispatcher's new "reply notified" log should in fact
+  show up clean on the next app test -- the device side was never the
+  problem here, confirming what the Mac-client comparison already
+  suggested.
 - Also relay to Midad as UX context: the SSID field stays manual-entry by
   necessity — iOS doesn't allow apps to scan for nearby Wi-Fi networks
   (pre-filling the phone's *current* SSID via NEHotspotNetwork is the
@@ -1094,3 +1100,9 @@ bug surfaced and was fixed to get there, and one app bug remains:
   session is up (one radio). Also, the reader intentionally does not
   appear in iOS Settings > Bluetooth > My Devices — the session is
   app-managed and transient, like most BLE accessories.
+  **Done, same session**: current-network SSID prefill is now built
+  (`network_info_plus` + a Location permission prompt, since iOS ties the
+  two together for this specific API) — password still has to be typed;
+  there's no API to read or share a saved Wi-Fi password with a
+  third-party app on either platform, so that half of the original ask
+  isn't achievable at all, not just deferred.
