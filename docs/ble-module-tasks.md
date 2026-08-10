@@ -1960,3 +1960,33 @@ fake SSID). The download call reuses `HttpDownloader::downloadToFile()`
 exactly as `downloadBook()`/the cover-fetch path already do elsewhere in
 this codebase -- not new risk surface, just not independently re-proven
 here.
+
+## Phone side (foulad-one): firmware.update + book.fetch -- built 2026-08-10
+
+Both wired up against the real `handleFirmwareUpdate()`/`handleBookFetch()`
+just committed. New shared piece neither of the earlier phone-side builds
+needed: `BleDeviceSession`, which finds and authenticates against a
+*specific* already-claimed device by serial (probes each nearby scan
+result's `device.info` until one matches) rather than letting the user
+pick from whatever's nearby -- these two actions start from Device Detail,
+where the device is already known, not from a bare scan list. Fetches a
+fresh credential via the already-live `POST /devices/{id}/credential` and
+writes it to Auth (`MidadBleClient.authenticate()`) before sending either
+command, since both need the real Auth check, unlike everything the
+provisioning wizard sends.
+
+`book.fetch`'s phone-side UI is single-pick, not multi-select -- matches
+`APP_STATE.pendingBleBookFetchId` being one field, not a queue, so a second
+send would overwrite the first rather than both landing. `firmware.update`
+sends no `channel` override from the UI (always the device's own persisted
+setting) -- exposing a one-off pre-release-channel toggle felt like more
+surface than a v1 button needs.
+
+Two new Device Detail actions: "Check for update over Bluetooth", "Send a
+book over Bluetooth". 795/795 tests pass, `flutter analyze` clean. Not yet
+tested against real hardware -- same as the rest of this doc's phone-side
+entries, waiting on a combined test pass.
+
+That's everything from the original command list now built on both sides
+except `sync.pull` and the page-turner (Phase 4) -- neither blocking the
+other, both still open.
