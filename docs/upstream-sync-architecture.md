@@ -2,6 +2,79 @@
 
 ## Status: Phase A scaffolding complete; conflict path validated. Phase B (settings extraction) complete, pending merge (PR #136) -- see "Phase B results" below. Clean-merge CI/PR path still remains to be exercised once a clean merge is achievable. Phases C onward not started.
 
+## Phase B round 2: SettingsList.h cleanup, hardened migration, wire-path test
+
+Follow-up to the round-1 results below, per PR #136 review feedback:
+
+1. **Finished the SettingsList extraction.** Round 1 moved the 12 fields off
+   `CrossPointSettings` but left their `SettingInfo::DynamicToggle`/
+   `DynamicValue`/`DynamicEnum` row *definitions* (the actual lambda code
+   referencing `MIDAD_APP_SETTINGS`) inside `SettingsList.h` — still
+   Midad-owned behavior sitting in an upstream-owned file. Moved all of it
+   (Quran/Games/Tasbih/Stopwatch/Pomodoro+3/Gym/GymWeightUnit/Debug Logging)
+   to new `src/MidadSettingsList.h/.cpp`, behind one hook:
+   `appendMidadAppSettings(appsSettings)`, called once from
+   `SettingsActivity::rebuildSettingsLists()`. `SettingsList.h` now contains
+   **zero** `MIDAD_APP_SETTINGS`/`MidadAppSettings` references — only two
+   comment lines pointing at where the code lives. The generic
+   `SettingInfo::DynamicToggle`/`DynamicValue` factories stay in
+   `SettingsActivity.h` (generic infrastructure, not Midad product logic, per
+   the review's own carve-out), and `CrossPointWebServer.cpp`'s matching
+   `valueGetter`/`valueSetter` fallback stays too, flagged as a possible
+   future upstream-contribution candidate. One accepted side effect: Quran
+   through GymWeightUnit now render after Dictionary/KOReader Sync in the
+   on-device Apps list instead of before (Debug Logging's "always last"
+   position is unchanged) — a cosmetic reorder, not a behavior change.
+
+2. **Hardened the migration.** `MidadAppSettings::loadFromFile()` previously
+   treated *any* load failure — file missing, or file present but
+   corrupt/unparseable — as "attempt migration from legacy settings.json."
+   That's wrong: a corrupt `midad_apps.json` should report failure, not
+   silently resurrect stale pre-migration values. Extracted the decision
+   into a pure function (`src/MidadAppSettingsLoadPlan.h/.cpp`,
+   `planMidadAppSettingsLoad(ownFileExists, ownFileLoadedOk,
+   legacyFileExists)`) with zero HalStorage/ArduinoJson dependency, so it's
+   host-testable without any HAL mocking — a new gtest target,
+   `test/midad_app_settings_load_plan/`, covers all four outcomes
+   (`UseOwnFile`, `ReportCorrupt`, `Migrate`, `FreshDefaults`). Also
+   live-verified in the simulator: a hand-corrupted `midad_apps.json` (`"not
+   valid json {{{"`) alongside a legacy `settings.json` correctly logged
+   `[ERR] [MAS] midad_apps.json exists but failed to load; not migrating
+   from legacy settings.json` and left the corrupt file untouched — no
+   silent fallback.
+
+3. **Exercised the wire path directly**, not just inspected key names. Added
+   a temporary simulator-only hook (`FouladDeviceTracking::
+   debugTestApplySettings()`, called from `main.cpp` behind `getenv(
+   "SIM_TEST_SETTINGS_PUSH")`) that pushes a payload touching a toggle
+   (`quranEnabled`), an enum (`gymWeightUnit`), and one unrelated
+   `CrossPointSettings` field (`darkModeEnabled`) through
+   `applySettingsFromServer()`, then calls `addSettingsReport()` and writes
+   the result to a file for inspection. Confirmed: `MidadAppSettings` values
+   changed correctly (`quranEnabled` 0→1, `gymWeightUnit` 0→1), `midad_apps.
+   json` was persisted with those values, fields *not* in the payload stayed
+   at their compile-time defaults (no cross-talk), `settings.json` picked up
+   `darkModeEnabled` correctly with zero Apps-category keys left in it
+   (confirming the split is clean), and `addSettingsReport()` read every
+   pushed value back under its original wire key. The temporary hook was
+   fully reverted (`git checkout --`) before this commit — `git status`
+   confirmed clean. Pomodoro fields remain deliberately unwired (matching the
+   pre-existing gap noted in round 1), per the explicit instruction not to
+   expand wire behavior in this PR.
+
+**Conflict re-measurement** (same method: real `git merge upstream/develop`
+against `crosspoint-reader/develop @ 2cac5971`, same commit every measurement
+in this doc has used): **158 conflicting files, identical file list to round
+1.** Every file this round's changes touched (`SettingsActivity.h/.cpp`,
+`SettingsList.h`, `test/CMakeLists.txt`) was already conflicting before this
+round — shrinking Midad's footprint inside an already-conflicting file
+doesn't change the file-level count, only what has to be reconciled inside
+it. The four new files this round added (`MidadSettingsList.h/.cpp`,
+`MidadAppSettingsLoadPlan.h/.cpp`, plus the new test directory) don't exist
+upstream at all, so none of them could conflict. Net: zero new conflicts
+introduced by a real architectural cleanup — the best possible outcome for
+this kind of change.
+
 ## Phase B results: MidadAppSettings extraction + BookmarkFile adoption
 
 Built `MidadAppSettings` (`src/MidadAppSettings.h/.cpp`), a `PersistableStore<T>`
