@@ -1,6 +1,170 @@
 # Midad as a Thin Fork of CrossPoint: Architecture and Migration Plan
 
-## Status: Phase A scaffolding complete; conflict path validated. Phase B (settings extraction) complete across three review rounds, pending merge (PR #136) -- see "Phase B round 3" below for the final state. Clean-merge CI/PR path still remains to be exercised once a clean merge is achievable. Phases C onward not started.
+## Status: Phase A scaffolding complete; conflict path validated. Phase B (settings extraction) merged (PR #136). Phase C (OPDS/device-tracking extraction) done through 2 review rounds, pending merge -- see "Phase C results" and "Phase C round 2" below; its originally-written scope (BLE book.fetch) turned out not to exist on develop, see that section's correction note. Clean-merge CI/PR path still remains to be exercised once a clean merge is achievable. Phase D not started.
+
+## Phase C results: FouladOpdsHooks extraction from OpdsBookBrowserActivity
+
+**Scope correction, found at the start of this phase**: the text below (before
+this results section) describes Phase C as extracting "BLE `book.fetch`
+integration" and "crosspoint-sync hooks" from `OpdsBookBrowserActivity.cpp`.
+Neither exists on `develop` -- `BleCommandDispatcher.cpp` implements exactly
+one command (`wifi.provision`); `book.fetch`/`settings.push`/etc. all fall
+through to `"unsupported"`. That work exists, real and substantial (14+ BLE
+matches including `book.fetch`, `sync.pull`/`sync.ack`, plus several unrelated
+upstream cherry-picks), on a separate branch --
+**`docs/ble-phase1-hardware-validated`, never merged via any PR** (`gh pr
+list` for that branch head returns empty). That branch is 18+ commits ahead of
+where `develop` diverged from it and does not include Phase A/B's work either.
+This is a real, separate situation worth the user's attention on its own, but
+it is not Phase C's concern -- left untouched here per explicit direction, and
+noted here only so this doc doesn't quietly repeat the stale premise again.
+
+**Actual scope, found on audit**: `OpdsBookBrowserActivity.cpp`/`.h` (1438 +
+245 lines, ~3x upstream's current 490 + 56) contained real Foulad-specific
+glue, concentrated and mechanically separable:
+
+- `reportDeviceTrackingOnConnect()` -- was a private method calling 6
+  `FouladDeviceTracking::*` functions, gated on the Foulad eBooks URL (KOReader
+  Sync's flush excepted, since its server isn't necessarily midad.one).
+- `extractFouladBookId()` -- parses foulad-ebooks' `urn:opds-library:book:<id>`
+  entry-id convention.
+- `downloadBook()`'s three Foulad-specific decision points: XTC/XTCH
+  extension-from-MIME-type mapping, the News-feed replace-not-accumulate
+  policy (remove stale file + render cache before every download), and
+  Foulad-book-id tagging on `RECENT_BOOKS` (duplicated identically at two call
+  sites -- also de-duplicated by this move, not just relocated).
+
+**Deliberately left in place** (see the audit's own reasoning): the
+401-handler's restart-to-QR-login branch (already a minimal hook -- one URL
+comparison, one call to an existing Midad function in `SilentRestart.h`); the
+News-feed UI branches for cover-fallback/search-suppression/empty-state
+message (single-line, tightly coupled to shared rendering/parsing code, no
+real extraction value); `maybeOfferFirmwareUpdate()` (already calls out to
+`FouladDeviceTracking::pendingFirmwareUpdate()`, the rest is generic
+UI-latch state); `hasHeapForCoverWork()`/`hasHeapForNavigation()` (generic
+heap-safety guards with zero Foulad branding, motivated by but not specific
+to Foulad's large catalogs -- a Phase G upstream-contribution candidate, not
+a Phase C extraction target); `browseLog()`/`saveOpdsDiagnosticLog()`
+(generic OPDS diagnostic logging, useful for any server).
+
+**New files**: `src/FouladOpdsHooks.h/.cpp` (the four functions needing
+`HalStorage`/`Epub`/`FouladDeviceTracking`) and `src/FouladOpdsHooksPure.h/.cpp`
+(the three with zero HAL dependency -- `extractFouladBookId`,
+`acquisitionExtension`, `isNewsFeed` -- split out the same way
+`MidadAppSettingsLoadPlan` was in Phase B, so they're host-testable). 12 new
+gtest cases in `test/foulad_opds_hooks_pure/` (128 total, up from 116).
+
+**Verification**: `pio run -e default`/`simulator`, `pio check` (no defects),
+`clang-format-fix` (clean), 128/128 gtest. Live-verified in the simulator
+against the real Foulad eBooks server (temporary hook, reverted before
+committing): `reportDeviceTrackingOnConnect()` correctly gated on the server
+URL and reached the real, unmodified `FouladDeviceTracking::registerDevice()`
+(confirmed by that function's own `[FDT]` log line -- `FouladDeviceTracking.cpp`
+itself has zero changes on this branch); `removeExistingNewsDownload()`
+correctly removed both a seeded stale file and its render cache;
+`tagFouladBookId()` correctly tagged a `RECENT_BOOKS` entry with the parsed id.
+`registerDevice()`'s own HTTP POST failed in the simulator
+(`"postJson write failed"`) -- confirmed via a direct `curl -X POST` to the
+same live endpoint (got a real `422` validation response) that this is a
+pre-existing simulator-only `HttpDownloader`/`NetworkClient` gap, not a
+regression from this phase; worth adding to the "local simulator patches"
+list in a future session, not fixed here (out of scope, would be scope creep
+into unrelated simulator infrastructure).
+
+**Conflict re-measurement**: **158, identical file list to every prior
+measurement.** `OpdsBookBrowserActivity.cpp` and `test/CMakeLists.txt` were
+already conflicting (both already on the Phase A baseline); `.h` was never on
+any conflict list despite its large divergence -- this phase's small removal
+from it (7 lines) didn't change that either way. The new `FouladOpdsHooks*`
+files don't exist upstream and can't conflict. Line-count reduction in the
+shared files: `OpdsBookBrowserActivity.cpp` -97 net lines (10 insertions, 107
+deletions), `.h` -7 net lines -- same "shrinks what's inside an
+already-conflicting file, not the file-level count" pattern as Phase B.
+
+### Phase C round 2: periodic device-tracking poll extraction, News-predicate centralization
+
+PR #137 review found the initial extraction above had missed one call site:
+`OpdsBookBrowserActivity::loop()` still ran the periodic (~30s) re-registration
+poll inline, with its timer state (`lastDeviceTrackingCheckMs`,
+`DEVICE_TRACKING_RECHECK_MS`) declared as members in `.h` -- the exact
+device-tracking glue this phase exists to remove, missed because the initial
+pass only found the connect-time call (`reportDeviceTrackingOnConnect()`), not
+this second, separately-triggered one. Consistent with the recurring lesson
+from every prior review round (Phase B rounds 1 and 3, and now this one):
+grep for *every* call site of the pattern being extracted, not just the most
+obvious one, before declaring an extraction complete.
+
+**Fixed**: `FouladOpdsHooks::pollDeviceTracking(server, isBrowsing)` now owns
+both the gating logic and the timer state. The timer (`lastDeviceTrackingCheckMs`)
+moved into an anonymous namespace in `FouladOpdsHooks.cpp` -- deliberately
+*not* passed in from the caller, so it persists for the process's lifetime
+rather than resetting every time a new `OpdsBookBrowserActivity` is
+constructed (a minor, intentional behavior difference from the pre-extraction
+per-instance member). The gating decision itself
+(`shouldPollDeviceTracking(isBrowsing, isFouladServer, wifiConnected, nowMs,
+lastCheckMs, intervalMs)`) is a pure function in `FouladOpdsHooksPure.h/.cpp`,
+taking a plain `bool isBrowsing` rather than `OpdsBookBrowserActivity::BrowserState`
+-- the Midad module has no dependency on that upstream-owned enum. 6 new
+gtest cases cover it (134 total, up from 128): fires when browsing + Foulad +
+WiFi + interval elapsed, fires exactly at the interval boundary (`>=`, matching
+the original inline check), does not fire before the interval elapses, and
+does not fire when any one of not-browsing / non-Foulad-server / no-WiFi holds.
+
+Also centralized: the 3 remaining direct `server.url == FOULAD_EBOOKS_NEWS_URL`
+checks (News cover fallback, search suppression, empty-feed message) now call
+`FouladOpdsHooks::isNewsFeed(server.url)` instead of duplicating the URL
+comparison. Per the reviewed scope, only the predicate moved -- the
+surrounding rendering/search state machines stay physically in
+`OpdsBookBrowserActivity.cpp`, unchanged, since they have no real extraction
+value on their own (same reasoning as the "deliberately left in place" list
+above).
+
+**Remaining intentional Midad hooks in `OpdsBookBrowserActivity.cpp`/`.h`**
+(everything still there is either a single-line integration branch or a call
+into an already-extracted Midad module -- there is no longer any
+`FouladDeviceTracking::registerDevice()` call, direct or periodic, inside this
+file):
+
+- `FouladOpdsHooks::reportDeviceTrackingOnConnect(server)` -- one call, fired
+  on WiFi connect.
+- `FouladOpdsHooks::pollDeviceTracking(server, state == BrowserState::BROWSING)`
+  -- one call in `loop()`, per this round's change.
+- `FouladOpdsHooks::isNewsFeed(server.url)` -- 3 call sites (cover fallback,
+  search suppression, empty-feed message), per this round's change.
+- `FouladOpdsHooks::removeExistingNewsDownload()` / `tagFouladBookId()` -- one
+  call each inside `downloadBook()`.
+- `FouladOpdsHooks::acquisitionExtension()` -- one call inside `downloadBook()`
+  for the XTC/XTCH MIME mapping.
+- The 401-handler's restart-to-QR-login branch -- one URL comparison, one call
+  into `SilentRestart.h` (already minimal; see the initial audit above).
+- `FouladDeviceTracking::pendingFirmwareUpdate()` inside
+  `maybeOfferFirmwareUpdate()` -- the rest of that function is generic
+  update-latch UI state, not Foulad-specific.
+
+`.h` now declares zero Midad-specific state (`lastDeviceTrackingCheckMs` and
+`DEVICE_TRACKING_RECHECK_MS` are gone) and zero Midad-specific method
+declarations -- everything Foulad-specific it once owned now lives behind a
+`FouladOpdsHooks::*` call.
+
+**Conflict re-measurement (round 2)**: **158, identical file list to every
+prior measurement**, including this phase's initial round. `OpdsBookBrowserActivity.h`
+still isn't on the conflict list (unchanged from every prior measurement,
+despite losing its two tracking members here) and `.cpp` still is (unavoidable
+-- other Midad integration points remain, and it was already conflicting on
+the Phase A baseline regardless). No new files or lines in `FouladOpdsHooks.h/.cpp`/
+`FouladOpdsHooksPure.h/.cpp` appear on the conflict list, since none of them
+exist upstream. No new conflicts introduced.
+
+**Verification (round 2)**: `pio run -e default`/`simulator`, `pio check` (no
+defects), `clang-format-fix` (clean, only the 7 intended files touched),
+134/134 gtest. Live-verified in the simulator via a temporary `main.cpp` hook
+(reverted before committing): confirmed all four gating scenarios --
+not-browsing at boot (no attempt), browsing but interval not yet elapsed (no
+attempt), browsing with the interval genuinely elapsed via `delay(31000)`
+(fired, reached the real `FouladDeviceTracking::registerDevice()`, same
+pre-existing simulator-only `HttpDownloader` POST gap as the initial round,
+not a regression), and an immediate re-poll right after firing while still
+browsing (correctly did not re-fire, interval not yet elapsed again).
 
 ## Phase B final state (after round 3)
 
@@ -648,14 +812,18 @@ and `CrossPointSettings.cpp` by 11. The metric to watch going forward is which
 files *upstream can still independently edit into a conflict*, not a raw
 count — Phase C's file-count delta should be read the same way.
 
-**Phase C — OPDS/device-tracking extraction.**
-Move Foulad-specific logic out of `OpdsBookBrowserActivity.cpp` into a
+**Phase C — OPDS/device-tracking extraction. Done, see "Phase C results" below.**
+~~Move Foulad-specific logic out of `OpdsBookBrowserActivity.cpp` into a
 Midad-owned module it calls into at defined hook points (mirroring how
 `FouladDeviceTracking.cpp` already exists as a separate file — the gap is
 that `OpdsBookBrowserActivity.cpp` itself still contains inline device-
 tracking/book.fetch glue rather than just calling out to it). Verify OPDS
 browsing, downloads, and BLE `book.fetch` all still work against the real
-Foulad eBooks server.
+Foulad eBooks server.~~ **Correction (found when Phase C actually started):**
+this file has no BLE/`book.fetch`/crosspoint-sync code to extract — that
+description was written ahead of work that ended up on a separate,
+never-merged branch (`docs/ble-phase1-hardware-validated`), not on `develop`.
+See "Phase C results" for the real scope that was actually there.
 
 **Phase D — Web server extraction.**
 Move the dictionary-management endpoints (`/dictionaries`,

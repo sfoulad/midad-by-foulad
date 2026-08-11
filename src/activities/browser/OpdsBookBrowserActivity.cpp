@@ -12,16 +12,15 @@
 #include <WiFi.h>
 
 #include <algorithm>
-#include <cctype>
 #include <memory>
 
 #include "CrossPointState.h"
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "FouladOpdsHooks.h"
 #include "MappedInputManager.h"
 #include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
-#include "RecentBooksStore.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
@@ -43,32 +42,6 @@ namespace {
 // previous fixed 30px row height gave the Latin font (24px advanceY) -- see
 // OpdsBookBrowserActivity::getListRowHeight().
 constexpr int LIST_ROW_VERTICAL_PADDING = 6;
-
-// Foulad eBooks' catalog feed writes each book entry's <id> as
-// "urn:opds-library:book:<numeric id>" (see foulad-ebooks'
-// resources/views/opds/books.blade.php) -- the same numeric id used for
-// device reading-stats reporting (EINK_DEVICE_TRACKING_TASKS.md). Returns ""
-// for anything that doesn't end in a run of digits (a non-Foulad OPDS
-// server's own id convention, or a malformed entry) so callers can treat
-// that as "no Foulad book id available" rather than a parse error.
-std::string extractFouladBookId(const std::string& entryId) {
-  // The prefix is checked, not just the trailing digits. News entries are
-  // "urn:midad:feed:<id>" in a DIFFERENT namespace, and a bare trailing-digit
-  // parse turns feed 3 into book 3 -- which is not a missing id, it is somebody
-  // else's book. That id is sent to /opds/reading-position and /opds/reading-stats,
-  // so the failure mode is a news article silently overwriting the saved position
-  // of an unrelated real book. Anything that is not a book entry returns "".
-  static constexpr char kBookPrefix[] = "urn:opds-library:book:";
-  static constexpr size_t kBookPrefixLen = sizeof(kBookPrefix) - 1;
-  if (entryId.compare(0, kBookPrefixLen, kBookPrefix) != 0) return "";
-
-  const std::string tail = entryId.substr(kBookPrefixLen);
-  if (tail.empty()) return "";
-  for (const char c : tail) {
-    if (!isdigit(static_cast<unsigned char>(c))) return "";
-  }
-  return tail;
-}
 
 // What earns a cell in the cover grid. Books always do. A navigation entry does when
 // it carries cover art -- a collection is a shelf with a picture on it, and rendering
@@ -209,15 +182,8 @@ void OpdsBookBrowserActivity::loop() {
   }
 
   // Re-check for a pushed settings change every ~30s while sitting on the
-  // catalog -- BROWSING only (not LOADING/DOWNLOADING) so this never
-  // competes with an in-flight fetch/download for the same connection.
-  if (state == BrowserState::BROWSING && server.url == FOULAD_EBOOKS_URL && WiFi.status() == WL_CONNECTED) {
-    const unsigned long nowMs = millis();
-    if (nowMs - lastDeviceTrackingCheckMs >= DEVICE_TRACKING_RECHECK_MS) {
-      lastDeviceTrackingCheckMs = nowMs;
-      FouladDeviceTracking::registerDevice(server.username, server.password);
-    }
-  }
+  // catalog -- see FouladOpdsHooks::pollDeviceTracking().
+  FouladOpdsHooks::pollDeviceTracking(server, state == BrowserState::BROWSING);
 
   if (consumeConfirm && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     consumeConfirm = false;
@@ -728,7 +694,7 @@ void OpdsBookBrowserActivity::drawGridCell(const GridLayout& layout, const int p
     }
   }
   renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
-  if (!drawn && (server.url == FOULAD_EBOOKS_NEWS_URL || entry.type == OpdsEntryType::NAVIGATION)) {
+  if (!drawn && (FouladOpdsHooks::isNewsFeed(server.url) || entry.type == OpdsEntryType::NAVIGATION)) {
     // News entries carry no cover art -- there is no image link in the feed, so
     // nothing failed to download and nothing is going to appear later. The generic
     // book icon reads as a book that did not load; the feed's own name on a
@@ -1047,7 +1013,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   // On the News root the advertised search is the BOOK search (/opds/search), which
   // would put a row inside News that returns books. Wrong answer to the wrong
   // question, so News does not offer it.
-  if (server.url == FOULAD_EBOOKS_NEWS_URL) searchTemplate.clear();
+  if (FouladOpdsHooks::isNewsFeed(server.url)) searchTemplate.clear();
   feedNextUrl = parser->getNextPageUrl();
   feedPrevUrl = parser->getPrevPageUrl();
   entries = std::move(*parser).getEntries();
@@ -1099,7 +1065,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     // An empty feed is the normal, successful answer to "this account has no
     // subscriptions" -- not an error (EINK_NEWS_TASKS.md §2). Say what to do next
     // instead, because the thing to do is on the phone and nothing here can do it.
-    errorMessage = (server.url == FOULAD_EBOOKS_NEWS_URL) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
+    errorMessage = FouladOpdsHooks::isNewsFeed(server.url) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
   }
 
   // Crash report: a heap-corruption abort (multi_heap assert_valid_block) landed inside
@@ -1168,51 +1134,20 @@ void OpdsBookBrowserActivity::navigateBack() {
 }
 
 void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
-  // Pick the file extension from the acquisition link's actual format instead of always
-  // assuming EPUB -- matters now that XTC-only books (Arabic/PDF-sourced, per foulad-ebooks'
-  // one-format-per-book rule) are recognized as downloadable BOOK entries too. foulad-ebooks
-  // derives this MIME type from the stored file's own extension, so mirror it back exactly
-  // (.xtch vs .xtc) rather than assuming one -- both are recognized identically for local
-  // file-type detection (FsHelpers::hasXtcExtension), so either is safe to save as.
-  std::string extension = ".epub";
-  if (book.acquisitionType == "application/x-xtch") {
-    extension = ".xtch";
-  } else if (book.acquisitionType == "application/x-xtc") {
-    extension = ".xtc";
-  }
-  // News goes in its own folder; books stay at the root where they have always been.
-  const bool isNewsFeed = server.url == FOULAD_EBOOKS_NEWS_URL;
+  // Extension/folder/replace policy is Foulad eBooks catalog-specific (XTC-only
+  // books, News' own folder and replace-not-accumulate rule) -- see FouladOpdsHooks.h.
+  const std::string extension = FouladOpdsHooks::acquisitionExtension(book.acquisitionType);
+  const bool isNewsFeed = FouladOpdsHooks::isNewsFeed(server.url);
   if (isNewsFeed) Storage.mkdir(FOULAD_NEWS_DIR);
   const std::string filename =
       (isNewsFeed ? std::string(FOULAD_NEWS_DIR) + "/" : std::string("/")) +
       StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + extension;
 
-  // News is never "already downloaded". Each download is the whole current feed
-  // rather than a delta, and the filename is stable per feed, so the fast path below
-  // would open yesterday's articles forever and the page would never refresh
-  // (EINK_NEWS_TASKS.md §4: replace rather than accumulate). Remove first, because
-  // the download writes to the same path.
-  if (isNewsFeed && Storage.exists(filename.c_str())) {
-    Storage.remove(filename.c_str());
-    // And the cache with it. The cache directory is keyed on the FILE PATH
-    // (Epub.h: "epub_" + hash(filepath)) and is only validated against the cache
-    // format version -- never against the file's size or contents. A feed keeps the
-    // same path every time, so without this the reader would find yesterday's
-    // book.bin and rendered sections still valid and read the old articles out of
-    // cache, no matter how fresh the download was. Progress goes too, which is
-    // correct: page 4 of yesterday's articles means nothing in today's.
-    const std::string cacheDir = Epub(filename, "/.crosspoint").getCachePath();
-    if (Storage.exists(cacheDir.c_str())) Storage.removeDir(cacheDir.c_str());
-  }
+  if (isNewsFeed) FouladOpdsHooks::removeExistingNewsDownload(filename);
 
   if (!isNewsFeed && Storage.exists(filename.c_str())) {
     // Already downloaded -- open it directly rather than downloading again.
-    if (server.url == FOULAD_EBOOKS_URL) {
-      const std::string fouladBookId = extractFouladBookId(book.id);
-      if (!fouladBookId.empty()) {
-        RECENT_BOOKS.addBook(filename, book.title, book.author, "", fouladBookId);
-      }
-    }
+    FouladOpdsHooks::tagFouladBookId(filename, book, server);
     pendingReaderPath = filename;
     activityManager.goToReader(filename);
     return;
@@ -1272,12 +1207,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
         LOG_DBG("OPDS", "External cover download failed (non-fatal): %s", book.coverUrl.c_str());
       }
     }
-    if (server.url == FOULAD_EBOOKS_URL) {
-      const std::string fouladBookId = extractFouladBookId(book.id);
-      if (!fouladBookId.empty()) {
-        RECENT_BOOKS.addBook(filename, book.title, book.author, "", fouladBookId);
-      }
-    }
+    FouladOpdsHooks::tagFouladBookId(filename, book, server);
     pendingReaderPath = filename;
     activityManager.goToReader(filename);
     return;
@@ -1344,40 +1274,6 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
   fetchFeed(url);
 }
 
-void OpdsBookBrowserActivity::reportDeviceTrackingOnConnect() {
-  // Not gated on server.url below like the rest of this function: KOReader
-  // Sync's server is independently configured (any KOSync-compatible host,
-  // not necessarily midad.one), so this is worth attempting on WiFi coming up
-  // for ANY OPDS server, Foulad eBooks or not.
-  FouladDeviceTracking::flushPendingKOReaderSync();
-
-  if (server.url != FOULAD_EBOOKS_URL) return;
-  FouladDeviceTracking::registerDevice(server.username, server.password);
-  // Reading itself never keeps WiFi connected (see onExit() below), so this
-  // is the one reliable moment to sync any progress accumulated since the
-  // last time the device was online.
-  FouladDeviceTracking::flushPendingReadingStats(server.username, server.password);
-  // Crash reports go the same way, and for a stronger reason: until now the only
-  // path was the user tapping Send on the crash screen. A device that panics and
-  // reboots cleanly never shows that screen, so nobody taps it -- which is why
-  // zero crash reports have ever reached the server while nine debug logs have.
-  // The very failures worth seeing were the ones that reported nothing.
-  //
-  // Queued instead: the report sits on the SD card until the next time the device
-  // is online with an account, then uploads unattended and is deleted so it is
-  // sent once. Unconditional -- unlike the debug log below it, this is not gated
-  // on Settings -> Apps -> Debug, because a crash is not routine logging and the
-  // people whose devices crash are the least likely to have opted into anything.
-  FouladDeviceTracking::flushPendingCrashReport(server.username, server.password);
-  // Same reasoning: uploading the debug log here (rather than at the moment
-  // a book is opened, when WiFi is already gone) is what actually delivers
-  // it. No-op unless Settings -> Apps -> Debug is on.
-  FouladDeviceTracking::uploadDebugLog(server.username, server.password);
-  // Device/reading-stats snapshot for the "My Devices" web page's Device
-  // Stats / Reading Stats tabs -- same reliable-moment reasoning.
-  FouladDeviceTracking::reportDeviceStats(server.username, server.password);
-}
-
 // Once per boot, not once per Library entry: declining should stick for the session
 // rather than being asked again on every visit. File-scope because the activity is
 // destroyed and rebuilt each time.
@@ -1404,7 +1300,7 @@ void OpdsBookBrowserActivity::maybeOfferFirmwareUpdate() {
 
 void OpdsBookBrowserActivity::checkAndConnectWifi() {
   if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
-    reportDeviceTrackingOnConnect();
+    FouladOpdsHooks::reportDeviceTrackingOnConnect(server);
     state = BrowserState::LOADING;
     statusMessage = tr(STR_LOADING);
     requestUpdate();
@@ -1424,7 +1320,7 @@ void OpdsBookBrowserActivity::launchWifiSelection() {
 
 void OpdsBookBrowserActivity::onWifiSelectionComplete(const bool connected) {
   if (connected) {
-    reportDeviceTrackingOnConnect();
+    FouladOpdsHooks::reportDeviceTrackingOnConnect(server);
     state = BrowserState::LOADING;
     statusMessage = tr(STR_LOADING);
     requestUpdate(true);
