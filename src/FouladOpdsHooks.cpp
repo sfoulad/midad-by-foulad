@@ -2,10 +2,19 @@
 
 #include <Epub.h>
 #include <HalStorage.h>
+#include <WiFi.h>
 
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
 #include "RecentBooksStore.h"
+
+namespace {
+// Owned here, not by the caller (see FouladOpdsHooks.h's pollDeviceTracking()
+// comment) -- persists for the program's lifetime rather than resetting each
+// time a new OpdsBookBrowserActivity is constructed.
+constexpr unsigned long DEVICE_TRACKING_RECHECK_MS = 30000;
+unsigned long lastDeviceTrackingCheckMs = 0;
+}  // namespace
 
 namespace FouladOpdsHooks {
 
@@ -41,6 +50,16 @@ void reportDeviceTrackingOnConnect(const OpdsServer& server) {
   // Device/reading-stats snapshot for the "My Devices" web page's Device
   // Stats / Reading Stats tabs -- same reliable-moment reasoning.
   FouladDeviceTracking::reportDeviceStats(server.username, server.password);
+}
+
+void pollDeviceTracking(const OpdsServer& server, const bool isBrowsing) {
+  const unsigned long nowMs = millis();
+  const bool shouldPoll =
+      shouldPollDeviceTracking(isBrowsing, server.url == FOULAD_EBOOKS_URL, WiFi.status() == WL_CONNECTED, nowMs,
+                               lastDeviceTrackingCheckMs, DEVICE_TRACKING_RECHECK_MS);
+  if (!shouldPoll) return;
+  lastDeviceTrackingCheckMs = nowMs;
+  FouladDeviceTracking::registerDevice(server.username, server.password);
 }
 
 void removeExistingNewsDownload(const std::string& filename) {

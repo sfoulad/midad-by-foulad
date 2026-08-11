@@ -39,4 +39,11 @@ std::string acquisitionExtension(const std::string& acquisitionType) {
 
 bool isNewsFeed(const std::string& serverUrl) { return serverUrl == FOULAD_EBOOKS_NEWS_URL; }
 
+bool shouldPollDeviceTracking(const bool isBrowsing, const bool isFouladServer, const bool wifiConnected,
+                              const unsigned long nowMs, const unsigned long lastCheckMs,
+                              const unsigned long intervalMs) {
+  if (!isBrowsing || !isFouladServer || !wifiConnected) return false;
+  return nowMs - lastCheckMs >= intervalMs;
+}
+
 }  // namespace FouladOpdsHooks

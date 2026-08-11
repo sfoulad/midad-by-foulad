@@ -182,15 +182,8 @@ void OpdsBookBrowserActivity::loop() {
   }
 
   // Re-check for a pushed settings change every ~30s while sitting on the
-  // catalog -- BROWSING only (not LOADING/DOWNLOADING) so this never
-  // competes with an in-flight fetch/download for the same connection.
-  if (state == BrowserState::BROWSING && server.url == FOULAD_EBOOKS_URL && WiFi.status() == WL_CONNECTED) {
-    const unsigned long nowMs = millis();
-    if (nowMs - lastDeviceTrackingCheckMs >= DEVICE_TRACKING_RECHECK_MS) {
-      lastDeviceTrackingCheckMs = nowMs;
-      FouladDeviceTracking::registerDevice(server.username, server.password);
-    }
-  }
+  // catalog -- see FouladOpdsHooks::pollDeviceTracking().
+  FouladOpdsHooks::pollDeviceTracking(server, state == BrowserState::BROWSING);
 
   if (consumeConfirm && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     consumeConfirm = false;
@@ -701,7 +694,7 @@ void OpdsBookBrowserActivity::drawGridCell(const GridLayout& layout, const int p
     }
   }
   renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
-  if (!drawn && (server.url == FOULAD_EBOOKS_NEWS_URL || entry.type == OpdsEntryType::NAVIGATION)) {
+  if (!drawn && (FouladOpdsHooks::isNewsFeed(server.url) || entry.type == OpdsEntryType::NAVIGATION)) {
     // News entries carry no cover art -- there is no image link in the feed, so
     // nothing failed to download and nothing is going to appear later. The generic
     // book icon reads as a book that did not load; the feed's own name on a
@@ -1020,7 +1013,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   // On the News root the advertised search is the BOOK search (/opds/search), which
   // would put a row inside News that returns books. Wrong answer to the wrong
   // question, so News does not offer it.
-  if (server.url == FOULAD_EBOOKS_NEWS_URL) searchTemplate.clear();
+  if (FouladOpdsHooks::isNewsFeed(server.url)) searchTemplate.clear();
   feedNextUrl = parser->getNextPageUrl();
   feedPrevUrl = parser->getPrevPageUrl();
   entries = std::move(*parser).getEntries();
@@ -1072,7 +1065,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     // An empty feed is the normal, successful answer to "this account has no
     // subscriptions" -- not an error (EINK_NEWS_TASKS.md §2). Say what to do next
     // instead, because the thing to do is on the phone and nothing here can do it.
-    errorMessage = (server.url == FOULAD_EBOOKS_NEWS_URL) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
+    errorMessage = FouladOpdsHooks::isNewsFeed(server.url) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
   }
 
   // Crash report: a heap-corruption abort (multi_heap assert_valid_block) landed inside

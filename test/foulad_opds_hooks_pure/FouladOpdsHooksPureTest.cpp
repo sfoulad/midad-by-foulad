@@ -48,3 +48,32 @@ TEST(IsNewsFeed, DoesNotMatchTheCatalogUrl) { EXPECT_FALSE(FouladOpdsHooks::isNe
 TEST(IsNewsFeed, DoesNotMatchAnUnrelatedServer) {
   EXPECT_FALSE(FouladOpdsHooks::isNewsFeed("https://example.com/opds"));
 }
+
+TEST(ShouldPollDeviceTracking, FiresWhenBrowsingFouladAndIntervalElapsed) {
+  EXPECT_TRUE(FouladOpdsHooks::shouldPollDeviceTracking(
+      /*isBrowsing=*/true, /*isFouladServer=*/true, /*wifiConnected=*/true,
+      /*nowMs=*/40000, /*lastCheckMs=*/0, /*intervalMs=*/30000));
+}
+
+TEST(ShouldPollDeviceTracking, FiresExactlyAtTheIntervalBoundary) {
+  // Original inline check used >=, not >; preserve that.
+  EXPECT_TRUE(FouladOpdsHooks::shouldPollDeviceTracking(true, true, true, /*nowMs=*/30000, /*lastCheckMs=*/0,
+                                                        /*intervalMs=*/30000));
+}
+
+TEST(ShouldPollDeviceTracking, DoesNotFireBeforeTheIntervalElapses) {
+  EXPECT_FALSE(FouladOpdsHooks::shouldPollDeviceTracking(true, true, true, /*nowMs=*/29999, /*lastCheckMs=*/0,
+                                                         /*intervalMs=*/30000));
+}
+
+TEST(ShouldPollDeviceTracking, DoesNotFireWhenNotBrowsing) {
+  EXPECT_FALSE(FouladOpdsHooks::shouldPollDeviceTracking(/*isBrowsing=*/false, true, true, 40000, 0, 30000));
+}
+
+TEST(ShouldPollDeviceTracking, DoesNotFireForANonFouladServer) {
+  EXPECT_FALSE(FouladOpdsHooks::shouldPollDeviceTracking(true, /*isFouladServer=*/false, true, 40000, 0, 30000));
+}
+
+TEST(ShouldPollDeviceTracking, DoesNotFireWithoutWifi) {
+  EXPECT_FALSE(FouladOpdsHooks::shouldPollDeviceTracking(true, true, /*wifiConnected=*/false, 40000, 0, 30000));
+}

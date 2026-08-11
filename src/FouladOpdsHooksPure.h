@@ -28,4 +28,14 @@ std::string acquisitionExtension(const std::string& acquisitionType);
 // True when `serverUrl` is the Foulad eBooks News feed root.
 bool isNewsFeed(const std::string& serverUrl);
 
+// Pure gating decision for pollDeviceTracking(): true only when actually
+// browsing (not loading/downloading), the server is Foulad eBooks, WiFi is
+// connected, and at least `intervalMs` have elapsed since `lastCheckMs`
+// (unsigned subtraction, so this is correct across a millis() rollover the
+// same way the original inline check was). pollDeviceTracking() itself owns
+// the real timer state and the actual registerDevice() call -- this only
+// answers "should it fire right now", so it's host-testable without HAL.
+bool shouldPollDeviceTracking(bool isBrowsing, bool isFouladServer, bool wifiConnected, unsigned long nowMs,
+                              unsigned long lastCheckMs, unsigned long intervalMs);
+
 }  // namespace FouladOpdsHooks
