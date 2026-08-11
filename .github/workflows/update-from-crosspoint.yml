@@ -1,0 +1,140 @@
+name: Update from CrossPoint
+
+# Manually triggered fork-sync: mirrors crosspoint-reader/crosspoint-reader's
+# develop branch into `upstream`, merges it into a disposable sync branch off
+# `develop` (a real `git merge`, never a cherry-pick or rebase -- see
+# docs/upstream-sync-architecture.md), runs the exact same CI jobs a normal PR
+# would, and opens a PR. If the merge itself conflicts, this reports which
+# files and stops -- it never attempts to resolve or redesign anything, per
+# docs/upstream-sync-architecture.md's explicit "don't second-guess a clean
+# merge, don't auto-redesign a conflicted one" principle.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: update the upstream mirror and report the merge/CI result, but do not open a PR"
+        type: boolean
+        default: true
+      upstream_ref:
+        description: "Branch on crosspoint-reader/crosspoint-reader to sync from"
+        type: string
+        default: develop
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      conflict: ${{ steps.merge.outputs.conflict }}
+      branch: ${{ steps.merge.outputs.branch }}
+      upstream_sha: ${{ steps.fetch.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: develop
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ github.token }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch crosspoint-reader
+        id: fetch
+        run: |
+          set -euo pipefail
+          git remote add crosspoint-reader https://github.com/crosspoint-reader/crosspoint-reader.git
+          git fetch crosspoint-reader "${{ inputs.upstream_ref }}"
+          sha=$(git rev-parse crosspoint-reader/${{ inputs.upstream_ref }})
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Fetched crosspoint-reader/${{ inputs.upstream_ref }} @ $sha"
+
+      - name: Update the upstream mirror branch
+        # Exact mirror, zero Midad commits, force-updated -- see
+        # docs/upstream-sync-architecture.md's branch structure. Safe to
+        # force-push: this branch has no history of its own to lose.
+        run: |
+          set -euo pipefail
+          git push origin "crosspoint-reader/${{ inputs.upstream_ref }}:refs/heads/upstream" --force
+
+      - name: Create sync branch and merge
+        id: merge
+        run: |
+          set -euo pipefail
+          branch="sync/crosspoint-$(date +%Y%m%d-%H%M%S)"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git checkout -b "$branch"
+
+          if git merge "crosspoint-reader/${{ inputs.upstream_ref }}" --no-ff \
+              -m "Merge crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ steps.fetch.outputs.sha }}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            git push origin "$branch"
+            {
+              echo "## Merge: clean"
+              echo "Merged crosspoint-reader/${{ inputs.upstream_ref }} @ \`${{ steps.fetch.outputs.sha }}\` into \`$branch\` with no conflicts."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Merge: conflict"
+              echo "Merging crosspoint-reader/${{ inputs.upstream_ref }} @ \`${{ steps.fetch.outputs.sha }}\` conflicts in:"
+              echo '```'
+              git diff --name-only --diff-filter=U
+              echo '```'
+              echo ""
+              echo "No automatic resolution attempted, per policy -- see docs/upstream-sync-architecture.md."
+              echo "To resolve locally:"
+              echo '```'
+              echo "git fetch origin upstream"
+              echo "git checkout -b $branch develop"
+              echo "git merge origin/upstream"
+              echo "# resolve the files above, then:"
+              echo "git push origin $branch"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+          fi
+
+  ci:
+    needs: sync
+    if: needs.sync.outputs.conflict == 'false'
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.sync.outputs.branch }}
+    secrets: inherit
+
+  open-pr:
+    needs: [sync, ci]
+    if: needs.sync.outputs.conflict == 'false' && inputs.dry_run == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.sync.outputs.branch }}
+
+      - name: Open PR against develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh pr create \
+            --base develop \
+            --head "${{ needs.sync.outputs.branch }}" \
+            --title "Sync crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ needs.sync.outputs.upstream_sha }}" \
+            --body "Automated sync from crosspoint-reader/crosspoint-reader (\`${{ inputs.upstream_ref }}\` @ \`${{ needs.sync.outputs.upstream_sha }}\`). Merged cleanly; CI passed on the sync branch before this PR was opened. See docs/upstream-sync-architecture.md for the review checklist -- this still needs a human check for anything touching freeink-sdk/HAL/display code, which CI cannot verify on real hardware."
+
+  report-conflict:
+    needs: sync
+    if: needs.sync.outputs.conflict == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail with conflict summary already posted
+        run: |
+          echo "Merge conflicted -- see the sync job's summary above for the file list and manual-resolution steps."
+          exit 1

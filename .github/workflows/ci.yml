@@ -11,6 +11,18 @@ on:
     # work on that branch still gets checked.
     branches: [develop, master]
   pull_request:
+  # Reusable from other workflows (see update-from-crosspoint.yml), so the sync
+  # automation runs the exact same jobs a normal PR would rather than a second,
+  # drifting copy of them. `ref` lets a caller point checkout at a branch that
+  # didn't exist when this workflow started (e.g. a freshly created sync
+  # branch) -- plain push/pull_request runs leave it unset and fall back to
+  # the triggering ref via `inputs.ref || github.ref` below.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to check out (defaults to the triggering ref)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -21,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: recursive
 
       - uses: actions/setup-python@v7
@@ -45,6 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: recursive
 
       - uses: actions/setup-python@v7
@@ -75,6 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: recursive
 
       - uses: actions/setup-python@v7
@@ -128,6 +143,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: recursive
 
       - name: Install build tools
