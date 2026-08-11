@@ -1,6 +1,80 @@
 # Midad as a Thin Fork of CrossPoint: Architecture and Migration Plan
 
-## Status: planning document. No code has been changed to implement this yet.
+## Status: Phase A complete (branch scaffolding + automation live). Phases B onward not started.
+
+## Phase A results: the real baseline, not an estimate
+
+Ran the actual `Update from CrossPoint` action against `develop` on
+2026-08-11 (`dry_run: true`, run
+[31481945288](https://github.com/sfoulad/midad-by-foulad/actions/runs/31481945288)).
+This is a genuine `git merge --no-ff` of `crosspoint-reader/develop` @
+`2cac5971` into a disposable branch off `develop` @ `dc65c0f0` — not a
+sample of individual commits, the real thing the whole plan is about.
+`develop` itself was never touched (confirmed: still at `dc65c0f0`
+afterward); the merge attempt happened on a throwaway branch and was
+aborted on conflict, exactly as designed.
+
+**Result: 158 conflicts** — 107 content, 36 modify/delete, 14 add/add, 1
+rename/delete. This is today's true number; the individual-commit-sampling
+audit below undercounted because a real merge accumulates every file both
+sides touched across the *entire* divergent history at once, not just the
+commits sampled for that audit.
+
+**Confirms the tier predictions below directly** — every Tier 1/2 file
+named in the per-file audit shows up in the real conflict list:
+`lib/Epub/*`, `lib/GfxRenderer/*`, `EpubReaderActivity`/`EpubReaderMenuActivity`,
+`SettingsList.h`, `CrossPointSettings.*`, `main.cpp`, `OpdsBookBrowserActivity.cpp`,
+`CrossPointWebServer.cpp`, `RecentBooksActivity.cpp`, `HomeActivity.cpp`,
+`BaseTheme.cpp`, and `WifiSelectionActivity.cpp/.h` (the parallel-implementation
+candidate flagged below) all conflict, exactly as predicted.
+
+**New findings this run surfaced that the sampling missed:**
+
+- **Nearly every translation file conflicts** (`modify/delete` for most
+  languages, `add/add` for `arabic.yaml`) — confirms the earlier
+  session-level finding (translation files individually showed the same
+  `modify/delete` pattern) but at full scale: this is not a handful of
+  files, it's essentially the whole `lib/I18n/translations/` directory.
+- **`src/JsonSettingsIO.cpp/.h`**: `modify/delete` — we deleted these
+  (Phase 26 in the task history, migrating onto `PersistableStore`); upstream
+  still has and modifies them. Confirms that migration is a **permanent**
+  divergence unless upstream does the equivalent someday — not something
+  the settings-extraction plan below closes on its own.
+- **`src/CrossPointState.cpp/.h`** conflicts too — wasn't in the original
+  per-file sample; add to the Tier 1 settings-system list.
+- **Four genuine "add/add" surprises — both sides independently built the
+  same thing**, each a real Phase G (adopt-upstream-or-contribute-ours)
+  candidate, not just `WifiSelectionActivity`:
+  - `src/ReaderFontSizes.cpp/.h` — matches upstream's own `#2720`
+    "point-size font selection," the same feature we built independently
+    (task history: "Phase 7: point-size font selection, fork-designed
+    port"). Worth a real diff-and-compare, not just picking a side blind.
+  - `lib/Memory/BuildScratch.h`, `lib/Serialization/BufferedFile.h` — both
+    sides built overlapping memory/serialization scratch utilities.
+  - `lib/EpdFont/builtinFonts/source/NotoSansArabic/*` (the font source
+    files themselves) — upstream has landed its own Arabic font support
+    (matches their `#2596`/`#2599` "Arabic glyphs in built-in UI fonts"/
+    "Arabic translation" work found in the commit log), independently of
+    ours. Given this project's whole reason for existing leans on Arabic
+    support, this specific conflict deserves early, careful attention in
+    Phase F/G — it's possible upstream's approach has converged with or
+    could replace parts of ours.
+  - `src/util/DictZip.cpp/.h`, `src/activities/reader/DictionaryDefinitionActivity.*`,
+    `DictionaryWordSelectActivity.*` — both sides built dictionary-lookup UI
+    independently. Consistent with Dictionary's existing Tier 4 status
+    (deliberate fork) — not a signal to reconsider that, just confirms it.
+
+**What this means for sequencing**: Phase A is done and working — the
+automation correctly mirrors upstream, correctly attempts a real merge,
+correctly detects and reports conflicts without touching `develop`, and
+correctly stops rather than improvising a resolution. The 158-conflict
+number is the number Phases B–G exist to bring down; re-run this same
+workflow after each phase to confirm it's actually shrinking, not just
+moving around (see "Running the audit yourself," which now doubles as
+"running the real check" via the Action itself rather than only the
+commit-sampling script).
+
+---
 
 ## The goal, stated precisely
 
