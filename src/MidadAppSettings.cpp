@@ -1,8 +1,10 @@
 #include "MidadAppSettings.h"
 
+#include <HalStorage.h>
 #include <Logging.h>
 
 #include "CrossPointSettings.h"
+#include "MidadAppSettingsLoadPlan.h"
 
 namespace {
 uint8_t clampToggle(uint8_t val, uint8_t fieldDefault) { return val < 2 ? val : fieldDefault; }
@@ -49,28 +51,53 @@ bool MidadAppSettings::fromJson(JsonVariantConst doc) {
 }
 
 bool MidadAppSettings::loadFromFile() {
-  if (PersistableStore<MidadAppSettings>::loadFromFile()) {
-    return true;
-  }
+  // Decided up front via Storage.exists() rather than inferring "missing" from
+  // PersistableStore::loadFromFile()'s plain bool return -- that return value
+  // collapses "file doesn't exist" and "file exists but is corrupt/unparseable"
+  // into the same false, and those two cases must NOT be treated the same:
+  // see MidadAppSettingsLoadPlan.h.
+  const bool ownFileExists = Storage.exists(getFilePath());
+  const bool ownFileLoadedOk = ownFileExists && PersistableStore<MidadAppSettings>::loadFromFile();
+  const bool legacyFileExists = Storage.exists(CrossPointSettings::getFilePath());
 
-  // No midad_apps.json yet -- either a fresh device, or an existing one
-  // upgrading from a firmware where these fields still lived in
-  // CrossPointSettings' settings.json (same field names, same JSON keys, see
-  // docs/upstream-sync-architecture.md's Phase B). Seed from there once so an
-  // existing user's toggle/pomodoro/gym choices survive the migration, then
-  // write our own file so this branch is never taken again.
-  JsonDocument legacyDoc;
-  if (!readDocFromFile(CrossPointSettings::getFilePath(), legacyDoc)) {
-    return false;  // genuinely fresh device -- struct defaults above stand
-  }
+  switch (planMidadAppSettingsLoad(ownFileExists, ownFileLoadedOk, legacyFileExists)) {
+    case MidadAppSettingsLoadPlan::UseOwnFile:
+      return true;
 
-  const bool migrated = fromJson(legacyDoc.as<JsonVariantConst>());
-  if (migrated) {
-    if (saveToFile()) {
-      LOG_DBG("MAS", "Migrated Apps settings from settings.json");
-    } else {
-      LOG_ERR("MAS", "Failed to save migrated Apps settings");
+    case MidadAppSettingsLoadPlan::ReportCorrupt:
+      // readDocFromFile() already LOG_ERR'd the specific parse/read failure.
+      // Do not fall back to legacy settings.json here: migration is a
+      // one-time act, and resurrecting stale pre-migration values behind a
+      // torn write would be silently wrong, not a safe recovery.
+      LOG_ERR("MAS", "midad_apps.json exists but failed to load; not migrating from legacy settings.json");
+      return false;
+
+    case MidadAppSettingsLoadPlan::FreshDefaults:
+      return false;  // genuinely fresh device -- struct defaults above stand
+
+    case MidadAppSettingsLoadPlan::Migrate: {
+      // No midad_apps.json yet, but CrossPointSettings' settings.json still
+      // has these fields under the same names (see docs/upstream-sync-
+      // architecture.md's Phase B). Seed from there once so an existing
+      // user's toggle/pomodoro/gym choices survive the split, then write our
+      // own file so this branch is never taken again.
+      JsonDocument legacyDoc;
+      if (!readDocFromFile(CrossPointSettings::getFilePath(), legacyDoc)) {
+        // legacyFileExists was true a moment ago but the read failed anyway
+        // (e.g. corrupt legacy file) -- fall back to defaults rather than
+        // migrating from an empty document.
+        return false;
+      }
+      const bool migrated = fromJson(legacyDoc.as<JsonVariantConst>());
+      if (migrated) {
+        if (saveToFile()) {
+          LOG_DBG("MAS", "Migrated Apps settings from settings.json");
+        } else {
+          LOG_ERR("MAS", "Failed to save migrated Apps settings");
+        }
+      }
+      return migrated;
     }
   }
-  return migrated;
+  return false;
 }

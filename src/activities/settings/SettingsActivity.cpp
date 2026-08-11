@@ -19,7 +19,7 @@
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
-#include "MidadAppSettings.h"
+#include "MidadSettingsList.h"
 #include "OpdsServerListActivity.h"
 #include "OpdsServerStore.h"
 #include "QuranBook.h"
@@ -76,18 +76,11 @@ void SettingsActivity::rebuildSettingsLists() {
                           SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   appsSettings.push_back(SettingInfo::Action(StrId::STR_DICTIONARY, SettingAction::Dictionary));
   appsSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
-  // Last item in Apps by design (user request): gates whether the rolling SD
-  // diagnostic logs get written at all -- see CrossPointSettings::debugLoggingEnabled
-  // and src/util/DebugLogging.h for the full list and rationale. Appended here
-  // directly (not in the static getSettingsList() table above) specifically so it
-  // always lands after KOReader Sync, which is itself appended the same way.
-  appsSettings.push_back(SettingInfo::DynamicToggle(
-      StrId::STR_DEBUG_LOGGING, [] { return MIDAD_APP_SETTINGS.debugLoggingEnabled; },
-      [](uint8_t val) {
-        MIDAD_APP_SETTINGS.debugLoggingEnabled = val;
-        MIDAD_APP_SETTINGS.saveToFile();
-      },
-      "debugLoggingEnabled", StrId::STR_CAT_APPS));
+  // Midad-owned Apps rows (Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym/Debug
+  // Logging) -- see src/MidadSettingsList.h. Appended here, after KOReader
+  // Sync, so Debug Logging (the last row that function adds) keeps landing
+  // right after KOReader Sync, matching prior behavior.
+  appendMidadAppSettings(appsSettings);
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   // OPDS Servers is deliberately not listed. Adding a catalog by hand means typing a
   // URL and credentials on an on-screen keyboard, and every catalog these devices

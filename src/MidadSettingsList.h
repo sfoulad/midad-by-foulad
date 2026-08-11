@@ -1,0 +1,19 @@
+#pragma once
+
+#include <vector>
+
+#include "activities/settings/SettingsActivity.h"
+
+// Midad-owned Apps-screen setting rows: Quran, Games, Tasbih, Stop Watch,
+// Pomodoro (+ its three durations), Gym (+ weight unit), Debug Logging. None
+// of these have a CrossPoint upstream equivalent (see MidadAppSettings.h,
+// which backs every one of them), so their SettingInfo::DynamicToggle/
+// DynamicValue/DynamicEnum row definitions live here rather than in the
+// upstream-owned SettingsList.h -- see docs/upstream-sync-architecture.md's
+// Phase B for why that split matters for merge conflict surface.
+//
+// SettingsActivity::rebuildSettingsLists() is the one caller: a single hook
+// appending this whole family into whatever Apps-category vector it's
+// building, in place of what used to be a dozen individual rows mixed into
+// the shared getSettingsList() table.
+void appendMidadAppSettings(std::vector<SettingInfo>& appsSettings);
