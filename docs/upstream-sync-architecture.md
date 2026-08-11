@@ -1,6 +1,6 @@
 # Midad as a Thin Fork of CrossPoint: Architecture and Migration Plan
 
-## Status: Phase A scaffolding complete; conflict path validated. Phase B (settings extraction) merged (PR #136). Phase C (OPDS/device-tracking extraction) done, pending merge -- see "Phase C results" below; its originally-written scope (BLE book.fetch) turned out not to exist on develop, see that section's correction note. Clean-merge CI/PR path still remains to be exercised once a clean merge is achievable. Phases D onward not started.
+## Status: Phase A scaffolding complete; conflict path validated. Phase B (settings extraction) merged (PR #136). Phase C (OPDS/device-tracking extraction) done through 2 review rounds, pending merge -- see "Phase C results" and "Phase C round 2" below; its originally-written scope (BLE book.fetch) turned out not to exist on develop, see that section's correction note. Clean-merge CI/PR path still remains to be exercised once a clean merge is achievable. Phase D not started.
 
 ## Phase C results: FouladOpdsHooks extraction from OpdsBookBrowserActivity
 
@@ -80,6 +80,91 @@ files don't exist upstream and can't conflict. Line-count reduction in the
 shared files: `OpdsBookBrowserActivity.cpp` -97 net lines (10 insertions, 107
 deletions), `.h` -7 net lines -- same "shrinks what's inside an
 already-conflicting file, not the file-level count" pattern as Phase B.
+
+### Phase C round 2: periodic device-tracking poll extraction, News-predicate centralization
+
+PR #137 review found the initial extraction above had missed one call site:
+`OpdsBookBrowserActivity::loop()` still ran the periodic (~30s) re-registration
+poll inline, with its timer state (`lastDeviceTrackingCheckMs`,
+`DEVICE_TRACKING_RECHECK_MS`) declared as members in `.h` -- the exact
+device-tracking glue this phase exists to remove, missed because the initial
+pass only found the connect-time call (`reportDeviceTrackingOnConnect()`), not
+this second, separately-triggered one. Consistent with the recurring lesson
+from every prior review round (Phase B rounds 1 and 3, and now this one):
+grep for *every* call site of the pattern being extracted, not just the most
+obvious one, before declaring an extraction complete.
+
+**Fixed**: `FouladOpdsHooks::pollDeviceTracking(server, isBrowsing)` now owns
+both the gating logic and the timer state. The timer (`lastDeviceTrackingCheckMs`)
+moved into an anonymous namespace in `FouladOpdsHooks.cpp` -- deliberately
+*not* passed in from the caller, so it persists for the process's lifetime
+rather than resetting every time a new `OpdsBookBrowserActivity` is
+constructed (a minor, intentional behavior difference from the pre-extraction
+per-instance member). The gating decision itself
+(`shouldPollDeviceTracking(isBrowsing, isFouladServer, wifiConnected, nowMs,
+lastCheckMs, intervalMs)`) is a pure function in `FouladOpdsHooksPure.h/.cpp`,
+taking a plain `bool isBrowsing` rather than `OpdsBookBrowserActivity::BrowserState`
+-- the Midad module has no dependency on that upstream-owned enum. 6 new
+gtest cases cover it (134 total, up from 128): fires when browsing + Foulad +
+WiFi + interval elapsed, fires exactly at the interval boundary (`>=`, matching
+the original inline check), does not fire before the interval elapses, and
+does not fire when any one of not-browsing / non-Foulad-server / no-WiFi holds.
+
+Also centralized: the 3 remaining direct `server.url == FOULAD_EBOOKS_NEWS_URL`
+checks (News cover fallback, search suppression, empty-feed message) now call
+`FouladOpdsHooks::isNewsFeed(server.url)` instead of duplicating the URL
+comparison. Per the reviewed scope, only the predicate moved -- the
+surrounding rendering/search state machines stay physically in
+`OpdsBookBrowserActivity.cpp`, unchanged, since they have no real extraction
+value on their own (same reasoning as the "deliberately left in place" list
+above).
+
+**Remaining intentional Midad hooks in `OpdsBookBrowserActivity.cpp`/`.h`**
+(everything still there is either a single-line integration branch or a call
+into an already-extracted Midad module -- there is no longer any
+`FouladDeviceTracking::registerDevice()` call, direct or periodic, inside this
+file):
+
+- `FouladOpdsHooks::reportDeviceTrackingOnConnect(server)` -- one call, fired
+  on WiFi connect.
+- `FouladOpdsHooks::pollDeviceTracking(server, state == BrowserState::BROWSING)`
+  -- one call in `loop()`, per this round's change.
+- `FouladOpdsHooks::isNewsFeed(server.url)` -- 3 call sites (cover fallback,
+  search suppression, empty-feed message), per this round's change.
+- `FouladOpdsHooks::removeExistingNewsDownload()` / `tagFouladBookId()` -- one
+  call each inside `downloadBook()`.
+- `FouladOpdsHooks::acquisitionExtension()` -- one call inside `downloadBook()`
+  for the XTC/XTCH MIME mapping.
+- The 401-handler's restart-to-QR-login branch -- one URL comparison, one call
+  into `SilentRestart.h` (already minimal; see the initial audit above).
+- `FouladDeviceTracking::pendingFirmwareUpdate()` inside
+  `maybeOfferFirmwareUpdate()` -- the rest of that function is generic
+  update-latch UI state, not Foulad-specific.
+
+`.h` now declares zero Midad-specific state (`lastDeviceTrackingCheckMs` and
+`DEVICE_TRACKING_RECHECK_MS` are gone) and zero Midad-specific method
+declarations -- everything Foulad-specific it once owned now lives behind a
+`FouladOpdsHooks::*` call.
+
+**Conflict re-measurement (round 2)**: **158, identical file list to every
+prior measurement**, including this phase's initial round. `OpdsBookBrowserActivity.h`
+still isn't on the conflict list (unchanged from every prior measurement,
+despite losing its two tracking members here) and `.cpp` still is (unavoidable
+-- other Midad integration points remain, and it was already conflicting on
+the Phase A baseline regardless). No new files or lines in `FouladOpdsHooks.h/.cpp`/
+`FouladOpdsHooksPure.h/.cpp` appear on the conflict list, since none of them
+exist upstream. No new conflicts introduced.
+
+**Verification (round 2)**: `pio run -e default`/`simulator`, `pio check` (no
+defects), `clang-format-fix` (clean, only the 7 intended files touched),
+134/134 gtest. Live-verified in the simulator via a temporary `main.cpp` hook
+(reverted before committing): confirmed all four gating scenarios --
+not-browsing at boot (no attempt), browsing but interval not yet elapsed (no
+attempt), browsing with the interval genuinely elapsed via `delay(31000)`
+(fired, reached the real `FouladDeviceTracking::registerDevice()`, same
+pre-existing simulator-only `HttpDownloader` POST gap as the initial round,
+not a regression), and an immediate re-poll right after firing while still
+browsing (correctly did not re-fire, interval not yet elapsed again).
 
 ## Phase B final state (after round 3)
 
