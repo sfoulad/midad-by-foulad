@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Arduino.h>
+
 #include <string>
 
 #include "DebugLog.h"
@@ -23,8 +25,19 @@
 // nicety for real stability risk, which this log exists to help debug, not to add to.
 namespace BleDiagLog {
 
-inline void append(const std::string& line) {
-  RollingSdLog::append(DebugLog::PATH, "[BLE] " + line, DebugLog::MAX_LINES);
+// Takes a raw C string, not std::string: a std::string parameter would construct a
+// temporary from the caller's fixed char buffer BEFORE this function's body -- and
+// therefore before RollingSdLog's own MIN_SAFE_HEAP_BYTES check -- ever runs, exactly
+// the kind of allocation-ahead-of-the-safety-gate this log must not introduce given
+// BLE-R1 explicitly lets a running session's free heap sit as low as
+// BlePeripheralManager::kRunningFloorBytes (8 KB, well under the 32 KB floor). Checked
+// again here, redundantly but cheaply (a single ESP.getFreeHeap() comparison, no
+// allocation), so the "[BLE] " + line concatenation below never happens at all when
+// there isn't room for it -- RollingSdLog::append()'s own internal check remains as a
+// second guard, not replaced by this one.
+inline void append(const char* line) {
+  if (ESP.getFreeHeap() < RollingSdLog::MIN_SAFE_HEAP_BYTES) return;
+  RollingSdLog::append(DebugLog::PATH, std::string("[BLE] ") + line, DebugLog::MAX_LINES);
 }
 
 }  // namespace BleDiagLog
