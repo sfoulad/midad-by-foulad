@@ -1043,6 +1043,15 @@ void loop() {
           logSerial.printf("BLE_TEST_CATFILE_READ_FAILED\n");
         }
         logSerial.printf("\nBLE_TEST_CATFILE_END\n");
+      } else if (cmd.startsWith("BLE_TEST_RMFILE:")) {
+        // Temporary debug tooling: removes an arbitrary SD file over serial, for
+        // cleaning up test artifacts (e.g. a book.fetch test download) without
+        // physical SD card access. RECENT_BOOKS self-heals on the next
+        // HomeActivity::onEnter() via pruneMissing(), so no separate library-entry
+        // cleanup needed here.
+        const String path = cmd.substring(strlen("BLE_TEST_RMFILE:"));
+        const bool removed = Storage.remove(path.c_str());
+        logSerial.printf("BLE_TEST_RMFILE: path=%s removed=%d\n", path.c_str(), removed);
       } else if (cmd == "CRASHLOG") {
         // Temporary debug tooling -- dumps /crash_report.txt (HalSystem::checkPanic(),
         // written on the boot after a panic) straight to serial so a raw stack dump can
