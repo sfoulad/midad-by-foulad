@@ -1,6 +1,117 @@
 # Midad as a Thin Fork of CrossPoint: Architecture and Migration Plan
 
-## Status: planning document. No code has been changed to implement this yet.
+## Status: Phase A scaffolding complete; conflict path validated. Clean-merge CI/PR path remains to be exercised once a clean merge is achievable. Phases B onward not started.
+
+## Phase A results: the real baseline, not an estimate
+
+Ran the actual `Update from CrossPoint` action against `develop` on
+2026-08-11 (`dry_run: true`, run
+[31481945288](https://github.com/sfoulad/midad-by-foulad/actions/runs/31481945288)).
+This is a genuine `git merge --no-ff` of `crosspoint-reader/develop` @
+`2cac5971` into a disposable branch off `develop` @ `dc65c0f0` — not a
+sample of individual commits, the real thing the whole plan is about.
+`develop` itself was never touched (confirmed: still at `dc65c0f0`
+afterward); the merge attempt happened on a throwaway branch and was
+aborted on conflict, exactly as designed.
+
+**Result: 158 conflicts** — 107 content, 36 modify/delete, 14 add/add, 1
+rename/delete. This is today's true number; the individual-commit-sampling
+audit below undercounted because a real merge accumulates every file both
+sides touched across the *entire* divergent history at once, not just the
+commits sampled for that audit.
+
+**Confirms the tier predictions below directly** — every Tier 1/2 file
+named in the per-file audit shows up in the real conflict list:
+`lib/Epub/*`, `lib/GfxRenderer/*`, `EpubReaderActivity`/`EpubReaderMenuActivity`,
+`SettingsList.h`, `CrossPointSettings.*`, `main.cpp`, `OpdsBookBrowserActivity.cpp`,
+`CrossPointWebServer.cpp`, `RecentBooksActivity.cpp`, `HomeActivity.cpp`,
+`BaseTheme.cpp`, and `WifiSelectionActivity.cpp/.h` (the parallel-implementation
+candidate flagged below) all conflict, exactly as predicted.
+
+**New findings this run surfaced that the sampling missed:**
+
+- **Nearly every translation file conflicts** (`modify/delete` for most
+  languages, `add/add` for `arabic.yaml`) — confirms the earlier
+  session-level finding (translation files individually showed the same
+  `modify/delete` pattern) but at full scale: this is not a handful of
+  files, it's essentially the whole `lib/I18n/translations/` directory.
+- **`src/JsonSettingsIO.cpp/.h`**: `modify/delete` — **the direction is the
+  opposite of an earlier draft of this section**. Verified directly:
+  `src/JsonSettingsIO.h` exists in our `develop` (confirmed via `git show
+  origin/develop:src/JsonSettingsIO.h`) and does **not** exist in the
+  `upstream` mirror. So upstream deleted it, we still have a modified copy —
+  not the other way around. Investigated why we still have it: `grep` for
+  every call site shows only two callers left, both bookmark I/O
+  (`EpubReaderActivity.cpp:2708/2760`, `EpubReaderBookmarksActivity.cpp:40/78`
+  calling `JsonSettingsIO::loadBookmarks`/`saveBookmarks`) — the
+  `saveSettings`/`loadSettings` half of the file is dead code, unused since
+  our own PersistableStore migration (task history: "Migrate
+  CrossPointSettings/State off JsonSettingsIO onto PersistableStore").
+  Upstream's own equivalent migration (`63eda54e`, "chore: Migrate
+  Settings/State onto PersistableStore" — the same commit, independently
+  built, matching our task title almost word for word) went one step
+  further and *also* replaced bookmark persistence: it deleted
+  `JsonSettingsIO.cpp/.h` entirely and added `src/util/BookmarkFile.cpp/.h`
+  (`BookmarkFile::load(bookPath, ...)`/`save(bookPath, ...)`, confirmed in
+  its diff) as the dedicated replacement. **This is a convergence
+  opportunity, not a permanent divergence**: adopting `BookmarkFile` (or
+  building our own equivalent) for our two remaining bookmark call sites
+  would let us delete `JsonSettingsIO.cpp/.h` outright, closing this
+  conflict completely. Worth pulling into the Settings-extraction phase
+  (B) rather than treating as unfixable.
+- **`src/CrossPointState.cpp/.h`** conflicts too — wasn't in the original
+  per-file sample; add to the Tier 1 settings-system list.
+- **Four genuine "add/add" surprises — both sides independently built the
+  same thing**, each a real Phase G (adopt-upstream-or-contribute-ours)
+  candidate, not just `WifiSelectionActivity`:
+  - `src/ReaderFontSizes.cpp/.h` — matches upstream's own `#2720`
+    "point-size font selection," the same feature we built independently
+    (task history: "Phase 7: point-size font selection, fork-designed
+    port"). Worth a real diff-and-compare, not just picking a side blind.
+  - `lib/Memory/BuildScratch.h`, `lib/Serialization/BufferedFile.h` — both
+    sides built overlapping memory/serialization scratch utilities.
+  - `lib/EpdFont/builtinFonts/source/NotoSansArabic/*` (the font source
+    files themselves) — upstream has landed its own Arabic font support
+    (matches their `#2596`/`#2599` "Arabic glyphs in built-in UI fonts"/
+    "Arabic translation" work found in the commit log), independently of
+    ours. Given this project's whole reason for existing leans on Arabic
+    support, this specific conflict deserves early, careful attention in
+    Phase F/G — it's possible upstream's approach has converged with or
+    could replace parts of ours.
+  - `src/util/DictZip.cpp/.h`, `src/activities/reader/DictionaryDefinitionActivity.*`,
+    `DictionaryWordSelectActivity.*` — both sides built dictionary-lookup UI
+    independently. Consistent with Dictionary's existing Tier 4 status
+    (deliberate fork) — not a signal to reconsider that, just confirms it.
+
+**What this run actually validated, precisely** (this run's own status shows
+as a workflow *failure* — that's expected and correct, not a malfunction:
+the `report-conflict` job intentionally `exit 1`s when conflicts are
+detected, specifically so a real conflict can't silently look like success
+in the Actions UI):
+
+- the `upstream` mirror updates correctly
+- a real merge attempt runs correctly
+- conflict detection works
+- the exact conflicting-file list is reported correctly
+- `develop` is left untouched
+- the automation correctly aborts rather than attempting any auto-resolution
+
+**What this run did *not* exercise**: because this merge conflicted, the
+`ci` job (`workflow_call` into the reusable `ci.yml`) and the `open-pr` job
+were both skipped by their `if: needs.sync.outputs.conflict == 'false'`
+condition. **The clean-merge → CI → PR path has not been run yet.** That
+still needs a real exercise — either a future sync that happens to merge
+cleanly, or a deliberate test (e.g. temporarily pointing `upstream_ref` at
+an older upstream commit close enough to `develop` to merge clean) — before
+it can be called validated.
+
+The 158-conflict number is the number Phases B–G exist to bring down;
+re-run this same workflow after each phase to confirm it's actually
+shrinking, not just moving around (see "Running the audit yourself," which
+now doubles as "running the real check" via the Action itself rather than
+only the commit-sampling script).
+
+---
 
 ## The goal, stated precisely
 
