@@ -114,7 +114,13 @@ void pump() {
   char replyBuf[BlePeripheralManager::kMaxPayloadLen];
   const size_t replyLen = dispatch(cmd, doc["payload"], replyBuf, sizeof(replyBuf));
   if (replyLen > 0) {
-    BlePeripheral.sendCommandReply(reinterpret_cast<const uint8_t*>(replyBuf), replyLen);
+    // Log delivery, not just intent: notify() returns false when no client has
+    // subscribed to the Command characteristic's CCCD -- diagnostics-only, this
+    // doesn't retry or change protocol behavior, just distinguishes "device never
+    // replied" from "client never listened" for whoever reads the serial/debug log.
+    const bool delivered = BlePeripheral.sendCommandReply(reinterpret_cast<const uint8_t*>(replyBuf), replyLen);
+    LOG_DBG(TAG, "reply %s: %.*s", delivered ? "notified" : "NOT delivered (no subscriber?)",
+            static_cast<int>(replyLen), replyBuf);
   }
 }
 

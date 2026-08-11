@@ -48,6 +48,7 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "util/BatteryDiagLog.h"
+#include "util/BleDiagLog.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/SleepDiagLog.h"
@@ -839,6 +840,51 @@ void loop() {
   }
   BlePeripheral.poll();
   BleCommandDispatcher::pump();
+
+  // Diagnostics + repaint nudge. The "BT" indicator in BaseTheme::drawHeader() reads
+  // live BlePeripheral state, but e-ink screens don't repaint on a timer -- without an
+  // explicit nudge here, a header already on screen when the radio finishes starting
+  // (or stops) would sit stale until some unrelated repaint happened to occur.
+  //
+  // BleDiagLog is best-effort, not guaranteed: RollingSdLog::append() silently skips
+  // the write below RollingSdLog::MIN_SAFE_HEAP_BYTES (32 KB) free heap, and NimBLE's
+  // own resident cost can leave less than that free while BLE is up -- an Off ->
+  // Advertising transition right after a successful begin() may not actually reach
+  // /debug_log.txt. LOG_DBG alongside it is serial-only and stripped from RC builds
+  // (LOG_LEVEL=1), so it doesn't fill that gap either. Not solved here: a low-heap
+  // transition may simply go unlogged to SD. See BleDiagLog.h.
+  static bool lastBleAllowedNow = false;
+  if (bleAllowedNow != lastBleAllowedNow) {
+    LOG_DBG("BLEDIAG", "bleAllowedNow %d -> %d (bleEnabled=%d wifiMode=%d isReader=%d)", lastBleAllowedNow,
+            bleAllowedNow, MIDAD_APP_SETTINGS.bleEnabled, static_cast<int>(WiFi.getMode()),
+            activityManager.isReaderActivity());
+    lastBleAllowedNow = bleAllowedNow;
+  }
+  static BlePeripheralManager::State lastBleDiagState = BlePeripheralManager::State::Off;
+  static unsigned long lastBleRefusalLogMs = 0;
+  const auto bleStateNow = BlePeripheral.state();
+  if (bleStateNow != lastBleDiagState) {
+    static const char* const kBleStateNames[] = {"off", "advertising", "connected", "paused_low_memory"};
+    char bleBuf[96];
+    snprintf(bleBuf, sizeof(bleBuf), "state %s -> %s, free heap=%u (gate=%u, floor=%u)",
+             kBleStateNames[static_cast<int>(lastBleDiagState)], kBleStateNames[static_cast<int>(bleStateNow)],
+             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
+             static_cast<unsigned>(BlePeripheralManager::kRunningFloorBytes));
+    BleDiagLog::append(bleBuf);
+    LOG_DBG("BLEDIAG", "%s", bleBuf);
+    lastBleDiagState = bleStateNow;
+    activityManager.requestUpdate();
+  } else if (bleAllowedNow && bleStateNow == BlePeripheralManager::State::Off &&
+             millis() - lastBleRefusalLogMs >= 60000) {
+    // Wanted to run for at least 60s straight but hasn't -- one line per minute while
+    // stuck, not every tick, so this doesn't flood the shared log.
+    lastBleRefusalLogMs = millis();
+    char bleBuf[96];
+    snprintf(bleBuf, sizeof(bleBuf), "still off after wanting to start: free heap=%u (gate=%u)",
+             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes));
+    BleDiagLog::append(bleBuf);
+    LOG_DBG("BLEDIAG", "%s", bleBuf);
+  }
 #endif
 
   if (Serial && millis() - lastMemPrint >= 10000) {
@@ -860,6 +906,40 @@ void loop() {
         uint8_t* buf = display.getFrameBuffer();
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
+        // BLE_ON/BLE_OFF/BLE_STATUS/RESTART: permanent debug tooling alongside
+        // SCREENSHOT above, added for driving/inspecting BLE lifecycle state without
+        // physical button presses/screen navigation -- same rationale (device-side
+        // testing that doesn't need eyes on the e-ink panel or a phone in hand).
+      } else if (cmd == "BLE_ON") {
+        MIDAD_APP_SETTINGS.bleEnabled = 1;
+        MIDAD_APP_SETTINGS.saveToFile();
+        logSerial.printf("BLE_ON: bleEnabled now %d\n", MIDAD_APP_SETTINGS.bleEnabled);
+      } else if (cmd == "BLE_OFF") {
+        MIDAD_APP_SETTINGS.bleEnabled = 0;
+        MIDAD_APP_SETTINGS.saveToFile();
+        logSerial.printf("BLE_OFF: bleEnabled now %d\n", MIDAD_APP_SETTINGS.bleEnabled);
+      } else if (cmd == "BLE_STATUS") {
+#ifndef SIMULATOR
+        char advName[24];
+        BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
+        logSerial.printf(
+            "BLE_STATUS: enabled=%d activity=%s wifiMode=%d isReader=%d freeHeap=%u maxAlloc=%u gate=%u floor=%u "
+            "bleState=%d name=%s\n",
+            MIDAD_APP_SETTINGS.bleEnabled, activityManager.currentActivityDebugName(), static_cast<int>(WiFi.getMode()),
+            activityManager.isReaderActivity(), static_cast<unsigned>(ESP.getFreeHeap()),
+            static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
+            static_cast<unsigned>(BlePeripheralManager::kRunningFloorBytes), static_cast<int>(BlePeripheral.state()),
+            advName);
+#endif
+      } else if (cmd == "RESTART") {
+        // Lets a scripted USB test harness reboot the device to exercise boot-path
+        // behavior (e.g. the boot-time BLE session) without physical access.
+        // ESP.restart() is normally reserved for recovery paths (see CLAUDE.md), but a
+        // serial debug command is an explicit operator request, same as the power
+        // button.
+        logSerial.printf("RESTART: rebooting now\n");
+        logSerial.flush();
+        ESP.restart();
       }
     }
   }
@@ -998,8 +1078,19 @@ void loop() {
     yield();                             // Give FreeRTOS a chance to run tasks, but return immediately
   } else {
     if (millis() - lastActivityTime >= HalPowerManager::IDLE_POWER_SAVING_MS) {
-      // If we've been inactive for a while, increase the delay to save power
-      powerManager.setPowerSaving(true);  // Lower CPU frequency after extended inactivity
+      // If we've been inactive for a while, increase the delay to save power.
+      // NEVER while BLE is up: HalPowerManager's low-power CPU frequency is below
+      // what Espressif requires for BLE RF (the controller keeps reporting
+      // advertising-active while physically transmitting nothing at that frequency).
+      // A device would work fine while the user is actively pressing buttons and
+      // silently go dark to real scanners the moment it idles without this check.
+#ifndef SIMULATOR
+      const bool blePreventsLowPower = BlePeripheral.isActive();
+#else
+      const bool blePreventsLowPower = false;
+#endif
+      powerManager.setPowerSaving(
+          !blePreventsLowPower);  // Lower CPU frequency after extended inactivity, unless BLE needs it
       delay(50);
     } else {
       // Short delay to prevent tight loop while still being responsive

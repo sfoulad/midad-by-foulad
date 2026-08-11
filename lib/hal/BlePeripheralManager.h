@@ -39,15 +39,35 @@ class BlePeripheralManager {
                       // drop -- see docs/ble-module-tasks.md's PAUSED state design.
   };
 
-  // ~70 KB Idle-state gate from docs/ble-module-tasks.md's Hardware reality section:
-  // NimBLE's ~57 KB resident cost plus a flat safety margin, no EPUB-headroom term --
-  // that term is specific to Phase 4's Reading-state (BLE-central-while-reading)
-  // scenario, not this Idle-state peripheral role. Unmeasured on this codebase's real
-  // feature set yet; see the doc for the reasoning and what would revise it.
+  // ~70 KB Idle-state PRE-FLIGHT gate: NimBLE init itself consumes a large chunk of
+  // heap (tens of KB), so this is what begin() needs to see BEFORE init for the
+  // device to still have a workable floor left afterward. Deliberately NOT the
+  // while-running floor below -- using one number for both jobs means every
+  // successful start judges itself against its own pre-init requirement on the very
+  // next poll() and tears itself down immediately, since post-init free heap is far
+  // below this by design. See kRunningFloorBytes for the number poll() actually uses.
   static constexpr uint32_t kHeapGateBytes = 70 * 1024;
+  // While-RUNNING floor for poll(): once NimBLE is resident, kHeapGateBytes has
+  // already been spent and the question changes from "can we afford to start?" to
+  // "is the rest of the system being starved?". 8 KB carried over from an earlier
+  // hardware session's measurement, re-confirmed live on this build (real X3, BLE-R1):
+  // ~81 KB free immediately before begin(), ~22.5 KB free while advertising and
+  // holding steady over several minutes including repeated real connect/disconnect
+  // cycles (NimBLE's actual resident cost on this build: ~58.6 KB) -- comfortably
+  // above this floor, with more margin than the original session's ~12.7 KB
+  // measurement had. Reading state never sees this floor -- the lifecycle caller
+  // tears BLE down before the reader opens.
+  static constexpr uint32_t kRunningFloorBytes = 8 * 1024;
   // Cool-down after a low-memory teardown, so a caller retrying begin() can't spin the
   // radio on/off (PR #2527's field-crash finding, see the doc).
   static constexpr uint32_t kCooldownMs = 30000;
+  // How long poll()'s zombie check (state Advertising, radio reporting inactive, no
+  // live connection) must persist before tearing down for a retry. Must comfortably
+  // exceed the window between the controller accepting a CONNECT_IND (which stops
+  // advertising) and the host delivering the resulting connect event -- advertising
+  // legitimately going idle for a moment during a real inbound connection is normal,
+  // not a zombie; too short a persistence window tears down a connection mid-handshake.
+  static constexpr uint32_t kZombiePersistMs = 3000;
   // JSON payload budget for the Auth/Command/Status characteristics -- see the doc's
   // GATT layout MTU note (185-byte target MTU, minus ATT header and JSON framing
   // overhead). A write larger than this is truncated at the GATT layer (NimBLE's own
@@ -57,6 +77,18 @@ class BlePeripheralManager {
   static constexpr size_t kMaxPayloadLen = 160;
 
   static BlePeripheralManager& getInstance();
+
+  // Writes "Midad-<last 3 MAC bytes as hex>" into outBuf (caller-owned, fixed-size, no
+  // heap churn) -- the same name begin() advertises, exposed publicly so debug/status
+  // tooling can report the exact name a phone's scan list would show. Reads the
+  // factory-programmed MAC directly from eFuse (esp_efuse_mac_get_default()), NOT
+  // WiFi.macAddress() -- that call needs the WiFi driver initialized at least once
+  // this boot to have a value to return (it reads through esp_wifi_get_mac()), which
+  // the Idle -> BLE-peripheral state by design never does; confirmed live to return
+  // all-zeros here. eFuse access has no such dependency and needs no WiFi/BLE state at
+  // all -- same call already used by lib/Serialization/ObfuscationUtils.cpp's
+  // getHwKey() for the identical reason.
+  static void getAdvertisedName(char* outBuf, size_t outBufLen);
 
   // Starts advertising if the heap gate and cool-down both allow it. Returns false
   // (and logs why) otherwise -- the caller must not retry in a tight loop; back off and
@@ -115,6 +147,10 @@ class BlePeripheralManager {
   volatile State state_ = State::Off;
   uint32_t lastLowMemoryTeardownMs_ = 0;
   bool coolingDown_ = false;
+  // millis() when poll()'s zombie check first saw the signature (Advertising, radio
+  // reporting inactive, no connection); 0 = not currently seen. Reset the moment the
+  // condition clears, so only a persistent zombie -- not a momentary one -- tears down.
+  unsigned long zombieSinceMs_ = 0;
 
   uint8_t pendingAuth_[kMaxPayloadLen] = {};
   size_t pendingAuthLen_ = 0;

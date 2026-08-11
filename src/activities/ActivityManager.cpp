@@ -3,6 +3,9 @@
 #include <FontCacheManager.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#ifndef SIMULATOR
+#include <BlePeripheralManager.h>
+#endif
 
 #include <algorithm>
 
@@ -152,6 +155,21 @@ void ActivityManager::loop() {
       currentActivity = std::move(pendingActivity);
 
       lock.unlock();  // onEnter may acquire its own lock
+
+#ifndef SIMULATOR
+      // Free NimBLE's resident heap before the incoming activity allocates, but only
+      // if BLE is actually running -- end() is cheap but not free (HalPowerManager
+      // lock, NimBLE deinit sequence), so skip it entirely when there's nothing to
+      // tear down (Off/PausedLowMemory). With BLE resident, a heavy onEnter() (Home's
+      // cover art especially) could hit allocation failures before the main loop's
+      // poll() got a chance to react -- poll() only runs after onEnter() returns.
+      // main.cpp's bleAllowedNow logic restarts BLE on the new screen if its
+      // post-onEnter() heap clears the pre-flight gate.
+      if (BlePeripheral.isActive()) {
+        BlePeripheral.end();
+      }
+#endif
+
       currentActivity->onEnter();
 
       // onEnter may request another pending action, we will handle it in the next loop iteration

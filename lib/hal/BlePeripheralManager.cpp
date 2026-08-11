@@ -4,6 +4,7 @@
 #include <HalPowerManager.h>
 #include <Logging.h>
 #include <NimBLEDevice.h>
+#include <esp_mac.h>
 
 #include <cstring>
 
@@ -107,8 +108,20 @@ BlePeripheralManager& BlePeripheralManager::getInstance() {
   return instance;
 }
 
+void BlePeripheralManager::getAdvertisedName(char* outBuf, size_t outBufLen) {
+  uint8_t mac[6] = {};
+  esp_efuse_mac_get_default(mac);
+  snprintf(outBuf, outBufLen, "Midad-%02X%02X%02X", mac[3], mac[4], mac[5]);
+}
+
 bool BlePeripheralManager::begin() {
-  if (state_ != State::Off) return true;  // already running
+  // Only Advertising/Connected are genuinely "already running, no-op". PausedLowMemory
+  // used to be folded into this same early return (state_ != State::Off), which meant
+  // once poll() paused for low memory, begin() could never retry again -- no matter how
+  // long the cool-down ran or how much heap recovered. Off and PausedLowMemory both
+  // fall through to the cool-down + heap-gate checks below instead, so a genuine retry
+  // can actually happen once both clear.
+  if (state_ == State::Advertising || state_ == State::Connected) return true;
 
   if (coolingDown_) {
     if (millis() - lastLowMemoryTeardownMs_ < kCooldownMs) {
@@ -138,11 +151,21 @@ bool BlePeripheralManager::begin() {
     NimBLEDevice::deinit(true);
   }
 
-  if (!NimBLEDevice::init("Midad")) {
+  char advertisedName[24];
+  getAdvertisedName(advertisedName, sizeof(advertisedName));
+
+  if (!NimBLEDevice::init(advertisedName)) {
     LOG_ERR(TAG, "begin(): NimBLEDevice::init() failed");
     return false;
   }
   NimBLEDevice::setMTU(kTargetMtu);
+  // Explicit TX power (+9 dBm), not left at whatever default the controller happens to
+  // pick: an earlier hardware session found the controller reporting advertising-active
+  // while two independent scanners at desk range saw nothing over the air with no
+  // explicit setPower() call. NimBLE-Arduino's setPower(int8_t dbm, ...) is the current
+  // API surface (h2zero/NimBLE-Arduino ^2.3.8) -- not the esp_power_level_t-enum-based
+  // setPower(ESP_PWR_LVL_P9) shape an earlier, now-superseded version of this fix used.
+  NimBLEDevice::setPower(9);
 
   g_server = NimBLEDevice::createServer();
   if (!g_server) {
@@ -163,10 +186,15 @@ bool BlePeripheralManager::begin() {
     return false;
   }
 
-  // WRITE_ENC: requires an encrypted link before a write is accepted -- see
-  // docs/ble-module-tasks.md's Security section (LE Secure Connections, not Just
-  // Works, since this exchange needs to resist a passive eavesdropper).
-  NimBLECharacteristic* authChar = service->createCharacteristic(kAuthCharUuid, NIMBLE_PROPERTY::WRITE_ENC);
+  // WRITE | WRITE_ENC: WRITE_ENC alone is only the requires-encryption flag -- without
+  // the plain WRITE property bit the characteristic declaration advertises no write
+  // support at all, and a real phone BLE stack refuses to even attempt a write ("The
+  // WRITE property is not supported by this BLE characteristic", confirmed against a
+  // real client on an earlier hardware session). Encryption is still fully enforced:
+  // WRITE_ENC gates the write on an encrypted link per docs/ble-module-tasks.md's
+  // Security section -- this only adds the missing "writable at all" declaration.
+  NimBLECharacteristic* authChar =
+      service->createCharacteristic(kAuthCharUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
   authChar->setCallbacks(&g_authCallbacks);
 
   g_commandChar = service->createCharacteristic(kCommandCharUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
@@ -181,9 +209,33 @@ bool BlePeripheralManager::begin() {
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(kServiceUuid);
+  // Scan response, NOT the primary advertising payload: the 128-bit service UUID
+  // above already consumes 18 of the primary payload's 31-byte legacy AD budget: the
+  // per-device name ("Midad-XXXXXX", up to 14 bytes with its AD header) doesn't fit
+  // alongside it. NimBLEAdvertisementData::addData() silently no-ops when a field
+  // doesn't fit rather than failing loudly, so without this the name was verified
+  // live to never reach the actual over-the-air advertisement at all (confirmed via
+  // a real scan: local_name absent from the raw AD payload) -- any name a scanner
+  // showed was a stale OS-level cache from an earlier static-name advertisement, not
+  // a live read. Scan response is a second, separate 31-byte payload sent in reply to
+  // an active scan request, with its own budget -- enabling it and letting setName()
+  // land there (its own fallback order, see NimBLEAdvertising::setName()) fits both.
+  advertising->enableScanResponse(true);
+  advertising->setName(advertisedName);
   advertising->setMinInterval(kAdvIntervalUnits);
   advertising->setMaxInterval(kAdvIntervalUnits);
-  advertising->start();
+  // start() has real failure paths (GATT server start, adv-data set, ble_gap_adv_start
+  // rc) -- ignoring its result is how this class could sit in Advertising state with a
+  // silent radio for a whole session. Fail begin() honestly instead, tearing everything
+  // back down rather than leaving state_ claiming a radio that isn't actually running.
+  if (!advertising->start() || !advertising->isAdvertising()) {
+    LOG_ERR(TAG, "begin(): advertising failed to start (free heap=%u)", static_cast<unsigned>(ESP.getFreeHeap()));
+    NimBLEDevice::deinit(true);
+    g_server = nullptr;
+    g_commandChar = nullptr;
+    g_statusChar = nullptr;
+    return false;
+  }
 
   state_ = State::Advertising;
   publishStatus();
@@ -215,8 +267,40 @@ void BlePeripheralManager::end() {
 void BlePeripheralManager::poll() {
   if (state_ != State::Advertising && state_ != State::Connected) return;
 
-  if (ESP.getFreeHeap() < kHeapGateBytes) {
-    LOG_ERR(TAG, "poll(): heap dropped below gate while running (free=%u), tearing down",
+  // Zombie guard: state says Advertising but the controller isn't actually
+  // transmitting. Tear down so the caller's normal begin() cadence brings it back for
+  // real; no cool-down, this isn't memory pressure.
+  //
+  // MUST be lazy about it: adv-inactive is also the perfectly normal signature of a
+  // central mid-connect (the controller stops advertising the instant it accepts
+  // CONNECT_IND, milliseconds before the host delivers the connect event that moves
+  // state_ to Connected). An eager, no-tolerance version of this check would kill a
+  // real inbound connection mid-handshake. So: never a zombie if a connection exists,
+  // and the radio-idle condition must persist kZombiePersistMs before teardown.
+  if (state_ == State::Advertising) {
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    const bool radioIdle = advertising && !advertising->isAdvertising();
+    const bool hasConnection = g_server && g_server->getConnectedCount() > 0;
+    if (radioIdle && !hasConnection) {
+      if (zombieSinceMs_ == 0) {
+        zombieSinceMs_ = millis();
+      } else if (millis() - zombieSinceMs_ >= kZombiePersistMs) {
+        LOG_ERR(TAG, "poll(): zombie state -- Advertising but radio idle for %lus, tearing down for retry",
+                static_cast<unsigned long>(kZombiePersistMs / 1000));
+        zombieSinceMs_ = 0;
+        end();
+        return;
+      }
+    } else {
+      zombieSinceMs_ = 0;
+    }
+  }
+
+  // kRunningFloorBytes, NOT kHeapGateBytes: init already spent kHeapGateBytes-and-then-
+  // some, so judging a running session against the pre-flight number tears down every
+  // successful start on its very next poll().
+  if (ESP.getFreeHeap() < kRunningFloorBytes) {
+    LOG_ERR(TAG, "poll(): heap dropped below running floor (free=%u), tearing down",
             static_cast<unsigned>(ESP.getFreeHeap()));
     end();
     state_ = State::PausedLowMemory;
