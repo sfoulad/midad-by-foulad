@@ -1,6 +1,7 @@
 #include "MidadSettingsList.h"
 
 #include "MidadAppSettings.h"
+#include "SettingsList.h"
 
 void appendMidadAppSettings(std::vector<SettingInfo>& appsSettings) {
   // Quran toggle: SettingsActivity::toggleCurrentSetting() extracts the
@@ -96,6 +97,17 @@ void appendMidadAppSettings(std::vector<SettingInfo>& appsSettings) {
         MIDAD_APP_SETTINGS.saveToFile();
       },
       "gymWeightUnit", StrId::STR_CAT_APPS));
+  // Midad BLE toggle: also the live-switch AppsActivity tile's backing flag
+  // (see MidadAppSettings::bleEnabled and AppsActivity's special-cased Midad
+  // BLE entry) -- registering it here gets the same free persistence every
+  // other app toggle already has, in addition to that tile.
+  appsSettings.push_back(SettingInfo::DynamicToggle(
+      StrId::STR_MIDAD_BLE, [] { return MIDAD_APP_SETTINGS.bleEnabled; },
+      [](uint8_t val) {
+        MIDAD_APP_SETTINGS.bleEnabled = val;
+        MIDAD_APP_SETTINGS.saveToFile();
+      },
+      "bleEnabled", StrId::STR_CAT_APPS));
   // Gates whether the rolling SD diagnostic logs get written at all -- see
   // MidadAppSettings::debugLoggingEnabled and src/util/DebugLogging.h for the
   // full list and rationale. Last in this function by design (user request):
@@ -108,4 +120,10 @@ void appendMidadAppSettings(std::vector<SettingInfo>& appsSettings) {
         MIDAD_APP_SETTINGS.saveToFile();
       },
       "debugLoggingEnabled", StrId::STR_CAT_APPS));
+}
+
+std::vector<SettingInfo> getCombinedSettingsList(const SdCardFontRegistry* registry) {
+  std::vector<SettingInfo> settings = getSettingsList(registry);
+  appendMidadAppSettings(settings);
+  return settings;
 }

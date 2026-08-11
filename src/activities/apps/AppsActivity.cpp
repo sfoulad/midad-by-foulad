@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <memory>
 
-#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "MidadAppSettings.h"
 #include "QuranBook.h"
@@ -81,7 +80,7 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
          MIDAD_APP_SETTINGS.saveToFile();
        }},
       // Live toggle, not a launcher -- see launch()/render()'s AppId::MidadBle
-      // special cases, which read/write SETTINGS.bleEnabled directly and never
+      // special cases, which read/write MIDAD_APP_SETTINGS.bleEnabled directly and never
       // go through getEnabled/setEnabled (both empty here on purpose).
       {AppId::MidadBle, StrId::STR_MIDAD_BLE, nullptr, nullptr},
   };
@@ -99,8 +98,8 @@ bool AppsActivity::launch(const AppEntry& entry) {
   // here (returning false makes the caller's `if (!launch(...)) requestUpdate();`
   // repaint the tile with the new state, the same as every other "stayed here" path).
   if (entry.id == AppId::MidadBle) {
-    SETTINGS.bleEnabled = SETTINGS.bleEnabled ? 0 : 1;
-    SETTINGS.saveToFile();
+    MIDAD_APP_SETTINGS.bleEnabled = MIDAD_APP_SETTINGS.bleEnabled ? 0 : 1;
+    MIDAD_APP_SETTINGS.saveToFile();
     return false;
   }
 
@@ -239,7 +238,7 @@ void AppsActivity::render(RenderLock&&) {
     std::string tileLabel = I18N.get(entry.label);
     if (entry.id == AppId::MidadBle) {
       tileLabel += ": ";
-      tileLabel += I18N.get(SETTINGS.bleEnabled ? StrId::STR_ON : StrId::STR_OFF);
+      tileLabel += I18N.get(MIDAD_APP_SETTINGS.bleEnabled ? StrId::STR_ON : StrId::STR_OFF);
     }
     drawTileCover(renderer, cellX, cellY, tileWidth, tileHeight, tileLabel.c_str());
     if (idx == selectorIndex) {

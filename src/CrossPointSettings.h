@@ -329,23 +329,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t arabicFontFamily = NOTONASKHARABIC;
   uint8_t arabicFontSize = MEDIUM;
 
-  // Settings -> Apps -> Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym and the
-  // Debug logging toggle below all moved to MidadAppSettings (see
+  // Settings -> Apps -> Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym/Midad BLE
+  // and the Debug logging toggle all moved to MidadAppSettings (see
   // src/MidadAppSettings.h) -- none of them have a CrossPoint upstream
   // equivalent, so keeping them here meant every upstream sync touched this
   // file for no reason. See docs/upstream-sync-architecture.md's Phase B.
-
-  // Apps -> Midad BLE: whether the BLE peripheral (phone control -- Wi-Fi
-  // provisioning today, more in later phases; see docs/ble-module-tasks.md) is
-  // allowed to advertise while the device is Idle. Defaults on: it only ever runs
-  // in Idle state (home/menus/sleep screen, never while reading or on Wi-Fi), is
-  // gated by its own heap floor and cool-down (BlePeripheralManager) regardless of
-  // this setting, and the whole point of Phase 1 is a phone finding the device
-  // without the user doing anything first -- an opt-in toggle would defeat that.
-  // Unlike the AppsActivity launcher tiles above, this is a live radio switch, not
-  // something to "open": AppsActivity special-cases it to flip this flag directly
-  // rather than navigating anywhere.
-  uint8_t bleEnabled = 1;
 
   // --- Per-book reading overrides (RAM ONLY -- never serialized) ---
   // Applied by EpubReaderActivity from the book's own settings file (see

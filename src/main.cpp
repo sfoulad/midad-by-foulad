@@ -831,7 +831,7 @@ void loop() {
   // no-ops when already in the right state, so polling this every tick is fine --
   // BlePeripheral.begin() itself enforces the heap gate and cool-down.
   const bool bleAllowedNow =
-      SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
+      MIDAD_APP_SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
   if (bleAllowedNow) {
     BlePeripheral.begin();
   } else if (BlePeripheral.isActive()) {

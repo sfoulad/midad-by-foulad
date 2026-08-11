@@ -23,6 +23,7 @@ void MidadAppSettings::toJson(JsonDocument& doc) const {
   doc["gymEnabled"] = gymEnabled;
   doc["gymWeightUnit"] = gymWeightUnit;
   doc["debugLoggingEnabled"] = debugLoggingEnabled;
+  doc["bleEnabled"] = bleEnabled;
 }
 
 bool MidadAppSettings::fromJson(JsonVariantConst doc) {
@@ -46,6 +47,7 @@ bool MidadAppSettings::fromJson(JsonVariantConst doc) {
   const uint8_t weightUnit = doc["gymWeightUnit"] | gymWeightUnit;
   gymWeightUnit = weightUnit < GYM_WEIGHT_UNIT_COUNT ? weightUnit : gymWeightUnit;
   debugLoggingEnabled = clampToggle(doc["debugLoggingEnabled"] | debugLoggingEnabled, debugLoggingEnabled);
+  bleEnabled = clampToggle(doc["bleEnabled"] | bleEnabled, bleEnabled);
 
   return true;
 }

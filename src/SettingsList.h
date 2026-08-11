@@ -363,20 +363,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
 
     // --- Apps ---
-    // Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym/Debug Logging live on
-    // MidadAppSettings, not CrossPointSettings, and their SettingInfo rows are
-    // defined in src/MidadSettingsList.h/.cpp instead of here -- see
+    // Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym/Midad BLE/Debug Logging live
+    // on MidadAppSettings, not CrossPointSettings, and their SettingInfo rows
+    // are defined in src/MidadSettingsList.h/.cpp instead of here -- see
     // SettingsActivity::rebuildSettingsLists()'s appendMidadAppSettings() call
     // and docs/upstream-sync-architecture.md's Phase B for why keeping them
     // out of this upstream-owned file matters.
     //
-    // Midad BLE toggle: also the live-switch AppsActivity tile's backing flag (see
-    // CrossPointSettings::bleEnabled and AppsActivity's special-cased Midad BLE entry)
-    // -- registering it here gets the same free persistence and server-push handling
-    // every other app toggle already has (see FouladDeviceTracking.cpp's applyToggle),
-    // in addition to that tile.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_MIDAD_BLE, &CrossPointSettings::bleEnabled, "bleEnabled", StrId::STR_CAT_APPS));
     // KOReader Sync itself is a device-only ACTION appended in
     // SettingsActivity::rebuildSettingsLists() (web-only, uses
     // KOReaderCredentialStore) -- see the comment further below.
