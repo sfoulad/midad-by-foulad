@@ -210,13 +210,6 @@ class OpdsBookBrowserActivity final : public Activity {
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);
-  // Foulad eInk device tracking (EINK_DEVICE_TRACKING_TASKS.md): registers
-  // this device and flushes any locally-accumulated reading stats for
-  // previously-downloaded Foulad eBooks books. Called once per WiFi connect
-  // (both places that confirm WiFi is up right before the first fetchFeed()),
-  // not on every page/pagination fetch. No-op for any non-Foulad-eBooks
-  // server -- see the server.url check inside.
-  void reportDeviceTrackingOnConnect();
   // Raises the update offer if registration came back naming a newer build. Reads a
   // cached string; makes no request. An earlier version of this asked GitHub from
   // here and aborted the device -- see the implementation.
