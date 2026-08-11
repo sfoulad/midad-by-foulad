@@ -329,77 +329,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t arabicFontFamily = NOTONASKHARABIC;
   uint8_t arabicFontSize = MEDIUM;
 
-  // Settings -> System -> Quran: the firmware-embedded Quran EPUB is extracted
-  // to SD and pinned as the first book in My Books (see QuranBook.h).
-  uint8_t quranEnabled = 0;
-
-  // Apps -> News: pins a synthetic "News" tile that browses /opds/news. Off by
-  // default and, like the other app toggles, mirrored from the server so the
-  // Midad app can turn it on -- a missing key means false, never "on" (a server
-  // that has not shipped News yet is not opting anyone in).
-  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
-  // they no longer clutter My Books, which is the only reason they were opt-in.
-  uint8_t rssEnabled = 1;
-
-  // Settings -> System -> Games: pins a synthetic "Games" tile in My Books
-  // (see GAMES_PSEUDO_PATH in RecentBooksActivity.cpp) that opens a picker for
-  // the built-in Snake/Tetris activities. No SD extraction needed (unlike
-  // Quran) -- the games are compiled into the firmware directly.
-  uint8_t gamesEnabled = 1;
-
-  // Settings -> Apps -> Tasbih: pins a synthetic "Tasbih" tile in My Books
-  // (see TASBIH_PSEUDO_PATH in RecentBooksActivity.cpp), between Quran and
-  // Games, that opens the built-in dhikr counter (TasbihActivity). No SD
-  // extraction needed, same as Games.
-  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
-  // they no longer clutter My Books, which is the only reason they were opt-in.
-  uint8_t tasbihEnabled = 1;
-
-  // Settings -> Apps -> Stop Watch: pins a synthetic "Stop Watch" tile in My
-  // Books (see STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp), between
-  // Tasbih and Games, that opens the built-in stopwatch (StopwatchActivity).
-  // No SD extraction or persisted state, same as Games.
-  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
-  // they no longer clutter My Books, which is the only reason they were opt-in.
-  uint8_t stopwatchEnabled = 1;
-
-  // Settings -> Apps -> Pomodoro: pins a synthetic "Pomodoro" tile in My Books
-  // (see POMODORO_PSEUDO_PATH in RecentBooksActivity.cpp) that opens
-  // StopwatchActivity with its Pomodoro mode preselected -- one activity, two
-  // modes, so the timing and render scaffolding isn't duplicated.
-  //
-  // Off by default, like every app tile except Games -- a fresh device shows only
-  // Games in My Books, and anything else is opt-in from Settings -> Apps.
-  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
-  // they no longer clutter My Books, which is the only reason they were opt-in.
-  uint8_t pomodoroEnabled = 1;
-
-  // Phase lengths in minutes. Read live at each phase change rather than cached
-  // when the app opens, so an edit mid-cycle applies at the next phase instead
-  // of needing a restart. Ranges in SettingsList exclude 0, but these persist to
-  // JSON that the bidirectional web settings sync could write anything into, so
-  // the activity clamps a 0 to 1 -- a zero-length phase would expire instantly
-  // and leave the end-of-phase flash firing in a loop.
-  uint8_t pomodoroFocusMin = 25;
-  uint8_t pomodoroShortBreakMin = 5;
-  uint8_t pomodoroLongBreakMin = 15;
-  // Focus phases completed before a long break replaces the short one.
-  static constexpr uint8_t POMODORO_CYCLES_BEFORE_LONG_BREAK = 4;
-
-  // Settings -> Apps -> Gym: pins a synthetic "Gym" tile in My Books (see
-  // GYM_PSEUDO_PATH in RecentBooksActivity.cpp), between Stop Watch and Games,
-  // that opens the built-in 7-day workout planner. Unlike Games/Tasbih/Stop
-  // Watch, this DOES need SD data (the downloaded exercise catalog) -- the
-  // tile itself works with zero downloaded data (shows an empty plan), so no
-  // extraction gate is needed here, only inside the exercise browser.
-  // Defaults to on: with the apps gathered into their own Apps screen (AppsActivity)
-  // they no longer clutter My Books, which is the only reason they were opt-in.
-  uint8_t gymEnabled = 1;
-  // Display unit for logged weights: 0 = kg, 1 = lb. Weight is always stored
-  // internally in kg (GymLogStore) regardless of this setting, so toggling it
-  // never rewrites persisted data, only how it's displayed.
-  enum GYM_WEIGHT_UNIT { GYM_WEIGHT_KG = 0, GYM_WEIGHT_LB = 1, GYM_WEIGHT_UNIT_COUNT };
-  uint8_t gymWeightUnit = GYM_WEIGHT_KG;
+  // Settings -> Apps -> Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym and the
+  // Debug logging toggle below all moved to MidadAppSettings (see
+  // src/MidadAppSettings.h) -- none of them have a CrossPoint upstream
+  // equivalent, so keeping them here meant every upstream sync touched this
+  // file for no reason. See docs/upstream-sync-architecture.md's Phase B.
 
   // Apps -> Midad BLE: whether the BLE peripheral (phone control -- Wi-Fi
   // provisioning today, more in later phases; see docs/ble-module-tasks.md) is
@@ -412,19 +346,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // something to "open": AppsActivity special-cases it to flip this flag directly
   // rather than navigating anywhere.
   uint8_t bleEnabled = 1;
-
-  // Settings -> Apps -> Debug: gates whether ANY diagnostic entries get
-  // written to the single shared SD log (/debug_log.txt -- see
-  // src/util/DebugLog.h and src/util/DebugLogging.h) by Gym, Sleep, Battery,
-  // GameInput, ReaderPerf, Cover, OPDS browse/error, My Books scan, and Foulad
-  // device tracking (each line tagged e.g. "[GYM] ..." so subsystems stay
-  // distinguishable when interleaved in the one file). Off by default so
-  // ordinary users never see log clutter on their SD card; a user asked to
-  // help diagnose an issue turns this on first. Does NOT gate
-  // crash_report.txt (HalSystem::checkPanic) -- that's a one-shot panic
-  // capture on an actual crash, not routine verbose logging, and must always
-  // work regardless of this setting.
-  uint8_t debugLoggingEnabled = 0;
 
   // --- Per-book reading overrides (RAM ONLY -- never serialized) ---
   // Applied by EpubReaderActivity from the book's own settings file (see

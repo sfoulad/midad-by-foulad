@@ -134,6 +134,35 @@ struct SettingInfo {
     return s;
   }
 
+  // For a TOGGLE/VALUE field stored outside CrossPointSettings (e.g.
+  // MidadAppSettings) -- same reasoning as DynamicEnum above: Toggle()/Value()'s
+  // pointer-to-member only works for fields that actually live on CrossPointSettings.
+  static SettingInfo DynamicToggle(StrId nameId, std::function<uint8_t()> getter, std::function<void(uint8_t)> setter,
+                                   const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
+    SettingInfo s;
+    s.nameId = nameId;
+    s.type = SettingType::TOGGLE;
+    s.valueGetter = std::move(getter);
+    s.valueSetter = std::move(setter);
+    s.key = key;
+    s.category = category;
+    return s;
+  }
+
+  static SettingInfo DynamicValue(StrId nameId, std::function<uint8_t()> getter, std::function<void(uint8_t)> setter,
+                                  const ValueRange valueRange, const char* key = nullptr,
+                                  StrId category = StrId::STR_NONE_OPT) {
+    SettingInfo s;
+    s.nameId = nameId;
+    s.type = SettingType::VALUE;
+    s.valueGetter = std::move(getter);
+    s.valueSetter = std::move(setter);
+    s.valueRange = valueRange;
+    s.key = key;
+    s.category = category;
+    return s;
+  }
+
   static SettingInfo DynamicString(StrId nameId, std::function<std::string()> getter,
                                    std::function<void(const std::string&)> setter, const char* key = nullptr,
                                    StrId category = StrId::STR_NONE_OPT) {

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
+#include "MidadAppSettings.h"
 #include "util/BookReaderSettings.h"
 
 namespace {
@@ -96,7 +97,7 @@ const uint8_t* data(size_t& size) {
 #endif
 }
 
-bool isPinned() { return SETTINGS.quranEnabled != 0 && Storage.exists(PATH); }
+bool isPinned() { return MIDAD_APP_SETTINGS.quranEnabled != 0 && Storage.exists(PATH); }
 
 bool ensureExtracted() {
   size_t embeddedSize = 0;

@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <memory>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "MidadAppSettings.h"
 #include "QuranBook.h"
 #include "SilentRestart.h"
 #include "activities/ActivityManager.h"
@@ -37,23 +39,51 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
   // the order they were introduced, which is also roughly how much they get used.
   // Quran carries no toggle here on purpose -- see launch() for why it is the one
   // app that cannot simply be switched on.
+  // Setter lambdas save immediately (same convention as SettingInfo::DynamicToggle
+  // in SettingsList.h) so this table is the one place that knows each app's flag
+  // lives on MidadAppSettings, not the caller.
   static const std::vector<AppEntry> kEntries = {
-      {AppId::Files, StrId::STR_FILES, nullptr},
-      {AppId::Quran, StrId::STR_QURAN, &CrossPointSettings::quranEnabled},
-      {AppId::Games, StrId::STR_GAMES, &CrossPointSettings::gamesEnabled},
-      {AppId::Tasbih, StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled},
+      {AppId::Files, StrId::STR_FILES, nullptr, nullptr},
+      {AppId::Quran, StrId::STR_QURAN, [] { return MIDAD_APP_SETTINGS.quranEnabled; },
+       [](uint8_t v) {
+         MIDAD_APP_SETTINGS.quranEnabled = v;
+         MIDAD_APP_SETTINGS.saveToFile();
+       }},
+      {AppId::Games, StrId::STR_GAMES, [] { return MIDAD_APP_SETTINGS.gamesEnabled; },
+       [](uint8_t v) {
+         MIDAD_APP_SETTINGS.gamesEnabled = v;
+         MIDAD_APP_SETTINGS.saveToFile();
+       }},
+      {AppId::Tasbih, StrId::STR_TASBIH, [] { return MIDAD_APP_SETTINGS.tasbihEnabled; },
+       [](uint8_t v) {
+         MIDAD_APP_SETTINGS.tasbihEnabled = v;
+         MIDAD_APP_SETTINGS.saveToFile();
+       }},
       // News is deliberately absent: the server removed /opds/news (foulad-ebooks
       // PR #113, live 2026-08-05) after News-as-EPUB kept producing on-device parse
       // crashes -- News is an app-only feature now (the phone app renders native
       // article cards). A tile here would only ever reach a permanent 404. The
       // launch plumbing (AppId::News, goToNews) stays for a possible future
       // device-facing endpoint, but nothing routes to it.
-      {AppId::Stopwatch, StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled},
-      {AppId::Pomodoro, StrId::STR_POMODORO, &CrossPointSettings::pomodoroEnabled},
-      {AppId::Gym, StrId::STR_GYM, &CrossPointSettings::gymEnabled},
-      // Live toggle, not a launcher -- see AppEntry's enableFlag comment and
-      // launch()/render()'s AppId::MidadBle special cases.
-      {AppId::MidadBle, StrId::STR_MIDAD_BLE, &CrossPointSettings::bleEnabled},
+      {AppId::Stopwatch, StrId::STR_STOPWATCH, [] { return MIDAD_APP_SETTINGS.stopwatchEnabled; },
+       [](uint8_t v) {
+         MIDAD_APP_SETTINGS.stopwatchEnabled = v;
+         MIDAD_APP_SETTINGS.saveToFile();
+       }},
+      {AppId::Pomodoro, StrId::STR_POMODORO, [] { return MIDAD_APP_SETTINGS.pomodoroEnabled; },
+       [](uint8_t v) {
+         MIDAD_APP_SETTINGS.pomodoroEnabled = v;
+         MIDAD_APP_SETTINGS.saveToFile();
+       }},
+      {AppId::Gym, StrId::STR_GYM, [] { return MIDAD_APP_SETTINGS.gymEnabled; },
+       [](uint8_t v) {
+         MIDAD_APP_SETTINGS.gymEnabled = v;
+         MIDAD_APP_SETTINGS.saveToFile();
+       }},
+      // Live toggle, not a launcher -- see launch()/render()'s AppId::MidadBle
+      // special cases, which read/write SETTINGS.bleEnabled directly and never
+      // go through getEnabled/setEnabled (both empty here on purpose).
+      {AppId::MidadBle, StrId::STR_MIDAD_BLE, nullptr, nullptr},
   };
   return kEntries;
 }
@@ -77,7 +107,7 @@ bool AppsActivity::launch(const AppEntry& entry) {
   // Turn the app on if it is off. This is what makes listing every app safe: the
   // screen shows what the device can do, and pressing one is the whole opt-in --
   // no round trip through Settings to find out an app was there all along.
-  if (entry.enableFlag != nullptr && SETTINGS.*(entry.enableFlag) == 0) {
+  if (entry.getEnabled && entry.getEnabled() == 0) {
     if (entry.id == AppId::Quran) {
       // The one app with a real cost to switching on: it extracts the embedded
       // EPUB to the SD card (seconds on a first enable) and re-checks that at
@@ -90,8 +120,7 @@ bool AppsActivity::launch(const AppEntry& entry) {
         return false;
       }
     }
-    SETTINGS.*(entry.enableFlag) = 1;
-    SETTINGS.saveToFile();
+    entry.setEnabled(1);
   }
 
   switch (entry.id) {
@@ -205,8 +234,8 @@ void AppsActivity::render(RenderLock&&) {
     // Same designed name-tile the news feeds and collection tiles use, rather
     // than eight new icons: the label IS the thing being identified here.
     // Midad BLE shows its live on/off state in the label itself -- see
-    // AppEntry's enableFlag comment for why this one entry needs a computed label
-    // instead of the static I18N.get() every other entry uses.
+    // AppEntry's getEnabled/setEnabled comment for why this one entry needs a
+    // computed label instead of the static I18N.get() every other entry uses.
     std::string tileLabel = I18N.get(entry.label);
     if (entry.id == AppId::MidadBle) {
       tileLabel += ": ";

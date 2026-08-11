@@ -184,13 +184,6 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
-
-  // Debug logging -- appended in SettingsActivity's own Apps list (not SettingsList's
-  // static table) so it always lands right after KOReader Sync; save/load it manually
-  // here for the same reason frontButtonBack etc. are manual above. Without this the
-  // toggle silently reset to off on every deep sleep (a chip reset), defeating the
-  // rolling SD diagnostic logs (SleepDiagLog/BatteryDiagLog/etc.) the next session.
-  doc["debugLoggingEnabled"] = debugLoggingEnabled;
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -297,10 +290,6 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
   }
-
-  // Debug logging -- not in SettingsList's static table (see save side above); load
-  // it manually so the toggle actually survives a reboot.
-  debugLoggingEnabled = clamp(doc["debugLoggingEnabled"] | (uint8_t)0, 2, 0);
 
   LOG_DBG("CPS", "Settings loaded from file");
 

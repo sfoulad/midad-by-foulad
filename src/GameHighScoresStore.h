@@ -4,8 +4,8 @@
 #include <cstdint>
 
 // Persisted best-score tracking for the built-in games. Kept in its own small
-// file rather than folded into CrossPointSettings: the settings JSON loop
-// (JsonSettingsIO) only round-trips uint8_t fields (see SettingInfo::valuePtr),
+// file rather than folded into CrossPointSettings: its generic SettingInfo-driven
+// toJson/fromJson loop only round-trips uint8_t fields (see SettingInfo::valuePtr),
 // too narrow for a Tetris score in the thousands, and high scores aren't a
 // user-configurable setting anyway -- same reasoning RecentBooksStore/
 // BookmarkEntry already get their own files instead of living in Settings.

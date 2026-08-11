@@ -19,6 +19,13 @@ class PersistableStoreBase {
   PersistableStoreBase() = default;
   ~PersistableStoreBase() = default;
 
+ public:
+  // Public so non-store JSON files (e.g. per-book bookmarks, see
+  // src/util/BookmarkFile.cpp) can reuse them instead of instantiating
+  // serializeJson/deserializeJson in their own TU -- that per-TU duplication
+  // is exactly what this class exists to prevent. Matches upstream CrossPoint's
+  // own shape for this pair (see docs/upstream-sync-architecture.md's Phase B).
+
   // Serializes doc and writes it to path (ensures /.crosspoint exists). Logs on failure.
   static bool writeDocToFile(const char* path, const JsonDocument& doc);
 
@@ -26,6 +33,7 @@ class PersistableStoreBase {
   // does not exist (expected on first boot); logs on read/parse failure.
   static bool readDocFromFile(const char* path, JsonDocument& doc);
 
+ protected:
   /**
    * Helper function for extracting an obfuscated password from a JSON value.
    * Accepts JsonVariantConst so callers can pass either a whole JsonDocument

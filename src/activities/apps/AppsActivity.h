@@ -3,9 +3,9 @@
 #include <I18n.h>
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
-#include "CrossPointSettings.h"
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
@@ -39,14 +39,14 @@ class AppsActivity final : public Activity {
   struct AppEntry {
     AppId id;
     StrId label;
-    // The Settings -> Apps toggle behind this app, or nullptr for the ones that
-    // have none (Files is always available). Opening an app whose flag is off
-    // turns it on first -- see launch(). MidadBle is the one exception: it's a
-    // live radio switch, not a destination to open, so launch()/render() special-
-    // case it by AppId to flip CrossPointSettings::bleEnabled directly and show
-    // its current state in the tile label, instead of using this field the way
-    // every other entry does.
-    uint8_t CrossPointSettings::* enableFlag;
+    // The Settings -> Apps toggle behind this app, or empty for the ones that
+    // have none (Files, and MidadBle -- see below). Opening an app whose flag
+    // is off turns it on first -- see launch(). Getter/setter rather than a
+    // pointer-to-member since the backing fields live on different stores
+    // (MidadAppSettings for most apps) -- see SettingInfo::DynamicToggle for
+    // the same reasoning applied to the Settings screen.
+    std::function<uint8_t()> getEnabled;
+    std::function<void(uint8_t)> setEnabled;
   };
 
   static const std::vector<AppEntry>& entries();

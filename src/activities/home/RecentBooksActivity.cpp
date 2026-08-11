@@ -15,6 +15,7 @@
 #include "CrossPointSettings.h"
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
+#include "MidadAppSettings.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -158,7 +159,7 @@ void RecentBooksActivity::loadRecentBooks() {
   // Pinned Quran: when enabled in Settings -> System (and extracted), it is
   // always the FIRST book -- drop whatever entry the scan/recents produced for
   // it and re-insert at the front with its canonical Arabic title.
-  if (SETTINGS.quranEnabled && Storage.exists(QuranBook::PATH)) {
+  if (MIDAD_APP_SETTINGS.quranEnabled && Storage.exists(QuranBook::PATH)) {
     recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
                                      [](const RecentBook& b) { return b.path == QuranBook::PATH; }),
                       recentBooks.end());

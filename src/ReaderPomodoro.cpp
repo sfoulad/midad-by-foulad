@@ -4,7 +4,7 @@
 
 #include <cstdio>
 
-#include "CrossPointSettings.h"
+#include "MidadAppSettings.h"
 
 std::string formatPomodoroRemaining(const uint32_t ms) {
   // Rounded up, so a phase reads its full length the instant it starts (25:00, not
@@ -31,13 +31,13 @@ uint32_t ReaderPomodoro::phaseDurationMs() const {
   uint8_t minutes = 0;
   switch (phase) {
     case Phase::Focus:
-      minutes = SETTINGS.pomodoroFocusMin;
+      minutes = MIDAD_APP_SETTINGS.pomodoroFocusMin;
       break;
     case Phase::ShortBreak:
-      minutes = SETTINGS.pomodoroShortBreakMin;
+      minutes = MIDAD_APP_SETTINGS.pomodoroShortBreakMin;
       break;
     case Phase::LongBreak:
-      minutes = SETTINGS.pomodoroLongBreakMin;
+      minutes = MIDAD_APP_SETTINGS.pomodoroLongBreakMin;
       break;
   }
   if (minutes == 0) minutes = 1;
@@ -68,8 +68,8 @@ void ReaderPomodoro::stop() {
 void ReaderPomodoro::advancePhase() {
   if (phase == Phase::Focus) {
     ++focusesCompleted;
-    phase = (focusesCompleted % CrossPointSettings::POMODORO_CYCLES_BEFORE_LONG_BREAK) == 0 ? Phase::LongBreak
-                                                                                            : Phase::ShortBreak;
+    phase = (focusesCompleted % MidadAppSettings::POMODORO_CYCLES_BEFORE_LONG_BREAK) == 0 ? Phase::LongBreak
+                                                                                          : Phase::ShortBreak;
   } else {
     phase = Phase::Focus;
   }

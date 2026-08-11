@@ -14,6 +14,7 @@
 
 #include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
+#include "MidadAppSettings.h"
 #include "ReaderFontSizes.h"
 #include "activities/settings/SettingsActivity.h"
 
@@ -363,51 +364,106 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
 
     // --- Apps ---
+    // All of these live on MidadAppSettings, not CrossPointSettings -- see
+    // src/MidadAppSettings.h and docs/upstream-sync-architecture.md's Phase B.
+    // DynamicToggle/DynamicValue/DynamicEnum (getter/setter lambdas) are what
+    // SettingInfo already uses for any field stored outside CrossPointSettings
+    // (see KOReaderCredentialStore's entries below) -- Toggle/Value/Enum's
+    // pointer-to-member only works for CrossPointSettings itself.
+    //
     // Quran toggle: SettingsActivity::toggleCurrentSetting() extracts the
     // firmware-embedded EPUB to SD when this turns on (QuranBook::ensureExtracted).
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled", StrId::STR_CAT_APPS));
-    // Games toggle: pins a "Games" tile in My Books (see GAMES_PSEUDO_PATH in
-    // RecentBooksActivity.cpp) that opens a Snake/Tetris picker. No extraction
-    // step needed -- unlike Quran, nothing but the toggle itself is required.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled", StrId::STR_CAT_APPS));
-    // Tasbih toggle: pins a "Tasbih" tile in My Books (see TASBIH_PSEUDO_PATH
-    // in RecentBooksActivity.cpp) that opens the built-in dhikr counter. No
-    // extraction step needed, same as Games.
-    v.push_back(SettingInfo::Toggle(StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled, "tasbihEnabled",
-                                    StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::DynamicToggle(
+        StrId::STR_QURAN, [] { return MIDAD_APP_SETTINGS.quranEnabled; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.quranEnabled = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "quranEnabled", StrId::STR_CAT_APPS));
+    // Games toggle: pins a "Games" tile in My Books that opens a Snake/Tetris
+    // picker. No extraction step needed -- unlike Quran, nothing but the
+    // toggle itself is required.
+    v.push_back(SettingInfo::DynamicToggle(
+        StrId::STR_GAMES, [] { return MIDAD_APP_SETTINGS.gamesEnabled; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.gamesEnabled = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "gamesEnabled", StrId::STR_CAT_APPS));
+    // Tasbih toggle: pins a "Tasbih" tile in My Books that opens the built-in
+    // dhikr counter. No extraction step needed, same as Games.
+    v.push_back(SettingInfo::DynamicToggle(
+        StrId::STR_TASBIH, [] { return MIDAD_APP_SETTINGS.tasbihEnabled; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.tasbihEnabled = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "tasbihEnabled", StrId::STR_CAT_APPS));
     // News toggle: pins a "News" tile in My Books that browses the account's feed
     // subscriptions (EINK_NEWS_TASKS.md). Off by default, and the Midad app can turn
     // it on remotely -- subscriptions are managed there, never here, because adding
     // one means typing a URL on an on-screen keyboard.
     // News toggle removed with the tile -- see AppsActivity::entries(). The
     // rssEnabled field itself stays (settings.json + web-sync compatibility).
-    // Stop Watch toggle: pins a "Stop Watch" tile in My Books (see
-    // STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp) that opens the
+    // Stop Watch toggle: pins a "Stop Watch" tile in My Books that opens the
     // built-in stopwatch. No extraction step needed, same as Games.
-    v.push_back(SettingInfo::Toggle(StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled, "stopwatchEnabled",
-                                    StrId::STR_CAT_APPS));
-    // Pomodoro toggle: pins a "Pomodoro" tile in My Books (see
-    // POMODORO_PSEUDO_PATH) opening StopwatchActivity in Pomodoro mode. The three
-    // durations below sit directly under it so the group reads as one feature.
-    // Ranges cover the common variants -- 25/5/15 classic, 52/17, 90-minute deep
-    // work -- and start above 0, since a zero-length phase would expire instantly.
-    v.push_back(SettingInfo::Toggle(StrId::STR_POMODORO, &CrossPointSettings::pomodoroEnabled, "pomodoroEnabled",
-                                    StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_FOCUS_MIN, &CrossPointSettings::pomodoroFocusMin, {5, 90, 5},
-                                   "pomodoroFocusMin", StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_SHORT_BREAK_MIN, &CrossPointSettings::pomodoroShortBreakMin,
-                                   {1, 30, 1}, "pomodoroShortBreakMin", StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_LONG_BREAK_MIN, &CrossPointSettings::pomodoroLongBreakMin,
-                                   {5, 60, 5}, "pomodoroLongBreakMin", StrId::STR_CAT_APPS));
-    // Gym toggle: pins a "Gym" tile in My Books (see GYM_PSEUDO_PATH in
-    // RecentBooksActivity.cpp) that opens the built-in workout planner.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_GYM, &CrossPointSettings::gymEnabled, "gymEnabled", StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Enum(StrId::STR_GYM_WEIGHT_UNIT, &CrossPointSettings::gymWeightUnit,
-                                  {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB}, "gymWeightUnit",
-                                  StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::DynamicToggle(
+        StrId::STR_STOPWATCH, [] { return MIDAD_APP_SETTINGS.stopwatchEnabled; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.stopwatchEnabled = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "stopwatchEnabled", StrId::STR_CAT_APPS));
+    // Pomodoro toggle: pins a "Pomodoro" tile in My Books opening
+    // StopwatchActivity in Pomodoro mode. The three durations below sit
+    // directly under it so the group reads as one feature. Ranges cover the
+    // common variants -- 25/5/15 classic, 52/17, 90-minute deep work -- and
+    // start above 0, since a zero-length phase would expire instantly.
+    v.push_back(SettingInfo::DynamicToggle(
+        StrId::STR_POMODORO, [] { return MIDAD_APP_SETTINGS.pomodoroEnabled; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.pomodoroEnabled = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "pomodoroEnabled", StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::DynamicValue(
+        StrId::STR_POMODORO_FOCUS_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroFocusMin; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.pomodoroFocusMin = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        {5, 90, 5}, "pomodoroFocusMin", StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::DynamicValue(
+        StrId::STR_POMODORO_SHORT_BREAK_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroShortBreakMin; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.pomodoroShortBreakMin = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        {1, 30, 1}, "pomodoroShortBreakMin", StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::DynamicValue(
+        StrId::STR_POMODORO_LONG_BREAK_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroLongBreakMin; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.pomodoroLongBreakMin = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        {5, 60, 5}, "pomodoroLongBreakMin", StrId::STR_CAT_APPS));
+    // Gym toggle: pins a "Gym" tile in My Books that opens the built-in
+    // workout planner.
+    v.push_back(SettingInfo::DynamicToggle(
+        StrId::STR_GYM, [] { return MIDAD_APP_SETTINGS.gymEnabled; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.gymEnabled = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "gymEnabled", StrId::STR_CAT_APPS));
+    v.push_back(SettingInfo::DynamicEnum(
+        StrId::STR_GYM_WEIGHT_UNIT, {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB},
+        [] { return MIDAD_APP_SETTINGS.gymWeightUnit; },
+        [](uint8_t val) {
+          MIDAD_APP_SETTINGS.gymWeightUnit = val;
+          MIDAD_APP_SETTINGS.saveToFile();
+        },
+        "gymWeightUnit", StrId::STR_CAT_APPS));
     // Midad BLE toggle: also the live-switch AppsActivity tile's backing flag (see
     // CrossPointSettings::bleEnabled and AppsActivity's special-cased Midad BLE entry)
     // -- registering it here gets the same free persistence and server-push handling

@@ -6,9 +6,9 @@
 #include <cstdio>
 #include <string>
 
-#include "CrossPointSettings.h"
 #include "HalDisplay.h"
 #include "MappedInputManager.h"
+#include "MidadAppSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -94,13 +94,13 @@ uint32_t StopwatchActivity::phaseDurationMs() const {
   uint8_t minutes = 0;
   switch (phase) {
     case Phase::Focus:
-      minutes = SETTINGS.pomodoroFocusMin;
+      minutes = MIDAD_APP_SETTINGS.pomodoroFocusMin;
       break;
     case Phase::ShortBreak:
-      minutes = SETTINGS.pomodoroShortBreakMin;
+      minutes = MIDAD_APP_SETTINGS.pomodoroShortBreakMin;
       break;
     case Phase::LongBreak:
-      minutes = SETTINGS.pomodoroLongBreakMin;
+      minutes = MIDAD_APP_SETTINGS.pomodoroLongBreakMin;
       break;
   }
   if (minutes == 0) minutes = 1;
@@ -116,8 +116,8 @@ uint32_t StopwatchActivity::remainingMs() const {
 void StopwatchActivity::startNextPhase() {
   if (phase == Phase::Focus) {
     ++focusesCompleted;
-    phase = (focusesCompleted % CrossPointSettings::POMODORO_CYCLES_BEFORE_LONG_BREAK) == 0 ? Phase::LongBreak
-                                                                                            : Phase::ShortBreak;
+    phase = (focusesCompleted % MidadAppSettings::POMODORO_CYCLES_BEFORE_LONG_BREAK) == 0 ? Phase::LongBreak
+                                                                                          : Phase::ShortBreak;
   } else {
     phase = Phase::Focus;
   }
@@ -270,7 +270,7 @@ void StopwatchActivity::renderPomodoro(const int pageWidth, const int pageHeight
                                                         : tr(STR_POMODORO_LONG_BREAK);
   char sub[48];
   snprintf(sub, sizeof(sub), "%s  ·  %s %d", phaseLabel, tr(STR_POMODORO_ROUND),
-           (focusesCompleted % CrossPointSettings::POMODORO_CYCLES_BEFORE_LONG_BREAK) + 1);
+           (focusesCompleted % MidadAppSettings::POMODORO_CYCLES_BEFORE_LONG_BREAK) + 1);
   renderer.drawCenteredText(UI_10_FONT_ID, metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing, sub,
                             true, EpdFontFamily::BOLD);
 
