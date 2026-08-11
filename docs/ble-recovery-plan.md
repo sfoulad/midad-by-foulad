@@ -25,7 +25,9 @@ The BLE Phase 1 foundation is already merged and is the common ancestor
 - NimBLE-Arduino dependency, wired into `platformio.ini`.
 - The Idle-state BLE lifecycle gate in `main.cpp`'s `loop()`
   (`bleAllowedNow` — WiFi off, not the reader activity).
-- A live BLE status indicator drawn near the battery in `FouladTheme`.
+- A live BT BLE status indicator drawn near the battery by
+  `BaseTheme::drawHeader()` when `BlePeripheralManager` is
+  advertising/connected.
 
 Confirmed byte-identical between the merge base and current `develop` for
 `BlePeripheralManager.*`/`BleCommandDispatcher.*` — Phases A, B, and C never
