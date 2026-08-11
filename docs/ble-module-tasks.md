@@ -2361,3 +2361,44 @@ it isn't, the original 422 still has no confirmed explanation.
 
 `book.fetch` is now fully unblocked: queue -> lookup -> download -> real
 metadata, all live-verified against production.
+
+## `book.fetch` duplicate-download fix -- same session, 2026-08-11
+
+The live test above had a side effect worth its own entry: book 935 was
+already on the device as `/Ali Hazelwood - Two Can Play.epub` (downloaded
+earlier through normal browsing), but `flushPendingBleBookFetch()`
+downloaded it a *second* time as `/book_935.epub` -- same book, two files,
+two `RECENT_BOOKS` entries.
+
+Root cause: the id-derived filename (`"/book_" + id + "." + format`) never
+matched the filename normal downloads use, so nothing could recognize the
+book was already present. Considered checking `RECENT_BOOKS` for an
+existing matching `fouladBookId` first, but that store is a capped
+10-entry recents list (`MAX_RECENT_BOOKS`), not a full library index -- a
+book that scrolled out of it would still read as "new".
+
+**Fix**: `flushPendingBleBookFetch()` now builds the *same* filename
+`OpdsBookBrowserActivity::downloadBook()` already uses for its
+already-downloaded fast path --
+`StringUtils::sanitizeFilename((author.empty() ? "" : author + " - ") +
+title) + "." + format` -- and checks `Storage.exists()` on it before
+downloading, exactly mirroring that existing fast path
+(`OpdsBookBrowserActivity.cpp:1208-1219`). This is a real SD-card
+existence check, not bounded by the recents cap, so it catches a
+duplicate regardless of how long ago the original was downloaded or
+whether it's still in the recents list. A hit re-tags the existing file's
+`RECENT_BOOKS` entry with the real `fouladBookId` (in case an
+earlier-browsing copy predates that) and clears the pending fetch without
+downloading -- same outcome as a successful fetch, no network use.
+
+Side effect: `book.fetch`'s own downloads now land under the same
+human-readable `<author> - <title>.<ext>` naming as normal downloads,
+replacing the `/book_<id>.<ext>` scheme -- one less thing that made a
+BLE-fetched book look different in the library.
+
+**Verified live**: re-queued id 935 (already present from the root-cause
+test above) -- log shows the lookup fire (`Fetching:
+.../opds/books/935`) with no `Downloading:` line following it, `pending`
+cleared, and `recent.json`'s existing `"Ali Hazelwood - Two Can
+Play.epub"` entry moved to front with `fouladBookId` intact, no second
+file created.

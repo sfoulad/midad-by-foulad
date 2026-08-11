@@ -21,6 +21,7 @@
 #include "util/DebugLog.h"
 #include "util/DebugLogging.h"
 #include "util/RollingSdLog.h"
+#include "util/StringUtils.h"
 
 namespace FouladDeviceTracking {
 
@@ -683,7 +684,29 @@ void flushPendingBleBookFetch(const std::string& username, const std::string& pa
   const std::string title = lookupDoc["title"].is<const char*>() ? lookupDoc["title"].as<const char*>()
                                                                    : "Book #" + bookId;
   const std::string author = lookupDoc["author"].is<const char*>() ? lookupDoc["author"].as<const char*>() : "";
-  const std::string filename = "/book_" + bookId + "." + format;
+
+  // Same filename convention OpdsBookBrowserActivity::downloadBook() already uses
+  // (author - title, sanitized, + extension) -- deliberately NOT "/book_" + id, so a
+  // book already on the SD card from normal browsing (or an earlier book.fetch) is
+  // found by Storage.exists() below and never re-downloaded under a second name.
+  // Checking RECENT_BOOKS instead would have missed this: it's a 10-entry recents
+  // list, not a full library index, so a book that scrolled out of it would have
+  // looked "new" again. A real duplicate hit exactly this way in testing 2026-08-11
+  // (935 already present as "Ali Hazelwood - Two Can Play.epub", re-downloaded as
+  // "/book_935.epub") -- this filename match is what would have caught it.
+  const std::string filename =
+      "/" + StringUtils::sanitizeFilename((author.empty() ? "" : author + " - ") + title) + "." + format;
+
+  if (Storage.exists(filename.c_str())) {
+    // Already have it -- make sure it's tagged with the real fouladBookId (a copy
+    // downloaded via normal browsing may predate that tagging) and stop, same as
+    // downloadBook()'s own already-downloaded fast path.
+    RECENT_BOOKS.addBook(filename, title, author, "", bookId);
+    APP_STATE.pendingBleBookFetchId.clear();
+    APP_STATE.saveToFile();
+    diagLog("ble book.fetch: already have book_id=" + bookId + " (" + filename + "), skipped download");
+    return;
+  }
 
   const auto result = HttpDownloader::downloadToFile(downloadUrl, filename, nullptr, nullptr, username, password);
   if (result == HttpDownloader::OK) {
