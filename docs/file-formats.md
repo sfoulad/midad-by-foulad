@@ -98,11 +98,17 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 39
+### Version 40
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 40 is a pure cache-bust (no layout change) for upstream #2722:
+`FootnoteEntry::href` grew from 96 to 256 bytes (calibre-generated EPUBs with
+long filenames and URL-encoded characters routinely exceed 96 chars), which
+changes the struct's serialized size in every cached `Page` that has a
+footnote.
 
 Version 39 adds the book-internal source href to each serialized ImageBlock,
 written right after the cache path (lazy image extraction: section builds only

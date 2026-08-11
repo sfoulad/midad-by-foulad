@@ -40,7 +40,10 @@ namespace {
 // v39: ImageBlock serializes the book-internal source href after the cache path
 // (lazy extraction: images are header-probed at build time and extracted on
 // first render).
-constexpr uint8_t SECTION_FILE_VERSION = 39;
+// v40: upstream merge (#2722) -- FootnoteEntry::href grew from 96 to 256 bytes
+// (calibre-generated EPUBs routinely exceed 96 chars), changing the struct's
+// serialized size in every cached Page.
+constexpr uint8_t SECTION_FILE_VERSION = 40;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
