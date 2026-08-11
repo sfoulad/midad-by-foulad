@@ -8,10 +8,10 @@
 #include <algorithm>
 #include <cstdio>
 
-#include "CrossPointSettings.h"
 #include "GymCatalog.h"
 #include "GymLogStore.h"
 #include "MappedInputManager.h"
+#include "MidadAppSettings.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -25,7 +25,7 @@ constexpr int kDotSize = 14;
 constexpr int kDotGap = 10;
 
 std::string formatWeight(const float weightKg) {
-  const bool isLb = SETTINGS.gymWeightUnit == CrossPointSettings::GYM_WEIGHT_LB;
+  const bool isLb = MIDAD_APP_SETTINGS.gymWeightUnit == MidadAppSettings::GYM_WEIGHT_LB;
   const float displayValue = isLb ? weightKg * KG_TO_LB : weightKg;
   char buf[24];
   snprintf(buf, sizeof(buf), "%.1f %s", static_cast<double>(displayValue), isLb ? tr(STR_LB_SHORT) : tr(STR_KG_SHORT));

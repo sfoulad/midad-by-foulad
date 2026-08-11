@@ -13,6 +13,7 @@
 #include "FouladEbooksConfig.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncClient.h"
+#include "MidadAppSettings.h"
 #include "RecentBooksStore.h"
 #include "network/HttpDownloader.h"
 #include "network/OtaUpdater.h"
@@ -135,15 +136,17 @@ void addSettingsReport(JsonObject settings) {
   settings["shortPwrBtn"] = s.shortPwrBtn;
   settings["pwrBtnFootnoteBack"] = s.pwrBtnFootnoteBack;
   settings["tiltPageTurn"] = s.tiltPageTurn;
-  // Apps
-  settings["quranEnabled"] = s.quranEnabled;
-  settings["rssEnabled"] = s.rssEnabled;
-  settings["gamesEnabled"] = s.gamesEnabled;
-  settings["tasbihEnabled"] = s.tasbihEnabled;
-  settings["stopwatchEnabled"] = s.stopwatchEnabled;
-  settings["gymEnabled"] = s.gymEnabled;
-  settings["gymWeightUnit"] = s.gymWeightUnit;
-  settings["debugLoggingEnabled"] = s.debugLoggingEnabled;
+  // Apps -- MidadAppSettings, a separate store (see src/MidadAppSettings.h);
+  // wire key names are unchanged from their old life on CrossPointSettings.
+  const auto& m = MIDAD_APP_SETTINGS;
+  settings["quranEnabled"] = m.quranEnabled;
+  settings["rssEnabled"] = m.rssEnabled;
+  settings["gamesEnabled"] = m.gamesEnabled;
+  settings["tasbihEnabled"] = m.tasbihEnabled;
+  settings["stopwatchEnabled"] = m.stopwatchEnabled;
+  settings["gymEnabled"] = m.gymEnabled;
+  settings["gymWeightUnit"] = m.gymWeightUnit;
+  settings["debugLoggingEnabled"] = m.debugLoggingEnabled;
   // System
   settings["sleepTimeoutMinutes"] = s.sleepTimeoutMinutes;
   settings["showHiddenFiles"] = s.showHiddenFiles;
@@ -279,15 +282,6 @@ void applySettingsFromServer(JsonObjectConst settings) {
   applyToggle(s.pwrBtnFootnoteBack, "pwrBtnFootnoteBack");
   applyEnum(s.tiltPageTurn, "tiltPageTurn", S::TILT_PAGE_TURN_COUNT);
 
-  applyToggle(s.quranEnabled, "quranEnabled");
-  applyToggle(s.rssEnabled, "rssEnabled");
-  applyToggle(s.gamesEnabled, "gamesEnabled");
-  applyToggle(s.tasbihEnabled, "tasbihEnabled");
-  applyToggle(s.stopwatchEnabled, "stopwatchEnabled");
-  applyToggle(s.gymEnabled, "gymEnabled");
-  applyEnum(s.gymWeightUnit, "gymWeightUnit", S::GYM_WEIGHT_UNIT_COUNT);
-  applyToggle(s.debugLoggingEnabled, "debugLoggingEnabled");
-
   applyRange(s.sleepTimeoutMinutes, "sleepTimeoutMinutes", S::MIN_SLEEP_TIMEOUT_MINUTES, S::MAX_SLEEP_TIMEOUT_MINUTES);
   applyToggle(s.showHiddenFiles, "showHiddenFiles");
   applyToggle(s.removeReadBooksFromRecents, "removeReadBooksFromRecents");
@@ -309,6 +303,48 @@ void applySettingsFromServer(JsonObjectConst settings) {
   if (changed) {
     s.saveToFile();
     diagLog("applied pushed settings from server");
+  }
+
+  // Apps -- separate store/file (MidadAppSettings), same reasoning as KOReader
+  // Sync below: its own changed-flag and saveToFile() so an unrelated push
+  // doesn't force-touch this file. Note: pomodoroEnabled/pomodoroFocusMin/
+  // pomodoroShortBreakMin/pomodoroLongBreakMin are not wired here -- they
+  // never were (addSettingsReport() doesn't report them either), so this
+  // preserves that pre-existing gap rather than adding new wire behavior.
+  {
+    auto& m = MIDAD_APP_SETTINGS;
+    bool midadAppsChanged = false;
+    auto applyMidadToggle = [&](uint8_t& field, const char* key) {
+      const JsonVariantConst v = settings[key];
+      if (v.isNull()) return;
+      const uint8_t val = v.as<uint8_t>() != 0 ? 1 : 0;
+      if (field != val) {
+        field = val;
+        midadAppsChanged = true;
+      }
+    };
+    auto applyMidadEnum = [&](uint8_t& field, const char* key, const uint8_t count) {
+      const JsonVariantConst v = settings[key];
+      if (v.isNull()) return;
+      const uint8_t val = v.as<uint8_t>();
+      if (val >= count) return;
+      if (field != val) {
+        field = val;
+        midadAppsChanged = true;
+      }
+    };
+    applyMidadToggle(m.quranEnabled, "quranEnabled");
+    applyMidadToggle(m.rssEnabled, "rssEnabled");
+    applyMidadToggle(m.gamesEnabled, "gamesEnabled");
+    applyMidadToggle(m.tasbihEnabled, "tasbihEnabled");
+    applyMidadToggle(m.stopwatchEnabled, "stopwatchEnabled");
+    applyMidadToggle(m.gymEnabled, "gymEnabled");
+    applyMidadEnum(m.gymWeightUnit, "gymWeightUnit", MidadAppSettings::GYM_WEIGHT_UNIT_COUNT);
+    applyMidadToggle(m.debugLoggingEnabled, "debugLoggingEnabled");
+    if (midadAppsChanged) {
+      m.saveToFile();
+      diagLog("applied pushed Apps settings from server");
+    }
   }
 
   // KOReader Sync -- separate store/file, each field applied independently so

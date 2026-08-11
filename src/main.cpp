@@ -34,6 +34,7 @@
 #include "GymPlanStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
+#include "MidadAppSettings.h"
 #include "OpdsServerStore.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
@@ -545,7 +546,7 @@ void setupDisplayAndFonts(bool seamless = false, bool uiOnlyFonts = false) {
   // Self-heal the extracted Quran (and its default-font sidecar) at boot for
   // devices where the toggle is already on -- covers SD swaps, torn writes,
   // and firmware upgrades that changed the embedded copy or sidecar format.
-  if (SETTINGS.quranEnabled) {
+  if (MIDAD_APP_SETTINGS.quranEnabled) {
     QuranBook::ensureExtracted();
   }
 
@@ -596,6 +597,7 @@ void setup() {
   HalSystem::checkPanic();
 
   SETTINGS.loadFromFile();
+  MIDAD_APP_SETTINGS.loadFromFile();
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   GAME_SCORES.loadFromFile();
@@ -829,7 +831,7 @@ void loop() {
   // no-ops when already in the right state, so polling this every tick is fine --
   // BlePeripheral.begin() itself enforces the heap gate and cool-down.
   const bool bleAllowedNow =
-      SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
+      MIDAD_APP_SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
   if (bleAllowedNow) {
     BlePeripheral.begin();
   } else if (BlePeripheral.isActive()) {

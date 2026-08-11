@@ -19,6 +19,7 @@
 #include "FontInstaller.h"
 #include "FouladEbooksConfig.h"
 #include "HttpDownloader.h"
+#include "MidadSettingsList.h"
 #include "OpdsServerStore.h"
 #include "SdCardFontSystem.h"
 #include "SettingsList.h"
@@ -1272,8 +1273,11 @@ void CrossPointWebServer::handleSettingsPage() const {
 void CrossPointWebServer::handleGetSettings() const {
   // Pass the SD font registry so the fontFamily setting's enumStringValues
   // includes SD-resident families — otherwise the web API only exposes the
-  // three built-in fonts.
-  const auto& settings = getSettingsList(&sdFontSystem.registry());
+  // three built-in fonts. getCombinedSettingsList() (not getSettingsList()
+  // directly) merges in the Midad-owned Apps rows (Quran/Games/.../Debug
+  // Logging, see src/MidadSettingsList.h) so this endpoint keeps exposing
+  // them now that they no longer live in the shared getSettingsList() table.
+  const auto settings = getCombinedSettingsList(&sdFontSystem.registry());
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
@@ -1297,6 +1301,8 @@ void CrossPointWebServer::handleGetSettings() const {
         doc["type"] = "toggle";
         if (s.valuePtr) {
           doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+        } else if (s.valueGetter) {
+          doc["value"] = static_cast<int>(s.valueGetter());
         }
         break;
       }
@@ -1323,6 +1329,8 @@ void CrossPointWebServer::handleGetSettings() const {
         doc["type"] = "value";
         if (s.valuePtr) {
           doc["value"] = static_cast<int>(SETTINGS.*(s.valuePtr));
+        } else if (s.valueGetter) {
+          doc["value"] = static_cast<int>(s.valueGetter());
         }
         doc["min"] = s.valueRange.min;
         doc["max"] = s.valueRange.max;
@@ -1375,7 +1383,9 @@ void CrossPointWebServer::handlePostSettings() {
     return;
   }
 
-  const auto& settings = getSettingsList(&sdFontSystem.registry());
+  // See handleGetSettings() -- getCombinedSettingsList() merges in the
+  // Midad-owned Apps rows so this endpoint can apply them too.
+  const auto settings = getCombinedSettingsList(&sdFontSystem.registry());
   int applied = 0;
 
   for (const auto& s : settings) {
@@ -1387,6 +1397,8 @@ void CrossPointWebServer::handlePostSettings() {
         const int val = doc[s.key].as<int>() ? 1 : 0;
         if (s.valuePtr) {
           SETTINGS.*(s.valuePtr) = val;
+        } else if (s.valueSetter) {
+          s.valueSetter(static_cast<uint8_t>(val));
         }
         applied++;
         break;
@@ -1410,6 +1422,8 @@ void CrossPointWebServer::handlePostSettings() {
         if (val >= s.valueRange.min && val <= s.valueRange.max) {
           if (s.valuePtr) {
             SETTINGS.*(s.valuePtr) = static_cast<uint8_t>(val);
+          } else if (s.valueSetter) {
+            s.valueSetter(static_cast<uint8_t>(val));
           }
           applied++;
         }

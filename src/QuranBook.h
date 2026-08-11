@@ -7,8 +7,8 @@
 // into flash via board_build.embed_files; built by tools/quran/build_quran_epub.py
 // from the source EPUB -- ornate ayah markers, Arabic-Indic surah numbers).
 //
-// Enabling the Settings -> System toggle (SETTINGS.quranEnabled) extracts the
-// EPUB from flash to the SD card at PATH; My Books then pins it as the first
+// Enabling the Settings -> Apps toggle (MidadAppSettings::quranEnabled) extracts
+// the EPUB from flash to the SD card at PATH; My Books then pins it as the first
 // book (see RecentBooksActivity). No network involved: the whole book lives in
 // the firmware, satisfying "works out of the box, offline".
 namespace QuranBook {

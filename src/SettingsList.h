@@ -363,58 +363,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
 
     // --- Apps ---
-    // Quran toggle: SettingsActivity::toggleCurrentSetting() extracts the
-    // firmware-embedded EPUB to SD when this turns on (QuranBook::ensureExtracted).
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_QURAN, &CrossPointSettings::quranEnabled, "quranEnabled", StrId::STR_CAT_APPS));
-    // Games toggle: pins a "Games" tile in My Books (see GAMES_PSEUDO_PATH in
-    // RecentBooksActivity.cpp) that opens a Snake/Tetris picker. No extraction
-    // step needed -- unlike Quran, nothing but the toggle itself is required.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_GAMES, &CrossPointSettings::gamesEnabled, "gamesEnabled", StrId::STR_CAT_APPS));
-    // Tasbih toggle: pins a "Tasbih" tile in My Books (see TASBIH_PSEUDO_PATH
-    // in RecentBooksActivity.cpp) that opens the built-in dhikr counter. No
-    // extraction step needed, same as Games.
-    v.push_back(SettingInfo::Toggle(StrId::STR_TASBIH, &CrossPointSettings::tasbihEnabled, "tasbihEnabled",
-                                    StrId::STR_CAT_APPS));
-    // News toggle: pins a "News" tile in My Books that browses the account's feed
-    // subscriptions (EINK_NEWS_TASKS.md). Off by default, and the Midad app can turn
-    // it on remotely -- subscriptions are managed there, never here, because adding
-    // one means typing a URL on an on-screen keyboard.
-    // News toggle removed with the tile -- see AppsActivity::entries(). The
-    // rssEnabled field itself stays (settings.json + web-sync compatibility).
-    // Stop Watch toggle: pins a "Stop Watch" tile in My Books (see
-    // STOPWATCH_PSEUDO_PATH in RecentBooksActivity.cpp) that opens the
-    // built-in stopwatch. No extraction step needed, same as Games.
-    v.push_back(SettingInfo::Toggle(StrId::STR_STOPWATCH, &CrossPointSettings::stopwatchEnabled, "stopwatchEnabled",
-                                    StrId::STR_CAT_APPS));
-    // Pomodoro toggle: pins a "Pomodoro" tile in My Books (see
-    // POMODORO_PSEUDO_PATH) opening StopwatchActivity in Pomodoro mode. The three
-    // durations below sit directly under it so the group reads as one feature.
-    // Ranges cover the common variants -- 25/5/15 classic, 52/17, 90-minute deep
-    // work -- and start above 0, since a zero-length phase would expire instantly.
-    v.push_back(SettingInfo::Toggle(StrId::STR_POMODORO, &CrossPointSettings::pomodoroEnabled, "pomodoroEnabled",
-                                    StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_FOCUS_MIN, &CrossPointSettings::pomodoroFocusMin, {5, 90, 5},
-                                   "pomodoroFocusMin", StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_SHORT_BREAK_MIN, &CrossPointSettings::pomodoroShortBreakMin,
-                                   {1, 30, 1}, "pomodoroShortBreakMin", StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Value(StrId::STR_POMODORO_LONG_BREAK_MIN, &CrossPointSettings::pomodoroLongBreakMin,
-                                   {5, 60, 5}, "pomodoroLongBreakMin", StrId::STR_CAT_APPS));
-    // Gym toggle: pins a "Gym" tile in My Books (see GYM_PSEUDO_PATH in
-    // RecentBooksActivity.cpp) that opens the built-in workout planner.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_GYM, &CrossPointSettings::gymEnabled, "gymEnabled", StrId::STR_CAT_APPS));
-    v.push_back(SettingInfo::Enum(StrId::STR_GYM_WEIGHT_UNIT, &CrossPointSettings::gymWeightUnit,
-                                  {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB}, "gymWeightUnit",
-                                  StrId::STR_CAT_APPS));
-    // Midad BLE toggle: also the live-switch AppsActivity tile's backing flag (see
-    // CrossPointSettings::bleEnabled and AppsActivity's special-cased Midad BLE entry)
-    // -- registering it here gets the same free persistence and server-push handling
-    // every other app toggle already has (see FouladDeviceTracking.cpp's applyToggle),
-    // in addition to that tile.
-    v.push_back(
-        SettingInfo::Toggle(StrId::STR_MIDAD_BLE, &CrossPointSettings::bleEnabled, "bleEnabled", StrId::STR_CAT_APPS));
+    // Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym/Midad BLE/Debug Logging live
+    // on MidadAppSettings, not CrossPointSettings, and their SettingInfo rows
+    // are defined in src/MidadSettingsList.h/.cpp instead of here -- see
+    // SettingsActivity::rebuildSettingsLists()'s appendMidadAppSettings() call
+    // and docs/upstream-sync-architecture.md's Phase B for why keeping them
+    // out of this upstream-owned file matters.
+    //
     // KOReader Sync itself is a device-only ACTION appended in
     // SettingsActivity::rebuildSettingsLists() (web-only, uses
     // KOReaderCredentialStore) -- see the comment further below.

@@ -1,6 +1,288 @@
 # Midad as a Thin Fork of CrossPoint: Architecture and Migration Plan
 
-## Status: Phase A scaffolding complete; conflict path validated. Clean-merge CI/PR path remains to be exercised once a clean merge is achievable. Phases B onward not started.
+## Status: Phase A scaffolding complete; conflict path validated. Phase B (settings extraction) complete across three review rounds, pending merge (PR #136) -- see "Phase B round 3" below for the final state. Clean-merge CI/PR path still remains to be exercised once a clean merge is achievable. Phases C onward not started.
+
+## Phase B final state (after round 3)
+
+Read this section first if you only want the current facts, not the history
+of how Phase B got there (that's in the round 1/2/3 sections below, kept for
+the record).
+
+- **`MidadAppSettings`** (`src/MidadAppSettings.h/.cpp`) owns **13 fields**:
+  `quranEnabled`, `rssEnabled`, `gamesEnabled`, `tasbihEnabled`,
+  `stopwatchEnabled`, `pomodoroEnabled`, `pomodoroFocusMin`,
+  `pomodoroShortBreakMin`, `pomodoroLongBreakMin`, `gymEnabled`,
+  `gymWeightUnit`, `debugLoggingEnabled`, `bleEnabled`. None have a
+  CrossPoint upstream equivalent.
+- **`SettingsList.h`** (upstream-owned) contains **zero** Midad-specific
+  executable lines — no `MIDAD_APP_SETTINGS`/`MidadAppSettings` reference of
+  any kind, only two comments pointing at `src/MidadSettingsList.h/.cpp`.
+- **`CrossPointSettings.h`** no longer declares `bleEnabled` (or any of the
+  other 12) — confirmed absent.
+- **`/api/settings` GET/POST** (`CrossPointWebServer.cpp`) exposes and
+  accepts **12** of the 13 Midad fields via `getCombinedSettingsList()`
+  (`src/MidadSettingsList.h/.cpp`), which merges `getSettingsList()` with
+  `appendMidadAppSettings()` — the single source of truth both the web API
+  and (indirectly, via its own two-call composition) the on-device Settings
+  screen build from. `rssEnabled` is the one exception: it has never had a
+  `SettingInfo` row (on `CrossPointSettings` before Phase B, or on
+  `MidadAppSettings` after) because the on-device News tile it used to gate
+  was removed — see `AppsActivity::entries()`'s comment. It's still
+  persisted in `MidadAppSettings` and still part of `FouladDeviceTracking`'s
+  settings.push/report wire contract (see below); it's just not a row either
+  Settings surface can toggle, the same as before Phase B.
+- **`FouladDeviceTracking`'s settings.push/report wire contract**: unchanged
+  from before Phase B for the 8 fields it already carried (quran/rss/games/
+  tasbih/stopwatch/gym/gymWeightUnit/debugLogging — now read from
+  `MidadAppSettings` instead of `CrossPointSettings`, same JSON keys); the 3
+  pomodoro fields and `bleEnabled` were never part of that contract and still
+  aren't — no new remote wire behavior added anywhere in Phase B.
+- **Fixed-upstream conflict count**: **158**, unchanged across all three
+  rounds (down from JsonSettingsIO's 2 modify/delete conflicts, up by the
+  `BookmarkFile` add/add pair and one `PersistableStore.h` visibility
+  conflict — see "Phase B results" below for the original accounting; rounds
+  2 and 3 introduced zero additional conflicts because every file they
+  touched was already on the list, and every new file they added is
+  Midad-only and can't conflict).
+- **Tests**: 116 gtest cases pass (112 pre-existing + 4 new
+  `MidadAppSettingsLoadPlan` cases added in round 2; round 3 added no new
+  test target). `pio run -e default`/`simulator` succeed; `pio check`
+  (cppcheck) reports no defects; `clang-format-fix` is clean.
+
+## Phase B round 3: web API regression fix, bleEnabled extraction
+
+Follow-up to round 2, per PR #136 review feedback:
+
+1. **Restored Midad settings to `/api/settings`.** Round 2 moved the Midad
+   row definitions out of `SettingsList.h` correctly for the on-device
+   Settings screen (`SettingsActivity::rebuildSettingsLists()` calls
+   `appendMidadAppSettings()`), but `CrossPointWebServer::handleGetSettings()`/
+   `handlePostSettings()` still called `getSettingsList()` directly — which no
+   longer includes the Midad rows. This was a real regression: the 12
+   configurable Midad fields silently disappeared from the web settings API
+   after round 2 (`rssEnabled` was never one of them — see "Phase B final
+   state" above).
+   Fixed with `getCombinedSettingsList()` (`src/MidadSettingsList.h/.cpp`), a
+   Midad-owned helper that returns `getSettingsList()` with
+   `appendMidadAppSettings()` merged in; both `CrossPointWebServer` handlers
+   now call it. `SettingsActivity` is unaffected — it still needs its own
+   category-then-action ordering (Dictionary/KOReader Sync between the
+   generic list and the Midad rows), so it keeps its round-2 two-call
+   composition rather than switching to the combined helper.
+
+2. **Finished the `bleEnabled` extraction.** It had no CrossPoint upstream
+   equivalent either, so leaving it on `CrossPointSettings` (and its row in
+   `SettingsList.h`) was the same permanent fork delta as the other 12
+   fields, "live radio switch" notwithstanding. Moved it to `MidadAppSettings`
+   as the 13th field: `toJson`/`fromJson` (the existing legacy migration
+   covers it for free, since `fromJson()` is reused for both normal loads and
+   migration), `MidadSettingsList.cpp`'s row definition (removed from
+   `SettingsList.h`, which now has zero Midad-specific rows left),
+   `AppsActivity`'s live BLE tile toggle/label, and `main.cpp`'s Idle-state
+   BLE gate. `bleEnabled` was never part of `FouladDeviceTracking`'s
+   settings.push/report wire contract before this move (confirmed via
+   `grep`) and still isn't — no new remote wire behavior added.
+
+Verified live in the simulator (temporary hook replicating
+`handleGetSettings()`/`handlePostSettings()`'s exact switch-case logic against
+`getCombinedSettingsList()`, reverted before committing — `git status`
+confirmed clean both times, including a caught-and-fixed mistake where the
+first `git checkout --` of `main.cpp` reverted the legitimate `bleEnabled`
+gate fix along with the temporary hook, since both were uncommitted changes
+to the same file): GET returned `quranEnabled`, `pomodoroFocusMin`,
+`gymWeightUnit`, `debugLoggingEnabled`, and `bleEnabled` with correct
+defaults (`0`, `25`, `0`, `0`, `1`); POST applied all 5
+(`applied=5`) and persisted them to `midad_apps.json`, including
+`bleEnabled` flipping `1` → `0`.
+
+**Conflict re-measurement**: **158, identical file list to rounds 1 and 2.**
+`CrossPointSettings.h`, `CrossPointWebServer.cpp`, and `main.cpp` were all
+already conflicting; `AppsActivity.cpp` isn't an upstream file at all and was
+never on the list. Zero new conflicts from this round either.
+
+## Phase B round 2: SettingsList.h cleanup, hardened migration, wire-path test
+
+Follow-up to the round-1 results below, per PR #136 review feedback:
+
+1. **Finished the SettingsList extraction.** Round 1 moved the 12 fields off
+   `CrossPointSettings` but left their `SettingInfo::DynamicToggle`/
+   `DynamicValue`/`DynamicEnum` row *definitions* (the actual lambda code
+   referencing `MIDAD_APP_SETTINGS`) inside `SettingsList.h` — still
+   Midad-owned behavior sitting in an upstream-owned file. Moved all of it
+   (Quran/Games/Tasbih/Stopwatch/Pomodoro+3/Gym/GymWeightUnit/Debug Logging)
+   to new `src/MidadSettingsList.h/.cpp`, behind one hook:
+   `appendMidadAppSettings(appsSettings)`, called once from
+   `SettingsActivity::rebuildSettingsLists()`. `SettingsList.h` now contains
+   **zero** `MIDAD_APP_SETTINGS`/`MidadAppSettings` references — only two
+   comment lines pointing at where the code lives. The generic
+   `SettingInfo::DynamicToggle`/`DynamicValue` factories stay in
+   `SettingsActivity.h` (generic infrastructure, not Midad product logic, per
+   the review's own carve-out), and `CrossPointWebServer.cpp`'s matching
+   `valueGetter`/`valueSetter` fallback stays too, flagged as a possible
+   future upstream-contribution candidate. One accepted side effect: Quran
+   through GymWeightUnit now render after Dictionary/KOReader Sync in the
+   on-device Apps list instead of before (Debug Logging's "always last"
+   position is unchanged) — a cosmetic reorder, not a behavior change.
+
+2. **Hardened the migration.** `MidadAppSettings::loadFromFile()` previously
+   treated *any* load failure — file missing, or file present but
+   corrupt/unparseable — as "attempt migration from legacy settings.json."
+   That's wrong: a corrupt `midad_apps.json` should report failure, not
+   silently resurrect stale pre-migration values. Extracted the decision
+   into a pure function (`src/MidadAppSettingsLoadPlan.h/.cpp`,
+   `planMidadAppSettingsLoad(ownFileExists, ownFileLoadedOk,
+   legacyFileExists)`) with zero HalStorage/ArduinoJson dependency, so it's
+   host-testable without any HAL mocking — a new gtest target,
+   `test/midad_app_settings_load_plan/`, covers all four outcomes
+   (`UseOwnFile`, `ReportCorrupt`, `Migrate`, `FreshDefaults`). Also
+   live-verified in the simulator: a hand-corrupted `midad_apps.json` (`"not
+   valid json {{{"`) alongside a legacy `settings.json` correctly logged
+   `[ERR] [MAS] midad_apps.json exists but failed to load; not migrating
+   from legacy settings.json` and left the corrupt file untouched — no
+   silent fallback.
+
+3. **Exercised the wire path directly**, not just inspected key names. Added
+   a temporary simulator-only hook (`FouladDeviceTracking::
+   debugTestApplySettings()`, called from `main.cpp` behind `getenv(
+   "SIM_TEST_SETTINGS_PUSH")`) that pushes a payload touching a toggle
+   (`quranEnabled`), an enum (`gymWeightUnit`), and one unrelated
+   `CrossPointSettings` field (`darkModeEnabled`) through
+   `applySettingsFromServer()`, then calls `addSettingsReport()` and writes
+   the result to a file for inspection. Confirmed: `MidadAppSettings` values
+   changed correctly (`quranEnabled` 0→1, `gymWeightUnit` 0→1), `midad_apps.
+   json` was persisted with those values, fields *not* in the payload stayed
+   at their compile-time defaults (no cross-talk), `settings.json` picked up
+   `darkModeEnabled` correctly with zero Apps-category keys left in it
+   (confirming the split is clean), and `addSettingsReport()` read every
+   pushed value back under its original wire key. The temporary hook was
+   fully reverted (`git checkout --`) before this commit — `git status`
+   confirmed clean. Pomodoro fields remain deliberately unwired (matching the
+   pre-existing gap noted in round 1), per the explicit instruction not to
+   expand wire behavior in this PR.
+
+**Conflict re-measurement** (same method: real `git merge upstream/develop`
+against `crosspoint-reader/develop @ 2cac5971`, same commit every measurement
+in this doc has used): **158 conflicting files, identical file list to round
+1.** Every file this round's changes touched (`SettingsActivity.h/.cpp`,
+`SettingsList.h`, `test/CMakeLists.txt`) was already conflicting before this
+round — shrinking Midad's footprint inside an already-conflicting file
+doesn't change the file-level count, only what has to be reconciled inside
+it. The four new files this round added (`MidadSettingsList.h/.cpp`,
+`MidadAppSettingsLoadPlan.h/.cpp`, plus the new test directory) don't exist
+upstream at all, so none of them could conflict. Net: zero new conflicts
+introduced by a real architectural cleanup — the best possible outcome for
+this kind of change.
+
+## Phase B results: MidadAppSettings extraction + BookmarkFile adoption
+
+Built `MidadAppSettings` (`src/MidadAppSettings.h/.cpp`), a `PersistableStore<T>`
+singleton holding the 12 fields identified in the settings-migration inventory
+above (`quranEnabled`, `rssEnabled`, `gamesEnabled`, `tasbihEnabled`,
+`stopwatchEnabled`, `pomodoroEnabled`/`FocusMin`/`ShortBreakMin`/`LongBreakMin`,
+`gymEnabled`/`gymWeightUnit`, `debugLoggingEnabled`) — every one of them had zero
+CrossPoint upstream equivalent, so every touch to `CrossPointSettings.h`/
+`SettingsList.h` for them was permanent, avoidable fork delta. Two new
+`SettingInfo::DynamicToggle`/`DynamicValue` factories (mirroring the existing
+`DynamicEnum`/`DynamicString` pattern `KOReaderCredentialStore` already used)
+made this possible without inventing a new settings-UI mechanism.
+`AppsActivity::AppEntry::enableFlag` (a `CrossPointSettings`-typed
+pointer-to-member) became getter/setter `std::function`s for the same reason.
+`FouladDeviceTracking.cpp`'s wire keys are unchanged — only the backing store
+moved, verified field-by-field against the existing key list.
+
+**Migration**: `MidadAppSettings::loadFromFile()` seeds itself from the legacy
+keys still sitting in `settings.json` the first time its own file doesn't
+exist yet (same technique `CrossPointSettings` already uses for its
+`settings.bin` → `settings.json` migration). Verified live in the simulator:
+booted with a synthetic pre-Phase-B `settings.json` (all 12 fields set to
+non-default values, no `midad_apps.json` present) and confirmed the migration
+log fires exactly once, all 12 values carry over exactly, and a
+migration-dependent behavior (Quran extraction, gated on the migrated
+`quranEnabled`) actually ran. A second boot confirmed no re-migration.
+
+**Also closed in the same PR**: adopted upstream's own `BookmarkFile` module
+(commit `63eda54e`, the same "migrate off `JsonSettingsIO`" commit discussed in
+the Phase A section above) for the two remaining `JsonSettingsIO` call sites
+(bookmark load/save) instead of keeping a permanently-diverged remnant of that
+file. `JsonSettingsIO.cpp/.h` deleted outright. This required making
+`PersistableStoreBase::read/writeDocToFile` public — upstream had already made
+the same change, for the same reason (a free function, not a `PersistableStore`
+subclass, needs to call them) — so this is a second, independent point of
+convergence with upstream's shape, not just the bookmark logic itself.
+
+**Real merge-conflict delta** (measured the same way as Phase A: a real
+`git merge upstream/develop --no-ff` against `crosspoint-reader/develop @
+2cac5971` — the identical upstream commit Phase A measured against, so this is
+an apples-to-apples comparison with no upstream drift in between — this time
+off `feat/phase-b-settings-extraction` instead of `develop`, since the PR
+hasn't merged yet):
+
+- **Old baseline (Phase A): 157 distinct conflicting files** (158 conflict
+  events — `portuguese.yaml`'s rename/delete and `portuguese-BR.yaml`'s
+  modify/delete both landed on the same path).
+- **New count (Phase B): 158 distinct conflicting files.**
+- **Eliminated**: `src/JsonSettingsIO.cpp`, `src/JsonSettingsIO.h` (2 files) —
+  gone because we deleted them, matching upstream having already deleted them.
+- **Introduced**: `lib/Serialization/PersistableStore.h` (a real, new content
+  conflict — see below), `src/util/BookmarkFile.cpp`, `src/util/BookmarkFile.h`
+  (2 files, both **add/add** — both sides independently created the same file
+  at the same path, because we deliberately copied upstream's own version).
+
+**The raw count is flat, but that number hides the real result.** An add/add
+conflict on two files that are already near-identical (ours is upstream's
+`BookmarkFile.cpp`/`.h` verbatim, minus the `visibleTextOffset`/`vo` field
+upstream's version also carries — a genuinely separate, out-of-scope feature)
+is close to a mechanical resolution — likely "take upstream's version, or
+diff the two and confirm they agree" — nothing like the judgment call the old
+`JsonSettingsIO` modify/delete conflict demanded (decide whether to accept
+upstream's deletion at all, then work out where the bookmark logic that stayed
+should live). `PersistableStore.h`'s new conflict is a single, deliberate,
+2-line visibility change (`protected:` → `public:` for one pair of methods)
+landing in a region upstream has also independently restructured (upstream's
+own `PersistableStoreBase` grew a built-in `storeMutex`/`resaveRequested`
+mechanism this fork's version doesn't have — a real, larger design divergence
+worth its own future phase, not something this change tried to fix).
+
+**Where the reduction actually shows up (round-1 intermediate snapshot —
+superseded by round 3, see below)**: `git show`'s `--numstat` on the round-1
+commit, restricted to the three files that remain on the still-conflicts
+list because upstream independently touches them too (so removing our footprint
+doesn't remove the conflict, only shrinks what has to be reconciled inside it):
+
+| File | Net lines (round 1) |
+|---|---|
+| `src/CrossPointSettings.h` | −79 (5 insertions, 84 deletions) |
+| `src/CrossPointSettings.cpp` | −11 (0 insertions, 11 deletions) |
+| `src/SettingsList.h` | +56 (92 insertions, 36 deletions) — round 1 only moved the *fields* off `CrossPointSettings`; the `Dynamic*` row *definitions* still lived in `SettingsList.h`, which is why this file grew instead of shrinking. **This was temporary**: round 2 (below) moved those row definitions out too, and `SettingsList.h` ends Phase B with zero Midad-specific executable lines — see "Phase B round 2" for the corrected numbers. Kept here only as a historical record of the intermediate state; do not read this row as Phase B's final result. |
+
+`src/CrossPointState.h`/`.cpp` were untouched this phase (none of the migrated
+fields lived there, confirmed in the original audit) and still conflict for
+reasons unrelated to Phase B.
+
+**Remaining settings-related conflict files** (still conflicting, not
+addressed by Phase B, tracked for a future phase): `src/CrossPointSettings.h`,
+`src/CrossPointSettings.cpp`, `src/CrossPointState.h`, `src/CrossPointState.cpp`,
+`src/SettingsList.h`, `src/activities/settings/SettingsActivity.h`,
+`src/activities/settings/SettingsActivity.cpp`, `src/network/CrossPointWebServer.cpp`
+(the settings web API), `src/network/html/SettingsPage.html`. None of these
+were expected to reach zero in Phase B — they all carry either genuine Tier-1
+integration surface (the settings *mechanism* itself) or upstream's own
+independent, unrelated edits to the same files.
+
+**What was deliberately NOT moved** (see the migration inventory above):
+`bleEnabled` (not purely a settings-page field — also the live radio switch
+`AppsActivity` special-cases) and `darkModeEnabled` (upstream has a parallel
+`screenInverted` concept worth reconciling on its own, not a clean migration
+to a Midad-only store).
+
+**Verification**: `pio run -e default` (success), `pio check` (no defects),
+`bin/clang-format-fix` (clean), `pio run -e simulator` (success, live-verified
+the migration as described above), `ctest` (112/112 passed). `pio run -e
+simulator_x3` currently fails, but on a pre-existing, unrelated line
+(`HalClock::isSystemTimeValid` missing from that environment's own HAL stub,
+`EpubReaderActivity.cpp:363`, untouched by this phase) — not a regression from
+this change. On-device physical Settings/Apps-screen verification is flagged
+for hardware testing, per this repo's usual simulator/hardware split.
 
 ## Phase A results: the real baseline, not an estimate
 
@@ -262,7 +544,7 @@ checked field-by-field against upstream's `CrossPointSettings.h`):
 
 This migration is scoped and moderate-effort (touches 7+ files for
 `quranEnabled` alone) — sequence it into the phased plan below, not as a
-same-day change.
+same-day change. **Done as of Phase B (PR #136) — see "Phase B results" above.**
 
 ## Arabic/EPUB core: shrink the surface, don't accept it as fixed
 
@@ -352,14 +634,19 @@ it to open PRs. This alone answers "how much would a real `git merge
 upstream/develop` conflict right now" with certainty, replacing the
 individual-commit audit numbers in this doc with ground truth.
 
-**Phase B — Settings extraction.**
-Build `MidadAppSettings`, migrate the 11+1 fields listed above, update
-`FouladDeviceTracking.cpp`'s report/apply logic, remove the fields from
-`CrossPointSettings.h`/`SettingsList.h`. Scoped, testable in isolation
-(verify every app tile + Pomodoro/Gym persistence + BLE `settings.push`
-round-trip still work), and it's the single highest-value extraction: it
-directly shrinks the 579-line `SettingsList.h` divergence and the 294-line
-`CrossPointSettings.cpp` one.
+**Phase B — Settings extraction. Done, PR #136 (pending merge).**
+Built `MidadAppSettings`, migrated the 11+1 fields listed above, updated
+`FouladDeviceTracking.cpp`'s report/apply logic, removed the fields from
+`CrossPointSettings.h`/`SettingsList.h`. Also adopted upstream's `BookmarkFile`
+module, closing the `JsonSettingsIO.cpp/.h` conflict outright. See "Phase B
+results" above for the full writeup, including the honest finding that the
+real merge-conflict *file count* didn't drop (157 → 158 — 2 files eliminated,
+3 introduced, but the 3 new ones are a near-mechanical add/add pair plus one
+deliberate 2-line visibility change, nowhere near the old modify/delete
+conflict's complexity) even though `CrossPointSettings.h` shrank by 79 lines
+and `CrossPointSettings.cpp` by 11. The metric to watch going forward is which
+files *upstream can still independently edit into a conflict*, not a raw
+count — Phase C's file-count delta should be read the same way.
 
 **Phase C — OPDS/device-tracking extraction.**
 Move Foulad-specific logic out of `OpdsBookBrowserActivity.cpp` into a

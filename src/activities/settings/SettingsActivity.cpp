@@ -19,6 +19,7 @@
 #include "KOReaderSettingsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
+#include "MidadSettingsList.h"
 #include "OpdsServerListActivity.h"
 #include "OpdsServerStore.h"
 #include "QuranBook.h"
@@ -75,13 +76,11 @@ void SettingsActivity::rebuildSettingsLists() {
                           SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   appsSettings.push_back(SettingInfo::Action(StrId::STR_DICTIONARY, SettingAction::Dictionary));
   appsSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
-  // Last item in Apps by design (user request): gates whether the rolling SD
-  // diagnostic logs get written at all -- see CrossPointSettings::debugLoggingEnabled
-  // and src/util/DebugLogging.h for the full list and rationale. Appended here
-  // directly (not in the static getSettingsList() table above) specifically so it
-  // always lands after KOReader Sync, which is itself appended the same way.
-  appsSettings.push_back(SettingInfo::Toggle(StrId::STR_DEBUG_LOGGING, &CrossPointSettings::debugLoggingEnabled,
-                                             "debugLoggingEnabled", StrId::STR_CAT_APPS));
+  // Midad-owned Apps rows (Quran/Games/Tasbih/Stop Watch/Pomodoro/Gym/Debug
+  // Logging) -- see src/MidadSettingsList.h. Appended here, after KOReader
+  // Sync, so Debug Logging (the last row that function adds) keeps landing
+  // right after KOReader Sync, matching prior behavior.
+  appendMidadAppSettings(appsSettings);
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   // OPDS Servers is deliberately not listed. Adding a catalog by hand means typing a
   // URL and credentials on an on-screen keyboard, and every catalog these devices
@@ -267,12 +266,17 @@ void SettingsActivity::toggleCurrentSetting() {
     // Toggle the boolean value using the member pointer
     const bool currentValue = SETTINGS.*(setting.valuePtr);
     SETTINGS.*(setting.valuePtr) = !currentValue;
-    if (setting.valuePtr == &CrossPointSettings::quranEnabled && SETTINGS.quranEnabled) {
+  } else if (setting.type == SettingType::TOGGLE && setting.valueGetter && setting.valueSetter) {
+    // Same as the valuePtr branch above, for a field stored outside
+    // CrossPointSettings (e.g. MidadAppSettings) -- see SettingInfo::DynamicToggle.
+    const uint8_t currentValue = setting.valueGetter();
+    setting.valueSetter(currentValue ? 0 : 1);
+    if (setting.nameId == StrId::STR_QURAN && !currentValue) {
       // Enabling the Quran extracts the firmware-embedded EPUB to the SD card
       // (a few seconds on first enable; instant when already extracted).
       GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       if (!QuranBook::ensureExtracted()) {
-        SETTINGS.quranEnabled = 0;  // no SD / write failure: stay honest, keep it off
+        setting.valueSetter(0);  // no SD / write failure: stay honest, keep it off
       }
       requestUpdate();
     }
@@ -348,6 +352,15 @@ void SettingsActivity::toggleCurrentSetting() {
       SETTINGS.*(setting.valuePtr) = setting.valueRange.min;
     } else {
       SETTINGS.*(setting.valuePtr) = currentValue + setting.valueRange.step;
+    }
+  } else if (setting.type == SettingType::VALUE && setting.valueGetter && setting.valueSetter) {
+    // Same as the valuePtr branch above, for a field stored outside
+    // CrossPointSettings -- see SettingInfo::DynamicValue.
+    const int currentValue = setting.valueGetter();
+    if (currentValue + setting.valueRange.step > setting.valueRange.max) {
+      setting.valueSetter(setting.valueRange.min);
+    } else {
+      setting.valueSetter(static_cast<uint8_t>(currentValue + setting.valueRange.step));
     }
   } else if (setting.type == SettingType::ACTION) {
     auto resultHandler = [this](const ActivityResult&) { SETTINGS.saveToFile(); };
@@ -564,6 +577,9 @@ void SettingsActivity::render(RenderLock&&) {
         if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
           const bool value = SETTINGS.*(setting.valuePtr);
           valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
+        } else if (setting.type == SettingType::TOGGLE && setting.valueGetter) {
+          const uint8_t value = setting.valueGetter();
+          valueText = value ? tr(STR_STATE_ON) : tr(STR_STATE_OFF);
         } else if (setting.type == SettingType::ENUM && setting.valuePtr != nullptr) {
           const uint8_t value = SETTINGS.*(setting.valuePtr);
           valueText = I18N.get(setting.enumValues[value]);
@@ -587,6 +603,8 @@ void SettingsActivity::render(RenderLock&&) {
           } else {
             valueText = std::to_string(SETTINGS.*(setting.valuePtr));
           }
+        } else if (setting.type == SettingType::VALUE && setting.valueGetter) {
+          valueText = std::to_string(setting.valueGetter());
         }
         return valueText;
       },

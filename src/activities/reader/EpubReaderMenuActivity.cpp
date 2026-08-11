@@ -14,6 +14,7 @@
 #include "DictionaryStore.h"
 #include "FouladEbooksConfig.h"
 #include "MappedInputManager.h"
+#include "MidadAppSettings.h"
 #include "OpdsServerStore.h"
 #include "ReaderFontSizes.h"
 #include "ReaderPomodoro.h"
@@ -167,7 +168,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
   // space is a worse cost than one extra row to scroll past. Gated on the same
   // Settings -> Apps -> Pomodoro toggle that pins the My Books tile, so a device that
   // doesn't use the feature sees no new row at all.
-  if (SETTINGS.pomodoroEnabled) {
+  if (MIDAD_APP_SETTINGS.pomodoroEnabled) {
     items.push_back({MenuAction::POMODORO, StrId::STR_POMODORO});
   }
   return items;
