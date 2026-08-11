@@ -20,11 +20,17 @@ the record).
 - **`CrossPointSettings.h`** no longer declares `bleEnabled` (or any of the
   other 12) — confirmed absent.
 - **`/api/settings` GET/POST** (`CrossPointWebServer.cpp`) exposes and
-  accepts all 13 Midad fields via `getCombinedSettingsList()`
+  accepts **12** of the 13 Midad fields via `getCombinedSettingsList()`
   (`src/MidadSettingsList.h/.cpp`), which merges `getSettingsList()` with
   `appendMidadAppSettings()` — the single source of truth both the web API
   and (indirectly, via its own two-call composition) the on-device Settings
-  screen build from.
+  screen build from. `rssEnabled` is the one exception: it has never had a
+  `SettingInfo` row (on `CrossPointSettings` before Phase B, or on
+  `MidadAppSettings` after) because the on-device News tile it used to gate
+  was removed — see `AppsActivity::entries()`'s comment. It's still
+  persisted in `MidadAppSettings` and still part of `FouladDeviceTracking`'s
+  settings.push/report wire contract (see below); it's just not a row either
+  Settings surface can toggle, the same as before Phase B.
 - **`FouladDeviceTracking`'s settings.push/report wire contract**: unchanged
   from before Phase B for the 8 fields it already carried (quran/rss/games/
   tasbih/stopwatch/gym/gymWeightUnit/debugLogging — now read from
@@ -52,8 +58,10 @@ Follow-up to round 2, per PR #136 review feedback:
    Settings screen (`SettingsActivity::rebuildSettingsLists()` calls
    `appendMidadAppSettings()`), but `CrossPointWebServer::handleGetSettings()`/
    `handlePostSettings()` still called `getSettingsList()` directly — which no
-   longer includes the Midad rows. This was a real regression: the 13 Midad
-   fields silently disappeared from the web settings API after round 2.
+   longer includes the Midad rows. This was a real regression: the 12
+   configurable Midad fields silently disappeared from the web settings API
+   after round 2 (`rssEnabled` was never one of them — see "Phase B final
+   state" above).
    Fixed with `getCombinedSettingsList()` (`src/MidadSettingsList.h/.cpp`), a
    Midad-owned helper that returns `getSettingsList()` with
    `appendMidadAppSettings()` merged in; both `CrossPointWebServer` handlers
