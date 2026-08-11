@@ -1,6 +1,6 @@
 # Midad as a Thin Fork of CrossPoint: Architecture and Migration Plan
 
-## Status: Phase A complete (branch scaffolding + automation live). Phases B onward not started.
+## Status: Phase A scaffolding complete; conflict path validated. Clean-merge CI/PR path remains to be exercised once a clean merge is achievable. Phases B onward not started.
 
 ## Phase A results: the real baseline, not an estimate
 
@@ -35,11 +35,30 @@ candidate flagged below) all conflict, exactly as predicted.
   session-level finding (translation files individually showed the same
   `modify/delete` pattern) but at full scale: this is not a handful of
   files, it's essentially the whole `lib/I18n/translations/` directory.
-- **`src/JsonSettingsIO.cpp/.h`**: `modify/delete` — we deleted these
-  (Phase 26 in the task history, migrating onto `PersistableStore`); upstream
-  still has and modifies them. Confirms that migration is a **permanent**
-  divergence unless upstream does the equivalent someday — not something
-  the settings-extraction plan below closes on its own.
+- **`src/JsonSettingsIO.cpp/.h`**: `modify/delete` — **the direction is the
+  opposite of an earlier draft of this section**. Verified directly:
+  `src/JsonSettingsIO.h` exists in our `develop` (confirmed via `git show
+  origin/develop:src/JsonSettingsIO.h`) and does **not** exist in the
+  `upstream` mirror. So upstream deleted it, we still have a modified copy —
+  not the other way around. Investigated why we still have it: `grep` for
+  every call site shows only two callers left, both bookmark I/O
+  (`EpubReaderActivity.cpp:2708/2760`, `EpubReaderBookmarksActivity.cpp:40/78`
+  calling `JsonSettingsIO::loadBookmarks`/`saveBookmarks`) — the
+  `saveSettings`/`loadSettings` half of the file is dead code, unused since
+  our own PersistableStore migration (task history: "Migrate
+  CrossPointSettings/State off JsonSettingsIO onto PersistableStore").
+  Upstream's own equivalent migration (`63eda54e`, "chore: Migrate
+  Settings/State onto PersistableStore" — the same commit, independently
+  built, matching our task title almost word for word) went one step
+  further and *also* replaced bookmark persistence: it deleted
+  `JsonSettingsIO.cpp/.h` entirely and added `src/util/BookmarkFile.cpp/.h`
+  (`BookmarkFile::load(bookPath, ...)`/`save(bookPath, ...)`, confirmed in
+  its diff) as the dedicated replacement. **This is a convergence
+  opportunity, not a permanent divergence**: adopting `BookmarkFile` (or
+  building our own equivalent) for our two remaining bookmark call sites
+  would let us delete `JsonSettingsIO.cpp/.h` outright, closing this
+  conflict completely. Worth pulling into the Settings-extraction phase
+  (B) rather than treating as unfixable.
 - **`src/CrossPointState.cpp/.h`** conflicts too — wasn't in the original
   per-file sample; add to the Tier 1 settings-system list.
 - **Four genuine "add/add" surprises — both sides independently built the
@@ -64,15 +83,33 @@ candidate flagged below) all conflict, exactly as predicted.
     independently. Consistent with Dictionary's existing Tier 4 status
     (deliberate fork) — not a signal to reconsider that, just confirms it.
 
-**What this means for sequencing**: Phase A is done and working — the
-automation correctly mirrors upstream, correctly attempts a real merge,
-correctly detects and reports conflicts without touching `develop`, and
-correctly stops rather than improvising a resolution. The 158-conflict
-number is the number Phases B–G exist to bring down; re-run this same
-workflow after each phase to confirm it's actually shrinking, not just
-moving around (see "Running the audit yourself," which now doubles as
-"running the real check" via the Action itself rather than only the
-commit-sampling script).
+**What this run actually validated, precisely** (this run's own status shows
+as a workflow *failure* — that's expected and correct, not a malfunction:
+the `report-conflict` job intentionally `exit 1`s when conflicts are
+detected, specifically so a real conflict can't silently look like success
+in the Actions UI):
+
+- the `upstream` mirror updates correctly
+- a real merge attempt runs correctly
+- conflict detection works
+- the exact conflicting-file list is reported correctly
+- `develop` is left untouched
+- the automation correctly aborts rather than attempting any auto-resolution
+
+**What this run did *not* exercise**: because this merge conflicted, the
+`ci` job (`workflow_call` into the reusable `ci.yml`) and the `open-pr` job
+were both skipped by their `if: needs.sync.outputs.conflict == 'false'`
+condition. **The clean-merge → CI → PR path has not been run yet.** That
+still needs a real exercise — either a future sync that happens to merge
+cleanly, or a deliberate test (e.g. temporarily pointing `upstream_ref` at
+an older upstream commit close enough to `develop` to merge clean) — before
+it can be called validated.
+
+The 158-conflict number is the number Phases B–G exist to bring down;
+re-run this same workflow after each phase to confirm it's actually
+shrinking, not just moving around (see "Running the audit yourself," which
+now doubles as "running the real check" via the Action itself rather than
+only the commit-sampling script).
 
 ---
 
