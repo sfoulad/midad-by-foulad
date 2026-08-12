@@ -593,7 +593,30 @@ Midad is a thin fork of [CrossPoint](https://github.com/crosspoint-reader/crossp
 * CrossPoint sync PRs must always be merged with **"Create a merge commit"** — never squash or rebase. Squashing or rebasing a sync PR discards the real merge commit, which breaks the ancestry `thin-fork-guard.sh` relies on to recognize future sync PRs and to reason about upstream divergence.
 * CI enforces this: `.github/workflows/thin-fork-guard.yml` fails a PR that introduces new fixed-upstream merge-conflict surface, or that diverges an upstream-owned file that was previously byte-identical to upstream. Treat a guard failure as an architecture problem to fix, not a check to route around.
 * The same principle applies to `crosspoint-simulator` (the host-build HAL replacement used by `pio run -e simulator`), confirmed directly by its maintainer reviewing our upstream PR (crosspoint-reader/crosspoint-simulator#30, closed 2026-08-09) and formalized in that repo's own `FORKING.md`: **generic simulator/platform-emulation fixes** (gaps in the ESP-IDF/Arduino emulation layer — `esp_http_client.h`, `Arduino.h`, `WiFi.h`, `freertos/`, etc. — or bugs in simulator behavior like rendering/storage/threading) **go upstream**; **Midad-specific HAL API changes** (anything that only compiles because of a signature Midad's firmware added that CrossPoint's `develop` doesn't have) **stay in a small Midad fork of `crosspoint-simulator`**, never as a hand-patch to the gitignored `.pio/libdeps/simulator/` checkout. See the "Local simulator patches" list under Testing and Debugging below for the current concrete instances of each category. The Midad simulator fork itself does not exist yet — see that list's item (a) for status.
-* **Pay it back, proactively.** Whenever work on Midad surfaces a genuine bug or gap in something we build on — CrossPoint firmware itself, `crosspoint-simulator`, or another upstream dependency — and the fix is generic (not Midad-specific, per the rule above), don't just carry it as a silent local patch. Write it up (or draft the PR) and flag it to the user for submission upstream, the same way crosspoint-reader/crosspoint-simulator#30 went out. This is the expected trade for building on their code: it shrinks our own permanent fork delta (one less local patch to carry forever) and is a real contribution back, not just risk-avoidance. Still get explicit go-ahead before actually opening a PR or posting to an external repo — drafting and flagging is proactive, publishing to someone else's repo is not something to do unprompted (see this doc's action-authorization rules).
+### Contributing Back to CrossPoint
+
+Midad benefits heavily from CrossPoint, so when we discover a fix or improvement that is genuinely generic and useful to CrossPoint, we should contribute it upstream rather than keeping unnecessary fork-only code. Before carrying a generic fix permanently in Midad, check whether it belongs upstream instead.
+
+**Upstream contribution candidates** — generic, not Midad-specific:
+* Generic bug fixes
+* Memory/performance improvements
+* ESP-IDF/simulator compatibility fixes (crosspoint-reader/crosspoint-simulator#30 is the model: `HTTP_METHOD_DELETE` went upstream as a real ESP-IDF emulation gap)
+* Generic Arabic/RTL improvements
+* Device/HAL improvements that apply to CrossPoint-supported hardware generally, not just Midad's
+* Correctness fixes unrelated to Midad services or branding
+
+**Stays in Midad, never pushed upstream just to shrink the fork** — Midad Cloud, BLE services, Foulad identity/device tracking, branding, apps, or fork-specific HAL APIs (e.g. `forceCleanBaseOnHalf` — see the "Local simulator patches" list below for why that one was already tried and correctly rejected).
+
+**Workflow — never skip straight to publishing:**
+1. Identify the upstream contribution candidate.
+2. Explain why it belongs in CrossPoint rather than Midad.
+3. Prepare the proposed patch/commit and draft PR/issue text.
+4. Show it to the user for approval.
+5. Only after the user explicitly says post/submit/open the PR, publish it to the CrossPoint (or crosspoint-simulator, etc.) repository.
+
+**Never open an upstream PR, issue, discussion, or comment automatically.** Steps 1–4 are proactive and don't need to wait for the user to ask; step 5 always does — this is a "publish externally" action and stays gated the same way any other outbound action does under this doc's action-authorization rules, no matter how clearly generic the fix looks.
+
+The objective: give useful generic improvements back to CrossPoint while keeping Midad-specific architecture isolated and the fork as small as practical.
 
 ---
 
