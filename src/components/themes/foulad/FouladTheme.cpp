@@ -297,14 +297,15 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
     }
     renderer.drawCenteredText(SMALL_FONT_ID, rect.y, tr(STR_BRAND_MIDAD), true, EpdFontFamily::BOLD);
     if (rtl) {
-      const Rect batteryRect{rect.x + kHeroPadding, rect.y - 5, FouladMetrics::values.batteryWidth,
-                             FouladMetrics::values.batteryHeight};
-      drawBatteryLeft(renderer, batteryRect, showBatteryPct);
+      drawBatteryLeft(renderer,
+                      Rect{rect.x + kHeroPadding, rect.y - 5, FouladMetrics::values.batteryWidth,
+                           FouladMetrics::values.batteryHeight},
+                      showBatteryPct);
     } else {
       const int batteryX = rect.x + rect.width - kHeroPadding - FouladMetrics::values.batteryWidth;
-      const Rect batteryRect{batteryX, rect.y - 5, FouladMetrics::values.batteryWidth,
-                             FouladMetrics::values.batteryHeight};
-      drawBatteryRight(renderer, batteryRect, showBatteryPct);
+      drawBatteryRight(
+          renderer, Rect{batteryX, rect.y - 5, FouladMetrics::values.batteryWidth, FouladMetrics::values.batteryHeight},
+          showBatteryPct);
     }
   }
 
