@@ -3,12 +3,10 @@
 
 // Lucide "bluetooth" glyph (24x24 viewBox: m7 7 10 10-5 5V2l5 5L7 17), rasterized
 // at 64x64 with an 8x supersample + 2.2px stroke, for BluetoothActivity's full-page
-// hero display (components/icons/bluetooth.h's 20x20 is sized for the header strip,
-// too small to read as a page's main visual). Pre-rotated 90 deg CCW before packing
-// to cancel out GfxRenderer::drawIcon's own internal (size-1-row, col) mapping --
-// see bluetooth.h's comment for the mechanism. Pixel data carried forward from the
-// BLE-R2 audit's stale-branch source (proven correct via real-device photo
-// verification); only this header's own commentary is new.
+// hero display. Pre-rotated 90 deg CCW before packing to cancel out
+// GfxRenderer::drawIcon's own internal (size-1-row, col) mapping. Pixel data
+// carried forward from the BLE-R2 audit's stale-branch source (proven correct via
+// real-device photo verification); only this header's own commentary is new.
 // size: 64x64
 static const uint8_t Bluetooth64Icon[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,

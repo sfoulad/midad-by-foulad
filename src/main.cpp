@@ -911,23 +911,15 @@ void loop() {
         uint8_t* buf = display.getFrameBuffer();
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
-        // BLE_ON/BLE_OFF/BLE_STATUS/RESTART: permanent debug tooling alongside
-        // SCREENSHOT above, added for driving/inspecting BLE lifecycle state without
-        // physical button presses/screen navigation -- same rationale (device-side
-        // testing that doesn't need eyes on the e-ink panel or a phone in hand).
-      } else if (cmd == "BLE_ON") {
-#ifndef SIMULATOR
-        // Drives the same userRequested_ flag BluetoothActivity's onEnter() sets --
-        // BLE-R2 correction 2 made this screen-scoped, so no persisted setting/SPIFFS
-        // write happens here anymore.
-        BlePeripheral.setUserRequested(true);
-        logSerial.printf("BLE_ON: userRequested now %d\n", BlePeripheral.isUserRequested());
-#endif
-      } else if (cmd == "BLE_OFF") {
-#ifndef SIMULATOR
-        BlePeripheral.setUserRequested(false);
-        logSerial.printf("BLE_OFF: userRequested now %d\n", BlePeripheral.isUserRequested());
-#endif
+        // BLE_STATUS/RESTART: permanent debug tooling alongside SCREENSHOT above,
+        // added for inspecting BLE lifecycle state without physical button presses/
+        // screen navigation -- same rationale (device-side testing that doesn't need
+        // eyes on the e-ink panel or a phone in hand). No BLE_ON/BLE_OFF here on
+        // purpose (BLE-R2 correction 4): the whole point of screen-scoped BLE is that
+        // BluetoothActivity's onEnter()/onExit() are the ONLY place the radio is ever
+        // requested -- a serial command that could drive setUserRequested()
+        // independently of that screen would be exactly the background-BLE footgun
+        // this design exists to close off.
       } else if (cmd == "BLE_STATUS") {
 #ifndef SIMULATOR
         char advName[24];
