@@ -592,6 +592,7 @@ Midad is a thin fork of [CrossPoint](https://github.com/crosspoint-reader/crossp
 * Never manually reconstruct, copy, or cherry-pick a CrossPoint release or feature. CrossPoint updates go through `.github/workflows/update-from-crosspoint.yml` using a real `git merge` — never a hand port.
 * CrossPoint sync PRs must always be merged with **"Create a merge commit"** — never squash or rebase. Squashing or rebasing a sync PR discards the real merge commit, which breaks the ancestry `thin-fork-guard.sh` relies on to recognize future sync PRs and to reason about upstream divergence.
 * CI enforces this: `.github/workflows/thin-fork-guard.yml` fails a PR that introduces new fixed-upstream merge-conflict surface, or that diverges an upstream-owned file that was previously byte-identical to upstream. Treat a guard failure as an architecture problem to fix, not a check to route around.
+* The same principle applies to `crosspoint-simulator` (the host-build HAL replacement used by `pio run -e simulator`), confirmed directly by its maintainer reviewing our upstream PR (crosspoint-reader/crosspoint-simulator#30, closed 2026-08-09) and formalized in that repo's own `FORKING.md`: **generic simulator/platform-emulation fixes** (gaps in the ESP-IDF/Arduino emulation layer — `esp_http_client.h`, `Arduino.h`, `WiFi.h`, `freertos/`, etc. — or bugs in simulator behavior like rendering/storage/threading) **go upstream**; **Midad-specific HAL API changes** (anything that only compiles because of a signature Midad's firmware added that CrossPoint's `develop` doesn't have) **stay in a small Midad fork of `crosspoint-simulator`**, never as a hand-patch to the gitignored `.pio/libdeps/simulator/` checkout. See the "Local simulator patches" list under Testing and Debugging below for the current concrete instances of each category. The Midad simulator fork itself does not exist yet — see that list's item (a) for status.
 
 ---
 
@@ -826,34 +827,60 @@ build_flags =
    **Local simulator patches.** `crosspoint-simulator` is fetched from git HEAD and lags
    this firmware, so `.pio/libdeps/simulator/` needs local edits. All of them live in a
    gitignored directory: `pio clean` or a libdeps re-fetch silently reverts every one.
-   If the simulator misbehaves, check this list before debugging anything else. a-c are
-   upstream fix candidates in the crosspoint-simulator repo; e is fork-specific until
-   upstream grows an equivalent async-refresh HAL surface.
+   If the simulator misbehaves, check this list before debugging anything else. See the
+   upstream-vs-fork rule in "Midad Thin-Fork Architecture" above — b is a genuine
+   simulator-behavior bug (upstream fix candidate); a and c are fork-specific HAL
+   surface with no upstream path.
 
-   a. **Build blocker — `displayBuffer` arity.** The firmware's `HalDisplay::displayBuffer`
-      takes three arguments (`mode, turnOffScreen, forceCleanBaseOnHalf`); the simulator's
-      still takes two, so `GfxRenderer.cpp` fails to compile and the simulator **cannot be
-      built at all** until patched. Add the third parameter to both
-      `simulator/src/HalDisplay.h` and `HalDisplay.cpp` and ignore it — the simulator has no
-      e-ink half-refresh base to keep clean, so discarding it is the correct behaviour.
-      This is the HAL stub rule from the simulator's own CLAUDE.md: when the firmware
-      changes a HAL signature, the simulator must match it or nothing links.
+   a. **Build blocker, permanent — `displayBuffer` arity (Midad-specific, will never be
+      upstream).** The firmware's `HalDisplay::displayBuffer` takes three arguments
+      (`mode, turnOffScreen, forceCleanBaseOnHalf`); the simulator's still takes two, so
+      `GfxRenderer.cpp` fails to compile and the simulator **cannot be built at all**
+      until patched. Today: add the third parameter to both `simulator/src/HalDisplay.h`
+      and `HalDisplay.cpp` and ignore it — the simulator has no e-ink half-refresh base
+      to keep clean, so discarding it is the correct behaviour.
 
-   b. **Fidelity gap — `O_WRONLY` vs `O_RDWR`.** The simulator's
+      This was submitted upstream (crosspoint-reader/crosspoint-simulator#30) and
+      explicitly rejected by the maintainer on 2026-08-09: real CrossPoint `develop`'s
+      `HalDisplay::displayBuffer` is still two-arg, `forceCleanBaseOnHalf` exists nowhere
+      in upstream firmware, so it's Midad-specific HAL surface, not an upstream gap —
+      not a quality rejection of the patch itself. The maintainer's `FORKING.md` is
+      explicit that this class of change belongs in a fork of the simulator repo, not a
+      hand-patched `.pio/libdeps/` checkout and not an upstream PR. **Policy**: this
+      belongs in a small Midad fork of `crosspoint-simulator` (not yet created — tracked
+      as a follow-up after the thin-fork guardrails work), with Midad's `platformio.ini`
+      `[env:simulator]` pointing `lib_deps` at that fork instead of upstream. Until that
+      fork exists, this remains a necessary local `.pio/libdeps/` patch as a stopgap —
+      not the target state.
+
+   b. **Fidelity gap, upstream candidate — `O_WRONLY` vs `O_RDWR`.** The simulator's
       `HalStorage::openFileForWrite` opens `O_WRONLY` while the device's SDCardManager opens
       `O_RDWR`. Section's `loadPageDuringBuild()` reads pages back through the build's write
       handle, so unpatched, every page rendered while a section build is still in progress
       deserializes as EMPTY (blank page, `bw_render≈1ms`, zero glyph prewarm) — the device
       renders these fine. Patch `simulator/src/HalStorage.cpp`:
-      `O_WRONLY | O_CREAT | O_TRUNC` → `O_RDWR | O_CREAT | O_TRUNC`.
+      `O_WRONLY | O_CREAT | O_TRUNC` → `O_RDWR | O_CREAT | O_TRUNC`. This is simulator
+      *behavior*, not Midad HAL surface, so it's a legitimate upstream PR candidate under
+      the same rule as item a — nothing about it depends on any Midad-only signature.
 
-   c. **Build blocker — no `HTTP_METHOD_DELETE`.** The simulator's `esp_http_client.h`
-      enum stops at `HTTP_METHOD_PUT`, so `HttpDownloader`'s DELETE path (added for
-      device sign-out) does not compile and the whole simulator build fails. Add
-      `HTTP_METHOD_DELETE` to the enum in `simulator/src/esp_http_client.h` and a
-      `case` returning `"DELETE"` to `methodName()`. Note the sim performs the whole
-      request inside `esp_http_client_open()`, which suits DELETE (no request body)
-      better than it suits POST.
+   c. **Build blocker, permanent — no async-refresh HAL surface (Midad-specific, same
+      category as a).** The async grayscale refresh overlap feature
+      (`HalDisplay::displayBufferAsync`/`waitRefreshComplete`/`supportsAsyncRefresh`) has
+      no simulator counterpart, so `GfxRenderer.cpp` fails to link with "no member named
+      'displayBufferAsync' in 'HalDisplay'" until patched. Today: add all three to
+      `simulator/src/HalDisplay.h` and implement them in `HalDisplay.cpp`:
+      `displayBufferAsync()` just calls the existing blocking `refreshDisplay()` (the
+      sim's SDL push is already synchronous, nothing to overlap), `waitRefreshComplete()`
+      is a no-op, and `supportsAsyncRefresh()` returns `true` so host builds exercise the
+      same 2-plane-buffer overlap path as async-capable device panels (same reasoning as
+      `supportsStripGrayscale()` always returning `true`). Note the firmware's own
+      `GfxRenderer::supportsAsyncRefresh()` still gates on `!fadingFix` — with
+      `fadingFix` at its default of `1`, the sim (and device) fall back to the blocking
+      strip-scratch tier regardless of this stub; set `SETTINGS.fadingFix = 0` before
+      opening a book to actually exercise the overlap tier. Not (yet) submitted upstream,
+      but expect the same verdict as item a if it were — this HAL surface has no upstream
+      equivalent either. Same policy: belongs in the future Midad simulator fork, not a
+      hand-patch.
 
    d. **Not a bug — the QR code is always blank.** The simulator ships stub QR functions
       (`simulator/src/qrcode.cpp`) whose `qrcode_getModule()` returns 0 unconditionally, so
@@ -861,20 +888,17 @@ build_flags =
       device. Do not chase this; verify QR rendering on hardware, or by encoding the payload
       against the real `ricmoo/QRCode` in a standalone host program.
 
-   e. **Build blocker — no async-refresh HAL surface.** The async grayscale refresh
-      overlap feature (`HalDisplay::displayBufferAsync`/`waitRefreshComplete`/
-      `supportsAsyncRefresh`) has no simulator counterpart, so `GfxRenderer.cpp` fails to
-      link with "no member named 'displayBufferAsync' in 'HalDisplay'" until patched.
-      Add all three to `simulator/src/HalDisplay.h` and implement them in
-      `HalDisplay.cpp`: `displayBufferAsync()` just calls the existing blocking
-      `refreshDisplay()` (the sim's SDL push is already synchronous, nothing to overlap),
-      `waitRefreshComplete()` is a no-op, and `supportsAsyncRefresh()` returns `true` so
-      host builds exercise the same 2-plane-buffer overlap path as async-capable device
-      panels (same reasoning as `supportsStripGrayscale()` always returning `true`). Note
-      the firmware's own `GfxRenderer::supportsAsyncRefresh()` still gates on
-      `!fadingFix` — with `fadingFix` at its default of `1`, the sim (and device) fall
-      back to the blocking strip-scratch tier regardless of this stub; set
-      `SETTINGS.fadingFix = 0` before opening a book to actually exercise the overlap tier.
+   **Resolved upstream, no longer needed here.** `HTTP_METHOD_DELETE` was missing from
+   the simulator's `esp_http_client.h` enum (`HttpDownloader`'s DELETE path, added for
+   device sign-out, failed to compile against it) — submitted as the other half of PR #30
+   above and accepted as-is, landing on `crosspoint-simulator`'s `main` branch as a
+   genuine platform-emulation gap (real ESP-IDF defines it; the stub belongs there
+   regardless of whether Midad's firmware calls it yet). Since this repo fetches
+   `crosspoint-simulator` from git HEAD, no local patch is needed for this anymore — drop
+   it from any local `.pio/libdeps/` patch set you're carrying. Note: the maintainer
+   later added `HTTP_METHOD_PATCH` ahead of `DELETE` in that same enum to match real
+   ESP-IDF's ordering (PUT, PATCH, DELETE), so `HTTP_METHOD_DELETE`'s *numeric* value
+   shifted — never hardcode this enum's underlying integer value anywhere; use the name.
 
    **Not patchable — the web server is a separate, out-of-sync file, not a stub.**
    `src/network/CrossPointWebServer.cpp`/`WebDAVHandler.cpp` are NOT compiled from the
