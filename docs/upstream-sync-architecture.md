@@ -885,6 +885,195 @@ git diff --numstat "$BASE" HEAD -- $(git ls-tree -r --name-only "$BASE") \
 Re-run after each phase to confirm the divergence numbers are actually
 shrinking, not just moving around.
 
+## Thin-Fork Guard: proposed GitHub ruleset (not yet applied)
+
+`scripts/thin-fork-guard.sh` (CI-side) and the "Midad Thin-Fork Architecture"
+section of `.skills/SKILL.md` (agent-side) enforce this document's rules, but
+neither can stop someone from editing the guard itself to weaken or disable
+it — GitHub branch protection is the only backstop for that. This section is
+the proposed ruleset; it has **not** been applied. Applying it is a separate,
+explicit step (`gh api ... rulesets`, see below) requiring repo-admin
+permission, done outside of any PR.
+
+**Schema source**: verified against GitHub's REST API docs
+(`repos/{owner}/{repo}/rulesets`, `pull_request` / `required_status_checks` /
+`file_path_restriction` / `non_fast_forward` / `deletion` rule types) at the
+time this was written. Re-verify against the live docs before applying, in
+case the schema has changed.
+
+**What each rule does**:
+- `deletion` — blocks deleting the `develop` branch.
+- `non_fast_forward` — blocks force-pushes to `develop`.
+- `pull_request` — requires all changes to land via PR (blocks direct
+  pushes), which is what actually makes the other rules unbypassable by a
+  plain `git push`. `required_approving_review_count: 0` because this is a
+  solo-owner repo (`sfoulad` is the only collaborator) — a nonzero count
+  would make merging anything structurally impossible with no second
+  reviewer. `allowed_merge_methods` includes both `merge` and `squash`
+  because normal Midad PRs squash-merge but CrossPoint sync PRs must use
+  "Create a merge commit" (see `.skills/SKILL.md` and
+  `update-from-crosspoint.yml`'s generated PR body) — the ruleset can't
+  distinguish PR types, so both stay allowed and the discipline is
+  documented instead.
+- `required_status_checks` — requires the `Test Status` and `thin-fork-guard`
+  checks to pass before merging, and (`strict_required_status_checks_policy:
+  true`) requires the PR branch to be up to date with `develop` first.
+- `file_path_restriction` — blocks *any* PR that touches the guard's own
+  enforcement files, full stop, with no size/reviewer exception. This is
+  deliberately blunt: these specific files could be edited to make the
+  guard silently pass anything, which is a stronger threat than an ordinary
+  governance-file change (already caught, non-blocking, by
+  `thin-fork-guard.sh`'s own `GOVERNANCE_TOUCHED` report). Protected paths:
+  - `.github/workflows/thin-fork-guard.yml`
+  - `.github/workflows/update-from-crosspoint.yml`
+  - `scripts/thin-fork-guard.sh`
+  - `scripts/measure-conflicts.sh`
+
+  **Deliberately excluded**: `.skills/SKILL.md` — it needs to stay normally
+  editable for routine doc updates; it's already covered by the non-blocking
+  governance report. `scripts/test-thin-fork-guard.sh` — evaluated and
+  excluded because corrupting it (e.g. hardcoding a pass) cannot by itself
+  let a bad PR through: the workflow's separate "Run Thin-Fork Guard" step
+  invokes `thin-fork-guard.sh` directly against the PR's real refs, and that
+  step's verdict does not depend on the synthetic self-test's outcome. It
+  remains in the non-blocking `GOVERNANCE_FILES` report.
+
+**On `bypass_actors: []`**: this means no user/team/app has a standing
+bypass *of an active rule*. It does **not** mean the ruleset is
+immutable — any repo admin can still edit or disable the ruleset itself
+(or the `file_path_restriction` rule specifically) through the same
+permission that lets them manage branch protection today. That's the
+emergency-maintenance path below, not a gap in the ruleset.
+
+**Emergency-maintenance procedure** (for a legitimate fix to a
+guard file that the `file_path_restriction` rule would otherwise block):
+1. Repo admin opens Settings -> Rules -> Rulesets -> this ruleset, and
+   either sets `enforcement` to `evaluate` (report-only) or removes the
+   `file_path_restriction` rule temporarily.
+2. Open, review, and merge the guarded PR normally.
+3. Immediately restore the ruleset to its prior state (re-add the rule /
+   set `enforcement` back to `active`). Don't leave the repo unprotected
+   longer than the single merge requires.
+
+**Recommended rollout**: apply first with `"enforcement": "evaluate"` (or
+edit the applied ruleset's enforcement to `"evaluate"`) to confirm it
+doesn't misfire against real traffic, before switching to `"active"`.
+
+**Proposed ruleset JSON** (target: `develop`):
+
+```json
+{
+  "name": "Develop Branch Protection (Thin-Fork Guard)",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/develop"],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["merge", "squash"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "required_status_checks": [
+          { "context": "Test Status" },
+          { "context": "thin-fork-guard" }
+        ],
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false
+      }
+    },
+    {
+      "type": "file_path_restriction",
+      "parameters": {
+        "restricted_file_paths": [
+          ".github/workflows/thin-fork-guard.yml",
+          ".github/workflows/update-from-crosspoint.yml",
+          "scripts/thin-fork-guard.sh",
+          "scripts/measure-conflicts.sh"
+        ]
+      }
+    }
+  ]
+}
+```
+
+**Apply command** (not run -- requires explicit go-ahead and repo-admin
+token permission):
+
+```bash
+cat >/tmp/develop-ruleset.json <<'EOF'
+{
+  "name": "Develop Branch Protection (Thin-Fork Guard)",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": { "include": ["refs/heads/develop"], "exclude": [] }
+  },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["merge", "squash"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "required_status_checks": [
+          { "context": "Test Status" },
+          { "context": "thin-fork-guard" }
+        ],
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false
+      }
+    },
+    {
+      "type": "file_path_restriction",
+      "parameters": {
+        "restricted_file_paths": [
+          ".github/workflows/thin-fork-guard.yml",
+          ".github/workflows/update-from-crosspoint.yml",
+          "scripts/thin-fork-guard.sh",
+          "scripts/measure-conflicts.sh"
+        ]
+      }
+    }
+  ]
+}
+EOF
+
+gh api \
+  --method POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  repos/sfoulad/midad-by-foulad/rulesets \
+  --input /tmp/develop-ruleset.json
+```
+
 ## Prior sync-session findings (kept for reference)
 
 These are concrete, already-verified lessons from the 2026-08-11 session
