@@ -16,6 +16,7 @@
 #include "activities/apps/StopwatchActivity.h"
 #include "activities/apps/TasbihActivity.h"
 #include "activities/games/GamesMenuActivity.h"
+#include "activities/network/BluetoothActivity.h"
 #include "components/TileCover.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -79,9 +80,14 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
          MIDAD_APP_SETTINGS.gymEnabled = v;
          MIDAD_APP_SETTINGS.saveToFile();
        }},
-      // Live toggle, not a launcher -- see launch()/render()'s AppId::MidadBle
-      // special cases, which read/write MIDAD_APP_SETTINGS.bleEnabled directly and never
-      // go through getEnabled/setEnabled (both empty here on purpose).
+      // A launcher like any other app entry below (BLE-R2) -- opens BluetoothActivity,
+      // which shows live radio state and lets the user flip MIDAD_APP_SETTINGS.bleEnabled
+      // from there instead of this tile directly. getEnabled/setEnabled stay empty on
+      // purpose: this tile's label still reads the setting directly (see render()) to
+      // show its current On/Off state, but launch() never auto-enables it the way a
+      // normal app's first-open opt-in does -- BLE defaults on already (see
+      // MidadAppSettings.h), and the pairing screen is where the user would turn it off,
+      // not where they'd expect a tap to silently flip it back on first.
       {AppId::MidadBle, StrId::STR_MIDAD_BLE, nullptr, nullptr},
   };
   return kEntries;
@@ -94,15 +100,6 @@ void AppsActivity::onEnter() {
 }
 
 bool AppsActivity::launch(const AppEntry& entry) {
-  // Midad BLE is a live radio switch, not a destination -- flip it in place and stay
-  // here (returning false makes the caller's `if (!launch(...)) requestUpdate();`
-  // repaint the tile with the new state, the same as every other "stayed here" path).
-  if (entry.id == AppId::MidadBle) {
-    MIDAD_APP_SETTINGS.bleEnabled = MIDAD_APP_SETTINGS.bleEnabled ? 0 : 1;
-    MIDAD_APP_SETTINGS.saveToFile();
-    return false;
-  }
-
   // Turn the app on if it is off. This is what makes listing every app safe: the
   // screen shows what the device can do, and pressing one is the whole opt-in --
   // no round trip through Settings to find out an app was there all along.
@@ -154,7 +151,12 @@ bool AppsActivity::launch(const AppEntry& entry) {
       startActivityForResult(std::make_unique<GymActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       return true;
     case AppId::MidadBle:
-      return false;  // handled by the early return above; kept for switch exhaustiveness
+      // Opens the pairing/observability screen -- BLE-R2. Does not itself touch
+      // MIDAD_APP_SETTINGS.bleEnabled or any BLE lifecycle; BluetoothActivity reads/
+      // writes the setting and main.cpp's existing bleAllowedNow gate keeps driving
+      // the radio exactly as it does from anywhere else in the firmware.
+      startActivityForResult(std::make_unique<BluetoothActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      return true;
   }
   return false;
 }
@@ -232,9 +234,10 @@ void AppsActivity::render(RenderLock&&) {
 
     // Same designed name-tile the news feeds and collection tiles use, rather
     // than eight new icons: the label IS the thing being identified here.
-    // Midad BLE shows its live on/off state in the label itself -- see
-    // AppEntry's getEnabled/setEnabled comment for why this one entry needs a
-    // computed label instead of the static I18N.get() every other entry uses.
+    // Midad BLE keeps showing its persisted on/off state in the label even though
+    // launch() now opens BluetoothActivity instead of flipping the setting directly
+    // -- the tile still answers "is it on?" at a glance from the Apps grid; the
+    // pairing screen answers "is it actually doing anything right now?".
     std::string tileLabel = I18N.get(entry.label);
     if (entry.id == AppId::MidadBle) {
       tileLabel += ": ";

@@ -33,4 +33,22 @@ class FouladTheme : public LyraTheme {
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
+  // BLE-R2's global status indicator: delegates the entire header to
+  // LyraTheme::drawHeader() (every screen except Home routes through this) and only
+  // overlays a small Bluetooth icon beside the battery when BLE is active -- see the
+  // .cpp for why this lives here rather than in LyraTheme.cpp (thin-fork rule:
+  // FouladTheme is Midad-owned, LyraTheme is upstream-shared).
+  void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle) const override;
+
+ private:
+  // Shared by drawHeader() and drawRecentBookCover()'s own separately-drawn status
+  // line (Home never calls drawHeader() at all -- see drawRecentBookCover()'s own
+  // comment). `batteryRect` is the exact same Rect just passed to
+  // drawBatteryLeft()/drawBatteryRight(), before their internal y+6 offset -- this
+  // mirrors that offset and the live percentage-text width (BaseTheme::
+  // batteryPercentSpacing, a protected member only a BaseTheme subclass can reach)
+  // rather than guessing a fixed pixel offset, so the icon never collides with wide
+  // percentage text like "100%". A member function (not a free function) precisely
+  // so it can reach that protected constant.
+  void drawBleStatusIcon(const GfxRenderer& renderer, Rect batteryRect, bool rtl, bool showBatteryPercentage) const;
 };

@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
+#include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <ScriptDetector.h>
@@ -15,6 +16,7 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "components/icons/apps.h"
+#include "components/icons/bluetooth.h"
 #include "components/icons/cover.h"
 #include "components/icons/folder.h"
 #include "components/icons/library.h"
@@ -24,6 +26,13 @@
 #include "components/icons/transfer.h"
 #include "fontIds.h"
 #include "reading/ReadingStatsStore.h"
+#ifndef SIMULATOR
+// No simulator-side counterpart exists for this HAL component -- see main.cpp's own
+// guarded include of the same header. bleActive below stays false in simulator
+// builds, so this whole indicator compiles out to nothing rather than needing a
+// simulator-side stub.
+#include <BlePeripheralManager.h>
+#endif
 
 // Home layout ported from aalu (github.com/dawsonfi/aalu) HomeRenderer: top status
 // line, 200x300 hero cover with a metadata column (title / author / rounded pill
@@ -220,6 +229,58 @@ void drawCoverSelection(const GfxRenderer& renderer, const int x, const int y, c
 }
 }  // namespace
 
+void FouladTheme::drawBleStatusIcon(const GfxRenderer& renderer, const Rect batteryRect, const bool rtl,
+                                    const bool showBatteryPercentage) const {
+  bool bleActive = false;
+#ifndef SIMULATOR
+  bleActive = BlePeripheral.isActive();
+#endif
+  if (!bleActive) return;
+
+  // BLE-R2 semantics: the global indicator shows only for Advertising/Connected
+  // (isActive() covers exactly those two) -- Off and PausedLowMemory show nothing
+  // here, since BluetoothActivity is where those states get explained in detail.
+  constexpr int kIconSize = 20;
+  int batteryTextWidth = 0;
+  if (showBatteryPercentage) {
+    const uint16_t percentage = powerManager.getBatteryPercentage();
+    batteryTextWidth =
+        batteryPercentSpacing + renderer.getTextWidth(SMALL_FONT_ID, (std::to_string(percentage) + "%").c_str());
+  }
+  // Mirrors drawBatteryLeft/Right's own internal "+6" vertical offset (BaseTheme.cpp)
+  // and centers the icon on the battery outline's actual vertical center, not the
+  // Rect's nominal y -- see this method's own header-comment for why a fixed guessed
+  // offset is exactly the bug BLE-R2's audit found and avoided.
+  const int iconY = batteryRect.y + 6 + batteryRect.height / 2 - kIconSize / 2;
+  if (rtl) {
+    renderer.drawIcon(BluetoothIcon, batteryRect.x + batteryRect.width + 4 + batteryTextWidth, iconY, kIconSize);
+  } else {
+    renderer.drawIcon(BluetoothIcon, batteryRect.x - kIconSize - 4 - batteryTextWidth, iconY, kIconSize);
+  }
+}
+
+void FouladTheme::drawHeader(const GfxRenderer& renderer, const Rect rect, const char* title,
+                             const char* subtitle) const {
+  // Delegate the entire header to LyraTheme -- every screen except Home routes
+  // through this, and duplicating its title/subtitle truncation and layout logic
+  // here would be real, ongoing upstream-conflict surface for no benefit. Only the
+  // BLE overlay below is genuinely Midad-specific.
+  LyraTheme::drawHeader(renderer, rect, title, subtitle);
+
+  const bool rtl = I18N.isRtl();
+  const bool showBatteryPercentage =
+      SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+  // Same battery rect LyraTheme::drawHeader() itself just used internally -- not
+  // exposed by that call, so recomputed here from the same rect/metrics it started
+  // from. Small, self-contained arithmetic; see FouladTheme.h's own comment on why
+  // this trades a few duplicated lines for not touching the upstream-shared file.
+  const Rect batteryRect =
+      rtl ? Rect{rect.x + 12, rect.y + 5, LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight}
+          : Rect{rect.x + rect.width - 12 - LyraMetrics::values.batteryWidth, rect.y + 5,
+                 LyraMetrics::values.batteryWidth, LyraMetrics::values.batteryHeight};
+  drawBleStatusIcon(renderer, batteryRect, rtl, showBatteryPercentage);
+}
+
 void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                       const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
                                       bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
@@ -296,16 +357,21 @@ void FouladTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const st
       }
     }
     renderer.drawCenteredText(SMALL_FONT_ID, rect.y, tr(STR_BRAND_MIDAD), true, EpdFontFamily::BOLD);
+    // Home draws this status line itself rather than calling drawHeader() (see this
+    // block's own leading comment), so it never gets the BLE indicator by
+    // inheritance the way every other screen does via FouladTheme::drawHeader()
+    // above -- added explicitly here, same helper, same reasoning.
     if (rtl) {
-      drawBatteryLeft(renderer,
-                      Rect{rect.x + kHeroPadding, rect.y - 5, FouladMetrics::values.batteryWidth,
-                           FouladMetrics::values.batteryHeight},
-                      showBatteryPct);
+      const Rect batteryRect{rect.x + kHeroPadding, rect.y - 5, FouladMetrics::values.batteryWidth,
+                             FouladMetrics::values.batteryHeight};
+      drawBatteryLeft(renderer, batteryRect, showBatteryPct);
+      drawBleStatusIcon(renderer, batteryRect, rtl, showBatteryPct);
     } else {
       const int batteryX = rect.x + rect.width - kHeroPadding - FouladMetrics::values.batteryWidth;
-      drawBatteryRight(
-          renderer, Rect{batteryX, rect.y - 5, FouladMetrics::values.batteryWidth, FouladMetrics::values.batteryHeight},
-          showBatteryPct);
+      const Rect batteryRect{batteryX, rect.y - 5, FouladMetrics::values.batteryWidth,
+                             FouladMetrics::values.batteryHeight};
+      drawBatteryRight(renderer, batteryRect, showBatteryPct);
+      drawBleStatusIcon(renderer, batteryRect, rtl, showBatteryPct);
     }
   }
 
