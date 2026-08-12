@@ -11,7 +11,9 @@
 # Scenarios 8-12 cover the upstream-content divergence gate, the
 # unconditional (non-bypassable) nature of both gates under sync-PR
 # recognition, and measure-conflicts.sh's fail-closed behavior on a
-# non-conflict merge failure.
+# non-conflict merge failure. Scenario 13 covers renaming a previously
+# upstream-exact file away from its upstream path, which the plain
+# divergence gate cannot see on its own (see thin-fork-guard.sh's header).
 #
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
@@ -361,6 +363,22 @@ echo "=== Scenario 12: measure-conflicts.sh fails closed on a non-conflict merge
   ec2=$?
   assert_exit "guard propagates non-conflict merge failure as nonzero (fail-closed, not silent 0 conflicts)" 1 "$ec2"
   assert_contains "guard's propagated failure carries the real reason, not a swallowed PASS" "failed for a" "$out2"
+}
+
+echo "=== Scenario 13: rename of a previously upstream-exact file -> FAIL (divergence via rename, zero new conflicts) ==="
+{
+  dir="$(new_fixture_ext scenario13)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  git mv shared3.txt midad_shared3.txt
+  git commit -qm "midad: rename shared3.txt away from its upstream-exact path"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "rename of upstream-exact file fails" 1 "$ec"
+  assert_contains "rename of upstream-exact file reports zero new conflicts" "No new conflicting files." "$out"
+  assert_contains "rename of upstream-exact file reports the old -> new mapping" "shared3.txt\` -> \`midad_shared3.txt" "$out"
+  assert_contains "rename of upstream-exact file reports FAIL with the rename reason" "renames a previously upstream-exact file away from tracking upstream" "$out"
 }
 
 echo

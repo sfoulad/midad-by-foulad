@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # thin-fork-guard.sh <base-ref> <head-ref> [upstream-ref] [head-branch-name]
 #
-# Reports, and gates on, two things <head-ref> may do relative to <base-ref>,
-# both measured against the LIVE upstream mirror (default origin/upstream,
-# the maintained CrossPoint mirror kept current by
+# Reports, and gates on, three things <head-ref> may do relative to
+# <base-ref>, all measured against the LIVE upstream mirror (default
+# origin/upstream, the maintained CrossPoint mirror kept current by
 # .github/workflows/update-from-crosspoint.yml):
 #
 #   1. Introduce new fixed-upstream MERGE-CONFLICT surface (simulated real
@@ -18,9 +18,17 @@
 #      conflict-count alone stops being a meaningful gate for files that
 #      no longer register as "unmerged" but are still meant to track
 #      upstream content exactly.
+#   3. RENAME an upstream-owned file that was byte-identical to upstream at
+#      <base-ref> away from its upstream path. This is a special case of
+#      divergence (#2), not a separate mechanism: the old path simply
+#      disappears from <head-ref>, and a plain `git diff --name-only` (what
+#      the divergence check's file list is built from) does not surface the
+#      old path for a detected rename at all, only `--name-status` does --
+#      so without this explicit check, a rename would silently escape both
+#      the conflict gate and the divergence gate.
 #
 # See CLAUDE.md's "Midad Thin-Fork Architecture" section and
-# docs/upstream-sync-architecture.md for why either matters.
+# docs/upstream-sync-architecture.md for why any of this matters.
 #
 # Deliberately compares against the LIVE upstream mirror at run time, not a
 # hard-coded historical commit: base and head are measured against the
@@ -29,15 +37,16 @@
 # full CrossPoint merge, without ever needing today's number hard-coded.
 #
 # A recognized genuine CrossPoint sync PR (see is_recognized_sync_pr below)
-# is NOT exempted from either gate -- a real sync is expected to pass both
-# on its own merits (it does not introduce a NEW conflict/divergence that
-# didn't already exist on either side; it resolves them). Recognition is
-# purely informational in the report. This is intentional: exempting sync
-# PRs previously meant a later Midad commit riding on a valid sync's
+# is NOT exempted from any of these -- a real sync is expected to pass all
+# three on its own merits (it does not introduce a NEW conflict/divergence
+# that didn't already exist on either side; it resolves them). Recognition
+# is purely informational in the report. This is intentional: exempting
+# sync PRs previously meant a later Midad commit riding on a valid sync's
 # ancestry could diverge a previously-clean upstream file for free, which
 # is exactly the failure mode this gate exists to catch.
 #
-# Exit 0: no new conflicting files AND no newly-diverged upstream file.
+# Exit 0: no new conflicting files, no newly-diverged upstream file, and no
+#         rename of a previously upstream-exact file away from upstream.
 # Exit 1: otherwise, OR if conflict measurement itself fails for a non
 #         content-conflict reason (see measure-conflicts.sh -- this script
 #         does not catch that failure, so it propagates as a hard abort
@@ -120,13 +129,30 @@ while IFS= read -r path; do
 done <<<"$PR_DIFF_FILES"
 
 # Renames away from an upstream path: ownership-by-current-path stops
-# tracking these going forward. Not silently guessed either way -- flagged
-# for human review. See CLAUDE.md/docs/upstream-sync-architecture.md.
-RENAME_WARNINGS=""
+# tracking these going forward, and a plain `git diff --name-only` (as used
+# to build PR_DIFF_FILES/UPSTREAM_TOUCHED above) does not surface the old
+# path for a detected rename at all -- only --name-status does. That means
+# the divergence gate below, which only ever looks at UPSTREAM_TOUCHED,
+# cannot see a rename on its own: a rename of a path that was upstream-exact
+# at base is functionally a deletion of that upstream-exact content (the old
+# path is simply gone from HEAD), so it must be treated the same as an
+# outright deletion -- FAIL, not a soft "needs human review" note. A rename
+# of a path that was ALREADY diverged from upstream at base carries no new
+# information the guard needs to block; report only, same as any other
+# already-diverged touch. See CLAUDE.md/docs/upstream-sync-architecture.md.
+RENAME_NEW_DIVERGED=""
+RENAME_ALREADY_DIVERGED=""
 while IFS=$'\t' read -r _ old_path new_path; do
   [ -z "$old_path" ] && continue
   if git cat-file -e "$UPSTREAM_REF:$old_path" 2>/dev/null; then
-    RENAME_WARNINGS="${RENAME_WARNINGS}\`${old_path}\` -> \`${new_path}\`"$'\n'
+    base_old_sha="$(git rev-parse -q --verify "$BASE_REF:$old_path" 2>/dev/null || true)"
+    upstream_old_sha="$(git rev-parse -q --verify "$UPSTREAM_REF:$old_path" 2>/dev/null || true)"
+    head_old_sha="$(git rev-parse -q --verify "$HEAD_REF:$old_path" 2>/dev/null || true)"
+    if [ "$base_old_sha" = "$upstream_old_sha" ] && [ "$head_old_sha" != "$upstream_old_sha" ]; then
+      RENAME_NEW_DIVERGED="${RENAME_NEW_DIVERGED}\`${old_path}\` -> \`${new_path}\`"$'\n'
+    else
+      RENAME_ALREADY_DIVERGED="${RENAME_ALREADY_DIVERGED}\`${old_path}\` -> \`${new_path}\`"$'\n'
+    fi
   fi
 done < <(git diff --name-status --diff-filter=R "$BASE_REF...$HEAD_REF")
 
@@ -290,9 +316,20 @@ fi
   fi
   echo
 
-  if [ -n "$RENAME_WARNINGS" ]; then
-    echo "### Renames away from an upstream-owned path (needs human review)"
-    echo "$RENAME_WARNINGS"
+  if [ -n "$RENAME_NEW_DIVERGED" ]; then
+    echo "### Renames away from a previously upstream-exact path (new divergence)"
+    echo "The source path was byte-identical to \`$UPSTREAM_REF\` at \`$BASE_REF\`; renaming it away is treated the same as deleting upstream-exact content:"
+    echo '```'
+    echo "$RENAME_NEW_DIVERGED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$RENAME_ALREADY_DIVERGED" ]; then
+    echo "### Renames of an already-diverged upstream-owned path (not newly diverged)"
+    echo '```'
+    echo "$RENAME_ALREADY_DIVERGED"
+    echo '```'
     echo
   fi
 
@@ -317,13 +354,13 @@ fi
 FAIL_REASONS=()
 [ -n "$NEW_CONFLICTS" ] && FAIL_REASONS+=("introduces new fixed-upstream merge-conflict surface")
 [ -n "$NEW_DIVERGED" ] && FAIL_REASONS+=("diverges a previously upstream-exact file")
+[ -n "$RENAME_NEW_DIVERGED" ] && FAIL_REASONS+=("renames a previously upstream-exact file away from tracking upstream")
 
 if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
-  reason_text="${FAIL_REASONS[0]}"
-  if [ "${#FAIL_REASONS[@]}" -gt 1 ]; then
-    reason_text="${FAIL_REASONS[0]} and ${FAIL_REASONS[1]}"
-  fi
-  echo "FAIL: this PR $reason_text."
+  echo "FAIL: this PR:"
+  for reason in "${FAIL_REASONS[@]}"; do
+    echo "  - $reason"
+  done
   exit 1
 fi
 
