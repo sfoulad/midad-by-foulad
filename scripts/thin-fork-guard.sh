@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
 # thin-fork-guard.sh <base-ref> <head-ref> [upstream-ref] [head-branch-name]
 #
-# Reports, and gates on, whether <head-ref> introduces new fixed-upstream
-# merge-conflict surface relative to <base-ref>, by simulating a real merge
-# of <upstream-ref> (default origin/upstream, the maintained CrossPoint
-# mirror kept current by .github/workflows/update-from-crosspoint.yml) into
-# each side. See CLAUDE.md's "Midad Thin-Fork Architecture" section and
-# docs/upstream-sync-architecture.md for why this exists.
+# Reports, and gates on, two things <head-ref> may do relative to <base-ref>,
+# both measured against the LIVE upstream mirror (default origin/upstream,
+# the maintained CrossPoint mirror kept current by
+# .github/workflows/update-from-crosspoint.yml):
+#
+#   1. Introduce new fixed-upstream MERGE-CONFLICT surface (simulated real
+#      merge of <upstream-ref> into each side).
+#   2. DIVERGE an upstream-owned file that was byte-identical to upstream
+#      at <base-ref> -- i.e. make its content differ from upstream's own
+#      copy for the first time, even where that produces no merge conflict
+#      today. This matters once <base-ref> already contains the full
+#      upstream history as an ancestor (post first full CrossPoint merge):
+#      at that point the conflict count for an untouched-but-now-editable
+#      upstream file reads 0->0 regardless of what a PR does to it, so
+#      conflict-count alone stops being a meaningful gate for files that
+#      no longer register as "unmerged" but are still meant to track
+#      upstream content exactly.
+#
+# See CLAUDE.md's "Midad Thin-Fork Architecture" section and
+# docs/upstream-sync-architecture.md for why either matters.
 #
 # Deliberately compares against the LIVE upstream mirror at run time, not a
 # hard-coded historical commit: base and head are measured against the
@@ -14,9 +28,22 @@
 # PR's own diff -- that stays correct forever, including after the first
 # full CrossPoint merge, without ever needing today's number hard-coded.
 #
-# Exit 0: no new conflicting files, OR a recognized genuine CrossPoint sync
-#         PR (see is_recognized_sync_pr below -- report-only in that case).
-# Exit 1: otherwise.
+# A recognized genuine CrossPoint sync PR (see is_recognized_sync_pr below)
+# is NOT exempted from either gate -- a real sync is expected to pass both
+# on its own merits (it does not introduce a NEW conflict/divergence that
+# didn't already exist on either side; it resolves them). Recognition is
+# purely informational in the report. This is intentional: exempting sync
+# PRs previously meant a later Midad commit riding on a valid sync's
+# ancestry could diverge a previously-clean upstream file for free, which
+# is exactly the failure mode this gate exists to catch.
+#
+# Exit 0: no new conflicting files AND no newly-diverged upstream file.
+# Exit 1: otherwise, OR if conflict measurement itself fails for a non
+#         content-conflict reason (see measure-conflicts.sh -- this script
+#         does not catch that failure, so it propagates as a hard abort
+#         under `set -e`, which is the fail-closed behavior we want: a
+#         broken measurement must never be silently read as "0 conflicts,
+#         PASS").
 #
 # Requires measure-conflicts.sh in the same directory. Both refs and
 # <upstream-ref> must already be resolvable (fetched) by the caller.
@@ -31,12 +58,13 @@ HEAD_BRANCH_NAME="${4:-}"
 
 # --- Sync-PR ancestry check --------------------------------------------------
 # Branch name alone (sync/crosspoint-*) is never trusted -- a feature branch
-# renamed to that prefix must not bypass the guard. Recognition requires a
-# real merge commit unique to <head-ref> whose parent is (an ancestor of)
-# <upstream-ref>'s current tip AND whose message matches
+# renamed to that prefix must not be treated as a sync PR. Recognition
+# requires a real merge commit unique to <head-ref> whose parent is (an
+# ancestor of) <upstream-ref>'s current tip AND whose message matches
 # update-from-crosspoint.yml's exact generated pattern
 # ("Merge crosspoint-reader/<ref> @ <sha>"). Run unconditionally, regardless
-# of branch name -- name is only used below for a mismatch warning.
+# of branch name -- name is only used below for a mismatch warning. Recognition
+# does NOT disable either gate below (see header comment).
 is_recognized_sync_pr() {
   local base="$1" head="$2" upstream="$3"
   git merge-base --is-ancestor "$upstream" "$head" 2>/dev/null || return 1
@@ -60,8 +88,13 @@ is_recognized_sync_pr() {
 # --- 1. Conflict counts, before vs. after ------------------------------------
 BASE_CONFLICTS_FILE="$(mktemp)"
 HEAD_CONFLICTS_FILE="$(mktemp)"
-trap 'rm -f "$BASE_CONFLICTS_FILE" "$HEAD_CONFLICTS_FILE"' EXIT
+BASE_DIVERGED_FILE="$(mktemp)"
+HEAD_DIVERGED_FILE="$(mktemp)"
+trap 'rm -f "$BASE_CONFLICTS_FILE" "$HEAD_CONFLICTS_FILE" "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE"' EXIT
 
+# Not wrapped in an if/&&/|| -- a measure-conflicts.sh failure that is NOT a
+# content conflict (see that script's header) must abort this script under
+# `set -e` rather than being caught and treated as "0 conflicts."
 "$SCRIPT_DIR/measure-conflicts.sh" "$BASE_REF" "$UPSTREAM_REF" >"$BASE_CONFLICTS_FILE"
 "$SCRIPT_DIR/measure-conflicts.sh" "$HEAD_REF" "$UPSTREAM_REF" >"$HEAD_CONFLICTS_FILE"
 
@@ -107,6 +140,36 @@ while IFS= read -r path; do
   fi
 done < <(git diff --name-only --diff-filter=D "$BASE_REF...$HEAD_REF")
 
+# --- 3. Upstream-content divergence, before vs. after ------------------------
+# For each upstream-owned path this PR's diff touches, compare the blob SHA
+# at BASE_REF/HEAD_REF against the blob SHA at UPSTREAM_REF. Equal SHA (both
+# present and identical) = not diverged. Unequal -- including "missing at
+# this ref" as a case, via `git rev-parse -q --verify`, empty string on a
+# nonexistent path -- = diverged. A file's divergence status can only
+# CHANGE between base and head if the path itself is in the PR's own diff
+# (PR_DIFF_FILES / UPSTREAM_TOUCHED above); anything outside that diff is
+# byte-identical between base and head by definition, so it can't have
+# changed status and is correctly excluded from this comparison.
+compute_diverged_files() {
+  local ref="$1"
+  local path ref_sha upstream_sha
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    ref_sha="$(git rev-parse -q --verify "$ref:$path" 2>/dev/null || true)"
+    upstream_sha="$(git rev-parse -q --verify "$UPSTREAM_REF:$path" 2>/dev/null || true)"
+    if [ "$ref_sha" != "$upstream_sha" ]; then
+      echo "$path"
+    fi
+  done <<<"$UPSTREAM_TOUCHED" | sort
+}
+
+compute_diverged_files "$BASE_REF" >"$BASE_DIVERGED_FILE"
+compute_diverged_files "$HEAD_REF" >"$HEAD_DIVERGED_FILE"
+
+NEW_DIVERGED="$(comm -13 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
+RESOLVED_DIVERGED="$(comm -23 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
+ALREADY_DIVERGED="$(comm -12 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
+
 # Architecture-governance files: no branch-protection review requirement is
 # possible on a solo-owner repo (see thin-fork-guard PR's own description
 # for the CODEOWNERS trade-off), so this is the guard's substitute --
@@ -131,7 +194,7 @@ while IFS= read -r path; do
   done
 done <<<"$PR_DIFF_FILES"
 
-# --- 3. Sync-PR recognition --------------------------------------------------
+# --- 4. Sync-PR recognition (informational only -- see header) --------------
 IS_SYNC=false
 NAME_MISMATCH=false
 if is_recognized_sync_pr "$BASE_REF" "$HEAD_REF" "$UPSTREAM_REF"; then
@@ -140,7 +203,7 @@ elif [[ "$HEAD_BRANCH_NAME" == sync/crosspoint-* ]]; then
   NAME_MISMATCH=true
 fi
 
-# --- 4. Report ---------------------------------------------------------------
+# --- 5. Report ---------------------------------------------------------------
 {
   echo "## Thin-Fork Guard"
   echo
@@ -149,7 +212,7 @@ fi
   echo
 
   if [ "$IS_SYNC" = true ]; then
-    echo "**Recognized genuine CrossPoint sync PR** (verified upstream-merge ancestry from a real \`update-from-crosspoint.yml\` run). Running in report-only mode -- conflict-count fluctuation during a real sync is expected, per docs/upstream-sync-architecture.md's human-review step."
+    echo "**Recognized genuine CrossPoint sync PR** (verified upstream-merge ancestry from a real \`update-from-crosspoint.yml\` run). This does NOT bypass either gate below -- a genuine sync is expected to pass both on its own merits (see docs/upstream-sync-architecture.md's human-review step for what to check if it doesn't)."
     echo
   elif [ "$NAME_MISMATCH" = true ]; then
     echo "**WARNING:** branch name \`$HEAD_BRANCH_NAME\` matches \`sync/crosspoint-*\` but does NOT contain a verified upstream-merge ancestry. Treating as an ordinary feature PR -- the full guard applies below."
@@ -174,23 +237,55 @@ fi
     echo
   fi
 
+  if [ -n "$NEW_DIVERGED" ]; then
+    echo "### Files newly diverged from upstream content"
+    echo "Upstream-owned, byte-identical to \`$UPSTREAM_REF\` at \`$BASE_REF\`, no longer identical at \`$HEAD_REF\`:"
+    echo '```'
+    echo "$NEW_DIVERGED"
+    echo '```'
+  else
+    echo "No files newly diverged from upstream content."
+  fi
+  echo
+
+  if [ -n "$RESOLVED_DIVERGED" ]; then
+    echo "### Files returned to upstream-exact content"
+    echo '```'
+    echo "$RESOLVED_DIVERGED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$ALREADY_DIVERGED" ]; then
+    echo "### Already-diverged upstream files touched (not newly diverged)"
+    echo '```'
+    echo "$ALREADY_DIVERGED"
+    echo '```'
+    echo
+  fi
+
   echo "### Upstream-owned files touched by this PR"
   if [ -z "$UPSTREAM_TOUCHED" ]; then
     echo "None."
   else
-    echo "| File | +/- | Already conflicting (base) |"
-    echo "|---|---|---|"
+    echo "| File | +/- | Already conflicting (base) | Already diverged (base) |"
+    echo "|---|---|---|---|"
     while IFS= read -r path; do
       [ -z "$path" ] && continue
       stats="$(git diff --numstat "$BASE_REF...$HEAD_REF" -- "$path")"
       add="$(echo "$stats" | awk '{print $1}')"
       del="$(echo "$stats" | awk '{print $2}')"
       if grep -Fxq "$path" "$BASE_CONFLICTS_FILE"; then
-        already="yes"
+        already_conflicting="yes"
       else
-        already="no"
+        already_conflicting="no"
       fi
-      echo "| \`$path\` | +${add:-0}/-${del:-0} | $already |"
+      if grep -Fxq "$path" "$BASE_DIVERGED_FILE"; then
+        already_diverged="yes"
+      else
+        already_diverged="no"
+      fi
+      echo "| \`$path\` | +${add:-0}/-${del:-0} | $already_conflicting | $already_diverged |"
     done <<<"$UPSTREAM_TOUCHED"
   fi
   echo
@@ -219,8 +314,16 @@ fi
   fi
 }
 
-if [ -n "$NEW_CONFLICTS" ] && [ "$IS_SYNC" = false ]; then
-  echo "FAIL: this PR introduces new fixed-upstream conflict surface."
+FAIL_REASONS=()
+[ -n "$NEW_CONFLICTS" ] && FAIL_REASONS+=("introduces new fixed-upstream merge-conflict surface")
+[ -n "$NEW_DIVERGED" ] && FAIL_REASONS+=("diverges a previously upstream-exact file")
+
+if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
+  reason_text="${FAIL_REASONS[0]}"
+  if [ "${#FAIL_REASONS[@]}" -gt 1 ]; then
+    reason_text="${FAIL_REASONS[0]} and ${FAIL_REASONS[1]}"
+  fi
+  echo "FAIL: this PR $reason_text."
   exit 1
 fi
 

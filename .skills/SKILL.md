@@ -590,7 +590,8 @@ Midad is a thin fork of [CrossPoint](https://github.com/crosspoint-reader/crossp
 * CrossPoint-owned files may contain only the smallest stable integration hook necessary. Before modifying one, explicitly check whether the behavior can live entirely behind a Midad-owned module instead.
 * Every PR must identify any upstream-owned files it modifies and justify each one.
 * Never manually reconstruct, copy, or cherry-pick a CrossPoint release or feature. CrossPoint updates go through `.github/workflows/update-from-crosspoint.yml` using a real `git merge` — never a hand port.
-* CI enforces this: `.github/workflows/thin-fork-guard.yml` fails a PR that introduces new fixed-upstream merge-conflict surface. Treat a guard failure as an architecture problem to fix, not a check to route around.
+* CrossPoint sync PRs must always be merged with **"Create a merge commit"** — never squash or rebase. Squashing or rebasing a sync PR discards the real merge commit, which breaks the ancestry `thin-fork-guard.sh` relies on to recognize future sync PRs and to reason about upstream divergence.
+* CI enforces this: `.github/workflows/thin-fork-guard.yml` fails a PR that introduces new fixed-upstream merge-conflict surface, or that diverges an upstream-owned file that was previously byte-identical to upstream. Treat a guard failure as an architecture problem to fix, not a check to route around.
 
 ---
 
