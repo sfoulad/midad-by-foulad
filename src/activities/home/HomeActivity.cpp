@@ -17,6 +17,7 @@
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "SilentRestart.h"
+#include "activities/network/BluetoothActivity.h"
 #include "activities/stats/StatsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -265,6 +266,43 @@ void HomeActivity::loop() {
     lastIdleWhitenMs = millis();
     idleWhitenPending = true;
     requestUpdate();
+  }
+
+  // After the BLE long-press has fired, swallow input until Confirm is physically
+  // released (so the release doesn't ALSO act as a normal Confirm tap; re-arm only
+  // once the button is up) -- same pattern RecentBooksActivity's long-press-to-
+  // remove uses.
+  if (bleLongPressFired) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+      bleLongPressFired = false;
+    }
+    return;
+  }
+
+  // Hold Confirm anywhere on Home to open BLE pairing -- BLE-R2's second entry
+  // point (see BluetoothActivity's own header comment). BLE itself starts/stops
+  // via that screen's own onEnter()/onExit(), never here.
+  //
+  // replaceActivity(), not startActivityForResult(): measured on real hardware
+  // (BLE-R2 correction 3) that push-based entry left Home fully resident on
+  // ActivityManager's stack -- onExit() never fires, so HomeActivity::coverBuffer
+  // (~42KB) stays allocated for BluetoothActivity's entire lifetime, and the
+  // radio's 70KB heap gate reliably failed to clear (measured: capped at ~62.6KB
+  // free vs. the gate's 71.7KB). replaceActivity() destroys this HomeActivity
+  // instance outright (onExit() -> freeCoverBuffer(), then the object is
+  // dropped) before BluetoothActivity ever enters, measured to reliably clear
+  // the gate with tens of KB to spare. Trade-off: replaceActivity() also clears
+  // the navigation stack, so Back from BluetoothActivity finds it empty and
+  // ActivityManager's existing pop-fallback (see loop()) recreates Home fresh --
+  // i.e. this shortcut always returns to Home, which is the desired behavior for
+  // a Home-launched shortcut. The Apps -> Midad BLE tile is deliberately NOT
+  // changed to match: that path already clears the gate reliably as-is (Apps
+  // itself has nothing comparable to Home's cover buffer retained), and
+  // push/pop there correctly returns to Apps, not Home.
+  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= kBleLongPressMs) {
+    bleLongPressFired = true;
+    activityManager.replaceActivity(std::make_unique<BluetoothActivity>(renderer, mappedInput));
+    return;
   }
 
   const int menuCount = getMenuItemCount();

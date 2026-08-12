@@ -7,6 +7,20 @@ here turns out wrong once you're actually building it, that's expected;
 write it back as an update to this doc (or a reply doc) rather than treating
 it as fixed.
 
+> **Status update (BLE-R2, PR #141):** several design decisions recorded
+> below as dated snapshots have since been superseded by real X3 hardware
+> findings during implementation. For the current, accurate architecture see
+> `docs/ble-recovery-plan.md`'s status header. In short: there is **no
+> `CrossPointSettings`/`MidadAppSettings::bleEnabled` setting anymore** (fully
+> removed), **no status-bar Bluetooth indicator anywhere** (the one described
+> below as item 3a was built, then found to be dead code once BLE became
+> screen-scoped, and removed before merge), and BLE is not a background
+> service gated by any persisted setting — it only ever runs while the
+> dedicated `BluetoothActivity` pairing screen itself is open. The specific
+> passages below describing `bleEnabled`, the Apps live-toggle tile, or the
+> `BaseTheme::drawHeader()` "BT" indicator as current design are marked
+> **SUPERSEDED** inline; left in place as design history, not current fact.
+
 ## The requirement
 
 Two features, sharing one radio:
@@ -351,7 +365,9 @@ components):
    [#2119](https://github.com/crosspoint-reader/crosspoint-reader/pull/2119)
    shipped OTA-over-BLE, closed as out-of-scope for CrossPoint's roadmap but
    measured at only ~15 s slower than the serial path — the mechanism works.)
-3a. **Status-bar indicator** — added 2026-08-09, per direction from the
+3a. **[SUPERSEDED by BLE-R2, PR #141 — see this doc's top-of-file status
+    update. No status-bar indicator exists; removed as dead code once BLE
+    became screen-scoped.]** Status-bar indicator — added 2026-08-09, per direction from the
     Midad side: a small icon next to the battery indicator in
     `BaseTheme::drawHeader()` (used by every non-reader screen — Apps,
     Settings, Home, …; the reader's own `drawStatusBar()` is separate and
@@ -366,7 +382,9 @@ components):
     hand-draw a small glyph the same way `drawBatteryLightningBolt()`
     already hand-draws the charging bolt, rather than adding a new bitmap
     to the icon asset pipeline for one small header glyph.
-3. **Settings toggle** — corrected 2026-08-09, per direction from the
+3. **[SUPERSEDED by BLE-R2, PR #141 — see this doc's top-of-file status
+   update. `bleEnabled` no longer exists in any form; there is nothing left
+   to toggle.]** Settings toggle — corrected 2026-08-09, per direction from the
    Midad side: goes under **Apps** (`AppsActivity`, `src/activities/apps/`),
    not general Settings — labeled **"Midad BLE"**, defaults **on**
    (`CrossPointSettings::bleEnabled`, `uint8_t = 1`, matching the existing
@@ -499,16 +517,23 @@ been exercised. Same discipline this repo already applies to PR #122/#123/
 #126 (ESP32-S3 foundation, SDK bump, touch input) — do not treat this as
 shippable without a real device + phone pass.
 
-**What shipped**: `lib/hal/BlePeripheralManager.{h,cpp}` (GATT server,
+**What shipped** (this checkpoint, at the time — see this doc's top-of-file
+status update for what's SUPERSEDED as of BLE-R2/PR #141):
+`lib/hal/BlePeripheralManager.{h,cpp}` (GATT server,
 heap gate, cool-down, Off/Advertising/Connected/PausedLowMemory state),
 `src/BleCommandDispatcher.{h,cpp}` (routes Command writes by `cmd`,
 currently just `wifi.provision`), `CrossPointSettings::bleEnabled` (Apps ->
-Midad BLE toggle, on by default, also a live-toggle `AppsActivity` tile),
-a "BT" status-bar indicator in `BaseTheme::drawHeader()`, and lifecycle
-wiring in `main.cpp` (start/stop gated on `WiFi.getMode() == WIFI_MODE_NULL`
-+ not-reading, checked every loop tick rather than hooking every WiFi-
-activation call site; teardown-before-sleep in `enterDeepSleep()`, mirroring
-the existing WiFi backstop-disconnect pattern there).
+Midad BLE toggle, on by default, also a live-toggle `AppsActivity` tile) —
+**[SUPERSEDED: no such setting exists anymore]** —
+a "BT" status-bar indicator in `BaseTheme::drawHeader()` —
+**[SUPERSEDED: no status-bar indicator exists anymore]** —
+and lifecycle wiring in `main.cpp` (start/stop gated on
+`WiFi.getMode() == WIFI_MODE_NULL` + not-reading, checked every loop tick
+rather than hooking every WiFi-activation call site; teardown-before-sleep in
+`enterDeepSleep()`, mirroring the existing WiFi backstop-disconnect pattern
+there) — the WiFi/reader gating conditions are unchanged as of BLE-R2, only
+the third condition (was `bleEnabled`) changed, to
+`BlePeripheral.isUserRequested()`.
 
 **Real findings from actually building this, not present anywhere above
 before now:**
@@ -593,8 +618,12 @@ before now:**
   actually use the credential the next time Wi-Fi comes up. How the phone
   ever learns definitive connect success (vs. a bad password that fails
   silently later) is a real open question, added below.
-- **The status-bar indicator is plain "BT" text, not a hand-drawn
-  Bluetooth glyph**, despite the "hand-draw it like `drawBatteryLightningBolt()`"
+- **[SUPERSEDED by BLE-R2, PR #141 — see this doc's top-of-file status
+  update. This "BT" text indicator was already dead code by BLE-R1 (never
+  actually rendered — `LyraTheme::drawHeader()` fully overrides
+  `BaseTheme::drawHeader()` with no BLE code), and no status-bar indicator
+  of any kind exists as of BLE-R2.]** The status-bar indicator is plain "BT" text, not a hand-drawn
+  Bluetooth glyph, despite the "hand-draw it like `drawBatteryLightningBolt()`"
   note added earlier in this doc. Reason found while actually implementing
   it: that bolt glyph is a simple triangle, hand-verifiable by eye in the
   diff; the Bluetooth bind-rune is intricate enough (merged Hagall + Berkanan
@@ -604,8 +633,10 @@ before now:**
   isn't accessible from here). Text is unambiguous and correct by
   construction; a proper glyph is a fine follow-up once someone can
   actually look at it on a screen.
-- **`bleEnabled` is registered in `SettingsList.h`'s generic settings
-  table** (`SettingInfo::Toggle`), not just as the special-cased
+- **[SUPERSEDED by BLE-R2, PR #141 — see this doc's top-of-file status
+  update. `bleEnabled` no longer exists; nothing is registered anywhere.]**
+  `bleEnabled` is registered in `SettingsList.h`'s generic settings
+  table (`SettingInfo::Toggle`), not just as the special-cased
   `AppsActivity` tile — same as every other app's enable flag
   (`gymEnabled`, `tasbihEnabled`, etc.), for the same free persistence and
   server-settings-push handling (`FouladDeviceTracking.cpp`'s

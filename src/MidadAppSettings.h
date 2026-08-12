@@ -82,19 +82,18 @@ class MidadAppSettings : public PersistableStore<MidadAppSettings> {
   // a one-shot panic capture on an actual crash, not routine verbose logging.
   uint8_t debugLoggingEnabled = 0;
 
-  // Apps -> Midad BLE: whether the BLE peripheral (phone control -- Wi-Fi
-  // provisioning today, more in later phases; see docs/ble-module-tasks.md) is
-  // allowed to advertise while the device is Idle. Defaults on: it only ever runs
-  // in Idle state (home/menus/sleep screen, never while reading or on Wi-Fi), is
-  // gated by its own heap floor and cool-down (BlePeripheralManager) regardless of
-  // this setting, and the whole point of Phase 1 is a phone finding the device
-  // without the user doing anything first -- an opt-in toggle would defeat that.
-  // Unlike the other AppsActivity launcher tiles, this is a live radio switch,
-  // not something to "open": AppsActivity special-cases it to flip this flag
-  // directly rather than navigating anywhere. Not part of FouladDeviceTracking's
-  // settings.push/report wire contract -- it never was, even before this field
-  // lived here, so this move doesn't add new remote wire behavior.
-  uint8_t bleEnabled = 1;
+  // Midad BLE used to have a persisted on/off field here (bleEnabled), read by
+  // main.cpp's background bleAllowedNow gate so the radio could run unattended on
+  // Home/Settings/etc. BLE-R2 correction 2 removed it: NimBLE's ~57-58KB resident
+  // cost was competing with every other screen's own heap needs (root cause of a
+  // real Settings-screen OOM abort), so BLE is now purely screen-scoped --
+  // BluetoothActivity's onEnter()/onExit() request/release it directly via
+  // BlePeripheralManager::setUserRequested(), nothing to persist. Confirmed via
+  // audit before removal: this field was never part of FouladDeviceTracking's
+  // settings.push/report wire contract, and the BLE settings.push command itself
+  // isn't implemented yet -- its only consumer was this struct's own local SPIFFS
+  // file, which degrades safely (unknown/missing JSON keys are silently ignored,
+  // same as every other field here).
 };
 
 #define MIDAD_APP_SETTINGS MidadAppSettings::getInstance()

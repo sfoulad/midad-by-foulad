@@ -172,7 +172,19 @@ Read this section first if you only want the current facts, not the history
 of how Phase B got there (that's in the round 1/2/3 sections below, kept for
 the record).
 
-- **`MidadAppSettings`** (`src/MidadAppSettings.h/.cpp`) owns **13 fields**:
+> **Post-BLE-R2 correction (PR #141):** the field count and list immediately
+> below describe Phase B's own final state, accurate as of Phase B and left
+> as-is rather than silently rewritten. BLE-R2 subsequently **removed**
+> `bleEnabled` entirely (no persisted BLE setting exists anymore — see
+> `docs/ble-recovery-plan.md`'s BLE-R2 section for why). As of BLE-R2,
+> `MidadAppSettings` owns **12 fields**, not 13: everything below minus
+> `bleEnabled`. The `/api/settings` GET/POST and wire-contract bullets a few
+> lines down, which already described `bleEnabled` as excluded from that
+> contract, are otherwise unaffected — there's simply one fewer field to
+> exclude from it now.
+
+- **`MidadAppSettings`** (`src/MidadAppSettings.h/.cpp`) owns **13 fields**
+  as of Phase B (see correction above — as of BLE-R2, 12):
   `quranEnabled`, `rssEnabled`, `gamesEnabled`, `tasbihEnabled`,
   `stopwatchEnabled`, `pomodoroEnabled`, `pomodoroFocusMin`,
   `pomodoroShortBreakMin`, `pomodoroLongBreakMin`, `gymEnabled`,

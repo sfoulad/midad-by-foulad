@@ -1,38 +1,77 @@
 # BLE Recovery Plan
 
-**Status: planning only. No BLE recovery code has been written yet.** This
-document is the current source of truth for how BLE work on the stale branch
-`docs/ble-phase1-hardware-validated` (head `50e0fc64` as of this writing) will
-be brought onto `develop`, now that `develop` contains Phases A, B, and C of
-the thin-fork architecture (`docs/upstream-sync-architecture.md`).
+**Status, as of PR #141: BLE-P0, Safety-P0, BLE-R1, and BLE-R2 are all
+complete.** BLE-P0 preserved the stale branch's history
+(`docs/history/ble-module-tasks-pre-thin-fork.md`) and established this plan.
+Safety-P0 (PR #139) shipped the XTEINK display-controller detection fix (§5's
+`e02fb457`, unrelated to BLE itself). BLE-R1 (PR #140) recovered the Phase 1
+lifecycle bug fixes. BLE-R2 (PR #141) implemented the dedicated pairing
+screen — but landed on a **materially different final architecture** than
+this document originally planned in §4's BLE-R2 section below: real X3
+hardware testing during implementation found NimBLE's background presence
+(~57-58KB resident, previously kept alive on Home/Settings/every non-Reader
+screen by a persisted `bleEnabled` setting) directly implicated in a captured
+OOM `abort()` elsewhere in the firmware. The fix was architectural, not just
+a UX port: BLE is now **fully screen-scoped** — it only ever runs while
+`BluetoothActivity` itself is on screen, requested in `onEnter()` and
+released in `onExit()` via an ephemeral (non-persisted)
+`BlePeripheralManager::setUserRequested()` flag. `bleEnabled` is gone
+entirely, not carried forward. See §4's BLE-R2 entry for the corrected
+description and §1 for what's actually on `develop` now.
+
+**BLE-R3 is next but has not started.** Do not begin it without a fresh
+audit turn — this plan's own §4 BLE-R3 description predates BLE-R2's
+architecture change and needs re-scoping against the new screen-scoped model
+before work starts (in particular: `wifi.scan`'s cache-before-radio-switch
+design and any future discovery/claim command must respect that BLE now only
+runs inside `BluetoothActivity`, not in the background).
 
 For the historical design/debugging narrative this plan is derived from, see
 [`docs/history/ble-module-tasks-pre-thin-fork.md`](history/ble-module-tasks-pre-thin-fork.md)
 — preserved verbatim from the stale branch, but **not** current architecture.
 
-This plan is the output of a read-only audit (no code changes, no merges, no
-cherry-picks, no rebases) of the stale branch against `develop`. Nothing in
-this document has been implemented yet.
+This plan was originally the output of a read-only audit (no code changes, no
+merges, no cherry-picks, no rebases) of the stale branch against `develop`.
+§§1-9 below are left as that original audit record except where explicitly
+marked as updated post-BLE-R2.
 
-## 1. What already exists on `develop`
+## 1. What already exists on `develop` (updated post-BLE-R2)
 
-The BLE Phase 1 foundation is already merged and is the common ancestor
-(`a52a97d4`, PR #132) between `develop` and the stale branch:
+The BLE Phase 1 foundation (PR #132), BLE-R1 hardening (PR #140), and BLE-R2
+(PR #141) are merged/in-review on `develop`:
 
 - `lib/hal/BlePeripheralManager.h/.cpp` — the BLE peripheral HAL component.
+  As of BLE-R2, gains `setUserRequested()`/`isUserRequested()`, an ephemeral
+  (non-persisted) flag that is now the **sole** input to `bleAllowedNow` —
+  set only by `BluetoothActivity::onEnter()`/`onExit()`.
 - `src/BleCommandDispatcher.h/.cpp` — the command dispatcher, with
   `wifi.provision` implemented.
 - NimBLE-Arduino dependency, wired into `platformio.ini`.
-- The Idle-state BLE lifecycle gate in `main.cpp`'s `loop()`
-  (`bleAllowedNow` — WiFi off, not the reader activity).
-- A live BT BLE status indicator drawn near the battery by
-  `BaseTheme::drawHeader()` when `BlePeripheralManager` is
-  advertising/connected.
+- The BLE lifecycle gate in `main.cpp`'s `loop()` (`bleAllowedNow` — WiFi
+  off, not the reader activity, **and** `BlePeripheral.isUserRequested()`).
+  Pre-BLE-R2 this third condition was `MIDAD_APP_SETTINGS.bleEnabled`, a
+  persisted setting that let BLE run in the background on any qualifying
+  screen; BLE-R2 replaced it outright (see §4).
+- `src/activities/network/BluetoothActivity.{h,cpp}` — the dedicated pairing
+  screen (BLE-R2). Two entry points reach it: `AppsActivity`'s "Midad BLE"
+  tile (push/pop, `startActivityForResult()`) and `HomeActivity`'s
+  hold-Confirm-1s shortcut (`replaceActivity()` — see §4's heap-gate note).
+  Owns BLE's entire lifetime; nothing else in the firmware ever requests it.
+- **No global BLE status icon.** BLE-R2 initially added one to
+  `FouladTheme::drawHeader()`/Home's status line, but under the final
+  screen-scoped architecture BLE is never active on any screen that icon
+  could render on (`BluetoothActivity` doesn't use `drawHeader()` at all) —
+  it was dead code and was removed before merge. `FouladTheme.cpp/.h` are
+  therefore untouched by BLE-R2 in the final state.
+- No `bleEnabled` setting anywhere. Removed entirely by BLE-R2, along with
+  all three of its former mutation sites (`BluetoothActivity`'s old in-screen
+  toggle, `AppsActivity`'s pre-BLE-R2 live-switch tile, and a
+  `MidadSettingsList.cpp` Settings→Apps toggle registration).
 
-Confirmed byte-identical between the merge base and current `develop` for
-`BlePeripheralManager.*`/`BleCommandDispatcher.*` — Phases A, B, and C never
-touched the BLE mechanics themselves. Phase B's only BLE-related change was
-relocating `bleEnabled`'s storage (see §2).
+Confirmed byte-identical between the Phase 1 merge base (`a52a97d4`) and
+current `develop` for `BlePeripheralManager.*`/`BleCommandDispatcher.*` as of
+that baseline — Phases A, B, and C never touched the BLE mechanics
+themselves. BLE-R1/R2 above are the changes made since.
 
 ## 2. What exists only on the stale branch
 
@@ -101,8 +140,8 @@ Phase A/B/C architecture, and requires hardware verification where marked.
 **The stale branch is never merged wholesale — nothing here is a merge,
 rebase, or bulk cherry-pick of `docs/ble-phase1-hardware-validated`.**
 
-### BLE-R1 — Phase 1 hardening
-Recover the bug fixes atop the foundation already on `develop`:
+### BLE-R1 — Phase 1 hardening — **complete, merged (PR #140)**
+Recovered the bug fixes atop the foundation already on `develop`:
 - `0592d385` — BLE state repaint lag + SD-persisted lifecycle diagnostics
 - `28562591` — `BlePeripheralManager::begin()` couldn't retry from `PausedLowMemory`
 - `90d19895` — four stacked root causes (NimBLE build-flag/`sdkconfig.h`
@@ -114,16 +153,40 @@ Recover the bug fixes atop the foundation already on `develop`:
 Lowest risk of any phase: bug fixes to code already on `develop` and already
 X3-hardware-validated, no settings/architecture surface touched.
 
-### BLE-R2 — Dedicated pairing screen + status presentation
-Reimplement the `BluetoothActivity` redesign and BLE status icon against
-current architecture — not ported as-is. Specifically:
-- `bleEnabled` should likely be **removed** from `MidadAppSettings`/
-  `MidadSettingsList` entirely rather than carried forward: the dedicated
-  screen has nothing to persist (radio only runs while the screen is open).
-- `main.cpp`'s BLE lifecycle/debug-command additions must land as calls into
-  new Midad-owned modules, not inlined into `loop()` (see §6).
-- Status icon in `FouladTheme`/`LyraTheme` needs a minimal-hook design — see
-  §6's conflict-budget note before assuming a direct port.
+### BLE-R2 — Dedicated pairing screen — **implemented, PR #141 (screen-scoped final architecture)**
+Landed materially differently than originally planned in this section, based
+on real X3 findings during implementation (see the doc header). What
+actually shipped:
+- `bleEnabled` **removed** entirely from `MidadAppSettings`/
+  `MidadSettingsList` — confirmed correct against real hardware: the
+  dedicated screen has nothing to persist, since BLE now only ever runs
+  while it's open. (Audited before removal: never part of
+  `FouladDeviceTracking`'s web wire contract; its only consumer was local
+  SPIFFS persistence, which degrades safely when a field disappears.)
+- BLE's entire lifetime is owned by `BluetoothActivity::onEnter()`/
+  `onExit()` via `BlePeripheralManager::setUserRequested()` — not a
+  persisted setting, not `main.cpp`-driven background logic. This is
+  stricter than this section originally planned: the original plan still
+  assumed some form of persisted intent; real hardware testing (a captured
+  OOM `abort()` in `SettingsActivity`'s save path, with NimBLE's background
+  presence directly implicated) showed persistent/background BLE itself was
+  the problem, not just its implementation.
+- Two entry points, not one: `AppsActivity`'s "Midad BLE" tile (unchanged
+  push/pop) and `HomeActivity`'s hold-Confirm-1s shortcut. The Home shortcut
+  needed its own fix (`replaceActivity()` instead of push) after real-device
+  measurement showed push-based entry kept `HomeActivity` — and its ~42KB
+  retained cover buffer — resident on the activity stack for the pairing
+  screen's whole lifetime, capping free heap below the 70KB gate. Apps'
+  entry point never hit this (reaching Apps already destroys Home via
+  `replaceActivity()`), so it was deliberately left unchanged.
+- **No status icon anywhere in `FouladTheme`/`LyraTheme`.** One was built
+  initially (`drawHeader()` override + Home status-line overlay), but under
+  the final screen-scoped architecture there's no normal product state where
+  BLE is active on a screen that icon could render on — it was dead code and
+  was removed. `main.cpp`'s BLE lifecycle hook stayed a small, bounded
+  addition (the `bleAllowedNow` gate + `BLE_STATUS`/`RESTART` debug
+  commands only — no `BLE_ON`/`BLE_OFF`, deliberately removed so no serial
+  command can drive BLE independently of `BluetoothActivity`).
 
 ### BLE-R3 — Discovery/claim commands
 `device.info`, `account.claim`, `device.challenge`, `wifi.scan` (including
@@ -212,12 +275,13 @@ fixed-upstream conflict baseline (`docs/upstream-sync-architecture.md`):
   footprint to zero and leaves the file at least as upstream-similar as it is
   today.
 - **Avoid turning currently-clean `FouladTheme.cpp`/`LyraTheme.cpp` into new
-  conflict files merely for a BLE status icon.** Both are currently absent
-  from the 158-file baseline. Design a Midad-owned/minimal-hook solution for
-  the status icon in BLE-R2 before assuming a direct port of the stale
-  branch's theme changes — this is the one place in the whole recovery where
-  a naive port would most likely create a new conflicting file that doesn't
-  exist today.
+  conflict files merely for a BLE status icon.** Resolved by BLE-R2's final
+  architecture more strongly than this rule anticipated: there is no global
+  status icon at all. `BluetoothActivity` is the only place BLE is ever
+  active, and it doesn't use `drawHeader()`, so a global indicator elsewhere
+  has no normal state to render — one was built during implementation, found
+  to be dead code once the screen-scoped design was finalized, and removed.
+  `FouladTheme.cpp/.h` remain untouched by BLE-R2.
 - **`main.cpp` should contain only minimal BLE lifecycle hooks.** The stale
   branch grew `main.cpp` by ~240 net lines (lifecycle gate, diagnostics, ~10
   serial debug commands, all inlined into `loop()`). Recovery should extract

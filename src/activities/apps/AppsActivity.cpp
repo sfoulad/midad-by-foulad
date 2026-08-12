@@ -16,6 +16,7 @@
 #include "activities/apps/StopwatchActivity.h"
 #include "activities/apps/TasbihActivity.h"
 #include "activities/games/GamesMenuActivity.h"
+#include "activities/network/BluetoothActivity.h"
 #include "components/TileCover.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -79,9 +80,11 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
          MIDAD_APP_SETTINGS.gymEnabled = v;
          MIDAD_APP_SETTINGS.saveToFile();
        }},
-      // Live toggle, not a launcher -- see launch()/render()'s AppId::MidadBle
-      // special cases, which read/write MIDAD_APP_SETTINGS.bleEnabled directly and never
-      // go through getEnabled/setEnabled (both empty here on purpose).
+      // A launcher like any other app entry below (BLE-R2) -- opens BluetoothActivity,
+      // which now owns BLE's entire lifetime itself (correction 2: screen-scoped, no
+      // persisted on/off setting left to back a getEnabled/setEnabled pair). Entering
+      // the screen starts BLE; leaving it stops BLE. Nothing to auto-enable on first
+      // tap the way a normal app's opt-in does.
       {AppId::MidadBle, StrId::STR_MIDAD_BLE, nullptr, nullptr},
   };
   return kEntries;
@@ -94,15 +97,6 @@ void AppsActivity::onEnter() {
 }
 
 bool AppsActivity::launch(const AppEntry& entry) {
-  // Midad BLE is a live radio switch, not a destination -- flip it in place and stay
-  // here (returning false makes the caller's `if (!launch(...)) requestUpdate();`
-  // repaint the tile with the new state, the same as every other "stayed here" path).
-  if (entry.id == AppId::MidadBle) {
-    MIDAD_APP_SETTINGS.bleEnabled = MIDAD_APP_SETTINGS.bleEnabled ? 0 : 1;
-    MIDAD_APP_SETTINGS.saveToFile();
-    return false;
-  }
-
   // Turn the app on if it is off. This is what makes listing every app safe: the
   // screen shows what the device can do, and pressing one is the whole opt-in --
   // no round trip through Settings to find out an app was there all along.
@@ -154,7 +148,16 @@ bool AppsActivity::launch(const AppEntry& entry) {
       startActivityForResult(std::make_unique<GymActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       return true;
     case AppId::MidadBle:
-      return false;  // handled by the early return above; kept for switch exhaustiveness
+      // Opens the pairing screen -- BLE-R2 correction 2. Does not itself touch BLE;
+      // BluetoothActivity's own onEnter()/onExit() request/release the radio
+      // directly now (see BlePeripheralManager::setUserRequested()). Deliberately
+      // still push-based (startActivityForResult), not replaceActivity() -- unlike
+      // Home's long-press shortcut (correction 3), this path already reliably
+      // clears the heap gate as measured on real hardware, since Apps itself has
+      // nothing comparable to Home's retained cover buffer. Back correctly returns
+      // to Apps, not Home.
+      startActivityForResult(std::make_unique<BluetoothActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      return true;
   }
   return false;
 }
@@ -231,15 +234,11 @@ void AppsActivity::render(RenderLock&&) {
     const int cellY = contentTop + row * rowHeight;
 
     // Same designed name-tile the news feeds and collection tiles use, rather
-    // than eight new icons: the label IS the thing being identified here.
-    // Midad BLE shows its live on/off state in the label itself -- see
-    // AppEntry's getEnabled/setEnabled comment for why this one entry needs a
-    // computed label instead of the static I18N.get() every other entry uses.
-    std::string tileLabel = I18N.get(entry.label);
-    if (entry.id == AppId::MidadBle) {
-      tileLabel += ": ";
-      tileLabel += I18N.get(MIDAD_APP_SETTINGS.bleEnabled ? StrId::STR_ON : StrId::STR_OFF);
-    }
+    // than eight new icons: the label IS the thing being identified here. Midad BLE
+    // no longer shows an On/Off suffix (correction 2, screen-scoped BLE): with no
+    // persisted setting left, "On" would be misleading almost all the time -- BLE
+    // only actually runs while the pairing screen itself is open.
+    const std::string tileLabel = I18N.get(entry.label);
     drawTileCover(renderer, cellX, cellY, tileWidth, tileHeight, tileLabel.c_str());
     if (idx == selectorIndex) {
       // Matches the OPDS grid's selection frame -- a 1px outline is hard to find
