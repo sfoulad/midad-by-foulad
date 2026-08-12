@@ -3,6 +3,9 @@
 #include <FontCacheManager.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#ifndef SIMULATOR
+#include <BlePeripheralManager.h>
+#endif
 
 #include <algorithm>
 
@@ -152,6 +155,8 @@ void ActivityManager::loop() {
       currentActivity = std::move(pendingActivity);
 
       lock.unlock();  // onEnter may acquire its own lock
+
+      prepareForActivityEnter();
       currentActivity->onEnter();
 
       // onEnter may request another pending action, we will handle it in the next loop iteration
@@ -176,6 +181,22 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
   }
 }
 
+void ActivityManager::prepareForActivityEnter() {
+#ifndef SIMULATOR
+  // Free NimBLE's resident heap before the incoming activity allocates, but only if
+  // BLE is actually running -- end() is cheap but not free (HalPowerManager lock,
+  // NimBLE deinit sequence), so skip it entirely when there's nothing to tear down
+  // (Off/PausedLowMemory). With BLE resident, a heavy onEnter() (Home's cover art
+  // especially) could hit allocation failures before the main loop's poll() got a
+  // chance to react -- poll() only runs after onEnter() returns. main.cpp's
+  // bleAllowedNow logic restarts BLE on the new screen if its post-onEnter() heap
+  // clears the pre-flight gate.
+  if (BlePeripheral.isActive()) {
+    BlePeripheral.end();
+  }
+#endif
+}
+
 void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   // Note: no lock here, this is usually called by loop() and we may run into deadlock
   if (currentActivity) {
@@ -184,8 +205,11 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     pendingActivity = std::move(newActivity);
     pendingAction = PendingAction::Replace;
   } else {
-    // No current activity, safe to launch immediately
+    // No current activity, safe to launch immediately. Reachable e.g. after Pop
+    // empties the activity stack and goHome() replaces straight into a fresh
+    // HomeActivity -- same onEnter()-about-to-allocate concern as the loop() path.
     currentActivity = std::move(newActivity);
+    prepareForActivityEnter();
     currentActivity->onEnter();
   }
 }

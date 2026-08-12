@@ -57,6 +57,14 @@ class ActivityManager {
 
   void exitActivity(const RenderLock& lock);
 
+  // Frees NimBLE's resident heap before a newly-constructed activity's onEnter()
+  // runs, but only when BLE is actually active -- called from both places a fresh
+  // activity's onEnter() is invoked (loop()'s pendingActivity path and
+  // replaceActivity()'s no-current-activity path), so neither can bypass it. Not
+  // needed when returning to an already-stacked activity (Pop), since that doesn't
+  // call onEnter().
+  void prepareForActivityEnter();
+
   // Pending activity to be launched on next loop iteration
   std::unique_ptr<Activity> pendingActivity;
   enum class PendingAction { None, Push, Pop, Replace };
