@@ -14,13 +14,11 @@
 
 #include "I18n.h"
 #include "MappedInputManager.h"
-#include "MidadAppSettings.h"
 #include "components/icons/bluetooth64.h"
 #include "fontIds.h"
 #include "reading/ReadingStatsStore.h"
 
 BluetoothActivity::UiState BluetoothActivity::currentUiState() const {
-  if (!MIDAD_APP_SETTINGS.bleEnabled) return UiState::Disabled;
 #ifndef SIMULATOR
   switch (BlePeripheral.state()) {
     case BlePeripheralManager::State::Off:
@@ -34,10 +32,10 @@ BluetoothActivity::UiState BluetoothActivity::currentUiState() const {
   }
   return UiState::Starting;
 #else
-  // Simulator placeholder: enabled always reads as "about to advertise" here, since
-  // there is no real radio to poll -- purely for visually validating layout/RTL, not
-  // for exercising actual BLE behavior (which the simulator can never do regardless,
-  // see CLAUDE.md's simulator-testing notes).
+  // Simulator placeholder: always reads as "about to advertise" here, since there is
+  // no real radio to poll -- purely for visually validating layout/RTL, not for
+  // exercising actual BLE behavior (which the simulator can never do regardless, see
+  // CLAUDE.md's simulator-testing notes).
   return UiState::Advertising;
 #endif
 }
@@ -47,30 +45,36 @@ void BluetoothActivity::onEnter() {
   lastRenderedUiState_ = -1;
 
   // Aggressively release everything reclaimable that this simple a page has no use
-  // for -- both proven safe to call cross-activity (global singletons, not owned by
-  // whichever activity happened to fill them): OtaUpdateActivity.cpp already does the
-  // same pair for the same reason (needing every spare block before a memory-heavy
-  // operation). This doesn't request BLE itself -- it only maximizes the headroom
-  // available whenever main.cpp's own bleAllowedNow gate next tries begin().
+  // for, before requesting the radio -- both proven safe to call cross-activity
+  // (global singletons, not owned by whichever activity happened to fill them):
+  // OtaUpdateActivity.cpp already does the same pair for the same reason (needing
+  // every spare block before a memory-heavy operation).
   READING_STATS.releaseMemory();
   if (auto* fcm = renderer.getFontCacheManager()) fcm->clearCache();
 
+#ifndef SIMULATOR
+  // This activity owns BLE's entire lifetime now -- see this class's own header
+  // comment. main.cpp's bleAllowedNow gate reacts on its own next tick.
+  BlePeripheral.setUserRequested(true);
+#endif
+
   requestUpdate();
+}
+
+void BluetoothActivity::onExit() {
+#ifndef SIMULATOR
+  // Mirror of onEnter()'s request -- this is the ONLY place BLE gets released, so
+  // every exit path (Back, or navigating elsewhere) must go through here. Radio
+  // teardown itself happens via main.cpp's normal bleAllowedNow lifecycle on the
+  // next tick, same as it always has.
+  BlePeripheral.setUserRequested(false);
+#endif
+  Activity::onExit();
 }
 
 void BluetoothActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
-    return;
-  }
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    // Same persisted setting the Apps tile already flips -- this screen is a better
-    // place to show the result, not a new capability. Never touches BLE lifetime
-    // directly; main.cpp's existing bleAllowedNow gate reacts on its own next tick.
-    MIDAD_APP_SETTINGS.bleEnabled = MIDAD_APP_SETTINGS.bleEnabled ? 0 : 1;
-    MIDAD_APP_SETTINGS.saveToFile();
-    requestUpdate();
     return;
   }
 
@@ -98,29 +102,21 @@ void BluetoothActivity::render(RenderLock&&) {
   renderer.drawCenteredText(UI_12_FONT_ID, titleY, tr(STR_MIDAD_BLE), true, EpdFontFamily::BOLD);
 
   // Device name: static regardless of state (a pure eFuse read, needs no radio up) --
-  // shown whenever BLE is enabled at all, so the user can cross-check it against a
-  // scanner even while the radio is still starting up.
+  // shown from the moment this screen opens, so the user can cross-check it against
+  // a scanner even while the radio is still starting up.
   int nextY = titleY + renderer.getLineHeight(UI_12_FONT_ID) + 8;
-  if (state != UiState::Disabled) {
-    char advName[24] = {};
+  char advName[24] = {};
 #ifndef SIMULATOR
-    BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
+  BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
 #else
-    snprintf(advName, sizeof(advName), "Midad-XXXXXX");
+  snprintf(advName, sizeof(advName), "Midad-XXXXXX");
 #endif
-    renderer.drawCenteredText(SMALL_FONT_ID, nextY, advName, true);
-    nextY += renderer.getLineHeight(SMALL_FONT_ID) + 12;
-  } else {
-    nextY += 12;
-  }
+  renderer.drawCenteredText(SMALL_FONT_ID, nextY, advName, true);
+  nextY += renderer.getLineHeight(SMALL_FONT_ID) + 12;
 
   const char* statusText = tr(STR_BLUETOOTH_STARTING);
   const char* hintText = nullptr;
   switch (state) {
-    case UiState::Disabled:
-      statusText = tr(STR_BLUETOOTH_OFF);
-      hintText = tr(STR_BLUETOOTH_ENABLE_HINT);
-      break;
     case UiState::Starting:
       statusText = tr(STR_BLUETOOTH_STARTING);
       break;
@@ -142,15 +138,10 @@ void BluetoothActivity::render(RenderLock&&) {
     renderer.drawCenteredText(SMALL_FONT_ID, nextY, hintText, true);
   }
 
-  // Bottom hints: exit always shown; enable/disable only when it isn't already
-  // implied by the status line's own hint above (Disabled already shows the enable
-  // hint there, so only add the disable hint here for the "on" states).
+  // Back is the only way out now -- and the only way BLE ever stops -- so it's the
+  // only hint left at the bottom (see this class's own header comment).
   const int exitHintY = pageHeight - renderer.getLineHeight(SMALL_FONT_ID) - 20;
   renderer.drawCenteredText(SMALL_FONT_ID, exitHintY, tr(STR_BLUETOOTH_EXIT_HINT), true);
-  if (state != UiState::Disabled) {
-    const int toggleHintY = exitHintY - renderer.getLineHeight(SMALL_FONT_ID) - 4;
-    renderer.drawCenteredText(SMALL_FONT_ID, toggleHintY, tr(STR_BLUETOOTH_DISABLE_HINT), true);
-  }
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }

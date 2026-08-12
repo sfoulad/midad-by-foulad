@@ -825,14 +825,19 @@ void loop() {
 
 #ifndef SIMULATOR
   // Midad BLE peripheral (phone control -- see docs/ble-module-tasks.md's device state
-  // machine): only ever runs in Idle state -- WiFi definitively off (the doc's mutual-
-  // exclusion design; checking WiFi.getMode() here rather than hooking every WiFi-
-  // activation call site catches all of them uniformly) and not the reader (Reading
-  // state is reserved for Phase 4's BLE-central page-turner). begin()/end() are cheap
-  // no-ops when already in the right state, so polling this every tick is fine --
-  // BlePeripheral.begin() itself enforces the heap gate and cool-down.
+  // machine): only ever runs while BluetoothActivity is on screen (isUserRequested(),
+  // set by that activity's onEnter()/onExit() -- BLE-R2 correction 2 moved this off a
+  // persisted "keep BLE running in the background" setting; NimBLE's ~57-58KB resident
+  // cost was competing with every other screen's own heap needs, see the Settings-
+  // screen OOM abort this correction was written in response to) AND WiFi is
+  // definitively off (the doc's mutual-exclusion design; checking WiFi.getMode() here
+  // rather than hooking every WiFi-activation call site catches all of them uniformly)
+  // AND not the reader (Reading state is reserved for Phase 4's BLE-central page-
+  // turner). begin()/end() are cheap no-ops when already in the right state, so
+  // polling this every tick is fine -- BlePeripheral.begin() itself enforces the heap
+  // gate and cool-down.
   const bool bleAllowedNow =
-      MIDAD_APP_SETTINGS.bleEnabled && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
+      BlePeripheral.isUserRequested() && WiFi.getMode() == WIFI_MODE_NULL && !activityManager.isReaderActivity();
   if (bleAllowedNow) {
     BlePeripheral.begin();
   } else if (BlePeripheral.isActive()) {
@@ -855,8 +860,8 @@ void loop() {
   // transition may simply go unlogged to SD. See BleDiagLog.h.
   static bool lastBleAllowedNow = false;
   if (bleAllowedNow != lastBleAllowedNow) {
-    LOG_DBG("BLEDIAG", "bleAllowedNow %d -> %d (bleEnabled=%d wifiMode=%d isReader=%d)", lastBleAllowedNow,
-            bleAllowedNow, MIDAD_APP_SETTINGS.bleEnabled, static_cast<int>(WiFi.getMode()),
+    LOG_DBG("BLEDIAG", "bleAllowedNow %d -> %d (userRequested=%d wifiMode=%d isReader=%d)", lastBleAllowedNow,
+            bleAllowedNow, BlePeripheral.isUserRequested(), static_cast<int>(WiFi.getMode()),
             activityManager.isReaderActivity());
     lastBleAllowedNow = bleAllowedNow;
   }
@@ -911,23 +916,29 @@ void loop() {
         // physical button presses/screen navigation -- same rationale (device-side
         // testing that doesn't need eyes on the e-ink panel or a phone in hand).
       } else if (cmd == "BLE_ON") {
-        MIDAD_APP_SETTINGS.bleEnabled = 1;
-        MIDAD_APP_SETTINGS.saveToFile();
-        logSerial.printf("BLE_ON: bleEnabled now %d\n", MIDAD_APP_SETTINGS.bleEnabled);
+#ifndef SIMULATOR
+        // Drives the same userRequested_ flag BluetoothActivity's onEnter() sets --
+        // BLE-R2 correction 2 made this screen-scoped, so no persisted setting/SPIFFS
+        // write happens here anymore.
+        BlePeripheral.setUserRequested(true);
+        logSerial.printf("BLE_ON: userRequested now %d\n", BlePeripheral.isUserRequested());
+#endif
       } else if (cmd == "BLE_OFF") {
-        MIDAD_APP_SETTINGS.bleEnabled = 0;
-        MIDAD_APP_SETTINGS.saveToFile();
-        logSerial.printf("BLE_OFF: bleEnabled now %d\n", MIDAD_APP_SETTINGS.bleEnabled);
+#ifndef SIMULATOR
+        BlePeripheral.setUserRequested(false);
+        logSerial.printf("BLE_OFF: userRequested now %d\n", BlePeripheral.isUserRequested());
+#endif
       } else if (cmd == "BLE_STATUS") {
 #ifndef SIMULATOR
         char advName[24];
         BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
         logSerial.printf(
-            "BLE_STATUS: enabled=%d activity=%s wifiMode=%d isReader=%d freeHeap=%u maxAlloc=%u gate=%u floor=%u "
-            "bleState=%d name=%s\n",
-            MIDAD_APP_SETTINGS.bleEnabled, activityManager.currentActivityDebugName(), static_cast<int>(WiFi.getMode()),
-            activityManager.isReaderActivity(), static_cast<unsigned>(ESP.getFreeHeap()),
-            static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
+            "BLE_STATUS: userRequested=%d activity=%s wifiMode=%d isReader=%d freeHeap=%u maxAlloc=%u gate=%u "
+            "floor=%u bleState=%d name=%s\n",
+            BlePeripheral.isUserRequested(), activityManager.currentActivityDebugName(),
+            static_cast<int>(WiFi.getMode()), activityManager.isReaderActivity(),
+            static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+            static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
             static_cast<unsigned>(BlePeripheralManager::kRunningFloorBytes), static_cast<int>(BlePeripheral.state()),
             advName);
 #endif

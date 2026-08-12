@@ -17,6 +17,7 @@
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "SilentRestart.h"
+#include "activities/network/BluetoothActivity.h"
 #include "activities/stats/StatsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -265,6 +266,26 @@ void HomeActivity::loop() {
     lastIdleWhitenMs = millis();
     idleWhitenPending = true;
     requestUpdate();
+  }
+
+  // After the BLE long-press has fired, swallow input until Confirm is physically
+  // released (so the release doesn't ALSO act as a normal Confirm tap; re-arm only
+  // once the button is up) -- same pattern RecentBooksActivity's long-press-to-
+  // remove uses.
+  if (bleLongPressFired) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+      bleLongPressFired = false;
+    }
+    return;
+  }
+
+  // Hold Confirm anywhere on Home to open BLE pairing -- BLE-R2's second entry
+  // point (see BluetoothActivity's own header comment). Only navigates there;
+  // BLE itself starts/stops via that screen's own onEnter()/onExit(), never here.
+  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= kBleLongPressMs) {
+    bleLongPressFired = true;
+    startActivityForResult(std::make_unique<BluetoothActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+    return;
   }
 
   const int menuCount = getMenuItemCount();
