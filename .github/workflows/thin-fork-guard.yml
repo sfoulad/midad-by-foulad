@@ -1,0 +1,63 @@
+name: Thin-Fork Guard
+
+# Fails a PR that introduces new fixed-upstream merge-conflict surface --
+# see CLAUDE.md's "Midad Thin-Fork Architecture" section and
+# docs/upstream-sync-architecture.md. Automates the manual `git merge --no-ff`
+# dry-run methodology used during BLE-R1/R2 review (see
+# docs/upstream-sync-architecture.md's "Phase A results" section), against
+# the live `upstream` mirror kept current by update-from-crosspoint.yml.
+#
+# Recognizes genuine CrossPoint sync PRs (opened by update-from-crosspoint.yml)
+# via git ancestry, not branch-name trust -- see scripts/thin-fork-guard.sh's
+# own header for the exact check. A feature branch renamed to
+# sync/crosspoint-* does not bypass this guard.
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  thin-fork-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure git identity
+        # thin-fork-guard.sh creates real (throwaway, always-aborted) merge
+        # commits while probing for conflicts -- needs an identity to do so.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Self-test the guard script
+        # Validates the guard's own algorithm (synthetic fixtures, no
+        # dependency on this repo's real history) before trusting its
+        # verdict below -- see scripts/test-thin-fork-guard.sh.
+        run: |
+          set -euo pipefail
+          chmod +x scripts/measure-conflicts.sh scripts/thin-fork-guard.sh scripts/test-thin-fork-guard.sh
+          scripts/test-thin-fork-guard.sh
+
+      - name: Fetch PR base and upstream mirror
+        run: |
+          set -euo pipefail
+          git fetch origin ${{ github.event.pull_request.base.sha }}
+          git fetch origin upstream:refs/remotes/origin/upstream
+
+      - name: Run Thin-Fork Guard
+        run: |
+          set -euo pipefail
+          chmod +x scripts/measure-conflicts.sh scripts/thin-fork-guard.sh
+          scripts/thin-fork-guard.sh \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            "origin/upstream" \
+            "${{ github.head_ref }}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

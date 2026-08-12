@@ -10,6 +10,17 @@
 
 ---
 
+### Thin-Fork Impact
+
+Midad is a thin fork of CrossPoint — see `docs/upstream-sync-architecture.md` and `CLAUDE.md`'s "Midad Thin-Fork Architecture" section.
+
+* Does this PR modify any CrossPoint-owned (upstream) files? _**< YES | NO >**_
+* If yes, list each upstream-owned file changed and why the change couldn't live entirely in a Midad-owned module.
+* Conflict count before → after: _(from the Thin-Fork Guard check on this PR)_
+* Does this PR introduce any new conflicting file? _**< YES | NO >**_
+
+---
+
 ### AI Usage
 
 While CrossPoint doesn't have restrictions on AI tools in contributing, please be transparent about their usage as it 

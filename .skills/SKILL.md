@@ -581,6 +581,19 @@ clang-format -i src/**/*.cpp src/**/*.h
 
 ---
 
+## Midad Thin-Fork Architecture — Mandatory
+
+Midad is a thin fork of [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader). Protecting future upstream mergeability is a mandatory architecture requirement, not optional cleanup — every session must treat it that way.
+
+* Read `docs/upstream-sync-architecture.md` before any architecture-changing work.
+* New Midad-specific functionality belongs in Midad-owned files/modules whenever possible. Do not place substantial Midad/Foulad implementation inside CrossPoint-owned files.
+* CrossPoint-owned files may contain only the smallest stable integration hook necessary. Before modifying one, explicitly check whether the behavior can live entirely behind a Midad-owned module instead.
+* Every PR must identify any upstream-owned files it modifies and justify each one.
+* Never manually reconstruct, copy, or cherry-pick a CrossPoint release or feature. CrossPoint updates go through `.github/workflows/update-from-crosspoint.yml` using a real `git merge` — never a hand port.
+* CI enforces this: `.github/workflows/thin-fork-guard.yml` fails a PR that introduces new fixed-upstream merge-conflict surface. Treat a guard failure as an architecture problem to fix, not a check to route around.
+
+---
+
 ## Git Workflow and Repository Awareness
 
 ### Repository Detection Protocol
