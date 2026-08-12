@@ -150,7 +150,12 @@ bool AppsActivity::launch(const AppEntry& entry) {
     case AppId::MidadBle:
       // Opens the pairing screen -- BLE-R2 correction 2. Does not itself touch BLE;
       // BluetoothActivity's own onEnter()/onExit() request/release the radio
-      // directly now (see BlePeripheralManager::setUserRequested()).
+      // directly now (see BlePeripheralManager::setUserRequested()). Deliberately
+      // still push-based (startActivityForResult), not replaceActivity() -- unlike
+      // Home's long-press shortcut (correction 3), this path already reliably
+      // clears the heap gate as measured on real hardware, since Apps itself has
+      // nothing comparable to Home's retained cover buffer. Back correctly returns
+      // to Apps, not Home.
       startActivityForResult(std::make_unique<BluetoothActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       return true;
   }
