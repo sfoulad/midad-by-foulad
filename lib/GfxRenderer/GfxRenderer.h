@@ -281,6 +281,12 @@ class GfxRenderer {
   // Screen ops
   int getScreenWidth() const;
   int getScreenHeight() const;
+  // Maps a touch point normalized 0..1 in the panel's native (physical) frame -- the
+  // form InputManager/HalGPIO report touch in -- to logical screen coordinates in the
+  // CURRENT orientation, i.e. the same coordinate space drawText/drawRoundedRect/etc.
+  // already use. This is rotateCoordinates()'s inverse; touch callers should never do
+  // their own orientation math.
+  void tapToLogical(float nx, float ny, int& outX, int& outY) const;
   // forceCleanBaseOnHalf: see HalDisplay::displayBuffer's own comment. Defaults
   // to true (existing behavior); the reader's periodic ghost-cleanup refresh
   // is the one caller that passes false.

@@ -266,6 +266,10 @@ int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
   return contentHeight / rowHeight;
 }
 
+int BaseTheme::getListRowStep(bool hasSubtitle) const {
+  return hasSubtitle ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
+}
+
 void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                          const std::function<std::string(int index)>& rowTitle,
                          const std::function<std::string(int index)>& rowSubtitle,
@@ -783,6 +787,22 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
     // Invert text when the tile is selected, to contrast with the filled background
     renderer.drawText(UI_10_FONT_ID, textX, textY, label, selectedIndex != i);
   }
+}
+
+int BaseTheme::hitTestButtonMenu(const GfxRenderer&, Rect rect, const int buttonCount, const int x, const int y) const {
+  if (x < rect.x + BaseMetrics::values.contentSidePadding ||
+      x >= rect.x + rect.width - BaseMetrics::values.contentSidePadding) {
+    return -1;
+  }
+  const int rowStep = BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing;
+  if (rowStep <= 0) return -1;
+  const int firstTileY = BaseMetrics::values.verticalSpacing + rect.y;
+  if (y < firstTileY) return -1;
+  const int offset = y - firstTileY;
+  const int row = offset / rowStep;
+  if (row < 0 || row >= buttonCount) return -1;
+  if (offset % rowStep >= BaseMetrics::values.menuRowHeight) return -1;  // in the inter-row gap
+  return row;
 }
 
 Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {

@@ -80,6 +80,17 @@ class HalGPIO {
   // Should only be called when wakeup reason is PowerButton.
   void verifyPowerButtonWakeup(uint16_t requiredDurationMs, bool shortPressAllowed);
 
+  // Capacitive touch pass-through -- inert (always returns false/0) on boards without a
+  // touch controller configured, per InputManager's own contract. MappedInputManager is
+  // the only intended caller (see the HAL rule in CLAUDE.md); never call InputManager
+  // directly from activity/theme code.
+  bool hasTouch() const;
+  bool wasTouchTap(float& nx, float& ny) const;
+  bool isTouchTapCandidate(float& nx, float& ny, unsigned long& heldMs) const;
+  bool isTouchHeldAt(float& nx, float& ny) const;
+  unsigned long lastTouchHeldMs() const;
+  bool wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
+
   // Check if USB is connected
   bool isUsbConnected() const;
 

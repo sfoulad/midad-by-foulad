@@ -248,6 +248,27 @@ int LyraTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
   return contentHeight / rowHeight;
 }
 
+int LyraTheme::getListRowStep(bool hasSubtitle) const {
+  return hasSubtitle ? LyraMetrics::values.listWithSubtitleRowHeight : LyraMetrics::values.listRowHeight;
+}
+
+int LyraTheme::hitTestButtonMenu(const GfxRenderer&, Rect rect, const int buttonCount, const int x, const int y) const {
+  // Mirrors drawButtonMenu() above: tileRect.x = rect.x + contentSidePadding, no extra
+  // verticalSpacing offset on tileRect.y (unlike BaseTheme's own version).
+  if (x < rect.x + LyraMetrics::values.contentSidePadding ||
+      x >= rect.x + rect.width - LyraMetrics::values.contentSidePadding) {
+    return -1;
+  }
+  const int rowStep = LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing;
+  if (rowStep <= 0) return -1;
+  if (y < rect.y) return -1;
+  const int offset = y - rect.y;
+  const int row = offset / rowStep;
+  if (row < 0 || row >= buttonCount) return -1;
+  if (offset % rowStep >= LyraMetrics::values.menuRowHeight) return -1;
+  return row;
+}
+
 void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
                          const std::function<std::string(int index)>& rowTitle,
                          const std::function<std::string(int index)>& rowSubtitle,

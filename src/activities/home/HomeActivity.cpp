@@ -254,6 +254,8 @@ void HomeActivity::freeCoverBuffer() {
 }
 
 void HomeActivity::loop() {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+
   // Anti-drift whitening: a static e-ink image slowly drifts gray over minutes
   // even with the Sunlight Fading Fix ON (confirmed on-device by photo) -- the
   // pigment relaxes regardless of the panel gate being powered down. A FAST
@@ -317,7 +319,43 @@ void HomeActivity::loop() {
     requestUpdate();
   });
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  bool activate = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+
+  // Touch: tapping/holding a menu tile selects + (on release) activates it, the same
+  // as Confirm. Scoped to !metrics.homeContinueReadingInMenu (FouladTheme, this fork's
+  // only shipping theme) for now -- LyraTheme's own "Continue Reading" first-tile echo
+  // of the cover-row selection isn't touch-mapped yet, falls back to button/Confirm only
+  // there. Geometry mirrors render()'s own drawButtonMenu() Rect and buttonCount exactly.
+  if (mappedInput.hasTouch() && !metrics.homeContinueReadingInMenu) {
+    const Rect menuRect{
+        0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, renderer.getScreenWidth(),
+        renderer.getScreenHeight() - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
+                                      metrics.homeMenuTopOffset + metrics.buttonHintsHeight)};
+    constexpr int kMenuItemCount = 4;  // eBooks, Stats, Apps, Settings -- matches loop()'s Confirm branch
+
+    int tx = 0;
+    int ty = 0;
+    int hit = -1;
+    bool isTap = false;
+    if (mappedInput.wasScreenTouchDown(tx, ty)) {
+      hit = GUI.hitTestButtonMenu(renderer, menuRect, kMenuItemCount, tx, ty);
+    } else if (mappedInput.wasScreenTapped(tx, ty)) {
+      hit = GUI.hitTestButtonMenu(renderer, menuRect, kMenuItemCount, tx, ty);
+      isTap = hit >= 0;
+    }
+    if (hit >= 0) {
+      const int tappedIndex = static_cast<int>(recentBooks.size()) + hit;
+      if (isTap) {
+        selectorIndex = tappedIndex;
+        activate = true;
+      } else if (selectorIndex != tappedIndex) {
+        selectorIndex = tappedIndex;
+        requestUpdate();
+      }
+    }
+  }
+
+  if (activate) {
     if (selectorIndex < recentBooks.size()) {
       // The last recents tile becomes a "+N more" stack when the store holds more
       // books than the row shows (see FouladTheme); confirming it opens the full
