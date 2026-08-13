@@ -79,21 +79,42 @@ void HalPowerManager::startDeepSleep(HalGPIO& gpio) const {
   logSerial.end();
 #endif
 
+#if CONFIG_IDF_TARGET_ESP32C3
   // Pre-sleep routines from the original firmware
   // GPIO13 is connected to battery latch MOSFET, we need to make sure it's low during sleep
   // Note that this means the MCU will be completely powered off during sleep, including RTC
+  //
+  // Xteink-X3/X4-specific: this is the C3 board's own battery-latch wiring, not a generic
+  // ESP32 requirement. Do NOT extend this to other boards without checking their own power
+  // circuit first -- e.g. on X4 Pro (freeink-sdk BoardConfig.h), GPIO13 is the display SPI
+  // clock (SCLK), not a latch pin; driving it as a static output here would collide with
+  // the panel. Sticky's power circuit is a different design again (a 74AHC1G79 latch on
+  // PWR_HOLD/PWR_LOCK, GPIO45/46, that holds itself -- see freeink-sdk's STICKY BoardProfile
+  // comment) and needs its own release sequence, not implemented here.
   constexpr gpio_num_t GPIO_SPIWP = GPIO_NUM_13;
   gpio_set_direction(GPIO_SPIWP, GPIO_MODE_OUTPUT);
   gpio_set_level(GPIO_SPIWP, 0);
   esp_sleep_config_gpio_isolate();
   gpio_deep_sleep_hold_en();
   gpio_hold_en(GPIO_SPIWP);
+#else
+  // TODO(S3 boards): each board's own power-latch circuit needs its own release
+  // sequence here before deep sleep actually powers the board down correctly (see
+  // the board-specific note above). Not implemented -- unverified without hardware.
+  esp_sleep_config_gpio_isolate();
+#endif
   pinMode(InputManager::POWER_BUTTON_PIN, INPUT_PULLUP);
   // Arm the wakeup trigger *after* the button is released
   // Note: this is only useful for waking up on USB power. On battery, the MCU will be completely powered off, so the
   // power button is hard-wired to briefly provide power to the MCU, waking it up regardless of the wakeup source
   // configuration
+#if CONFIG_IDF_TARGET_ESP32C3
   esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+#else
+  // See the identical Xtensa EXT1 note in HalGPIO::startDeepSleep(). UNTESTED on
+  // real S3 hardware.
+  esp_sleep_enable_ext1_wakeup_io(1ULL << InputManager::POWER_BUTTON_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+#endif
   // Enter Deep Sleep
   esp_deep_sleep_start();
 }

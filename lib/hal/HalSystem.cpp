@@ -44,6 +44,16 @@ void IRAM_ATTR __wrap_panic_print_backtrace(const void* frame, int core) {
     __real_panic_print_backtrace(frame, core);
     return;
   }
+
+#if !__riscv
+  // Xtensa (S3, etc.): matches upstream CrossPoint's own choice here (verified
+  // against their current lib/hal/HalSystem.cpp) -- skip the raw stack-dump
+  // capture rather than guess at Xtensa's exception-frame layout. Crash
+  // reports on Xtensa targets lose the "Stack memory" section but everything
+  // else (panic message, heap-before-panic, last logs) still works.
+  __real_panic_print_backtrace(frame, core);
+  return;
+#else
   for (size_t i = 0; i < MAX_PANIC_STACK_DEPTH; i++) {
     panicStack[i].sp = 0;
   }
@@ -71,6 +81,7 @@ void IRAM_ATTR __wrap_panic_print_backtrace(const void* frame, int core) {
   }
 
   __real_panic_print_backtrace(frame, core);
+#endif
 }
 }
 

@@ -172,7 +172,15 @@ void HalGPIO::startDeepSleep() {
     inputMgr.update();
   }
   // Arm the wakeup trigger *after* the button is released
+#if CONFIG_IDF_TARGET_ESP32C3
   esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+#else
+  // Xtensa (S3, etc.) has no lightweight GPIO-wakeup peripheral (that's a RISC-V-
+  // only SoC feature, SOC_GPIO_SUPPORT_DEEPSLEEP_WAKEUP) -- EXT1 is the documented
+  // equivalent for "wake on this RTC-capable GPIO going low". UNTESTED on real S3
+  // hardware -- verify the device actually wakes on a power-button press.
+  esp_sleep_enable_ext1_wakeup_io(1ULL << InputManager::POWER_BUTTON_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+#endif
   // Enter Deep Sleep
   esp_deep_sleep_start();
 }
