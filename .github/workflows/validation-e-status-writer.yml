@@ -1,13 +1,16 @@
-name: "Validation D (disposable -- no permissions block)"
+name: "Validation E (disposable -- status-writer attempt)"
 
 on:
   pull_request_target:
     types:
       - opened
 
+permissions:
+  statuses: write
+
 jobs:
   noop:
     runs-on: ubuntu-latest
     steps:
       - name: No-op
-        run: echo "this workflow deliberately has no top-level permissions: block"
+        run: echo "this workflow deliberately grants statuses: write outside thin-fork-guard-trusted.yml"
