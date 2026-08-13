@@ -1096,6 +1096,34 @@ gh api \
   --input /tmp/develop-ruleset.json
 ```
 
+## Security-boundary file maintenance
+
+`scripts/thin-fork-guard.sh` hard-blocks any ordinary PR that touches one of its `SECURITY_BOUNDARY_FILES`:
+
+- `.github/workflows/thin-fork-guard-trusted.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/update-from-crosspoint.yml`
+- `scripts/thin-fork-guard.sh`
+- `scripts/measure-conflicts.sh`
+
+This is a separate, independent gate from the thin-fork conflict/divergence checks — it doesn't care about upstream ownership, existing divergence, or conflict count. These files collectively define what "passing" means (the trusted evaluator's own workflow, the scripts it runs, and the CI entrypoint it depends on being green), so a PR that touches any of them is, by definition, touching the machinery that decides whether PRs pass — including its own. Deliberately excluded from this hard block: `.skills/SKILL.md`, `docs/*`, and `scripts/test-thin-fork-guard.sh` — these remain normal, editable files, still covered by the existing non-blocking `GOVERNANCE_TOUCHED` report, because none of them individually decide a PR's pass/fail on their own (a corrupted `test-thin-fork-guard.sh` can't fake a result — see that reasoning in the "GitHub-side enforcement" section above; `.skills/SKILL.md` and `docs/*` are read by humans and agents, not executed by CI at all).
+
+**This means a legitimate fix to any of the five files above cannot go through the normal PR flow once the ruleset (above) requires `thin-fork-guard-trusted` — the gate will fail it every time, by design.** The explicit human procedure for that case:
+
+1. Identify the change as guard/security-boundary maintenance, not an ordinary PR.
+2. Repo admin temporarily relaxes the required check: either set the ruleset's `enforcement` to `disabled`, or remove `thin-fork-guard-trusted` from the `required_status_checks` rule's context list.
+3. Open, review, and merge the maintenance PR normally (it will still report its guard verdict — including a security-boundary FAIL, which is expected and can be disregarded for this one, deliberately-relaxed merge).
+4. Immediately restore the ruleset to its prior state. Don't leave the repo unprotected longer than the single merge requires.
+5. If the change touched the trusted evaluator's own logic (`thin-fork-guard-trusted.yml`, `thin-fork-guard.sh`, or `measure-conflicts.sh`), **re-run the disposable-PR validation sequence** (validations A-F for the trusted workflow itself, plus scenarios 16-18's real-PR equivalents for the security-boundary/workflow-permission gates) before trusting the guard again — a change to the evaluator's own logic is exactly the kind of change that most needs re-validating empirically, not just by code review.
+
+This mirrors the general emergency-maintenance procedure already described for the ruleset itself above, specialized for the specific files whose compromise would be most damaging: they're not just "hard to change," they're the thing that would need to be trusted to correctly report its own compromise.
+
+## Workflow-permission audit
+
+Complementary to the security-boundary gate: `scripts/thin-fork-guard.sh` also scans every `.github/workflows/*.yml`/`*.yaml` file's *content* at PR HEAD (via `git show`, read-only git plumbing — never executed, consistent with this guard never running anything from HEAD) for `statuses: write`, `checks: write`, or `permissions: write-all`, excluding `thin-fork-guard-trusted.yml` itself (which legitimately needs `statuses: write`, and is separately protected by the security-boundary gate above — an ordinary PR cannot modify it to remove that exclusion's justification). Any other workflow file containing one of those strings fails the PR.
+
+The invariant this protects: after the PR Formatting fix in the same PR that introduced this audit, `thin-fork-guard-trusted.yml` is the *only* workflow in the repo that legitimately needs to write a commit status or check — anything else claiming that permission is either a mistake or an attempt to publish a spoofed `thin-fork-guard-trusted` (or similar) result. This is deliberately a plain text scan, not a YAML-aware permission resolver or general security scanner — narrow, simple, and fail-closed on purpose.
+
 ## Prior sync-session findings (kept for reference)
 
 These are concrete, already-verified lessons from the 2026-08-11 session

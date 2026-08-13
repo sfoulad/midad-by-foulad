@@ -19,7 +19,11 @@
 # history, which a naive "differs from upstream's current tip" comparison
 # misclassifies as "already diverged" even when Midad has never touched it
 # -- see thin-fork-guard.sh's "COMMON_REF" header comment for the four-state
-# model this exists to get right.
+# model this exists to get right. Scenarios 16-18 cover the two independent
+# security-boundary gates (SECURITY_BOUNDARY_FILES and the workflow-
+# permission audit) that protect the guard's own enforcement machinery --
+# unrelated to thin-fork divergence, so they use the plain new_fixture
+# fixture with no upstream-ownership significance to the paths involved.
 #
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
@@ -445,6 +449,58 @@ echo "=== Scenario 15: upstream deletes a path after the shared history, Midad t
   assert_exit "upstream-deleted-first then Midad edit fails" 1 "$ec"
   assert_contains "upstream-deleted-first then Midad edit names shared5.txt" "shared5.txt" "$out"
   assert_contains "upstream-deleted-first then Midad edit reports the Midad-side divergence section" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 16: ordinary PR modifies a security-boundary file -> FAIL ==="
+{
+  dir="$(new_fixture scenario16)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  echo "name: CI" >.github/workflows/ci.yml
+  git add .github/workflows/ci.yml
+  git commit -qm "ordinary: touch ci.yml (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "security-boundary file touch fails" 1 "$ec"
+  assert_contains "security-boundary file touch names ci.yml" ".github/workflows/ci.yml" "$out"
+  assert_contains "security-boundary file touch reports the gate section" "Security-boundary files modified by this PR" "$out"
+  assert_contains "security-boundary file touch reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 17: ordinary PR adds a workflow with statuses: write -> FAIL ==="
+{
+  dir="$(new_fixture scenario17)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Suspicious\non:\n  pull_request_target:\npermissions:\n  statuses: write\n' >.github/workflows/suspicious.yml
+  git add .github/workflows/suspicious.yml
+  git commit -qm "ordinary: add a workflow claiming statuses: write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "new statuses:write workflow fails" 1 "$ec"
+  assert_contains "new statuses:write workflow names suspicious.yml" "suspicious.yml" "$out"
+  assert_contains "new statuses:write workflow reports the audit section" "Workflow files with forbidden status/check-write permissions" "$out"
+  assert_contains "new statuses:write workflow reports FAIL with the right reason" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 18: ordinary PR adds a normal read-only workflow -> PASS ==="
+{
+  dir="$(new_fixture scenario18)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Harmless\non:\n  pull_request:\npermissions:\n  contents: read\n' >.github/workflows/harmless.yml
+  git add .github/workflows/harmless.yml
+  git commit -qm "ordinary: add a harmless read-only workflow"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "harmless read-only workflow passes" 0 "$ec"
+  assert_contains "harmless read-only workflow reports PASS" "PASS" "$out"
 }
 
 echo

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # thin-fork-guard.sh <base-ref> <head-ref> [upstream-ref] [head-branch-name]
 #
-# Reports, and gates on, three things <head-ref> may do relative to
-# <base-ref>, all measured against the LIVE upstream mirror (default
+# Reports, and gates on, three THIN-FORK things <head-ref> may do relative
+# to <base-ref>, all measured against the LIVE upstream mirror (default
 # origin/upstream, the maintained CrossPoint mirror kept current by
-# .github/workflows/update-from-crosspoint.yml):
+# .github/workflows/update-from-crosspoint.yml), PLUS two independent
+# SECURITY-BOUNDARY gates (sections 6-7 below) that protect the guard's own
+# enforcement machinery and are not about thin-fork divergence at all:
 #
 #   1. Introduce new fixed-upstream MERGE-CONFLICT surface (simulated real
 #      merge of <upstream-ref> into each side).
@@ -14,6 +16,21 @@
 #   3. RENAME a shared file away from its upstream path while that file was
 #      still Midad-clean -- a special case of #2 that the general check
 #      cannot see on its own (see the note above compute_diverged_files).
+#   4. MODIFY a security-boundary file (section 6) -- the trusted workflow,
+#      the CI entrypoint, or this guard's own scripts. Independent of
+#      upstream ownership, existing divergence, or conflict count: these
+#      files define enforcement itself, so any ordinary-PR touch to them
+#      fails, full stop. See "Security-boundary file maintenance" in
+#      docs/upstream-sync-architecture.md for the explicit human procedure
+#      required to change one legitimately.
+#   5. INTRODUCE a second status/check-writing workflow (section 7) --
+#      `.github/workflows/*.yml` at HEAD other than
+#      thin-fork-guard-trusted.yml itself must never contain
+#      `statuses: write`, `checks: write`, or `permissions: write-all`.
+#      One invariant: no ordinary PR may create another workflow capable of
+#      spoofing the trusted required status. A plain text scan of HEAD's
+#      workflow file *content* (via `git show`, never executed), not a
+#      general YAML security scanner.
 #
 # --- Why #2 is anchored to a merge-base, not to upstream's current tip ---
 # A naive two-state comparison ("does <base-ref>/<head-ref>'s copy of this
@@ -70,9 +87,10 @@
 # ancestry could diverge a previously-clean upstream file for free, which
 # is exactly the failure mode this gate exists to catch.
 #
-# Exit 0: no new conflicting files, no new Midad-side divergence, and no
+# Exit 0: no new conflicting files, no new Midad-side divergence, no
 #         rename of a previously Midad-clean shared file away from
-#         upstream.
+#         upstream, no security-boundary file touched, and no other
+#         workflow introduces status/check-write permissions.
 # Exit 1: otherwise, OR if conflict measurement itself fails for a non
 #         content-conflict reason (see measure-conflicts.sh -- this script
 #         does not catch that failure, so it propagates as a hard abort
@@ -308,7 +326,63 @@ while IFS= read -r path; do
   done
 done <<<"$PR_DIFF_FILES"
 
-# --- 4. Sync-PR recognition (informational only -- see header) --------------
+# --- 6. Security-boundary files (independent hard gate) ----------------------
+# These files define or influence enforcement itself: the trusted
+# evaluator's own workflow, the CI entrypoint, and this guard's own
+# scripts. Independent of upstream ownership, existing divergence, or
+# conflict count -- none of those concepts capture "this PR is touching the
+# machinery that decides whether PRs pass." An ordinary PR must never
+# modify these; see docs/upstream-sync-architecture.md's "Security-boundary
+# file maintenance" section for the explicit human procedure required to
+# change one legitimately (relax the required check, merge, restore,
+# re-validate).
+SECURITY_BOUNDARY_FILES=(
+  ".github/workflows/thin-fork-guard-trusted.yml"
+  ".github/workflows/ci.yml"
+  ".github/workflows/update-from-crosspoint.yml"
+  "scripts/thin-fork-guard.sh"
+  "scripts/measure-conflicts.sh"
+)
+SECURITY_BOUNDARY_TOUCHED=""
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  for sb in "${SECURITY_BOUNDARY_FILES[@]}"; do
+    if [ "$path" = "$sb" ]; then
+      SECURITY_BOUNDARY_TOUCHED="${SECURITY_BOUNDARY_TOUCHED}${path}"$'\n'
+    fi
+  done
+done <<<"$PR_DIFF_FILES"
+
+# --- 7. Workflow-permission audit (independent hard gate) --------------------
+# One invariant: no ordinary PR may create another workflow capable of
+# spoofing the trusted required status/check. Scans every workflow file's
+# CONTENT at HEAD_REF (via `git show`, git plumbing -- never executed,
+# consistent with this guard never running anything from HEAD) for the
+# permission strings that would let a workflow publish or fake a commit
+# status/check. thin-fork-guard-trusted.yml itself is exempt here because
+# it legitimately needs `statuses: write` -- and it is already covered by
+# the security-boundary gate above, so an ordinary PR cannot modify it
+# anyway. Deliberately a plain text scan, not a YAML-aware permission
+# resolver or general security scanner -- one narrow invariant, kept simple
+# and fail-closed.
+FORBIDDEN_PERMISSION_PATTERNS=(
+  "statuses: write"
+  "checks: write"
+  "permissions: write-all"
+)
+WORKFLOW_PERMISSION_VIOLATIONS=""
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ "$path" = ".github/workflows/thin-fork-guard-trusted.yml" ] && continue
+  content="$(git show "$HEAD_REF:$path" 2>/dev/null || true)"
+  for pattern in "${FORBIDDEN_PERMISSION_PATTERNS[@]}"; do
+    if grep -qF "$pattern" <<<"$content"; then
+      WORKFLOW_PERMISSION_VIOLATIONS="${WORKFLOW_PERMISSION_VIOLATIONS}${path}: contains \`${pattern}\`"$'\n'
+    fi
+  done
+done < <(git ls-tree -r --name-only "$HEAD_REF" -- .github/workflows/ 2>/dev/null | grep -E '\.ya?ml$')
+
+# --- 8. Sync-PR recognition (informational only -- see header) --------------
 IS_SYNC=false
 NAME_MISMATCH=false
 if is_recognized_sync_pr "$BASE_REF" "$HEAD_REF" "$UPSTREAM_REF"; then
@@ -317,7 +391,7 @@ elif [[ "$HEAD_BRANCH_NAME" == sync/crosspoint-* ]]; then
   NAME_MISMATCH=true
 fi
 
-# --- 5. Report ---------------------------------------------------------------
+# --- 9. Report ---------------------------------------------------------------
 {
   echo "## Thin-Fork Guard"
   echo
@@ -462,12 +536,32 @@ fi
     echo '```'
     echo
   fi
+
+  if [ -n "$SECURITY_BOUNDARY_TOUCHED" ]; then
+    echo "### Security-boundary files modified by this PR (gates this PR)"
+    echo "These files define or influence enforcement itself; an ordinary PR must never modify them. See docs/upstream-sync-architecture.md's \"Security-boundary file maintenance\" section for the human procedure required to change one legitimately."
+    echo '```'
+    echo "$SECURITY_BOUNDARY_TOUCHED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$WORKFLOW_PERMISSION_VIOLATIONS" ]; then
+    echo "### Workflow files with forbidden status/check-write permissions (gates this PR)"
+    echo "Only \`thin-fork-guard-trusted.yml\` may hold these permissions:"
+    echo '```'
+    echo "$WORKFLOW_PERMISSION_VIOLATIONS"
+    echo '```'
+    echo
+  fi
 }
 
 FAIL_REASONS=()
 [ -n "$NEW_CONFLICTS" ] && FAIL_REASONS+=("introduces new fixed-upstream merge-conflict surface")
 [ -n "$MIDAD_NEW_DIVERGED" ] && FAIL_REASONS+=("introduces new Midad-side divergence in a file that was clean relative to the shared upstream history")
 [ -n "$RENAME_NEW_DIVERGED" ] && FAIL_REASONS+=("renames a Midad-clean shared file away from tracking upstream")
+[ -n "$SECURITY_BOUNDARY_TOUCHED" ] && FAIL_REASONS+=("security-boundary file modified -- explicit guard-maintenance procedure required")
+[ -n "$WORKFLOW_PERMISSION_VIOLATIONS" ] && FAIL_REASONS+=("introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml")
 
 if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
   echo "FAIL: this PR:"
