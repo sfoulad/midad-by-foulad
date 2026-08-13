@@ -464,8 +464,18 @@ fi
   fi
 }
 
-# VALIDATION D TAMPER: forcing a fake PASS to prove the trusted evaluator
-# (which runs the base branch's untampered copy of this file, never this
-# PR's) is not fooled by this. Disposable, will be reverted.
+FAIL_REASONS=()
+[ -n "$NEW_CONFLICTS" ] && FAIL_REASONS+=("introduces new fixed-upstream merge-conflict surface")
+[ -n "$MIDAD_NEW_DIVERGED" ] && FAIL_REASONS+=("introduces new Midad-side divergence in a file that was clean relative to the shared upstream history")
+[ -n "$RENAME_NEW_DIVERGED" ] && FAIL_REASONS+=("renames a Midad-clean shared file away from tracking upstream")
+
+if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
+  echo "FAIL: this PR:"
+  for reason in "${FAIL_REASONS[@]}"; do
+    echo "  - $reason"
+  done
+  exit 1
+fi
+
 echo "PASS"
 exit 0
