@@ -6,3 +6,4 @@ CrossPoint-owned path, and is not meant to be merged. This PR will be closed
 without merging once validation is complete.
 
 Validation A: harmless Midad-only addition.
+Validation B: harmless synchronize commit.
