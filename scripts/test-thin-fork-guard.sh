@@ -36,6 +36,16 @@
 # boundary file outright. Scenario 27 proves the workflow-permission audit
 # fails closed (hard aborts) on a workflow file it cannot parse, rather
 # than silently treating an unreadable file as "contains no violations."
+# Scenario 28 covers scripts/test-thin-fork-guard.sh itself as protected
+# security-boundary code -- the trusted workflow executes it before the
+# real guard, so a modified copy is trusted executable code, not just a
+# governance-flagged file. Scenarios 29-32 cover the "every
+# pull_request_target workflow must declare explicit top-level
+# permissions" invariant: no declaration at all, explicit read-only
+# permissions (PASS), explicit permissions that still contain a forbidden
+# write (routes through the existing forbidden-permission rule, not the
+# missing-declaration one), and the mapping-form/array-form trigger
+# spellings (both must be recognized, not just the bare scalar form).
 #
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
@@ -677,6 +687,101 @@ echo "=== Scenario 27: unparseable workflow YAML at PR HEAD -> guard fails close
   assert_exit "malformed workflow YAML fails closed" 1 "$ec"
   assert_contains "malformed workflow YAML reports the audit could not complete" "workflow-permission audit could not complete -- failing closed" "$out"
   assert_contains "malformed workflow YAML names the broken file" "broken.yml" "$out"
+}
+
+echo
+echo "=== Scenario 28: ordinary PR modifies scripts/test-thin-fork-guard.sh -> FAIL (trusted executable code, not just governance) ==="
+{
+  dir="$(new_fixture scenario28)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\necho ok\n' >scripts/test-thin-fork-guard.sh
+  git add scripts/test-thin-fork-guard.sh
+  git commit -qm "develop: placeholder test-thin-fork-guard.sh"
+  git checkout -qb head_branch
+  cat >scripts/test-thin-fork-guard.sh <<'MALICIOUS'
+#!/usr/bin/env bash
+# malicious: if this ran as the trusted evaluator's self-test step (before
+# the real guard, from the base checkout), it would overwrite the real
+# guard with an always-PASS stub before it ever runs.
+echo 'echo PASS; exit 0' > "$(dirname "$0")/thin-fork-guard.sh"
+exit 0
+MALICIOUS
+  git add scripts/test-thin-fork-guard.sh
+  git commit -qm "ordinary: modify test-thin-fork-guard.sh to tamper with the real guard (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "modify test-thin-fork-guard.sh fails" 1 "$ec"
+  assert_contains "modify test-thin-fork-guard.sh names it" "scripts/test-thin-fork-guard.sh (modified/deleted)" "$out"
+  assert_contains "modify test-thin-fork-guard.sh reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 29: new pull_request_target workflow with no permissions block -> FAIL ==="
+{
+  dir="$(new_fixture scenario29)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: NoPerms\non: pull_request_target\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/noperms29.yml
+  git add .github/workflows/noperms29.yml
+  git commit -qm "ordinary: add pull_request_target workflow with no permissions block (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "pull_request_target with no permissions fails" 1 "$ec"
+  assert_contains "pull_request_target with no permissions names the file" "noperms29.yml" "$out"
+  assert_contains "pull_request_target with no permissions reports the specific reason" "pull_request_target workflow has no explicit top-level permissions declaration" "$out"
+}
+
+echo "=== Scenario 30: pull_request_target with explicit read-only permissions -> PASS ==="
+{
+  dir="$(new_fixture scenario30)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: ReadOnly\non: pull_request_target\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/readonly30.yml
+  git add .github/workflows/readonly30.yml
+  git commit -qm "ordinary: add pull_request_target workflow with explicit read-only permissions"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "pull_request_target with explicit read-only permissions passes" 0 "$ec"
+  assert_contains "pull_request_target with explicit read-only permissions reports PASS" "PASS" "$out"
+}
+
+echo "=== Scenario 31: pull_request_target with explicit permissions but statuses: write -> FAIL (existing forbidden-permission rule) ==="
+{
+  dir="$(new_fixture scenario31)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: BadPerms\non: pull_request_target\npermissions:\n  contents: read\n  statuses: write\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/badperms31.yml
+  git add .github/workflows/badperms31.yml
+  git commit -qm "ordinary: add pull_request_target workflow with explicit statuses: write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "pull_request_target with explicit statuses write fails" 1 "$ec"
+  assert_contains "pull_request_target with explicit statuses write names the file" "badperms31.yml" "$out"
+  assert_contains "pull_request_target with explicit statuses write reports the forbidden-permission reason (not the missing-declaration one)" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 32: mapping-form and array-form pull_request_target triggers with explicit read-only permissions -> PASS ==="
+{
+  dir="$(new_fixture scenario32)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: MappingForm\non:\n  pull_request_target:\n    types: [opened, reopened, edited]\npermissions:\n  pull-requests: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/mapping32.yml
+  printf 'name: ArrayForm\non: [push, pull_request_target]\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/array32.yml
+  git add .github/workflows/mapping32.yml .github/workflows/array32.yml
+  git commit -qm "ordinary: add mapping-form and array-form pull_request_target workflows, both with explicit read-only permissions"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "mapping-form and array-form pull_request_target with explicit permissions passes" 0 "$ec"
+  assert_contains "mapping-form and array-form pull_request_target reports PASS" "PASS" "$out"
 }
 
 echo

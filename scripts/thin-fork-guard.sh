@@ -17,8 +17,14 @@
 #      still Midad-clean -- a special case of #2 that the general check
 #      cannot see on its own (see the note above compute_diverged_files).
 #   4. MODIFY, DELETE, or RENAME (either direction) a security-boundary
-#      file (section 6) -- the trusted workflow, the CI entrypoint, or this
-#      guard's own scripts. Independent of upstream ownership, existing
+#      file (section 6) -- the trusted workflow, the CI entrypoint, this
+#      guard's own scripts, AND the self-test suite (scripts/test-thin-
+#      fork-guard.sh): the trusted workflow executes the self-test BEFORE
+#      the production guard, using the base branch's copy, so it is
+#      trusted executable code, not just a governance-flagged file -- a
+#      compromised self-test in a merged base could alter the checkout
+#      (overwrite thin-fork-guard.sh with a stub, etc.) before the real
+#      evaluator ever runs. Independent of upstream ownership, existing
 #      divergence, or conflict count: these files define enforcement
 #      itself, so any ordinary-PR touch to them fails, full stop. Checked
 #      via both `git diff --name-only` (covers plain modify/delete) AND
@@ -360,6 +366,7 @@ SECURITY_BOUNDARY_FILES=(
   "scripts/thin-fork-guard.sh"
   "scripts/measure-conflicts.sh"
   "scripts/check-workflow-permissions.rb"
+  "scripts/test-thin-fork-guard.sh"
 )
 SECURITY_BOUNDARY_TOUCHED=""
 # Plain modify/delete: PR_DIFF_FILES (git diff --name-only) reliably lists
