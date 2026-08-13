@@ -329,4 +329,3 @@ WhitespaceSensitiveMacros:
   - PP_STRINGIZE
   - STRINGIZE
 WrapNamespaceBodyWithEmptyLines: Leave
-# validation-c: temporary disposable comment, will be reverted
