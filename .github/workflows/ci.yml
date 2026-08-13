@@ -184,4 +184,3 @@ jobs:
         run: exit 1
       - name: Success
         run: exit 0
-# validation-c: temporary disposable comment, will be reverted
