@@ -19,7 +19,33 @@
 # history, which a naive "differs from upstream's current tip" comparison
 # misclassifies as "already diverged" even when Midad has never touched it
 # -- see thin-fork-guard.sh's "COMMON_REF" header comment for the four-state
-# model this exists to get right.
+# model this exists to get right. Scenarios 16-18 cover the two independent
+# security-boundary gates (SECURITY_BOUNDARY_FILES and the workflow-
+# permission audit) that protect the guard's own enforcement machinery --
+# unrelated to thin-fork divergence, so they use the plain new_fixture
+# fixture with no upstream-ownership significance to the paths involved.
+# Scenarios 19-20 cover renaming a security-boundary file AWAY (the same
+# "--name-only doesn't surface a rename's old path" bypass class as
+# scenario 13, but for the security-boundary gate specifically, which is
+# independent code from the thin-fork rename gate). Scenario 21-23 and 25
+# prove the workflow-permission audit is a real YAML parse, not a text
+# match against one exact spelling: quoting, spacing, and a YAML alias all
+# still get caught because the parser reads the resolved value, not the
+# source bytes. Scenario 24 covers renaming an unrelated file INTO a
+# security-boundary pathname. Scenario 26 covers deleting a security-
+# boundary file outright. Scenario 27 proves the workflow-permission audit
+# fails closed (hard aborts) on a workflow file it cannot parse, rather
+# than silently treating an unreadable file as "contains no violations."
+# Scenario 28 covers scripts/test-thin-fork-guard.sh itself as protected
+# security-boundary code -- the trusted workflow executes it before the
+# real guard, so a modified copy is trusted executable code, not just a
+# governance-flagged file. Scenarios 29-32 cover the "every
+# pull_request_target workflow must declare explicit top-level
+# permissions" invariant: no declaration at all, explicit read-only
+# permissions (PASS), explicit permissions that still contain a forbidden
+# write (routes through the existing forbidden-permission rule, not the
+# missing-declaration one), and the mapping-form/array-form trigger
+# spellings (both must be recognized, not just the bare scalar form).
 #
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
@@ -445,6 +471,317 @@ echo "=== Scenario 15: upstream deletes a path after the shared history, Midad t
   assert_exit "upstream-deleted-first then Midad edit fails" 1 "$ec"
   assert_contains "upstream-deleted-first then Midad edit names shared5.txt" "shared5.txt" "$out"
   assert_contains "upstream-deleted-first then Midad edit reports the Midad-side divergence section" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 16: ordinary PR modifies a security-boundary file -> FAIL ==="
+{
+  dir="$(new_fixture scenario16)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  echo "name: CI" >.github/workflows/ci.yml
+  git add .github/workflows/ci.yml
+  git commit -qm "ordinary: touch ci.yml (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "security-boundary file touch fails" 1 "$ec"
+  assert_contains "security-boundary file touch names ci.yml" ".github/workflows/ci.yml" "$out"
+  assert_contains "security-boundary file touch reports the gate section" "Security-boundary files touched by this PR" "$out"
+  assert_contains "security-boundary file touch reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 17: ordinary PR adds a workflow with statuses: write -> FAIL ==="
+{
+  dir="$(new_fixture scenario17)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Suspicious\non:\n  pull_request_target:\npermissions:\n  statuses: write\n' >.github/workflows/suspicious.yml
+  git add .github/workflows/suspicious.yml
+  git commit -qm "ordinary: add a workflow claiming statuses: write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "new statuses:write workflow fails" 1 "$ec"
+  assert_contains "new statuses:write workflow names suspicious.yml" "suspicious.yml" "$out"
+  assert_contains "new statuses:write workflow reports the audit section" "Workflow files with forbidden status/check-write permissions" "$out"
+  assert_contains "new statuses:write workflow reports FAIL with the right reason" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 18: ordinary PR adds a normal read-only workflow -> PASS ==="
+{
+  dir="$(new_fixture scenario18)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Harmless\non:\n  pull_request:\npermissions:\n  contents: read\n' >.github/workflows/harmless.yml
+  git add .github/workflows/harmless.yml
+  git commit -qm "ordinary: add a harmless read-only workflow"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "harmless read-only workflow passes" 0 "$ec"
+  assert_contains "harmless read-only workflow reports PASS" "PASS" "$out"
+}
+
+echo "=== Scenario 19: rename scripts/thin-fork-guard.sh away -> FAIL (security-boundary) ==="
+{
+  dir="$(new_fixture scenario19)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  echo "#!/usr/bin/env bash" >scripts/thin-fork-guard.sh
+  git add scripts/thin-fork-guard.sh
+  git commit -qm "develop: placeholder thin-fork-guard.sh"
+  git checkout -qb head_branch
+  git mv scripts/thin-fork-guard.sh scripts/old-thin-fork-guard.sh
+  git commit -qm "ordinary: rename thin-fork-guard.sh away (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "rename thin-fork-guard.sh away fails" 1 "$ec"
+  # shellcheck disable=SC2016 # single-quoted on purpose: backticks must stay literal, not become command substitution
+  assert_contains "rename thin-fork-guard.sh away names the rename" 'scripts/thin-fork-guard.sh` -> `scripts/old-thin-fork-guard.sh' "$out"
+  assert_contains "rename thin-fork-guard.sh away reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 20: rename .github/workflows/ci.yml away -> FAIL (security-boundary) ==="
+{
+  dir="$(new_fixture scenario20)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p .github/workflows
+  echo "name: CI" >.github/workflows/ci.yml
+  git add .github/workflows/ci.yml
+  git commit -qm "develop: placeholder ci.yml"
+  git checkout -qb head_branch
+  git mv .github/workflows/ci.yml .github/workflows/ci-disabled.yml
+  git commit -qm "ordinary: rename ci.yml away (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "rename ci.yml away fails" 1 "$ec"
+  # shellcheck disable=SC2016 # single-quoted on purpose: backticks must stay literal, not become command substitution
+  assert_contains "rename ci.yml away names the rename" '.github/workflows/ci.yml` -> `.github/workflows/ci-disabled.yml' "$out"
+  assert_contains "rename ci.yml away reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo '=== Scenario 21: workflow permission audit catches quoted statuses: "write" -> FAIL ==='
+{
+  dir="$(new_fixture scenario21)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Suspicious\non:\n  pull_request_target:\npermissions:\n  statuses: "write"\n' >.github/workflows/suspicious21.yml
+  git add .github/workflows/suspicious21.yml
+  git commit -qm "ordinary: add workflow with quoted statuses write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "quoted statuses write fails" 1 "$ec"
+  assert_contains "quoted statuses write names the file" "suspicious21.yml" "$out"
+  assert_contains "quoted statuses write reports FAIL with the right reason" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo '=== Scenario 22: workflow permission audit catches quoted permissions: "write-all" -> FAIL ==='
+{
+  dir="$(new_fixture scenario22)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Suspicious\non:\n  pull_request_target:\npermissions: "write-all"\n' >.github/workflows/suspicious22.yml
+  git add .github/workflows/suspicious22.yml
+  git commit -qm "ordinary: add workflow with quoted write-all (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "quoted write-all fails" 1 "$ec"
+  assert_contains "quoted write-all names the file" "suspicious22.yml" "$out"
+  assert_contains "quoted write-all reports FAIL with the right reason" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 23: workflow permission audit catches a quoted/spaced checks: write variant -> FAIL ==="
+{
+  dir="$(new_fixture scenario23)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Suspicious\non:\n  pull_request_target:\npermissions:\n  "checks"   :   write\n' >.github/workflows/suspicious23.yml
+  git add .github/workflows/suspicious23.yml
+  git commit -qm "ordinary: add workflow with quoted/spaced checks write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "quoted/spaced checks write fails" 1 "$ec"
+  assert_contains "quoted/spaced checks write names the file" "suspicious23.yml" "$out"
+  assert_contains "quoted/spaced checks write reports FAIL with the right reason" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 24: rename an unrelated file INTO a security-boundary pathname -> FAIL ==="
+{
+  dir="$(new_fixture scenario24)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  echo "some other script content, long enough for git's rename similarity heuristic" >scripts/harmless-tool.sh
+  git add scripts/harmless-tool.sh
+  git commit -qm "develop: unrelated harmless script"
+  git checkout -qb head_branch
+  git mv scripts/harmless-tool.sh scripts/measure-conflicts.sh
+  git commit -qm "ordinary: rename an unrelated file into a boundary pathname (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "rename into boundary pathname fails" 1 "$ec"
+  # shellcheck disable=SC2016 # single-quoted on purpose: backticks must stay literal, not become command substitution
+  assert_contains "rename into boundary pathname names the rename" 'scripts/harmless-tool.sh` -> `scripts/measure-conflicts.sh' "$out"
+  assert_contains "rename into boundary pathname reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 25: workflow permission audit catches a YAML alias resolving to write -> FAIL (aliases cannot bypass) ==="
+{
+  dir="$(new_fixture scenario25)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'x-perm: &writeperm write\nname: Suspicious\non:\n  pull_request_target:\npermissions:\n  statuses: *writeperm\n' >.github/workflows/suspicious25.yml
+  git add .github/workflows/suspicious25.yml
+  git commit -qm "ordinary: add workflow using a YAML alias for statuses write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "YAML alias for statuses write fails" 1 "$ec"
+  assert_contains "YAML alias for statuses write names the file" "suspicious25.yml" "$out"
+  assert_contains "YAML alias for statuses write reports FAIL with the right reason" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 26: delete a security-boundary file outright -> FAIL (security-boundary) ==="
+{
+  dir="$(new_fixture scenario26)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  echo "#!/usr/bin/env bash" >scripts/measure-conflicts.sh
+  git add scripts/measure-conflicts.sh
+  git commit -qm "develop: placeholder measure-conflicts.sh"
+  git checkout -qb head_branch
+  git rm -q scripts/measure-conflicts.sh
+  git commit -qm "ordinary: delete measure-conflicts.sh (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "delete security-boundary file fails" 1 "$ec"
+  assert_contains "delete security-boundary file names it" "scripts/measure-conflicts.sh (modified/deleted)" "$out"
+  assert_contains "delete security-boundary file reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 27: unparseable workflow YAML at PR HEAD -> guard fails closed (hard abort) ==="
+{
+  dir="$(new_fixture scenario27)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: Broken\non:\n  pull_request_target:\npermissions:\n  statuses: [unterminated\n' >.github/workflows/broken.yml
+  git add .github/workflows/broken.yml
+  git commit -qm "ordinary: add a malformed/unparseable workflow file"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "malformed workflow YAML fails closed" 1 "$ec"
+  assert_contains "malformed workflow YAML reports the audit could not complete" "workflow-permission audit could not complete -- failing closed" "$out"
+  assert_contains "malformed workflow YAML names the broken file" "broken.yml" "$out"
+}
+
+echo
+echo "=== Scenario 28: ordinary PR modifies scripts/test-thin-fork-guard.sh -> FAIL (trusted executable code, not just governance) ==="
+{
+  dir="$(new_fixture scenario28)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  printf '#!/usr/bin/env bash\necho ok\n' >scripts/test-thin-fork-guard.sh
+  git add scripts/test-thin-fork-guard.sh
+  git commit -qm "develop: placeholder test-thin-fork-guard.sh"
+  git checkout -qb head_branch
+  cat >scripts/test-thin-fork-guard.sh <<'MALICIOUS'
+#!/usr/bin/env bash
+# malicious: if this ran as the trusted evaluator's self-test step (before
+# the real guard, from the base checkout), it would overwrite the real
+# guard with an always-PASS stub before it ever runs.
+echo 'echo PASS; exit 0' > "$(dirname "$0")/thin-fork-guard.sh"
+exit 0
+MALICIOUS
+  git add scripts/test-thin-fork-guard.sh
+  git commit -qm "ordinary: modify test-thin-fork-guard.sh to tamper with the real guard (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "modify test-thin-fork-guard.sh fails" 1 "$ec"
+  assert_contains "modify test-thin-fork-guard.sh names it" "scripts/test-thin-fork-guard.sh (modified/deleted)" "$out"
+  assert_contains "modify test-thin-fork-guard.sh reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 29: new pull_request_target workflow with no permissions block -> FAIL ==="
+{
+  dir="$(new_fixture scenario29)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: NoPerms\non: pull_request_target\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/noperms29.yml
+  git add .github/workflows/noperms29.yml
+  git commit -qm "ordinary: add pull_request_target workflow with no permissions block (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "pull_request_target with no permissions fails" 1 "$ec"
+  assert_contains "pull_request_target with no permissions names the file" "noperms29.yml" "$out"
+  assert_contains "pull_request_target with no permissions reports the specific reason" "pull_request_target workflow has no explicit top-level permissions declaration" "$out"
+}
+
+echo "=== Scenario 30: pull_request_target with explicit read-only permissions -> PASS ==="
+{
+  dir="$(new_fixture scenario30)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: ReadOnly\non: pull_request_target\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/readonly30.yml
+  git add .github/workflows/readonly30.yml
+  git commit -qm "ordinary: add pull_request_target workflow with explicit read-only permissions"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "pull_request_target with explicit read-only permissions passes" 0 "$ec"
+  assert_contains "pull_request_target with explicit read-only permissions reports PASS" "PASS" "$out"
+}
+
+echo "=== Scenario 31: pull_request_target with explicit permissions but statuses: write -> FAIL (existing forbidden-permission rule) ==="
+{
+  dir="$(new_fixture scenario31)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: BadPerms\non: pull_request_target\npermissions:\n  contents: read\n  statuses: write\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/badperms31.yml
+  git add .github/workflows/badperms31.yml
+  git commit -qm "ordinary: add pull_request_target workflow with explicit statuses: write (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "pull_request_target with explicit statuses write fails" 1 "$ec"
+  assert_contains "pull_request_target with explicit statuses write names the file" "badperms31.yml" "$out"
+  assert_contains "pull_request_target with explicit statuses write reports the forbidden-permission reason (not the missing-declaration one)" "introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml" "$out"
+}
+
+echo "=== Scenario 32: mapping-form and array-form pull_request_target triggers with explicit read-only permissions -> PASS ==="
+{
+  dir="$(new_fixture scenario32)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  mkdir -p .github/workflows
+  printf 'name: MappingForm\non:\n  pull_request_target:\n    types: [opened, reopened, edited]\npermissions:\n  pull-requests: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/mapping32.yml
+  printf 'name: ArrayForm\non: [push, pull_request_target]\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: []\n' >.github/workflows/array32.yml
+  git add .github/workflows/mapping32.yml .github/workflows/array32.yml
+  git commit -qm "ordinary: add mapping-form and array-form pull_request_target workflows, both with explicit read-only permissions"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "mapping-form and array-form pull_request_target with explicit permissions passes" 0 "$ec"
+  assert_contains "mapping-form and array-form pull_request_target reports PASS" "PASS" "$out"
 }
 
 echo

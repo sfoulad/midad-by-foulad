@@ -931,10 +931,25 @@ public repo (confirmed via `gh api user` — `type: User`, no Enterprise/org
 plan). There is no dry-run enforcement mode available to us. **Rollout is
 therefore**: (1) merge this PR, (2) run the disposable test-PR validation
 checklist from `thin-fork-guard-trusted.yml`'s header against real GitHub
-infrastructure, (3) only after all five of those checks pass, apply the
+infrastructure, (3) fix the Dependabot auto-merge compatibility gap below in
+its own tiny follow-up PR, (4) only after all of that passes, apply the
 ruleset below directly with `"enforcement": "active"` — there is no safer
 staged alternative on this account tier, so watch the first few real PRs
 after activation closely.
+
+**Pre-activation compatibility gap: Dependabot auto-merge uses `--rebase`.**
+`.github/workflows/dependabot-auto-merge.yml` currently runs
+`gh pr merge --auto --rebase "$PR_URL"`. The proposed ruleset's `pull_request`
+rule only allows `["merge", "squash"]` — not `rebase` — so activating the
+ruleset as designed would silently break Dependabot's auto-merge path the
+next time it tries to land a minor/patch bump (the merge attempt would be
+rejected by the ruleset, not obviously in a way that points back at this
+mismatch). **Tracked as a separate, tiny, Midad-owned follow-up PR** — change
+`--rebase` to `--squash` in that one workflow — to land after this PR merges
+and the trusted-evaluator validation passes, but *before* the ruleset is
+ever applied. Not bundled into this PR; not a reason to change the proposed
+ruleset's merge-method list instead unless a fresh review finds a reason to
+prefer that direction.
 
 **`file_path_restriction` does not belong in this ruleset — verified, not
 assumed.** The prior version of this section proposed a `file_path_restriction`
@@ -1095,6 +1110,60 @@ gh api \
   repos/sfoulad/midad-by-foulad/rulesets \
   --input /tmp/develop-ruleset.json
 ```
+
+## Security-boundary file maintenance
+
+`scripts/thin-fork-guard.sh` hard-blocks any ordinary PR that modifies, deletes, or renames (in either direction) one of its `SECURITY_BOUNDARY_FILES`:
+
+- `.github/workflows/thin-fork-guard-trusted.yml`
+- `.github/workflows/ci.yml`
+- `.github/workflows/update-from-crosspoint.yml`
+- `scripts/thin-fork-guard.sh`
+- `scripts/measure-conflicts.sh`
+- `scripts/check-workflow-permissions.rb`
+- `scripts/test-thin-fork-guard.sh`
+
+This is a separate, independent gate from the thin-fork conflict/divergence checks — it doesn't care about upstream ownership, existing divergence, or conflict count. These files collectively define what "passing" means (the trusted evaluator's own workflow, the scripts it runs including the permission-audit parser, and the CI entrypoint it depends on being green), so a PR that touches any of them is, by definition, touching the machinery that decides whether PRs pass — including its own.
+
+**`scripts/test-thin-fork-guard.sh` is trusted executable code, not just a governance-flagged file — a prior version of this doc got that wrong.** It previously argued a corrupted self-test "can't fake a result" because the real guard invocation is a separate step whose verdict doesn't depend on the self-test's outcome. That's true of *that specific step's output*, but it ignores execution order: `thin-fork-guard-trusted.yml` runs `scripts/test-thin-fork-guard.sh` **before** `scripts/thin-fork-guard.sh`, both checked out from the trusted base branch, in the same job, same filesystem. Once a malicious edit to the self-test lands in base (having itself been merged by some earlier PR that this doc's older reasoning wrongly let through unblocked), a later PR's trusted run executes that malicious base-branch self-test as arbitrary shell code *before* the real evaluator — it could overwrite `scripts/thin-fork-guard.sh` with an exit-0 stub, tamper with `scripts/check-workflow-permissions.rb`, alter git config/refs the following guard call relies on, or anything else a shell script running in that checkout can do. Self-test failing loudly on a genuine algorithm bug is a good thing (as documented elsewhere in this doc); self-test being *arbitrary code that ran first* is a different property entirely, and that's the one that matters for the security boundary. Protected accordingly now.
+
+Still deliberately excluded from this hard block: `.skills/SKILL.md` and `docs/*` — these remain normal, editable files, still covered by the existing non-blocking `GOVERNANCE_TOUCHED` report, because they are read by humans and agents, never executed by CI at all.
+
+**Rename/delete coverage, not just modify.** A plain `git diff --name-only` (the file list the earlier version of this gate was built from) does not reliably surface a detected rename's *old* path at all — only `git diff --name-status --diff-filter=R` does (the exact same gap the thin-fork rename gate above already had to work around). Checked independently here: both the source and destination path of every detected rename are checked against the boundary list, so a rename **away** from a boundary path (`scripts/thin-fork-guard.sh` → `scripts/old-thin-fork-guard.sh`) and a rename of an unrelated file **into** a boundary pathname (`scripts/harmless-tool.sh` → `scripts/measure-conflicts.sh`) both fail. Plain deletion was already covered by the `--name-only` check (deletions, unlike rename sources, are not hidden by rename-detection collapsing).
+
+**This means a legitimate fix to any of the seven files above cannot go through the normal PR flow once the ruleset (above) requires `thin-fork-guard-trusted` — the gate will fail it every time, by design.** The explicit human procedure for that case:
+
+1. Identify the change as guard/security-boundary maintenance, not an ordinary PR.
+2. Repo admin temporarily relaxes the required check: either set the ruleset's `enforcement` to `disabled`, or remove `thin-fork-guard-trusted` from the `required_status_checks` rule's context list.
+3. Open, review, and merge the maintenance PR normally (it will still report its guard verdict — including a security-boundary FAIL, which is expected and can be disregarded for this one, deliberately-relaxed merge).
+4. Immediately restore the ruleset to its prior state. Don't leave the repo unprotected longer than the single merge requires.
+5. If the change touched the trusted evaluator's own logic (`thin-fork-guard-trusted.yml`, `thin-fork-guard.sh`, `measure-conflicts.sh`, `check-workflow-permissions.rb`, or `test-thin-fork-guard.sh`), **re-run the disposable-PR validation sequence** (validations A-F for the trusted workflow itself, plus real-PR equivalents of the security-boundary/workflow-permission scenarios) before trusting the guard again — a change to the evaluator's own logic, including its self-test, is exactly the kind of change that most needs re-validating empirically, not just by code review.
+
+This mirrors the general emergency-maintenance procedure already described for the ruleset itself above, specialized for the specific files whose compromise would be most damaging: they're not just "hard to change," they're the thing that would need to be trusted to correctly report its own compromise.
+
+## Workflow-permission audit
+
+Complementary to the security-boundary gate: `scripts/thin-fork-guard.sh` also parses every `.github/workflows/*.yml`/`*.yaml` file's *content* at PR HEAD (via `git show`, read-only git plumbing — never executed, consistent with this guard never running anything from HEAD) as YAML, via `scripts/check-workflow-permissions.rb`, and inspects the actual *resolved* permission values (workflow-level `permissions:` and every `jobs.<job>.permissions:` block) for `statuses: write`, `checks: write`, or the `write-all` shorthand — excluding `thin-fork-guard-trusted.yml` itself (which legitimately needs `statuses: write`, and is separately protected by the security-boundary gate above — an ordinary PR cannot modify it to remove that exclusion's justification).
+
+**Semantic parse, not a text match.** An earlier version of this audit was a plain grep for the literal bytes `statuses: write`, which any equivalent-meaning YAML spelling defeats — `statuses: "write"` (quoted), extra whitespace around the colon, or a YAML alias/anchor resolving to the string `"write"` are all ordinary, valid YAML that mean exactly the same thing while not matching the literal bytes. Parsing the document and reading its actual resolved values catches all of these; see `scripts/check-workflow-permissions.rb`'s own header for why Ruby's bundled `Psych` (`YAML.safe_load`) is the parser used (part of Ruby's standard library — no gem/network fetch — and Ruby itself is part of GitHub's `ubuntu-latest` runner image with no setup step; `safe_load` restricts deserialization to plain data, appropriate for untrusted PR content).
+
+**Fails closed.** Enumerating workflow files, reading one via `git show`, or parsing one as YAML can each fail for reasons unrelated to whether it contains a forbidden permission (a transient git error, a workflow file that simply isn't valid YAML). The audit treats any such failure as a hard abort (`thin-fork-guard.sh: workflow-permission audit could not complete -- failing closed`, non-zero exit) rather than silently treating an unreadable/unparseable file as "contains no forbidden permissions" — the same fail-closed posture `COMMON_REF` and `measure-conflicts.sh` already use elsewhere in the guard.
+
+**Second, independent invariant: every `pull_request_target` workflow must declare an explicit top-level `permissions:` block.** GitHub documents that `pull_request_target` runs with the base repository's token privileges unless a workflow narrows them explicitly. A workflow with no `permissions:` key at all is relying entirely on the repository's *default* token permissions (`default_workflow_permissions`, audited below) — safe today because that default happens to be `read`, but that's a repository setting, not a property of the workflow file itself, and this session's fail-closed philosophy is not to lean on a fact the parser can't see or verify. `check-workflow-permissions.rb` detects `pull_request_target` in the trigger regardless of which of the three normal forms it's written in (`on: pull_request_target`, `on: [push, pull_request_target]`, or the mapping form with `types:`) — including handling Psych's YAML 1.1 quirk where a bare `on:` key parses as the boolean `true` rather than the string `"on"` — and requires *some* `permissions:` key to exist (even `permissions: {}` or `permissions: read-all` satisfy this; the point is forcing an explicit, reviewable decision, not dictating what that decision is). Reported distinctly from a YAML parse failure: this is a real, successfully-parsed document that fails the policy, not something the parser couldn't read.
+
+The invariants this protects: `thin-fork-guard-trusted.yml` is the *only* workflow in the repo that legitimately needs to write a commit status or check — anything else claiming that permission is either a mistake or an attempt to publish a spoofed `thin-fork-guard-trusted` (or similar) result; and no `pull_request_target` workflow is ever silently relying on implicit, unreviewed token scope. This is deliberately a narrow, single-purpose parser reading a small number of specific fields, not a general YAML security scanner.
+
+**Full repository audit (2026-08-13, re-verified with the semantic parser directly, not just grep, after adding the explicit-permissions invariant)**: every `.github/workflows/*.yml` file was run through `check-workflow-permissions.rb`. Only `thin-fork-guard-trusted.yml` (workflow-level `statuses: write`) is flagged — every other file, including `dependabot-auto-merge.yml` (see below), passes clean, and all three `pull_request_target` workflows have an explicit `permissions:` block.
+
+**Every `pull_request_target` workflow and its explicit permissions** (three total in the repo; `default_workflow_permissions` is `"read"` repo-wide — see below — so even an absent explicit declaration would default to read-only, but all three declare explicitly anyway, and the parser now requires it regardless):
+
+| Workflow | Workflow-level permissions | Job-level overrides | Notes |
+|---|---|---|---|
+| `thin-fork-guard-trusted.yml` | `contents: read`, `statuses: write` | none | The intended, sole status writer. Also a `SECURITY_BOUNDARY_FILES` entry — an ordinary PR cannot modify it. |
+| `pr-formatting-check.yml` | `pull-requests: read` | none | Fixed this round (was `pull_request` + `pull_request_target` sharing `statuses: write`; see "PR Formatting" above). |
+| `dependabot-auto-merge.yml` | `contents: read` | `auto-merge` job: `contents: write`, `pull-requests: write` | Job-level write access is gated by `if: github.actor == 'dependabot[bot]'` — `github.actor` reflects GitHub's own authenticated event payload, not PR-controlled data, so this isn't spoofable from a PR's own content. No `statuses`/`checks`/`write-all` permission anywhere in this file — outside the scope of the workflow-permission audit's specific invariant, but reported here in full per the explicit "verify every `pull_request_target` workflow has an explicit least-privilege permissions declaration" requirement. |
+
+**Live repository setting, `GET /repos/sfoulad/midad-by-foulad/actions/permissions/workflow`** (queried 2026-08-13, not changed): `default_workflow_permissions: "read"`, `can_approve_pull_request_reviews: false`. This is the safe state — recorded here as defense-in-depth, not something this session applied. If this were ever `"write"`, every workflow lacking an explicit `permissions:` block would inherit a broad write token by default, which would need to be treated as a blocker before relying on any workflow's *absence* of an explicit permissions declaration as evidence of least-privilege.
 
 ## Prior sync-session findings (kept for reference)
 
