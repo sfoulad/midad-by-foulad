@@ -1,0 +1,13 @@
+name: "Validation D (disposable -- no permissions block)"
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op
+        run: echo "this workflow deliberately has no top-level permissions: block"
