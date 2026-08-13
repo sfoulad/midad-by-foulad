@@ -937,19 +937,17 @@ ruleset below directly with `"enforcement": "active"` — there is no safer
 staged alternative on this account tier, so watch the first few real PRs
 after activation closely.
 
-**Pre-activation compatibility gap: Dependabot auto-merge uses `--rebase`.**
-`.github/workflows/dependabot-auto-merge.yml` currently runs
+**Pre-activation compatibility gap: Dependabot auto-merge used `--rebase`
+(resolved).** `.github/workflows/dependabot-auto-merge.yml` used to run
 `gh pr merge --auto --rebase "$PR_URL"`. The proposed ruleset's `pull_request`
 rule only allows `["merge", "squash"]` — not `rebase` — so activating the
-ruleset as designed would silently break Dependabot's auto-merge path the
-next time it tries to land a minor/patch bump (the merge attempt would be
+ruleset as designed would have silently broken Dependabot's auto-merge path
+the next time it tried to land a minor/patch bump (the merge attempt would be
 rejected by the ruleset, not obviously in a way that points back at this
-mismatch). **Tracked as a separate, tiny, Midad-owned follow-up PR** — change
-`--rebase` to `--squash` in that one workflow — to land after this PR merges
-and the trusted-evaluator validation passes, but *before* the ruleset is
-ever applied. Not bundled into this PR; not a reason to change the proposed
-ruleset's merge-method list instead unless a fresh review finds a reason to
-prefer that direction.
+mismatch). Fixed in a small, Midad-owned follow-up PR that changed
+`--rebase` to `--squash` in that one workflow, landed after PR #144 merged
+and the disposable trusted-evaluator security validation (PR #145) passed,
+before the ruleset is applied.
 
 **`file_path_restriction` does not belong in this ruleset — verified, not
 assumed.** The prior version of this section proposed a `file_path_restriction`
