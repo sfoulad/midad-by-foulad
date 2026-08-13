@@ -8,3 +8,4 @@ path. Not meant to be merged -- this PR will be closed without merging
 once validation is complete.
 
 Commit 1: initial harmless addition.
+Commit 2: second harmless addition, to confirm fresh status posts against the new HEAD SHA.
