@@ -69,7 +69,14 @@ name: Thin-Fork Guard (Trusted)
 # editing scripts/thin-fork-guard.sh IN the test PR to force a fake PASS
 # does NOT change the published trusted result (proves property A above,
 # empirically, not just by design); (5) a clean Midad-only change produces
-# `success`.
+# `success`; (6) `git fetch origin "$PR_HEAD_SHA"` (the "Fetch upstream
+# mirror and PR HEAD" step below) actually resolves for the test PR --
+# this repo has no forks today, so this has only ever been exercised for a
+# same-repository PR. If a fork PR is ever accepted, or once one exists to
+# test against, confirm the same-repo fetch is reliable there too; if not,
+# switch that step to `git fetch origin "refs/pull/<PR-number>/head"`
+# (works for both same-repo and fork PRs against the base repository) and
+# verify the fetched commit's SHA equals `$PR_HEAD_SHA` before trusting it.
 
 on:
   pull_request_target:
