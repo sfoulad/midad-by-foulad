@@ -127,7 +127,9 @@ jobs:
             --base develop \
             --head "${{ needs.sync.outputs.branch }}" \
             --title "Sync crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ needs.sync.outputs.upstream_sha }}" \
-            --body "Automated sync from crosspoint-reader/crosspoint-reader (\`${{ inputs.upstream_ref }}\` @ \`${{ needs.sync.outputs.upstream_sha }}\`). Merged cleanly; CI passed on the sync branch before this PR was opened. See docs/upstream-sync-architecture.md for the review checklist -- this still needs a human check for anything touching freeink-sdk/HAL/display code, which CI cannot verify on real hardware."
+            --body "**MERGE METHOD: Create a merge commit. Do NOT squash/rebase this sync PR** -- squashing or rebasing discards the real merge commit that \`thin-fork-guard.sh\` relies on to recognize this as a genuine sync and to reason about upstream divergence going forward. See CLAUDE.md's \"Midad Thin-Fork Architecture\" section.
+
+Automated sync from crosspoint-reader/crosspoint-reader (\`${{ inputs.upstream_ref }}\` @ \`${{ needs.sync.outputs.upstream_sha }}\`). Merged cleanly; CI passed on the sync branch before this PR was opened. See docs/upstream-sync-architecture.md for the review checklist -- this still needs a human check for anything touching freeink-sdk/HAL/display code, which CI cannot verify on real hardware."
 
   report-conflict:
     needs: sync

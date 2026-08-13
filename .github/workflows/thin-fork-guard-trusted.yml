@@ -1,0 +1,197 @@
+name: Thin-Fork Guard (Trusted)
+
+# The TRUSTED, REQUIRED evaluator for the thin-fork guard. This is the
+# check branch protection must require -- see docs/upstream-sync-architecture.md's
+# "Thin-Fork Guard: proposed GitHub ruleset" section.
+#
+# Why this exists / what it fixes: thin-fork-guard.yml runs on the plain
+# `pull_request` event, which checks out and EXECUTES the PR's own copy of
+# scripts/thin-fork-guard.sh and scripts/measure-conflicts.sh. A PR can edit
+# those scripts in the same commit that needs judging, so that workflow is
+# not a trustworthy judge of the PR's own diff -- a PR must never be able to
+# modify the evaluator that decides its own result. This workflow closes
+# that gap using `pull_request_target`, which GitHub always resolves against
+# the BASE (default) branch's copy of the workflow file itself -- a PR
+# cannot alter what this workflow DOES no matter what it changes in its own
+# branch. That property only holds as long as this workflow itself never
+# checks out and executes/sources/imports the PR's own copy of any script;
+# see the step comments below for exactly what is and isn't done with PR
+# HEAD.
+#
+# Design, and the two properties it must prove:
+#
+#   A. The PR cannot modify the evaluator that decides its own result.
+#      -> The initial checkout below is pinned to
+#         `github.event.pull_request.base.sha` (the base branch), never to
+#         `head.sha`. Every script this job runs --
+#         scripts/thin-fork-guard.sh, scripts/measure-conflicts.sh,
+#         scripts/test-thin-fork-guard.sh -- is therefore always the
+#         BASE branch's copy, regardless of what the PR's own branch
+#         contains. PR HEAD is fetched afterward as a bare git object (see
+#         "Fetch PR HEAD" step) so the trusted scripts can READ its diff --
+#         `git diff`, `git cat-file`, `git rev-parse`, and a `git merge`
+#         inside a disposable worktree (measure-conflicts.sh) are all
+#         content-level git plumbing operations, not code execution. At no
+#         point does this workflow `chmod +x`, source, run, build, or
+#         otherwise execute anything checked out from PR HEAD -- only from
+#         the base-branch checkout.
+#
+#   B. The required result still applies to the LATEST PR HEAD SHA.
+#      -> This workflow does not rely on the ordinary GitHub Actions "check
+#         run" that GitHub associates with the workflow's own triggering
+#         commit (which, under `pull_request_target`, is the BASE branch,
+#         not the PR -- a required check tied to that would silently stop
+#         tracking the PR's actual commits). Instead it explicitly PUBLISHES
+#         a commit status via the REST Statuses API
+#         (POST /repos/{owner}/{repo}/statuses/{sha}) with
+#         `sha: github.event.pull_request.head.sha` and
+#         `context: thin-fork-guard-trusted`. Triggering on `synchronize`
+#         means every new push to the PR re-runs this workflow and posts a
+#         FRESH status against the NEW head SHA -- exactly what a required
+#         status check needs to keep tracking the PR as it moves. The
+#         proposed branch ruleset (see docs/upstream-sync-architecture.md)
+#         requires this exact context, not thin-fork-guard.yml's.
+#
+# Permissions are the minimum this needs: `contents: read` to check out the
+# base branch and fetch data, `statuses: write` to publish the commit
+# status. No secrets are used or exposed; `persist-credentials: false` on
+# the checkout avoids leaving the token embedded in git config for any
+# later step to find. `submodules` are intentionally NOT checked out --
+# nothing here needs submodule content, and skipping it narrows what this
+# trusted job pulls in.
+#
+# Validation required before this becomes a required check (tracked as a
+# follow-up, not done as part of this PR): open a harmless disposable test
+# PR against develop and confirm, one at a time: (1) this workflow runs and
+# posts `thin-fork-guard-trusted` against the PR's head SHA; (2) pushing a
+# new commit to that PR produces a NEW status against the new SHA; (3) a
+# deliberate thin-fork violation in the test PR produces `failure`; (4)
+# editing scripts/thin-fork-guard.sh IN the test PR to force a fake PASS
+# does NOT change the published trusted result (proves property A above,
+# empirically, not just by design); (5) a clean Midad-only change produces
+# `success`; (6) `git fetch origin "$PR_HEAD_SHA"` (the "Fetch upstream
+# mirror and PR HEAD" step below) actually resolves for the test PR --
+# this repo has no forks today, so this has only ever been exercised for a
+# same-repository PR. If a fork PR is ever accepted, or once one exists to
+# test against, confirm the same-repo fetch is reliable there too; if not,
+# switch that step to `git fetch origin "refs/pull/<PR-number>/head"`
+# (works for both same-repo and fork PRs against the base repository) and
+# verify the fetched commit's SHA equals `$PR_HEAD_SHA` before trusting it.
+
+on:
+  pull_request_target:
+    branches: [develop]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  thin-fork-guard-trusted:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch (trusted scripts only -- never PR HEAD)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git identity
+        # thin-fork-guard.sh creates real (throwaway, always-aborted) merge
+        # commits while probing for conflicts -- needs an identity to do so.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream mirror and PR HEAD (git data only, never checked out)
+        # PR HEAD's commit becomes addressable by its own SHA for git
+        # plumbing purposes -- the working tree stays on the base-branch
+        # checkout from the step above the entire time.
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin upstream:refs/remotes/origin/upstream
+          git fetch origin "$PR_HEAD_SHA"
+
+      - name: Run trusted evaluator (self-test, then the real guard)
+        id: evaluate
+        # `set +e` throughout: GitHub Actions' default bash invocation adds
+        # `-e`, which would abort this step (and skip the outputs below) on
+        # the guard's expected non-zero exit for a FAIL verdict. Every
+        # branch below explicitly sets `state`/`description` outputs and
+        # then falls through to a clean `exit 0` for the step itself --
+        # only the PUBLISHED commit status should ever say "failure".
+        #
+        # PR_HEAD_REF is passed via `env`, not interpolated directly into
+        # the script with `${{ }}` -- a PR's branch name is attacker-
+        # controlled free text (unlike the SHAs below, which are immutable
+        # git object hashes) and inline interpolation is a classic GitHub
+        # Actions script-injection vector, doubly so here since this job
+        # holds a `statuses: write` token. Routing it through the
+        # environment means the shell only ever sees it as inert data.
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set +e
+          chmod +x scripts/measure-conflicts.sh scripts/thin-fork-guard.sh scripts/test-thin-fork-guard.sh
+
+          scripts/test-thin-fork-guard.sh >selftest-output.txt 2>&1
+          selftest_exit=$?
+          {
+            echo '## Thin-Fork Guard (Trusted) -- self-test'
+            echo '```'
+            cat selftest-output.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [ "$selftest_exit" -ne 0 ]; then
+            echo "state=failure" >>"$GITHUB_OUTPUT"
+            echo "description=evaluator self-test failed -- result not trustworthy" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          scripts/thin-fork-guard.sh \
+            "$PR_BASE_SHA" \
+            "$PR_HEAD_SHA" \
+            "origin/upstream" \
+            "$PR_HEAD_REF" \
+            >guard-output.txt 2>&1
+          guard_exit=$?
+          {
+            echo '## Thin-Fork Guard (Trusted) -- result'
+            echo '```'
+            cat guard-output.txt
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [ "$guard_exit" -eq 0 ]; then
+            echo "state=success" >>"$GITHUB_OUTPUT"
+            echo "description=thin-fork-guard passed (trusted evaluator)" >>"$GITHUB_OUTPUT"
+          else
+            echo "state=failure" >>"$GITHUB_OUTPUT"
+            echo "description=thin-fork-guard failed (trusted evaluator) -- see run summary" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish trusted result against PR HEAD SHA
+        # Runs even if the step above somehow errored outright (runner
+        # crash, etc.) -- the `|| 'failure'` fallback ensures a required
+        # check never silently sits at "pending" forever; it fails closed.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
+            -f "state=${{ steps.evaluate.outputs.state || 'failure' }}" \
+            -f "context=thin-fork-guard-trusted" \
+            -f "description=${{ steps.evaluate.outputs.description || 'trusted evaluator step failed unexpectedly' }}" \
+            -f "target_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
