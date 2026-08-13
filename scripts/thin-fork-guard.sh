@@ -16,21 +16,32 @@
 #   3. RENAME a shared file away from its upstream path while that file was
 #      still Midad-clean -- a special case of #2 that the general check
 #      cannot see on its own (see the note above compute_diverged_files).
-#   4. MODIFY a security-boundary file (section 6) -- the trusted workflow,
-#      the CI entrypoint, or this guard's own scripts. Independent of
-#      upstream ownership, existing divergence, or conflict count: these
-#      files define enforcement itself, so any ordinary-PR touch to them
-#      fails, full stop. See "Security-boundary file maintenance" in
+#   4. MODIFY, DELETE, or RENAME (either direction) a security-boundary
+#      file (section 6) -- the trusted workflow, the CI entrypoint, or this
+#      guard's own scripts. Independent of upstream ownership, existing
+#      divergence, or conflict count: these files define enforcement
+#      itself, so any ordinary-PR touch to them fails, full stop. Checked
+#      via both `git diff --name-only` (covers plain modify/delete) AND
+#      `git diff --name-status --diff-filter=R` inspecting BOTH the old and
+#      new path of every detected rename -- a plain `--name-only` diff does
+#      not reliably surface a rename's source path (see the note above
+#      is_shared_path), so relying on it alone would let a rename-away (or
+#      a rename-into a protected pathname) slip past silently. See
+#      "Security-boundary file maintenance" in
 #      docs/upstream-sync-architecture.md for the explicit human procedure
 #      required to change one legitimately.
 #   5. INTRODUCE a second status/check-writing workflow (section 7) --
 #      `.github/workflows/*.yml` at HEAD other than
-#      thin-fork-guard-trusted.yml itself must never contain
-#      `statuses: write`, `checks: write`, or `permissions: write-all`.
+#      thin-fork-guard-trusted.yml itself must never SEMANTICALLY grant
+#      `statuses: write`, `checks: write`, or the `write-all` shorthand.
 #      One invariant: no ordinary PR may create another workflow capable of
-#      spoofing the trusted required status. A plain text scan of HEAD's
-#      workflow file *content* (via `git show`, never executed), not a
-#      general YAML security scanner.
+#      spoofing the trusted required status. Each workflow file is parsed
+#      as YAML (scripts/check-workflow-permissions.rb) and its actual
+#      resolved permission values are inspected -- not a text/regex match
+#      against one exact spelling, which quoting, spacing, or a YAML
+#      alias/anchor can trivially differ from while meaning the same
+#      thing. A file this guard cannot read or parse is treated as a hard
+#      error (fail-closed), never as "contains no forbidden permissions."
 #
 # --- Why #2 is anchored to a merge-base, not to upstream's current tip ---
 # A naive two-state comparison ("does <base-ref>/<head-ref>'s copy of this
@@ -312,8 +323,11 @@ GOVERNANCE_FILES=(
   "docs/upstream-sync-architecture.md"
   ".github/workflows/update-from-crosspoint.yml"
   ".github/workflows/thin-fork-guard.yml"
+  ".github/workflows/thin-fork-guard-trusted.yml"
+  ".github/workflows/ci.yml"
   "scripts/thin-fork-guard.sh"
   "scripts/measure-conflicts.sh"
+  "scripts/check-workflow-permissions.rb"
   "scripts/test-thin-fork-guard.sh"
 )
 GOVERNANCE_TOUCHED=""
@@ -329,58 +343,135 @@ done <<<"$PR_DIFF_FILES"
 # --- 6. Security-boundary files (independent hard gate) ----------------------
 # These files define or influence enforcement itself: the trusted
 # evaluator's own workflow, the CI entrypoint, and this guard's own
-# scripts. Independent of upstream ownership, existing divergence, or
-# conflict count -- none of those concepts capture "this PR is touching the
+# scripts (including the permission-audit parser section 7 depends on --
+# a PR that could silently neuter check-workflow-permissions.rb would
+# defeat gate 5 just as completely as editing thin-fork-guard.sh itself).
+# Independent of upstream ownership, existing divergence, or conflict
+# count -- none of those concepts capture "this PR is touching the
 # machinery that decides whether PRs pass." An ordinary PR must never
-# modify these; see docs/upstream-sync-architecture.md's "Security-boundary
-# file maintenance" section for the explicit human procedure required to
-# change one legitimately (relax the required check, merge, restore,
-# re-validate).
+# modify, delete, or rename these; see docs/upstream-sync-architecture.md's
+# "Security-boundary file maintenance" section for the explicit human
+# procedure required to change one legitimately (relax the required check,
+# merge, restore, re-validate).
 SECURITY_BOUNDARY_FILES=(
   ".github/workflows/thin-fork-guard-trusted.yml"
   ".github/workflows/ci.yml"
   ".github/workflows/update-from-crosspoint.yml"
   "scripts/thin-fork-guard.sh"
   "scripts/measure-conflicts.sh"
+  "scripts/check-workflow-permissions.rb"
 )
 SECURITY_BOUNDARY_TOUCHED=""
+# Plain modify/delete: PR_DIFF_FILES (git diff --name-only) reliably lists
+# both, so a straight membership check is sufficient here.
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   for sb in "${SECURITY_BOUNDARY_FILES[@]}"; do
     if [ "$path" = "$sb" ]; then
-      SECURITY_BOUNDARY_TOUCHED="${SECURITY_BOUNDARY_TOUCHED}${path}"$'\n'
+      SECURITY_BOUNDARY_TOUCHED="${SECURITY_BOUNDARY_TOUCHED}${path} (modified/deleted)"$'\n'
     fi
   done
 done <<<"$PR_DIFF_FILES"
+# Renames: a plain `git diff --name-only` does not reliably surface a
+# detected rename's OLD path at all (see is_shared_path's note above) --
+# only `--name-status` does. Check BOTH the source and destination path of
+# every rename against the boundary list: a rename AWAY from a boundary
+# path is functionally a deletion of it, and a rename INTO a boundary
+# pathname is functionally a modification of it (whatever new content
+# just landed at that path is now what "the trusted workflow" or "the
+# guard script" means going forward) -- both must fail, independent of
+# the general thin-fork rename gate above, which only cares about
+# upstream-clean shared files.
+while IFS=$'\t' read -r _ rn_old_path rn_new_path; do
+  [ -z "$rn_old_path" ] && continue
+  for sb in "${SECURITY_BOUNDARY_FILES[@]}"; do
+    if [ "$rn_old_path" = "$sb" ] || [ "$rn_new_path" = "$sb" ]; then
+      SECURITY_BOUNDARY_TOUCHED="${SECURITY_BOUNDARY_TOUCHED}\`${rn_old_path}\` -> \`${rn_new_path}\` (rename)"$'\n'
+    fi
+  done
+done < <(git diff --name-status --diff-filter=R "$BASE_REF...$HEAD_REF")
 
 # --- 7. Workflow-permission audit (independent hard gate) --------------------
 # One invariant: no ordinary PR may create another workflow capable of
-# spoofing the trusted required status/check. Scans every workflow file's
-# CONTENT at HEAD_REF (via `git show`, git plumbing -- never executed,
-# consistent with this guard never running anything from HEAD) for the
-# permission strings that would let a workflow publish or fake a commit
-# status/check. thin-fork-guard-trusted.yml itself is exempt here because
-# it legitimately needs `statuses: write` -- and it is already covered by
-# the security-boundary gate above, so an ordinary PR cannot modify it
-# anyway. Deliberately a plain text scan, not a YAML-aware permission
-# resolver or general security scanner -- one narrow invariant, kept simple
-# and fail-closed.
-FORBIDDEN_PERMISSION_PATTERNS=(
-  "statuses: write"
-  "checks: write"
-  "permissions: write-all"
-)
+# spoofing the trusted required status/check. Parses every workflow
+# file's CONTENT at HEAD_REF (via `git show`, git plumbing -- never
+# executed, consistent with this guard never running anything from HEAD)
+# as YAML via scripts/check-workflow-permissions.rb, and inspects the
+# ACTUAL RESOLVED permission values (workflow-level and every
+# jobs.<job>.permissions block) -- not a text/regex match against one
+# exact spelling. A regex for the literal bytes `statuses: write` is
+# defeated by any equivalent-meaning YAML spelling (`statuses: "write"`,
+# extra spacing, a YAML alias resolving to the string "write"), all of
+# which are ordinary valid YAML, not exotic bypasses; only reading the
+# document's actual semantics catches all of them. See that script's own
+# header for why Ruby's bundled Psych (YAML.safe_load) is the parser: part
+# of Ruby's standard library (no gem/network fetch), Ruby itself is part
+# of GitHub's ubuntu-latest runner image (no setup step), and safe_load
+# restricts deserialization to plain data -- appropriate for parsing
+# untrusted PR content without executing it.
+#
+# Fails CLOSED, not open: enumerating workflow files, reading one via
+# `git show`, or parsing one as YAML can each fail for reasons that have
+# nothing to do with whether it contains a forbidden permission (a
+# transient git error, a workflow file that's simply not valid YAML).
+# Silently treating any of those as "no violation found" would be exactly
+# backwards for a security gate -- WORKFLOW_AUDIT_ERROR captures any such
+# failure and aborts the whole script immediately (see below), the same
+# fail-closed posture COMMON_REF and measure-conflicts.sh already use.
+CHECK_PERMS_SCRIPT="$SCRIPT_DIR/check-workflow-permissions.rb"
 WORKFLOW_PERMISSION_VIOLATIONS=""
-while IFS= read -r path; do
-  [ -z "$path" ] && continue
-  [ "$path" = ".github/workflows/thin-fork-guard-trusted.yml" ] && continue
-  content="$(git show "$HEAD_REF:$path" 2>/dev/null || true)"
-  for pattern in "${FORBIDDEN_PERMISSION_PATTERNS[@]}"; do
-    if grep -qF "$pattern" <<<"$content"; then
-      WORKFLOW_PERMISSION_VIOLATIONS="${WORKFLOW_PERMISSION_VIOLATIONS}${path}: contains \`${pattern}\`"$'\n'
+WORKFLOW_AUDIT_ERROR=""
+
+WORKFLOW_FILES_AT_HEAD=""
+# `git ls-tree`'s own exit status is captured directly (not through a pipe
+# to grep) so it can't be conflated with grep's exit 1 for "no lines
+# matched" -- under `set -e -o pipefail`, a piped command's combined exit
+# status doesn't distinguish "the git call itself failed" from "it
+# succeeded with zero matching filenames," and treating the latter as an
+# error would make an ordinary PR that never touches .github/workflows/ at
+# all fail closed for no reason.
+set +e
+workflow_ls_output="$(git ls-tree -r --name-only "$HEAD_REF" -- .github/workflows/ 2>&1)"
+workflow_ls_status=$?
+set -e
+if [ "$workflow_ls_status" -ne 0 ]; then
+  WORKFLOW_AUDIT_ERROR="failed to enumerate workflow files at '$HEAD_REF': $workflow_ls_output"
+else
+  WORKFLOW_FILES_AT_HEAD="$(grep -E '\.ya?ml$' <<<"$workflow_ls_output" || true)"
+fi
+
+if [ -z "$WORKFLOW_AUDIT_ERROR" ]; then
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    [ "$path" = ".github/workflows/thin-fork-guard-trusted.yml" ] && continue
+
+    if ! content="$(git show "$HEAD_REF:$path" 2>&1)"; then
+      WORKFLOW_AUDIT_ERROR="${WORKFLOW_AUDIT_ERROR}failed to read '$path' at '$HEAD_REF': $content"$'\n'
+      continue
     fi
-  done
-done < <(git ls-tree -r --name-only "$HEAD_REF" -- .github/workflows/ 2>/dev/null | grep -E '\.ya?ml$')
+
+    # ruby exits 1 for an ordinary, fully-expected "violation found" result
+    # (see check-workflow-permissions.rb's own exit-code contract) -- under
+    # `set -e -o pipefail`, a bare `VAR="$(cmd)"` assignment whose pipeline
+    # ends non-zero aborts the whole script right here otherwise, same
+    # pitfall as the `git ls-tree` enumeration above.
+    set +e
+    perm_output="$(printf '%s' "$content" | ruby "$CHECK_PERMS_SCRIPT" 2>&1)"
+    perm_status=$?
+    set -e
+    case "$perm_status" in
+      0) : ;;
+      1) WORKFLOW_PERMISSION_VIOLATIONS="${WORKFLOW_PERMISSION_VIOLATIONS}${path}:"$'\n'"${perm_output}"$'\n' ;;
+      *) WORKFLOW_AUDIT_ERROR="${WORKFLOW_AUDIT_ERROR}failed to parse '$path' at '$HEAD_REF' (exit $perm_status): $perm_output"$'\n' ;;
+    esac
+  done <<<"$WORKFLOW_FILES_AT_HEAD"
+fi
+
+if [ -n "$WORKFLOW_AUDIT_ERROR" ]; then
+  echo "thin-fork-guard.sh: workflow-permission audit could not complete -- failing closed:" >&2
+  echo "$WORKFLOW_AUDIT_ERROR" >&2
+  exit 1
+fi
 
 # --- 8. Sync-PR recognition (informational only -- see header) --------------
 IS_SYNC=false
@@ -538,8 +629,8 @@ fi
   fi
 
   if [ -n "$SECURITY_BOUNDARY_TOUCHED" ]; then
-    echo "### Security-boundary files modified by this PR (gates this PR)"
-    echo "These files define or influence enforcement itself; an ordinary PR must never modify them. See docs/upstream-sync-architecture.md's \"Security-boundary file maintenance\" section for the human procedure required to change one legitimately."
+    echo "### Security-boundary files touched by this PR (gates this PR)"
+    echo "These files define or influence enforcement itself; an ordinary PR must never modify, delete, or rename them (in either direction). See docs/upstream-sync-architecture.md's \"Security-boundary file maintenance\" section for the human procedure required to change one legitimately."
     echo '```'
     echo "$SECURITY_BOUNDARY_TOUCHED"
     echo '```'
