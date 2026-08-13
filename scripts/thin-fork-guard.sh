@@ -8,24 +8,49 @@
 #
 #   1. Introduce new fixed-upstream MERGE-CONFLICT surface (simulated real
 #      merge of <upstream-ref> into each side).
-#   2. DIVERGE an upstream-owned file that was byte-identical to upstream
-#      at <base-ref> -- i.e. make its content differ from upstream's own
-#      copy for the first time, even where that produces no merge conflict
-#      today. This matters once <base-ref> already contains the full
-#      upstream history as an ancestor (post first full CrossPoint merge):
-#      at that point the conflict count for an untouched-but-now-editable
-#      upstream file reads 0->0 regardless of what a PR does to it, so
-#      conflict-count alone stops being a meaningful gate for files that
-#      no longer register as "unmerged" but are still meant to track
-#      upstream content exactly.
-#   3. RENAME an upstream-owned file that was byte-identical to upstream at
-#      <base-ref> away from its upstream path. This is a special case of
-#      divergence (#2), not a separate mechanism: the old path simply
-#      disappears from <head-ref>, and a plain `git diff --name-only` (what
-#      the divergence check's file list is built from) does not surface the
-#      old path for a detected rename at all, only `--name-status` does --
-#      so without this explicit check, a rename would silently escape both
-#      the conflict gate and the divergence gate.
+#   2. Introduce new MIDAD-SIDE DIVERGENCE in a shared/upstream file that
+#      was clean (untouched by Midad) relative to the last history Midad's
+#      base actually shared with upstream.
+#   3. RENAME a shared file away from its upstream path while that file was
+#      still Midad-clean -- a special case of #2 that the general check
+#      cannot see on its own (see the note above compute_diverged_files).
+#
+# --- Why #2 is anchored to a merge-base, not to upstream's current tip ---
+# A naive two-state comparison ("does <base-ref>/<head-ref>'s copy of this
+# file differ from <upstream-ref>'s copy, right now") conflates two very
+# different situations:
+#   (a) Midad edited the file itself, diverging it from upstream.
+#   (b) Midad never touched the file at all -- upstream simply moved ahead
+#       since the last time Midad's base actually synced with it.
+# A file Midad has never edited can fail a "differs from upstream's CURRENT
+# tip" check purely because of (b), which then makes the naive check
+# misclassify it as "already diverged" (implying Midad caused it, and
+# implying any further edit is not new). That's wrong: if a PR then edits
+# that same file for the first time, it IS introducing new Midad-side
+# divergence, and the naive check would silently let it slide into
+# "already diverged, report only" instead of failing it.
+#
+# The fix: compute COMMON_REF = merge-base(<base-ref>, <upstream-ref>) --
+# the last point in history <base-ref> and upstream genuinely shared. For
+# each shared path, compare four blobs: COMMON (the shared ancestor),
+# BASE, HEAD, and UPSTREAM (upstream's current tip):
+#   - HEAD == UPSTREAM                        -> converged (PASS, always)
+#   - BASE == COMMON and HEAD == BASE          -> untouched, not evaluated
+#   - BASE == COMMON and HEAD != BASE/UPSTREAM -> NEW Midad-side divergence
+#                                                  (FAIL: first edit to a
+#                                                  file that was clean
+#                                                  relative to shared
+#                                                  history)
+#   - BASE != COMMON (Midad had already diverged this file before this PR,
+#     independent of whatever upstream has done since)
+#                                              -> pre-existing divergence,
+#                                                 report only, not new
+# See classify_divergence() below for the exact implementation. The older,
+# simpler "does this differ from upstream's current tip" comparison is
+# still computed and reported separately (labeled "vs. current upstream
+# tip") because it answers a different, still-useful question -- how far a
+# file has drifted from upstream *today* -- but it is no longer used to
+# decide FAIL/PASS on its own.
 #
 # See CLAUDE.md's "Midad Thin-Fork Architecture" section and
 # docs/upstream-sync-architecture.md for why any of this matters.
@@ -45,14 +70,17 @@
 # ancestry could diverge a previously-clean upstream file for free, which
 # is exactly the failure mode this gate exists to catch.
 #
-# Exit 0: no new conflicting files, no newly-diverged upstream file, and no
-#         rename of a previously upstream-exact file away from upstream.
+# Exit 0: no new conflicting files, no new Midad-side divergence, and no
+#         rename of a previously Midad-clean shared file away from
+#         upstream.
 # Exit 1: otherwise, OR if conflict measurement itself fails for a non
 #         content-conflict reason (see measure-conflicts.sh -- this script
 #         does not catch that failure, so it propagates as a hard abort
 #         under `set -e`, which is the fail-closed behavior we want: a
 #         broken measurement must never be silently read as "0 conflicts,
-#         PASS").
+#         PASS"), OR if <base-ref> and <upstream-ref> share no common
+#         ancestor at all (merge-base itself fails -- cannot reason about
+#         divergence without one).
 #
 # Requires measure-conflicts.sh in the same directory. Both refs and
 # <upstream-ref> must already be resolvable (fetched) by the caller.
@@ -65,6 +93,11 @@ HEAD_REF="${2:?usage: thin-fork-guard.sh <base-ref> <head-ref> [upstream-ref] [h
 UPSTREAM_REF="${3:-origin/upstream}"
 HEAD_BRANCH_NAME="${4:-}"
 
+COMMON_REF="$(git merge-base "$BASE_REF" "$UPSTREAM_REF")" || {
+  echo "thin-fork-guard.sh: no common ancestor between '$BASE_REF' and '$UPSTREAM_REF' -- cannot reason about upstream divergence" >&2
+  exit 1
+}
+
 # --- Sync-PR ancestry check --------------------------------------------------
 # Branch name alone (sync/crosspoint-*) is never trusted -- a feature branch
 # renamed to that prefix must not be treated as a sync PR. Recognition
@@ -73,7 +106,7 @@ HEAD_BRANCH_NAME="${4:-}"
 # update-from-crosspoint.yml's exact generated pattern
 # ("Merge crosspoint-reader/<ref> @ <sha>"). Run unconditionally, regardless
 # of branch name -- name is only used below for a mismatch warning. Recognition
-# does NOT disable either gate below (see header comment).
+# does NOT disable any gate below (see header comment).
 is_recognized_sync_pr() {
   local base="$1" head="$2" upstream="$3"
   git merge-base --is-ancestor "$upstream" "$head" 2>/dev/null || return 1
@@ -113,42 +146,57 @@ HEAD_COUNT=$(grep -c . "$HEAD_CONFLICTS_FILE" || true)
 NEW_CONFLICTS="$(comm -13 "$BASE_CONFLICTS_FILE" "$HEAD_CONFLICTS_FILE")"
 RESOLVED_CONFLICTS="$(comm -23 "$BASE_CONFLICTS_FILE" "$HEAD_CONFLICTS_FILE")"
 
-# --- 2. Upstream-owned files this PR's own diff touches ---------------------
-# Ownership: a path is upstream-owned iff it exists at that exact path in
-# <upstream-ref>'s tree -- no hand-maintained allowlist. Checked against
-# upstream regardless of whether the path currently exists at HEAD, so
-# deletions are still correctly classified.
+# --- 2. Shared/upstream-owned files this PR's own diff touches --------------
+# A path counts as having upstream lineage -- "shared" -- if it exists
+# EITHER at COMMON_REF (the merge-base computed above) OR at UPSTREAM_REF's
+# current tip. Checking only "exists in current UPSTREAM_REF" (the original,
+# simpler check) silently loses ownership for a path upstream has since
+# deleted or renamed away: Midad may still be carrying that path, and its
+# shared history with upstream still matters for divergence purposes. The
+# UPSTREAM_REF arm alone still catches a path upstream created after
+# COMMON_REF, so nothing regresses relative to the original check.
+is_shared_path() {
+  local path="$1"
+  if git cat-file -e "$COMMON_REF:$path" 2>/dev/null; then
+    return 0
+  fi
+  if git cat-file -e "$UPSTREAM_REF:$path" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 PR_DIFF_FILES="$(git diff --name-only "$BASE_REF...$HEAD_REF")"
 
 UPSTREAM_TOUCHED=""
 while IFS= read -r path; do
   [ -z "$path" ] && continue
-  if git cat-file -e "$UPSTREAM_REF:$path" 2>/dev/null; then
+  if is_shared_path "$path"; then
     UPSTREAM_TOUCHED="${UPSTREAM_TOUCHED}${path}"$'\n'
   fi
 done <<<"$PR_DIFF_FILES"
 
-# Renames away from an upstream path: ownership-by-current-path stops
-# tracking these going forward, and a plain `git diff --name-only` (as used
-# to build PR_DIFF_FILES/UPSTREAM_TOUCHED above) does not surface the old
-# path for a detected rename at all -- only --name-status does. That means
-# the divergence gate below, which only ever looks at UPSTREAM_TOUCHED,
-# cannot see a rename on its own: a rename of a path that was upstream-exact
-# at base is functionally a deletion of that upstream-exact content (the old
-# path is simply gone from HEAD), so it must be treated the same as an
-# outright deletion -- FAIL, not a soft "needs human review" note. A rename
-# of a path that was ALREADY diverged from upstream at base carries no new
-# information the guard needs to block; report only, same as any other
-# already-diverged touch. See CLAUDE.md/docs/upstream-sync-architecture.md.
+# Renames away from a shared path: ownership-by-current-path stops tracking
+# these going forward, and a plain `git diff --name-only` (what
+# PR_DIFF_FILES/UPSTREAM_TOUCHED above is built from) does not surface the
+# old path for a detected rename at all -- only --name-status does. A
+# rename of a path that was Midad-clean relative to COMMON_REF (i.e. Midad
+# had not yet touched it) is functionally the first Midad-side divergence
+# for that content, regardless of whether the renamed file's bytes changed:
+# the path itself is what lets a file keep tracking upstream, and the old
+# path is simply gone from HEAD after a rename. Content equality doesn't
+# rescue this -- a byte-for-byte `git mv` still severs upstream tracking.
+# A rename of a path that was ALREADY Midad-diverged before this PR carries
+# no new information the guard needs to block; report only, same as any
+# other pre-existing divergence. See CLAUDE.md/docs/upstream-sync-architecture.md.
 RENAME_NEW_DIVERGED=""
 RENAME_ALREADY_DIVERGED=""
 while IFS=$'\t' read -r _ old_path new_path; do
   [ -z "$old_path" ] && continue
-  if git cat-file -e "$UPSTREAM_REF:$old_path" 2>/dev/null; then
+  if is_shared_path "$old_path"; then
+    common_old_sha="$(git rev-parse -q --verify "$COMMON_REF:$old_path" 2>/dev/null || true)"
     base_old_sha="$(git rev-parse -q --verify "$BASE_REF:$old_path" 2>/dev/null || true)"
-    upstream_old_sha="$(git rev-parse -q --verify "$UPSTREAM_REF:$old_path" 2>/dev/null || true)"
-    head_old_sha="$(git rev-parse -q --verify "$HEAD_REF:$old_path" 2>/dev/null || true)"
-    if [ "$base_old_sha" = "$upstream_old_sha" ] && [ "$head_old_sha" != "$upstream_old_sha" ]; then
+    if [ "$base_old_sha" = "$common_old_sha" ]; then
       RENAME_NEW_DIVERGED="${RENAME_NEW_DIVERGED}\`${old_path}\` -> \`${new_path}\`"$'\n'
     else
       RENAME_ALREADY_DIVERGED="${RENAME_ALREADY_DIVERGED}\`${old_path}\` -> \`${new_path}\`"$'\n'
@@ -156,26 +204,25 @@ while IFS=$'\t' read -r _ old_path new_path; do
   fi
 done < <(git diff --name-status --diff-filter=R "$BASE_REF...$HEAD_REF")
 
-# Deletions of upstream-owned files: reported explicitly, not folded
-# silently into "no longer touches upstream files."
+# Deletions of shared files: reported explicitly, not folded silently into
+# "no longer touches upstream files." Also flows through the Midad-side
+# divergence classification below like any other content change (a
+# deletion is just "HEAD's blob is empty"), so a deletion of a previously
+# Midad-clean file correctly fails there without any special-casing here.
 DELETE_WARNINGS=""
 while IFS= read -r path; do
   [ -z "$path" ] && continue
-  if git cat-file -e "$UPSTREAM_REF:$path" 2>/dev/null; then
+  if is_shared_path "$path"; then
     DELETE_WARNINGS="${DELETE_WARNINGS}${path}"$'\n'
   fi
 done < <(git diff --name-only --diff-filter=D "$BASE_REF...$HEAD_REF")
 
-# --- 3. Upstream-content divergence, before vs. after ------------------------
-# For each upstream-owned path this PR's diff touches, compare the blob SHA
-# at BASE_REF/HEAD_REF against the blob SHA at UPSTREAM_REF. Equal SHA (both
-# present and identical) = not diverged. Unequal -- including "missing at
-# this ref" as a case, via `git rev-parse -q --verify`, empty string on a
-# nonexistent path -- = diverged. A file's divergence status can only
-# CHANGE between base and head if the path itself is in the PR's own diff
-# (PR_DIFF_FILES / UPSTREAM_TOUCHED above); anything outside that diff is
-# byte-identical between base and head by definition, so it can't have
-# changed status and is correctly excluded from this comparison.
+# --- 3a. Divergence vs. current upstream tip (informational only) -----------
+# Simple two-state comparison: does this path's blob at <ref> differ from
+# its blob at UPSTREAM_REF, right now. Kept and reported because it answers
+# a genuinely different, still-useful question -- how far a file has
+# drifted from upstream *today*, regardless of who caused it or when -- but
+# per the header comment above, this is NOT used to decide FAIL/PASS.
 compute_diverged_files() {
   local ref="$1"
   local path ref_sha upstream_sha
@@ -195,6 +242,47 @@ compute_diverged_files "$HEAD_REF" >"$HEAD_DIVERGED_FILE"
 NEW_DIVERGED="$(comm -13 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
 RESOLVED_DIVERGED="$(comm -23 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
 ALREADY_DIVERGED="$(comm -12 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
+
+# --- 3b. Midad-side divergence vs. COMMON_REF (authoritative gate) ----------
+# classify_divergence <common_sha> <base_sha> <head_sha> <upstream_sha>
+# Echoes one of: clean | converged | new_divergence | already_diverged.
+# See the header comment's four-state table for the exact rule; convergence
+# (HEAD == UPSTREAM) is checked first and wins regardless of BASE's prior
+# state, since adopting upstream's exact current content is always good
+# news, including when it resolves a pre-existing divergence.
+classify_divergence() {
+  local common="$1" base="$2" head="$3" upstream="$4"
+  if [ "$head" = "$upstream" ]; then
+    echo "converged"
+    return
+  fi
+  if [ "$base" = "$common" ]; then
+    if [ "$head" = "$base" ]; then
+      echo "clean"
+    else
+      echo "new_divergence"
+    fi
+  else
+    echo "already_diverged"
+  fi
+}
+
+MIDAD_NEW_DIVERGED=""
+MIDAD_CONVERGED=""
+MIDAD_ALREADY_DIVERGED=""
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  common_sha="$(git rev-parse -q --verify "$COMMON_REF:$path" 2>/dev/null || true)"
+  base_sha="$(git rev-parse -q --verify "$BASE_REF:$path" 2>/dev/null || true)"
+  head_sha="$(git rev-parse -q --verify "$HEAD_REF:$path" 2>/dev/null || true)"
+  upstream_sha="$(git rev-parse -q --verify "$UPSTREAM_REF:$path" 2>/dev/null || true)"
+  case "$(classify_divergence "$common_sha" "$base_sha" "$head_sha" "$upstream_sha")" in
+    new_divergence) MIDAD_NEW_DIVERGED="${MIDAD_NEW_DIVERGED}${path}"$'\n' ;;
+    converged) MIDAD_CONVERGED="${MIDAD_CONVERGED}${path}"$'\n' ;;
+    already_diverged) MIDAD_ALREADY_DIVERGED="${MIDAD_ALREADY_DIVERGED}${path}"$'\n' ;;
+    clean) : ;;
+  esac
+done <<<"$UPSTREAM_TOUCHED"
 
 # Architecture-governance files: no branch-protection review requirement is
 # possible on a solo-owner repo (see thin-fork-guard PR's own description
@@ -235,10 +323,11 @@ fi
   echo
   echo "Base (\`$BASE_REF\`) conflicting files: **$BASE_COUNT**"
   echo "PR HEAD (\`$HEAD_REF\`) conflicting files: **$HEAD_COUNT**"
+  echo "Common ancestor with upstream (\`merge-base $BASE_REF $UPSTREAM_REF\`): \`$COMMON_REF\`"
   echo
 
   if [ "$IS_SYNC" = true ]; then
-    echo "**Recognized genuine CrossPoint sync PR** (verified upstream-merge ancestry from a real \`update-from-crosspoint.yml\` run). This does NOT bypass either gate below -- a genuine sync is expected to pass both on its own merits (see docs/upstream-sync-architecture.md's human-review step for what to check if it doesn't)."
+    echo "**Recognized genuine CrossPoint sync PR** (verified upstream-merge ancestry from a real \`update-from-crosspoint.yml\` run). This does NOT bypass any gate below -- a genuine sync is expected to pass all of them on their own merits (see docs/upstream-sync-architecture.md's human-review step for what to check if it doesn't)."
     echo
   elif [ "$NAME_MISMATCH" = true ]; then
     echo "**WARNING:** branch name \`$HEAD_BRANCH_NAME\` matches \`sync/crosspoint-*\` but does NOT contain a verified upstream-merge ancestry. Treating as an ordinary feature PR -- the full guard applies below."
@@ -263,16 +352,57 @@ fi
     echo
   fi
 
+  if [ -n "$MIDAD_NEW_DIVERGED" ]; then
+    echo "### New Midad-side divergence (gates this PR)"
+    echo "These files were Midad-clean (identical to the last history shared with upstream at \`$COMMON_REF\`) before this PR, and are no longer clean at \`$HEAD_REF\`:"
+    echo '```'
+    echo "$MIDAD_NEW_DIVERGED"
+    echo '```'
+  else
+    echo "No new Midad-side divergence."
+  fi
+  echo
+
+  if [ -n "$MIDAD_CONVERGED" ]; then
+    echo "### Files converged to upstream's current content"
+    echo '```'
+    echo "$MIDAD_CONVERGED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$MIDAD_ALREADY_DIVERGED" ]; then
+    echo "### Pre-existing Midad-side divergence touched (not newly introduced)"
+    echo '```'
+    echo "$MIDAD_ALREADY_DIVERGED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$RENAME_NEW_DIVERGED" ]; then
+    echo "### Renames away from a Midad-clean shared path (gates this PR)"
+    echo "The source path was Midad-clean relative to \`$COMMON_REF\` before this PR; renaming it away severs upstream tracking the same as deleting it would:"
+    echo '```'
+    echo "$RENAME_NEW_DIVERGED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$RENAME_ALREADY_DIVERGED" ]; then
+    echo "### Renames of an already-diverged shared path (not newly diverged)"
+    echo '```'
+    echo "$RENAME_ALREADY_DIVERGED"
+    echo '```'
+    echo
+  fi
+
   if [ -n "$NEW_DIVERGED" ]; then
-    echo "### Files newly diverged from upstream content"
-    echo "Upstream-owned, byte-identical to \`$UPSTREAM_REF\` at \`$BASE_REF\`, no longer identical at \`$HEAD_REF\`:"
+    echo "### Files newly diverged from upstream content (vs. current upstream tip; informational -- see \"New Midad-side divergence\" above for what actually gates this PR)"
     echo '```'
     echo "$NEW_DIVERGED"
     echo '```'
-  else
-    echo "No files newly diverged from upstream content."
+    echo
   fi
-  echo
 
   if [ -n "$RESOLVED_DIVERGED" ]; then
     echo "### Files returned to upstream-exact content"
@@ -283,7 +413,7 @@ fi
   fi
 
   if [ -n "$ALREADY_DIVERGED" ]; then
-    echo "### Already-diverged upstream files touched (not newly diverged)"
+    echo "### Already-diverged upstream files touched (vs. current upstream tip; informational)"
     echo '```'
     echo "$ALREADY_DIVERGED"
     echo '```'
@@ -294,7 +424,7 @@ fi
   if [ -z "$UPSTREAM_TOUCHED" ]; then
     echo "None."
   else
-    echo "| File | +/- | Already conflicting (base) | Already diverged (base) |"
+    echo "| File | +/- | Already conflicting (base) | Already diverged vs. current upstream (base) |"
     echo "|---|---|---|---|"
     while IFS= read -r path; do
       [ -z "$path" ] && continue
@@ -316,23 +446,6 @@ fi
   fi
   echo
 
-  if [ -n "$RENAME_NEW_DIVERGED" ]; then
-    echo "### Renames away from a previously upstream-exact path (new divergence)"
-    echo "The source path was byte-identical to \`$UPSTREAM_REF\` at \`$BASE_REF\`; renaming it away is treated the same as deleting upstream-exact content:"
-    echo '```'
-    echo "$RENAME_NEW_DIVERGED"
-    echo '```'
-    echo
-  fi
-
-  if [ -n "$RENAME_ALREADY_DIVERGED" ]; then
-    echo "### Renames of an already-diverged upstream-owned path (not newly diverged)"
-    echo '```'
-    echo "$RENAME_ALREADY_DIVERGED"
-    echo '```'
-    echo
-  fi
-
   if [ -n "$DELETE_WARNINGS" ]; then
     echo "### Upstream-owned files deleted by this PR"
     echo '```'
@@ -353,8 +466,8 @@ fi
 
 FAIL_REASONS=()
 [ -n "$NEW_CONFLICTS" ] && FAIL_REASONS+=("introduces new fixed-upstream merge-conflict surface")
-[ -n "$NEW_DIVERGED" ] && FAIL_REASONS+=("diverges a previously upstream-exact file")
-[ -n "$RENAME_NEW_DIVERGED" ] && FAIL_REASONS+=("renames a previously upstream-exact file away from tracking upstream")
+[ -n "$MIDAD_NEW_DIVERGED" ] && FAIL_REASONS+=("introduces new Midad-side divergence in a file that was clean relative to the shared upstream history")
+[ -n "$RENAME_NEW_DIVERGED" ] && FAIL_REASONS+=("renames a Midad-clean shared file away from tracking upstream")
 
 if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
   echo "FAIL: this PR:"

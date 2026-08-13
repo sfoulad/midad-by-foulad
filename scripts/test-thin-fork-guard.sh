@@ -14,6 +14,12 @@
 # non-conflict merge failure. Scenario 13 covers renaming a previously
 # upstream-exact file away from its upstream path, which the plain
 # divergence gate cannot see on its own (see thin-fork-guard.sh's header).
+# Scenarios 14-15 cover the merge-base-anchored Midad-side divergence gate
+# specifically: a file upstream has already moved since the last shared
+# history, which a naive "differs from upstream's current tip" comparison
+# misclassifies as "already diverged" even when Midad has never touched it
+# -- see thin-fork-guard.sh's "COMMON_REF" header comment for the four-state
+# model this exists to get right.
 #
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
@@ -90,14 +96,25 @@ new_fixture() {
   echo "$dir"
 }
 
-# Variant of new_fixture adding shared3.txt, which NO branch ever touches
-# at fixture-build time -- it is byte-identical across main/upstream_mirror
-# /develop from the start, i.e. genuinely upstream-exact at base. shared.txt
+# Variant of new_fixture adding shared3.txt, shared4.txt, and shared5.txt,
+# none of which `develop` ever touches at fixture-build time -- they start
+# Midad-clean (base == the shared merge-base with upstream). shared.txt
 # keeps the same pre-existing base conflict as new_fixture. Used by
-# scenarios that need a clean (not-already-diverged) upstream-owned file to
-# test the divergence gate in isolation from new_fixture's shared2.txt
-# (which is already diverged at base by construction, so it can only ever
-# land in "already diverged," never "newly diverged").
+# scenarios that need a clean (not-already-diverged) shared file to test
+# the divergence gate in isolation from new_fixture's shared2.txt (which is
+# already diverged at base by construction, so it can only ever land in
+# "already diverged," never "newly diverged").
+#
+# shared3.txt: single-line, untouched by upstream_mirror too -- a plain
+#   Midad-clean file for deletion/rename/resolve-to-exact scenarios.
+# shared4.txt: multi-line; upstream_mirror changes line A only. Lets a
+#   scenario change a DIFFERENT line (line C) on the Midad side and still
+#   get a clean 3-way merge (disjoint line changes), proving the
+#   Midad-side divergence gate is load-bearing independent of the conflict
+#   gate even when upstream has moved since the shared merge-base.
+# shared5.txt: upstream_mirror DELETES it entirely (Midad's copy survives
+#   unchanged at base) -- covers "upstream deletes a path after the shared
+#   merge-base while base still contains it."
 new_fixture_ext() {
   local dir="$WORKDIR/$1"
   mkdir -p "$dir"
@@ -109,13 +126,17 @@ new_fixture_ext() {
 
     echo "line1" >shared.txt
     echo "line1" >shared3.txt
+    printf 'lineA\nlineB\nlineC\n' >shared4.txt
+    echo "keep me" >shared5.txt
     git add -A
     git commit -q -m "initial"
 
     git branch -q upstream_mirror
     git checkout -q upstream_mirror
     echo "line1-upstream-change" >shared.txt
-    git commit -aqm "upstream changes shared.txt only"
+    printf 'lineA-upstream\nlineB\nlineC\n' >shared4.txt
+    git rm -q shared5.txt
+    git commit -aqm "upstream changes shared.txt/shared4.txt line A, deletes shared5.txt"
 
     git checkout -q main
     git branch -qf develop main
@@ -291,7 +312,7 @@ echo "=== Scenario 8: post-ancestor edit of a previously upstream-exact file -> 
   assert_exit "post-ancestor divergence fails" 1 "$ec"
   assert_contains "post-ancestor divergence reports zero new conflicts" "No new conflicting files." "$out"
   assert_contains "post-ancestor divergence names shared.txt as newly diverged" "Files newly diverged from upstream content" "$out"
-  assert_contains "post-ancestor divergence reports FAIL with divergence reason" "diverges a previously upstream-exact file" "$out"
+  assert_contains "post-ancestor divergence reports FAIL with divergence reason" "introduces new Midad-side divergence in a file that was clean relative to the shared upstream history" "$out"
 }
 
 echo "=== Scenario 9: genuine sync PR with a post-sync new divergence -> FAIL (sync recognition does not bypass) ==="
@@ -331,7 +352,7 @@ echo "=== Scenario 10: deletion of a previously upstream-exact file -> FAIL (div
   ec=$?
   assert_exit "deletion of upstream-exact file fails" 1 "$ec"
   assert_contains "deletion of upstream-exact file names shared3.txt as newly diverged" "shared3.txt" "$out"
-  assert_contains "deletion of upstream-exact file reports FAIL with divergence reason" "diverges a previously upstream-exact file" "$out"
+  assert_contains "deletion of upstream-exact file reports FAIL with divergence reason" "introduces new Midad-side divergence in a file that was clean relative to the shared upstream history" "$out"
   assert_contains "deletion of upstream-exact file also flagged as an upstream-owned deletion" "Upstream-owned files deleted by this PR" "$out"
 }
 
@@ -359,10 +380,16 @@ echo "=== Scenario 12: measure-conflicts.sh fails closed on a non-conflict merge
   assert_exit "non-conflict merge failure exits nonzero" 1 "$ec"
   assert_contains "non-conflict merge failure reports the real reason on stderr" "failed for a" "$out"
 
+  # A bogus upstream ref is now caught even earlier than measure-conflicts.sh
+  # -- thin-fork-guard.sh computes COMMON_REF via `git merge-base` as its
+  # very first step, which fails for the same bad ref before ever reaching
+  # measure-conflicts.sh. Still fail-closed, just via an earlier check; the
+  # standalone $MEASURE assertions above already cover measure-conflicts.sh's
+  # own fail-closed behavior in isolation.
   out2="$("$GUARD" develop develop nonexistent-ref-does-not-exist 2>&1)"
   ec2=$?
-  assert_exit "guard propagates non-conflict merge failure as nonzero (fail-closed, not silent 0 conflicts)" 1 "$ec2"
-  assert_contains "guard's propagated failure carries the real reason, not a swallowed PASS" "failed for a" "$out2"
+  assert_exit "guard propagates a bad upstream ref as nonzero (fail-closed, not silent 0 conflicts)" 1 "$ec2"
+  assert_contains "guard's propagated failure carries the real reason, not a swallowed PASS" "cannot reason about upstream divergence" "$out2"
 }
 
 echo "=== Scenario 13: rename of a previously upstream-exact file -> FAIL (divergence via rename, zero new conflicts) ==="
@@ -378,7 +405,46 @@ echo "=== Scenario 13: rename of a previously upstream-exact file -> FAIL (diver
   assert_exit "rename of upstream-exact file fails" 1 "$ec"
   assert_contains "rename of upstream-exact file reports zero new conflicts" "No new conflicting files." "$out"
   assert_contains "rename of upstream-exact file reports the old -> new mapping" "shared3.txt\` -> \`midad_shared3.txt" "$out"
-  assert_contains "rename of upstream-exact file reports FAIL with the rename reason" "renames a previously upstream-exact file away from tracking upstream" "$out"
+  assert_contains "rename of upstream-exact file reports FAIL with the rename reason" "renames a Midad-clean shared file away from tracking upstream" "$out"
+}
+
+echo "=== Scenario 14: upstream moves first, Midad then edits a different line -> FAIL (Midad-side divergence, zero new conflicts) ==="
+{
+  dir="$(new_fixture_ext scenario14)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  printf 'lineA\nlineB\nlineC-midad\n' >shared4.txt
+  git commit -aqm "midad: edit shared4.txt line C (upstream already moved line A first)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "upstream-moved-first then Midad edit fails" 1 "$ec"
+  assert_contains "upstream-moved-first then Midad edit reports zero new conflicts" "No new conflicting files." "$out"
+  assert_contains "upstream-moved-first then Midad edit names shared4.txt" "shared4.txt" "$out"
+  assert_contains "upstream-moved-first then Midad edit reports the Midad-side divergence section" "New Midad-side divergence" "$out"
+  assert_contains "upstream-moved-first then Midad edit reports FAIL with the Midad-side reason" "introduces new Midad-side divergence in a file that was clean relative to the shared upstream history" "$out"
+}
+
+echo "=== Scenario 15: upstream deletes a path after the shared history, Midad then edits it -> FAIL ==="
+{
+  dir="$(new_fixture_ext scenario15)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  echo "midad edited" >shared5.txt
+  git commit -aqm "midad: edit shared5.txt (upstream already deleted it)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  # Deleting a file on one side and modifying it on the other is an
+  # inherent git modify/delete merge conflict -- this scenario cannot be
+  # made conflict-clean the way scenario 14 is. The point here is proving
+  # the divergence classification does NOT mislabel shared5.txt as
+  # "already diverged" just because upstream's deletion makes its blob
+  # differ from Midad's copy -- it must recognize this as Midad's FIRST
+  # touch to a previously clean file.
+  assert_exit "upstream-deleted-first then Midad edit fails" 1 "$ec"
+  assert_contains "upstream-deleted-first then Midad edit names shared5.txt" "shared5.txt" "$out"
+  assert_contains "upstream-deleted-first then Midad edit reports the Midad-side divergence section" "New Midad-side divergence" "$out"
 }
 
 echo

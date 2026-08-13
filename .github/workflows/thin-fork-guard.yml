@@ -1,5 +1,23 @@
 name: Thin-Fork Guard
 
+# ADVISORY / FAST-FEEDBACK ONLY -- NOT the trusted, required evaluator.
+#
+# This workflow runs on the ordinary `pull_request` event, which checks out
+# and executes the PR's OWN copy of scripts/thin-fork-guard.sh and
+# scripts/measure-conflicts.sh. That means a PR can edit those scripts and
+# this job would judge the PR using its own edited rules -- a PR is not a
+# trustworthy judge of itself. This job exists purely to give the PR author
+# fast, visible feedback in the PR's own Checks tab (and is genuinely safe
+# to run PR-controlled code in, since `pull_request` runs with a read-only
+# token and no secrets by GitHub's own design).
+#
+# The actual required, branch-protection-backing result comes from
+# .github/workflows/thin-fork-guard-trusted.yml (`pull_request_target`,
+# executes ONLY the base-branch's copy of these scripts, publishes a
+# `thin-fork-guard-trusted` commit status against the PR's head SHA). See
+# that workflow's header for why the split exists and what property it
+# proves. Do not point branch protection at this job's check name.
+#
 # Fails a PR that introduces new fixed-upstream merge-conflict surface --
 # see CLAUDE.md's "Midad Thin-Fork Architecture" section and
 # docs/upstream-sync-architecture.md. Automates the manual `git merge --no-ff`
@@ -52,12 +70,22 @@ jobs:
           git fetch origin upstream:refs/remotes/origin/upstream
 
       - name: Run Thin-Fork Guard
+        # PR_HEAD_REF is passed via `env`, not interpolated directly with
+        # `${{ }}` -- a PR's branch name is attacker-controlled free text,
+        # and inline interpolation into a shell script is a classic GitHub
+        # Actions script-injection vector (flagged by actionlint). This job
+        # only holds `contents: read` so the blast radius is small, but
+        # routing it through the environment is free and correct either way.
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           chmod +x scripts/measure-conflicts.sh scripts/thin-fork-guard.sh
           scripts/thin-fork-guard.sh \
-            "${{ github.event.pull_request.base.sha }}" \
-            "${{ github.event.pull_request.head.sha }}" \
+            "$PR_BASE_SHA" \
+            "$PR_HEAD_SHA" \
             "origin/upstream" \
-            "${{ github.head_ref }}" \
+            "$PR_HEAD_REF" \
             | tee -a "$GITHUB_STEP_SUMMARY"
