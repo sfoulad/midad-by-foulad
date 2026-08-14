@@ -177,13 +177,15 @@ void XtcReaderActivity::render(RenderLock&&) {
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
       if (!endOfBookOptions) LOG_ERR("XTC", "OOM: EndOfBookOptions");
-      // Release-publish AFTER construction so the main task's acquire load
-      // can't observe a half-built object.
-      endOfBookOptionsReady.store(endOfBookOptions != nullptr, std::memory_order_release);
+      // Release-publish AFTER loadOnce() so the main task's acquire load
+      // can't observe a constructed-but-not-yet-loaded object.
+      if (endOfBookOptions) {
+        endOfBookOptions->loadOnce(xtc->getPath());
+        endOfBookOptionsReady.store(true, std::memory_order_release);
+      }
     }
     renderer.clearScreen();
     if (endOfBookOptions) {
-      endOfBookOptions->loadOnce(xtc->getPath());
       endOfBookOptions->render(renderer, mappedInput);
     }
     renderer.displayBuffer();

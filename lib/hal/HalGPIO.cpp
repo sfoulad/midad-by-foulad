@@ -6,7 +6,10 @@
 #include <Wire.h>
 #include <XteinkDetect.h>
 #include <esp_sleep.h>
+#include <soc/soc_caps.h>
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
 #include <soc/usb_serial_jtag_struct.h>
+#endif
 
 // Global HalGPIO instance
 HalGPIO gpio;
@@ -158,9 +161,11 @@ void HalGPIO::updateUsbState(const unsigned long now) {
   // behind the I2C throttle below — a fresh enumeration must cancel light
   // sleep within a poll or two, or the next slice kills the CDC link again.
   if (sofLastSampleMs == 0 || now - sofLastSampleMs >= SOF_SAMPLE_MS) {
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
     const auto sof = static_cast<uint16_t>(USB_SERIAL_JTAG.fram_num.sof_frame_index);
     usbSofActive = (sof != lastSofFrameIndex);
     lastSofFrameIndex = sof;
+#endif
     sofLastSampleMs = now;
   }
 

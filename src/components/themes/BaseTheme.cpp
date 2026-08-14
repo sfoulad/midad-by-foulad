@@ -576,18 +576,27 @@ bool BaseTheme::tabIndexFromPoint(const GfxRenderer& renderer, const Rect rect, 
     return false;
   }
 
-  int currentX = rect.x + BaseMetrics::values.contentSidePadding;
+  // Mirror drawTabBar()'s RTL layout: first tab hugs the right edge and the
+  // strip advances leftward, so hit regions must be derived the same way.
+  const bool rtl = I18N.isRtl();
+  int currentX = rtl ? rect.x + rect.width - BaseMetrics::values.contentSidePadding
+                     : rect.x + BaseMetrics::values.contentSidePadding;
   for (size_t i = 0; i < tabs.size(); i++) {
     const auto& tab = tabs[i];
     const int textWidth =
         renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-    const int left = (i == 0) ? rect.x : currentX - BaseMetrics::values.tabSpacing / 2;
-    const int right = currentX + textWidth + BaseMetrics::values.tabSpacing / 2;
+    if (rtl) currentX -= textWidth;
+    const int left = (i == 0 && !rtl) ? rect.x : currentX - BaseMetrics::values.tabSpacing / 2;
+    const int right = (i == 0 && rtl) ? rect.x + rect.width : currentX + textWidth + BaseMetrics::values.tabSpacing / 2;
     if (x >= left && x < right) {
       index = static_cast<int>(i);
       return true;
     }
-    currentX += textWidth + BaseMetrics::values.tabSpacing;
+    if (rtl) {
+      currentX -= BaseMetrics::values.tabSpacing;
+    } else {
+      currentX += textWidth + BaseMetrics::values.tabSpacing;
+    }
   }
 
   return false;

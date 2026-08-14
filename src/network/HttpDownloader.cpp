@@ -151,6 +151,9 @@ struct WifiPowerSaveGuard {
 #if defined(FREEINK_NET_WOLFSSL)
 HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
                                          const std::string& password, Sink& sink) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
+  WifiPowerSaveGuard psGuard;
+
   std::string url = startUrl;
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
@@ -159,6 +162,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     http.setInsecure();
     if (!http.begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
+      setLastFailure(HttpDownloader::FailStage::OPEN, 0);
       return HttpDownloader::HTTP_ERROR;
     }
     // setUserAgent replaces SecureHttpClient's built-in UA; addHeader would
@@ -186,28 +190,34 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     if (http.aborted()) return HttpDownloader::ABORTED;
     if (status < 0) {
       LOG_ERR("HTTP", "wolfSSL request failed: %s", url.c_str());
+      setLastFailure(HttpDownloader::FailStage::OPEN, status);
       return HttpDownloader::HTTP_ERROR;
     }
     if (isRedirect(status)) {
       const std::string location = http.getHeader("location");
       if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, url)) {
         LOG_ERR("HTTP", "wolfSSL bad redirect: %d", status);
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
         return HttpDownloader::HTTP_ERROR;
       }
       continue;
     }
     if (status != 200) {
       LOG_ERR("HTTP", "wolfSSL unexpected status: %d", status);
+      setLastFailure(HttpDownloader::FailStage::STATUS, status);
       return HttpDownloader::HTTP_ERROR;
     }
     if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
     if (!http.responseComplete()) {
       LOG_ERR("HTTP", "wolfSSL incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
+      setLastFailure(HttpDownloader::FailStage::INCOMPLETE,
+                     static_cast<int>(std::min<size_t>(sink.downloaded, INT32_MAX)));
       return HttpDownloader::HTTP_ERROR;
     }
     return HttpDownloader::OK;
   }
   LOG_ERR("HTTP", "too many redirects");
+  setLastFailure(HttpDownloader::FailStage::REDIRECT, MAX_REDIRECTS);
   return HttpDownloader::HTTP_ERROR;
 }
 #endif

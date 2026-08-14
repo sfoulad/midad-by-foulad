@@ -64,7 +64,8 @@ void logPrintf(const char* level, const char* origin, const char* format, ...) {
     }
   }
   va_end(args);
-#if !defined(SIMULATOR) && FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF
+#if !defined(SIMULATOR) && defined(FREEINK_LOG_TRANSPORT) && defined(FREEINK_LOG_TRANSPORT_ROM_PRINTF) && \
+    FREEINK_LOG_TRANSPORT == FREEINK_LOG_TRANSPORT_ROM_PRINTF
   // IDF/ROM console path for boards monitored over USB-Serial-JTAG, where the
   // HWCDC `operator bool` reads false under `pio device monitor` and logs would
   // otherwise be silently dropped (e.g. Sticky).

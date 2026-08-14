@@ -250,17 +250,26 @@ bool LyraTheme::tabIndexFromPoint(const GfxRenderer& renderer, const Rect rect, 
     return false;
   }
 
-  int currentX = rect.x + LyraMetrics::values.contentSidePadding;
+  // Mirror drawTabBar()'s RTL layout: first tab hugs the right edge and the
+  // strip advances leftward, so hit regions must be derived the same way.
+  const bool rtl = I18N.isRtl();
+  int currentX = rtl ? rect.x + rect.width - LyraMetrics::values.contentSidePadding
+                     : rect.x + LyraMetrics::values.contentSidePadding;
   for (size_t i = 0; i < tabs.size(); i++) {
     const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tabs[i].label, EpdFontFamily::REGULAR);
     const int tabWidth = textWidth + 2 * hPaddingInSelection;
-    const int left = (i == 0) ? rect.x : currentX - LyraMetrics::values.tabSpacing / 2;
-    const int right = currentX + tabWidth + LyraMetrics::values.tabSpacing / 2;
+    if (rtl) currentX -= tabWidth;
+    const int left = (i == 0 && !rtl) ? rect.x : currentX - LyraMetrics::values.tabSpacing / 2;
+    const int right = (i == 0 && rtl) ? rect.x + rect.width : currentX + tabWidth + LyraMetrics::values.tabSpacing / 2;
     if (x >= left && x < right) {
       index = static_cast<int>(i);
       return true;
     }
-    currentX += tabWidth + LyraMetrics::values.tabSpacing;
+    if (rtl) {
+      currentX -= LyraMetrics::values.tabSpacing;
+    } else {
+      currentX += tabWidth + LyraMetrics::values.tabSpacing;
+    }
   }
 
   return false;
