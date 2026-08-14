@@ -5,12 +5,19 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Memory.h>
 
 #include <algorithm>
 
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+namespace {
+constexpr char CUSTOM_SLEEP_ROOT_BMP[] = "/sleep.bmp";
+constexpr char TRANSPARENT_SLEEP_ROOT_BMP[] = "/sleep-overlay.bmp";
+constexpr size_t COPY_BUFFER_SIZE = 2048;
+}  // namespace
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
     : Activity("BmpViewer", renderer, mappedInput), filePath(std::move(path)) {}
@@ -37,7 +44,7 @@ void BmpViewerActivity::loadSiblingImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string fname(name);
-        if (fname.length() >= 4 && fname.substr(fname.length() - 4) == ".bmp") {
+        if (FsHelpers::hasBmpExtension(fname)) {
           siblingImages.push_back(fname);
         }
       }
@@ -146,26 +153,33 @@ void BmpViewerActivity::onExit() {
 void BmpViewerActivity::doSetSleepCover() {
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
 
-  bool success = false;
-  HalFile inFile, outFile;
-  if (Storage.openFileForRead("BMP", filePath, inFile)) {
-    if (Storage.openFileForWrite("BMP", "/sleep.bmp", outFile)) {
-      char buffer[2048];
-      int bytesRead;
-      success = true;
-      while ((bytesRead = inFile.read(buffer, sizeof(buffer))) > 0) {
-        if (outFile.write(buffer, bytesRead) != bytesRead) {
-          success = false;
-          break;
+  const bool transparentMode = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::TRANSPARENT_CUSTOM;
+  const char* destination = transparentMode ? TRANSPARENT_SLEEP_ROOT_BMP : CUSTOM_SLEEP_ROOT_BMP;
+  bool success = filePath == destination;
+
+  if (!success) {
+    auto buffer = makeUniqueNoThrow<uint8_t[]>(COPY_BUFFER_SIZE);
+    if (!buffer) {
+      LOG_ERR("BMP", "OOM: sleep cover copy buffer");
+    } else {
+      HalFile inFile, outFile;
+      if (Storage.openFileForRead("BMP", filePath, inFile) && Storage.openFileForWrite("BMP", destination, outFile)) {
+        int bytesRead;
+        success = true;
+        while ((bytesRead = inFile.read(buffer.get(), COPY_BUFFER_SIZE)) > 0) {
+          if (outFile.write(buffer.get(), static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
+            success = false;
+            break;
+          }
         }
+        if (bytesRead < 0) success = false;
+        outFile.close();
       }
-      outFile.close();
     }
-    inFile.close();
   }
 
   if (success) {
-    SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
+    if (!transparentMode) SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
     SETTINGS.saveToFile();
     GUI.drawPopup(renderer, tr(STR_DONE));
   } else {
@@ -180,8 +194,34 @@ void BmpViewerActivity::loop() {
   // Keep CPU awake/polling so 1st click works
   Activity::loop();
 
+  auto openSibling = [this](const int delta) {
+    if (currentImageIndex < 0) {
+      return false;
+    }
+    const int nextIndex = currentImageIndex + delta;
+    if (siblingImages.size() <= 1 || nextIndex < 0 || nextIndex >= static_cast<int>(siblingImages.size())) {
+      return false;
+    }
+    currentImageIndex = nextIndex;
+    std::string dirPath = FsHelpers::extractFolderPath(filePath);
+    if (dirPath.back() != '/') dirPath += "/";
+    filePath = dirPath + siblingImages[currentImageIndex];
+    onEnter();
+    return true;
+  };
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     activityManager.goToFileBrowser(filePath);
+    return;
+  }
+
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Left) {
+    openSibling(1);
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Right) {
+    openSibling(-1);
     return;
   }
 
@@ -192,26 +232,13 @@ void BmpViewerActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Left) ||
       mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    if (siblingImages.size() > 1 && currentImageIndex > 0) {
-      currentImageIndex--;
-      std::string dirPath = FsHelpers::extractFolderPath(filePath);
-      if (dirPath.back() != '/') dirPath += "/";
-      filePath = dirPath + siblingImages[currentImageIndex];
-      onEnter();
-    }
+    openSibling(-1);
     return;
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right) ||
       mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (siblingImages.size() > 1 && currentImageIndex != -1 &&
-        currentImageIndex < static_cast<int>(siblingImages.size()) - 1) {
-      currentImageIndex++;
-      std::string dirPath = FsHelpers::extractFolderPath(filePath);
-      if (dirPath.back() != '/') dirPath += "/";
-      filePath = dirPath + siblingImages[currentImageIndex];
-      onEnter();
-    }
+    openSibling(1);
     return;
   }
 }

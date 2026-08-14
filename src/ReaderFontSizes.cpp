@@ -18,6 +18,7 @@ uint8_t snapToNearestPointSize(const uint8_t* sizes, const size_t count, const u
   uint8_t bestDelta = best > pt ? best - pt : pt - best;
   for (size_t i = 1; i < count; i++) {
     const uint8_t delta = sizes[i] > pt ? sizes[i] - pt : pt - sizes[i];
+    // Strictly-less keeps the smaller size on a tie, since `sizes` is ascending.
     if (delta < bestDelta) {
       best = sizes[i];
       bestDelta = delta;

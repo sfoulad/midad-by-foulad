@@ -21,7 +21,6 @@ void CrashActivity::onEnter() {
   if (panicMessage.empty()) {
     panicMessage = tr(STR_CRASH_NO_REASON);
   }
-  HalSystem::clearPanic();
 
   requestUpdateAndWait();
 }
@@ -30,7 +29,9 @@ void CrashActivity::loop() {
   // WifiSelectionActivity owns the screen/input while it's on top.
   if (sendState == SendState::Connecting) return;
 
-  if (mappedInput.isPressed(MappedInputManager::Button::Back)) {
+  int x = 0;
+  int y = 0;
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
     finish();
     return;
   }

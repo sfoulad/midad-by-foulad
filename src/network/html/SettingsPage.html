@@ -847,7 +847,8 @@
   // Sequential, not concurrent: the ESP32 WebServer handles one request at a
   // time, and firing these as three independent unawaited fetches on page load
   // let the browser open overlapping connections the device couldn't service
-  // in parallel, producing intermittent load failures/timeouts on this page.
+  // in parallel, producing intermittent load failures/timeouts on this page --
+  // and can stall long enough inside a single response to trip the firmware watchdog.
   (async function loadPageData() {
     await loadSettings();
     await loadWifiNetworks();

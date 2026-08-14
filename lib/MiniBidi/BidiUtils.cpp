@@ -11,6 +11,13 @@ extern "C" {
 #include <Utf8.h>
 
 #include <cstring>
+#include <mutex>
+
+// Guards the static bidi_char buffers in applyBidiVisual() and
+// computeVisualWordOrder().  The bidi+shaping pipeline is not reentrant;
+// this mutex serialises access so multi-core callers don't corrupt each
+// other's intermediate state.
+static std::mutex bidiMutex;
 
 namespace {
 
@@ -74,8 +81,20 @@ int detectParagraphLevel(const char* utf8, const int fallbackLevel, const int ma
   return fallbackLevel & 1;
 }
 
+bool isTransparentMark(const uint32_t cp) {
+  // RTL-script combining marks: Hebrew niqqud/cantillation and Arabic
+  // harakat/Quranic annotation. Zero-advance for measurement, and rendered
+  // as overlays on the preceding base glyph when the active font carries
+  // their glyphs. Arabic contextual shaping itself is handled separately by
+  // ArabicShaper (see GfxRenderer's Arabic dispatch), not here.
+  // The cp >= 0x0591 guard keeps Latin combining marks (U+0300-U+036F, also
+  // NSM) on their existing utf8IsCombiningMark() rendering path.
+  return cp >= 0x0591 && bidi_class(cp) == NSM;
+}
+
 bool applyBidiVisual(const char* utf8, std::string& out, int paragraphLevel) {
   if (!utf8 || !*utf8) return false;
+  const std::lock_guard<std::mutex> lock(bidiMutex);
 
   bidi_char* line = bidiScratchLine;
   int count = 0;
@@ -96,12 +115,37 @@ bool applyBidiVisual(const char* utf8, std::string& out, int paragraphLevel) {
 
   const bool autodir = (paragraphLevel < 0);
   const int level = autodir ? 0 : (paragraphLevel & 1);
+
   do_bidi(autodir, level, line, count);
 
   out.clear();
   out.reserve(std::strlen(utf8));
   for (int i = 0; i < count; i++) {
-    utf8AppendCodepoint(line[i].wc, out);
+    const uint32_t cp = line[i].wc;
+    if (!isTransparentMark(cp)) {
+      utf8AppendCodepoint(cp, out);
+      continue;
+    }
+    // UAX#9 rule L3: reversing an RTL run leaves combining marks *before*
+    // their base character. The renderer overlays a mark on the most
+    // recently drawn glyph, so emit the base first, then its marks in
+    // logical order. `index` is the original logical position: a base
+    // following its marks with a *lower* index means the run was reversed.
+    int j = i;  // [i, j) = the run of marks
+    while (j < count && isTransparentMark(line[j].wc)) j++;
+    if (j < count && line[j].index < line[i].index) {
+      utf8AppendCodepoint(line[j].wc, out);
+      for (int k = j - 1; k >= i; k--) {
+        utf8AppendCodepoint(line[k].wc, out);
+      }
+      i = j;  // base already emitted
+    } else {
+      // Unreversed (or trailing, base-less) marks already follow their base.
+      for (int k = i; k < j; k++) {
+        utf8AppendCodepoint(line[k].wc, out);
+      }
+      i = j - 1;
+    }
   }
   return true;
 }
@@ -111,6 +155,7 @@ bool computeVisualWordOrder(const std::vector<std::string>& words, bool paragrap
   visualOrder.clear();
   const size_t nWords = words.size();
   if (nWords <= 1 || nWords > BIDI_MAX_LINE) return false;
+  const std::lock_guard<std::mutex> lock(bidiMutex);
 
   bidi_char* line = bidiScratchLine;
   int count = 0;

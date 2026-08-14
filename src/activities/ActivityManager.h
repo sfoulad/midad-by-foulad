@@ -147,7 +147,7 @@ class ActivityManager {
   void goToNews();
   void goToGym();
   void goToDictionary();
-  void goToReader(std::string path);
+  void goToReader(std::string path, bool allowFastInitialRefresh = false);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);

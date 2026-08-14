@@ -10,6 +10,8 @@
 bool BookmarkFile::load(const std::string& bookPath, std::vector<BookmarkEntry>& bookmarks) {
   bookmarks.clear();
 
+  // Read/write go through PersistableStoreBase so the JSON parser and
+  // serializer stay instantiated once, in PersistableStore.cpp.
   const std::string path = BookmarkUtil::getBookmarkPath(bookPath);
   JsonDocument doc;
   if (!PersistableStoreBase::readDocFromFile(path.c_str(), doc)) {
@@ -27,6 +29,10 @@ bool BookmarkFile::load(const std::string& bookPath, std::vector<BookmarkEntry>&
     bookmark.computedSpineIndex = obj["si"] | static_cast<uint16_t>(0);
     bookmark.computedChapterPageCount = obj["pc"] | static_cast<uint16_t>(0);
     bookmark.computedChapterProgress = obj["pp"] | static_cast<uint16_t>(0);
+    if (!obj["vo"].isNull()) {
+      bookmark.visibleTextOffset = obj["vo"] | static_cast<uint32_t>(0);
+      bookmark.hasVisibleTextOffset = true;
+    }
   }
 
   LOG_DBG("BKM", "Loaded %zu bookmarks from file", bookmarks.size());
@@ -45,8 +51,12 @@ bool BookmarkFile::save(const std::string& bookPath, const std::vector<BookmarkE
     obj["si"] = bookmark.computedSpineIndex;
     obj["pc"] = bookmark.computedChapterPageCount;
     obj["pp"] = bookmark.computedChapterProgress;
+    if (bookmark.hasVisibleTextOffset) {
+      obj["vo"] = bookmark.visibleTextOffset;
+    }
   }
 
+  // writeDocToFile ensures /.crosspoint; the bookmarks subdirectory is ours.
   Storage.mkdir(BookmarkUtil::getBookmarksDir().c_str());
   const std::string path = BookmarkUtil::getBookmarkPath(bookPath);
   return PersistableStoreBase::writeDocToFile(path.c_str(), doc);

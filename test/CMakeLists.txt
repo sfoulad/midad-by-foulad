@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(crosspoint_reader_tests CXX)
+project(crosspoint_reader_tests C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,3 +46,6 @@ add_subdirectory(utf8_compose)
 add_subdirectory(arabic_shaper)
 add_subdirectory(midad_app_settings_load_plan)
 add_subdirectory(foulad_opds_hooks_pure)
+add_subdirectory(opds_filename)
+add_subdirectory(combining_marks)
+add_subdirectory(credential_integrity)

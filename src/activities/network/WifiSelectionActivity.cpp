@@ -41,7 +41,7 @@ void WifiSelectionActivity::onEnter() {
   autoConnecting = false;
   manualNetworkListRequested = false;
   autoAttemptedSsids.clear();
-  autoAttemptedSsids.reserve(WIFI_STORE.getCredentials().size());
+  autoAttemptedSsids.reserve(WIFI_STORE.getCredentialCount());
 
   // Cache MAC address for display
   uint8_t mac[6];
@@ -61,10 +61,10 @@ void WifiSelectionActivity::onEnter() {
   // saved or fails, an auto-scan (started below / by handleAutoConnectFailure)
   // tries every other saved network the scan finds, by signal strength. The
   // user can interrupt this at any point and drop straight to the manual list.
-  if (allowAutoConnect && !WIFI_STORE.getCredentials().empty()) {
+  if (allowAutoConnect && WIFI_STORE.getCredentialCount() > 0) {
     const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
     if (!lastSsid.empty()) {
-      const auto* cred = WIFI_STORE.findCredential(lastSsid);
+      const auto cred = WIFI_STORE.findCredential(lastSsid);
       if (cred && tryAutoConnectCredential(*cred)) {
         return;
       }
@@ -219,7 +219,7 @@ void WifiSelectionActivity::selectNetwork(const int index) {
   autoConnecting = false;
 
   // Check if we have saved credentials for this network
-  const auto* savedCred = WIFI_STORE.findCredential(selectedSSID);
+  const auto savedCred = WIFI_STORE.findCredential(selectedSSID);
   if (savedCred && !savedCred->password.empty()) {
     // Use saved password - connect directly
     enteredPassword = savedCred->password;
@@ -308,7 +308,7 @@ bool WifiSelectionActivity::tryNextSavedNetworkFromScan() {
       continue;
     }
 
-    const auto* cred = WIFI_STORE.findCredential(network.ssid);
+    const auto cred = WIFI_STORE.findCredential(network.ssid);
     if (cred && tryAutoConnectCredential(*cred)) {
       return true;
     }
@@ -548,7 +548,7 @@ void WifiSelectionActivity::loop() {
 
   // Reached once the hidden-network SSID has been entered (and was non-empty).
   if (state == WifiSelectionState::HIDDEN_SSID_ENTRY) {
-    const auto* savedCred = WIFI_STORE.findCredential(selectedSSID);
+    const auto savedCred = WIFI_STORE.findCredential(selectedSSID);
     if (savedCred && !savedCred->password.empty()) {
       // We already know this hidden network - connect with the saved password
       enteredPassword = savedCred->password;

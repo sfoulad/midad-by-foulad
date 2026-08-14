@@ -86,7 +86,8 @@ done
 python fontconvert.py notosans_8_regular 8 \
   ../builtinFonts/source/NotoSans/NotoSans-Regular.ttf \
   ../builtinFonts/source/NotoSansHebrew/NotoSansHebrew-Regular.ttf \
-  --additional-intervals 0x05D0,0x05EA > ../builtinFonts/notosans_8_regular.h
+  ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
+  --additional-intervals 0x05D0,0x05EA "${ARABIC_INTERVALS[@]}" > ../builtinFonts/notosans_8_regular.h
 
 # All three built-in Arabic fonts below have OpenType GPOS MarkBasePos/MarkMarkPos
 # tables (confirmed via fontTools) -- they anchor tashkeel to their base letter

@@ -9,6 +9,7 @@
 #include <Utf8.h>
 #include <Xtc.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -268,20 +269,23 @@ void HomeActivity::loop() {
     requestUpdate();
   }
 
-  // After the BLE long-press has fired, swallow input until Confirm is physically
-  // released (so the release doesn't ALSO act as a normal Confirm tap; re-arm only
+  // After the BLE long-press has fired, swallow input until Up is physically
+  // released (so the release doesn't ALSO act as a normal Up tap; re-arm only
   // once the button is up) -- same pattern RecentBooksActivity's long-press-to-
   // remove uses.
   if (bleLongPressFired) {
-    if (!mappedInput.isPressed(MappedInputManager::Button::Confirm)) {
+    if (!mappedInput.isPressed(MappedInputManager::Button::Up)) {
       bleLongPressFired = false;
     }
     return;
   }
 
-  // Hold Confirm anywhere on Home to open BLE pairing -- BLE-R2's second entry
-  // point (see BluetoothActivity's own header comment). BLE itself starts/stops
-  // via that screen's own onEnter()/onExit(), never here.
+  // Hold Up (side button) anywhere on Home to open BLE pairing -- BLE-R2's second
+  // entry point (see BluetoothActivity's own header comment). BLE itself
+  // starts/stops via that screen's own onEnter()/onExit(), never here. Confirm is
+  // deliberately not used for this: it is Home's normal book/menu-item activation
+  // button, and a short tap on it must never risk being mistaken for the start of
+  // a long-press gesture.
   //
   // replaceActivity(), not startActivityForResult(): measured on real hardware
   // (BLE-R2 correction 3) that push-based entry left Home fully resident on
@@ -299,25 +303,19 @@ void HomeActivity::loop() {
   // changed to match: that path already clears the gate reliably as-is (Apps
   // itself has nothing comparable to Home's cover buffer retained), and
   // push/pop there correctly returns to Apps, not Home.
-  if (mappedInput.isPressed(MappedInputManager::Button::Confirm) && mappedInput.getHeldTime() >= kBleLongPressMs) {
+  if (mappedInput.isPressed(MappedInputManager::Button::Up) && mappedInput.getHeldTime() >= kBleLongPressMs) {
     bleLongPressFired = true;
     activityManager.replaceActivity(std::make_unique<BluetoothActivity>(renderer, mappedInput));
     return;
   }
 
   const int menuCount = getMenuItemCount();
+  const auto& metrics = UITheme::getInstance().getMetrics();
 
-  buttonNavigator.onNext([this, menuCount] {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
-    requestUpdate();
-  });
-
-  buttonNavigator.onPrevious([this, menuCount] {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
-    requestUpdate();
-  });
-
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  // Shared by the Confirm-release path below and by the touch-tap paths further
+  // down (cover-row tap, menu-row tap): all three activate "whatever is
+  // currently selected" the same way.
+  auto activateSelection = [this] {
     if (selectorIndex < recentBooks.size()) {
       // The last recents tile becomes a "+N more" stack when the store holds more
       // books than the row shows (see FouladTheme); confirming it opens the full
@@ -329,28 +327,126 @@ void HomeActivity::loop() {
       } else {
         onSelectBook(recentBooks[selectorIndex].path);
       }
-    } else {
-      const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-      switch (indexToMenuItem(menuIndex)) {
-        case HomeMenuItem::FOULAD_EBOOKS:
-          // Signed out is not a separate destination: goToFouladEbooks() sends an
-          // unconfigured device straight to FouladQrLoginActivity, and a configured
-          // one to the catalog.
-          onFouladEbooksOpen();
-          break;
-        case HomeMenuItem::SETTINGS_MENU:
-          onSettingsOpen();
-          break;
-        case HomeMenuItem::APPS:
-          activityManager.goToApps();
-          break;
-        case HomeMenuItem::STATS:
-          onStatsOpen();
-          break;
-        default:
-          break;
-      }
+      return;
     }
+    const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
+    switch (indexToMenuItem(menuIndex)) {
+      case HomeMenuItem::FOULAD_EBOOKS:
+        // Signed out is not a separate destination: goToFouladEbooks() sends an
+        // unconfigured device straight to FouladQrLoginActivity, and a configured
+        // one to the catalog.
+        onFouladEbooksOpen();
+        break;
+      case HomeMenuItem::SETTINGS_MENU:
+        onSettingsOpen();
+        break;
+      case HomeMenuItem::APPS:
+        activityManager.goToApps();
+        break;
+      case HomeMenuItem::STATS:
+        onStatsOpen();
+        break;
+      default:
+        break;
+    }
+  };
+
+  buttonNavigator.onNextPress([this, menuCount] {
+    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
+    requestUpdate();
+  });
+  buttonNavigator.onPreviousPress([this, menuCount] {
+    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
+    requestUpdate();
+  });
+  // Repeat-while-held scrolling is suppressed while the physical Up button
+  // specifically is down: Up doubles as Home's BLE-pairing long-press (see
+  // above), and NavNext/NavPrevious's continuous repeat firing during that
+  // ~1s hold would visibly scroll the menu out from under the user right
+  // before BLE launches. A single short tap still steps once via onNextPress/
+  // onPreviousPress above; only the repeat is gated.
+  if (!mappedInput.isPressed(MappedInputManager::Button::Up)) {
+    buttonNavigator.onNextContinuous([this, menuCount] {
+      selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
+      requestUpdate();
+    });
+    buttonNavigator.onPreviousContinuous([this, menuCount] {
+      selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
+      requestUpdate();
+    });
+  }
+
+  const auto swipe = mappedInput.wasSwipe();
+  if (swipe == MappedInputManager::SwipeDir::Up) {
+    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
+    requestUpdate();
+    return;
+  }
+  if (swipe == MappedInputManager::SwipeDir::Down) {
+    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
+    requestUpdate();
+    return;
+  }
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) backPressSeen = true;
+
+  // Back is otherwise unused on the home menu: open the most recently read
+  // book directly (recentBooks is most-recent-first and already pruned of
+  // files missing from the SD card). backPressSeen guards against the stale
+  // release of the Back press that closed the previous activity.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && backPressSeen && !recentBooks.empty()) {
+    onSelectBook(recentBooks[0].path);
+    return;
+  }
+
+  const int coverColumnCount = std::max(1, metrics.homeRecentBooksCount);
+  const int recentCount = std::min(static_cast<int>(recentBooks.size()), coverColumnCount);
+  const int coverColumnWidth = (renderer.getScreenWidth() - 2 * metrics.contentSidePadding) / coverColumnCount;
+  int touchedBook = -1;
+  const auto coverTouch = mappedInput.colTouch(touchedBook, metrics.contentSidePadding, coverColumnWidth, recentCount,
+                                               metrics.homeTopPadding,
+                                               metrics.homeTopPadding + metrics.homeCoverTileHeight, coverColumnWidth);
+  if (coverTouch != MappedInputManager::RowTouch::None) {
+    if (coverTouch == MappedInputManager::RowTouch::Down) {
+      if (selectorIndex != touchedBook) {
+        selectorIndex = touchedBook;
+        requestUpdate();
+      }
+    } else {
+      selectorIndex = touchedBook;
+      activateSelection();
+    }
+    return;
+  }
+
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  const int renderedMenuSelection =
+      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size();
+  const int renderedMenuCount =
+      menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
+  int menuRow = -1;
+  // Row height from the theme, not the metrics table: RoundedRaff draws
+  // font-derived rows and the touch grid must match the visuals exactly.
+  const int menuRowHeight = GUI.getMenuRowHeight(renderer);
+  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, menuRowHeight + metrics.menuSpacing, renderedMenuCount,
+                                              0, INT32_MAX, menuRowHeight);
+  if (menuTouch != MappedInputManager::RowTouch::None) {
+    const int touchedIndex =
+        metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
+    if (menuTouch == MappedInputManager::RowTouch::Down) {
+      if (selectorIndex != touchedIndex) {
+        selectorIndex = touchedIndex;
+        requestUpdate();
+      }
+    } else {
+      selectorIndex = touchedIndex;
+      activateSelection();
+    }
+    return;
+  }
+
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    activateSelection();
   }
 }
 

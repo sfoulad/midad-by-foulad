@@ -47,6 +47,7 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   std::string password;
   std::string serverUrl;                                            // Custom sync server URL (empty = default)
   DocumentMatchMethod matchMethod = DocumentMatchMethod::FILENAME;  // Default to filename for compatibility
+  bool sendMetadata = false;                                        // Send document metadata with progress sync
   KOReaderSyncBehavior syncBehavior = KOReaderSyncBehavior::SMART;  // Default to Smart for new configs
   std::optional<PendingKOReaderSync> pendingSync;                   // Queued upload awaiting a reconnect; see above
 
@@ -82,9 +83,16 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   // Get base URL for API calls (with http:// normalization if no protocol, falls back to default)
   std::string getBaseUrl() const;
 
+  // Whether API calls target the CrossPoint sync server that supports protocol extensions.
+  bool usesCrossPointSyncServer() const;
+
   // Document matching method
   void setMatchMethod(DocumentMatchMethod method);
   DocumentMatchMethod getMatchMethod() const { return matchMethod; }
+
+  // Send metadata setting
+  void setSendMetadata(bool enabled);
+  bool getSendMetadata() const { return sendMetadata; }
 
   // Sync behavior
   void setSyncBehavior(KOReaderSyncBehavior behavior);

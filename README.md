@@ -376,6 +376,8 @@ Prefer a different Arabic look? You can swap in your own font too:
 | 🌐 [Web server usage](./docs/webserver.md) | Using the built-in file-transfer/settings web UI |
 | 🔌 [Web server endpoints](./docs/webserver-endpoints.md) | API reference for the web server |
 | 🗺️ [Project scope](./SCOPE.md) | What this fork will and won't take on |
+| 🧑‍💻 [Contributing docs](./docs/contributing/README.md) | Getting-started guide for code contributors |
+| 👆 [Touch and UI development](./docs/contributing/touch-and-ui.md) | Building new screens on the FreeInkUI activity bases (UiListActivity and friends) |
 
 ---
 
@@ -402,6 +404,24 @@ cd midad-by-foulad
 # if cloned without --recursive:
 git submodule update --init --recursive
 ```
+
+### Nix/NixOS
+
+Nix/NixOS users can enter the development shell with either `nix develop` (flakes) or `nix-shell`:
+
+```bash
+nix develop -f nix
+# or
+nix-shell nix
+```
+
+To flash a connected ESP32-C3 device, enable PlatformIO's udev rules in your NixOS configuration:
+
+```nix
+services.udev.packages = with pkgs; [ platformio-core.udev ];
+```
+
+After rebuilding the system configuration, reconnect the device or reload udev rules.
 
 ### Build / flash / monitor
 

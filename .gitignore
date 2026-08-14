@@ -3,6 +3,8 @@ fs_/
 .idea
 .DS_Store
 .vscode
+open-x4-sdk
+fs_
 lib/EpdFont/fontsrc
 lib/I18n/I18nKeys.h
 lib/I18n/I18nStrings.h
@@ -28,3 +30,10 @@ fs_/
 build-banners/
 # Local/private handoff & ops notes — never commit (contains test creds, internal notes)
 HANDOFF.md
+/managed_components
+/.dummy
+/CMakeLists.txt
+/dependencies.lock
+/sdkconfig.*
+sdkconfig.sticky
+flake.*

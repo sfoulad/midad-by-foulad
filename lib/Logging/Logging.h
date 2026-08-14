@@ -1,6 +1,12 @@
 #pragma once
 
+#include <Arduino.h>
 #include <HardwareSerial.h>
+// The simulator's HardwareSerial.h stub already declares HWCDC itself (no
+// separate HWCDC.h there); only pull in the real header on-device.
+#if !defined(SIMULATOR) && defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT
+#include <HWCDC.h>
+#endif
 
 #include <string>
 
@@ -27,7 +33,13 @@ won't trigger deprecation warnings.
 #define LOG_LEVEL 0
 #endif
 
+#if defined(SIMULATOR) || (defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT)
 static HWCDC& logSerial = Serial;
+#define LOG_SERIAL_HAS_TX_TIMEOUT 1
+#else
+static HardwareSerial& logSerial = Serial;
+#define LOG_SERIAL_HAS_TX_TIMEOUT 0
+#endif
 
 void logPrintf(const char* level, const char* origin, const char* format, ...);
 

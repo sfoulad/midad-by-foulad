@@ -1,14 +1,18 @@
-/* bidiclasses.t — bidi class table for CrossPoint Hebrew/English epub.
+/* bidiclasses.t — bidi class table for CrossPoint RTL (Hebrew/Arabic) epub.
  *
  * Coverage rationale:
- *   Hebrew + English is the primary target. However, CrossPoint renders
- *   Latin and Cyrillic scripts for many other languages, so these MUST be
- *   classified as L (not fall through to ON) to avoid regression when they
- *   appear adjacent to Hebrew runs.
+ *   Hebrew and Arabic-script languages (Arabic, Farsi, Urdu, Sindhi, Pashto,
+ *   Kurdish) are the RTL targets. CrossPoint also renders Latin and Cyrillic
+ *   scripts for many other languages, so these MUST be classified as L (not
+ *   fall through to ON) to avoid regression when they appear adjacent to
+ *   RTL runs.
  *
  *   Scripts NOT in this table fall through to ON — correct per UAX#9 for
- *   scripts CrossPoint's fonts don't support (CJK, Arabic, Devanagari, etc.)
+ *   scripts CrossPoint's fonts don't support (CJK, Devanagari, etc.)
  *   ON is the right class for "unknown" — it behaves neutrally.
+ *
+ *   Arabic ranges are sourced from Unicode UCD extracted/DerivedBidiClass.txt
+ *   (values verified against Unicode 17.0.0).
  *
  * Entries sorted ascending by first (binary search requirement).
  */
@@ -155,7 +159,6 @@
 {0x2068, 0x2068, FSI},
 {0x2069, 0x2069, PDI},
 {0x206A, 0x206F, BN},
-
 
 /* ── Arabic Presentation Forms ────────────────────────────────────────── */
 {0xFB50, 0xFDFF, AL},   /* Arabic Presentation Forms-A */

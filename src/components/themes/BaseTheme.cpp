@@ -1,7 +1,9 @@
 #include "BaseTheme.h"
 
+#include <FreeInkUIGfxRenderer.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
+#include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -13,7 +15,10 @@
 
 #include "I18n.h"
 #include "RecentBooksStore.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "components/UIThemeTokens.h"
+#include "components/UiAppHelpers.h"
 #include "components/icons/bookmark.h"
 #include "fontIds.h"
 #ifndef SIMULATOR
@@ -31,12 +36,6 @@ constexpr int bookmarkStatusIconWidth = 16;
 constexpr int bookmarkStatusIconHeight = 14;
 constexpr int bookmarkStatusIconGap = 4;
 constexpr int bookmarkStatusIconTopCrop = 2;
-
-bool statusBarTextLaneVisible() {
-  return SETTINGS.statusBarChapterPageCount || SETTINGS.statusBarBookProgressPercentage ||
-         SETTINGS.statusBarTitle != CrossPointSettings::STATUS_BAR_TITLE::HIDE_TITLE || SETTINGS.statusBarBattery ||
-         (SETTINGS.statusBarClock && halClock.isAvailable());
-}
 
 void drawBookmarkStatusIcon(const GfxRenderer& renderer, const int x, const int y) {
   constexpr int bytesPerRow = bookmarkStatusIconWidth / 8;
@@ -165,8 +164,43 @@ void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const si
   }
 }
 
+// Centre a button-hint label inside its box. A label that fits is drawn on the
+// single baseline it always was; one too wide used to overflow the button border
+// and run into the neighbouring hint, and now wraps to at most two centred lines
+// (wrappedText() ellipsises anything that still doesn't fit). Shared so every
+// theme's drawButtonHints() gets the same behaviour.
+void BaseTheme::drawHintLabel(GfxRenderer& renderer, const int fontId, const char* label, const int x,
+                              const int boxWidth, const int boxTop, const int boxHeight, const int singleLineYOffset) {
+  constexpr int textPadding = 4;  // keeps a wrapped label off the button's border
+  const int maxTextWidth = boxWidth - (textPadding * 2);
+
+  const int textWidth = renderer.getTextWidth(fontId, label);
+  if (textWidth <= maxTextWidth) {
+    renderer.drawText(fontId, x + (boxWidth - 1 - textWidth) / 2, boxTop + singleLineYOffset, label);
+    return;
+  }
+
+  // Spaced by the glyph height, not getLineHeight() — that returns the font's
+  // full advanceY (leading included), which stacks two lines taller than the
+  // button and clips the second one.
+  constexpr int lineGap = 2;
+  const int step = renderer.getTextHeight(fontId) + lineGap;
+  const auto lines = renderer.wrappedText(fontId, label, maxTextWidth, 2);
+  const int block = static_cast<int>(lines.size()) * step - lineGap;
+  int lineY = boxTop + std::max(1, (boxHeight - block) / 2);
+  for (const auto& line : lines) {
+    const int lineWidth = renderer.getTextWidth(fontId, line.c_str());
+    renderer.drawText(fontId, x + (boxWidth - 1 - lineWidth) / 2, lineY, line.c_str());
+    lineY += step;
+  }
+}
+
 void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                                 const char* btn4) const {
+  if (gpio.hasTouch()) {
+    return;
+  }
+
   const GfxRenderer::Orientation orig_orientation = renderer.getOrientation();
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
@@ -175,10 +209,11 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   constexpr int buttonHeight = BaseMetrics::values.buttonHintsHeight;
   constexpr int buttonY = BaseMetrics::values.buttonHintsHeight;  // Distance from bottom
   constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
-  // X3 has wider screen in portrait (528 vs 480), use more spacing
-  constexpr int x4ButtonPositions[] = {25, 130, 245, 350};
-  constexpr int x3ButtonPositions[] = {38, 154, 268, 384};
-  const int* buttonPositions = gpio.deviceIsX3() ? x3ButtonPositions : x4ButtonPositions;
+  // Keyed to the portrait panel width: the 528-wide X3 gets more spacing than
+  // the 480-wide boards (X4, X4 Pro, and the other 800x480 panels).
+  constexpr int narrowButtonPositions[] = {25, 130, 245, 350};
+  constexpr int wideButtonPositions[] = {38, 154, 268, 384};
+  const int* buttonPositions = renderer.getScreenWidth() >= 528 ? wideButtonPositions : narrowButtonPositions;
   const char* labels[] = {btn1, btn2, btn3, btn4};
 
   for (int i = 0; i < 4; i++) {
@@ -187,9 +222,8 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
       const int x = buttonPositions[i];
       renderer.fillRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, false);
       renderer.drawRect(x, pageHeight - buttonY, buttonWidth, buttonHeight);
-      const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, labels[i]);
-      const int textX = x + (buttonWidth - 1 - textWidth) / 2;
-      renderer.drawText(UI_10_FONT_ID, textX, pageHeight - buttonY + textYOffset, labels[i]);
+      drawHintLabel(renderer, UI_10_FONT_ID, labels[i], x, buttonWidth, pageHeight - buttonY, buttonHeight,
+                    textYOffset);
     }
   }
 
@@ -197,13 +231,17 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
 }
 
 void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+  if (gpio.hasTouch()) {
+    return;
+  }
+
   const int screenWidth = renderer.getScreenWidth();
   constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
   constexpr int buttonHeight = 80;                                       // Height on screen (width when rotated)
   constexpr int buttonMargin = 4;
 
-  if (gpio.deviceIsX3()) {
-    // X3 layout: Up on left side, Down on right side, positioned higher
+  if (gpio.hasEdgeSideButtons()) {
+    // Edge-button layout (X3, X4 Pro): Up on left side, Down on right side, positioned higher
     constexpr int x3ButtonY = 155;
 
     if (topBtn != nullptr && topBtn[0] != '\0') {
@@ -261,9 +299,15 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
   }
 }
 
-int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
+int BaseTheme::getListRowStep(bool hasSubtitle) const {
   int rowHeight = (hasSubtitle) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
-  return contentHeight / rowHeight;
+  return rowHeight;
+}
+
+int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
+  const int rowStep = getListRowStep(hasSubtitle);
+  if (rowStep <= 0) return 1;
+  return std::max(1, contentHeight / rowStep);
 }
 
 void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
@@ -274,7 +318,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<bool(int index)>& rowDimmed) const {
   int rowHeight =
       (rowSubtitle != nullptr) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
-  int pageItems = rect.height / rowHeight;
+  int pageItems = rowHeight > 0 ? std::max(1, rect.height / rowHeight) : 1;
 
   const int totalPages = (itemCount + pageItems - 1) / pageItems;
   if (totalPages > 1) {
@@ -526,6 +570,29 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
   }
 }
 
+bool BaseTheme::tabIndexFromPoint(const GfxRenderer& renderer, const Rect rect, const std::vector<TabInfo>& tabs,
+                                  const int x, const int y, int& index) const {
+  if (tabs.empty() || y < rect.y || y >= rect.y + rect.height) {
+    return false;
+  }
+
+  int currentX = rect.x + BaseMetrics::values.contentSidePadding;
+  for (size_t i = 0; i < tabs.size(); i++) {
+    const auto& tab = tabs[i];
+    const int textWidth =
+        renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+    const int left = (i == 0) ? rect.x : currentX - BaseMetrics::values.tabSpacing / 2;
+    const int right = currentX + textWidth + BaseMetrics::values.tabSpacing / 2;
+    if (x >= left && x < right) {
+      index = static_cast<int>(i);
+      return true;
+    }
+    currentX += textWidth + BaseMetrics::values.tabSpacing;
+  }
+
+  return false;
+}
+
 // Draw the "Recent Book" cover card on the home screen
 // TODO: Refactor method to make it cleaner, split into smaller methods
 void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
@@ -756,6 +823,8 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
   }
 }
 
+int BaseTheme::getMenuRowHeight(const GfxRenderer&) const { return UITheme::getInstance().getMetrics().menuRowHeight; }
+
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
@@ -848,7 +917,8 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
-  const bool showStatusBarTextLane = statusBarTextLaneVisible();
+  const auto sb = SETTINGS.statusBarSpec();
+  const bool showStatusBarTextLane = sb.textLaneVisible(halClock.isAvailable());
 
   // Draw Progress Text
   const auto screenHeight = renderer.getScreenHeight();
@@ -859,17 +929,17 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   int leftClusterWidth = 0;
   int rightClusterWidth = 0;
 
-  if (SETTINGS.statusBarBookProgressPercentage || SETTINGS.statusBarChapterPageCount) {
+  if (sb.showBookProgressPercent || sb.showChapterPageCount) {
     // Right aligned text for progress counter
     char progressStr[32];
 
     // Prefix the page count with "~" while a still-building spine only yields an estimated total.
     const char* estimatePrefix = pageCountEstimated ? "~" : "";
 
-    if (SETTINGS.statusBarBookProgressPercentage && SETTINGS.statusBarChapterPageCount) {
+    if (sb.showBookProgressPercent && sb.showChapterPageCount) {
       snprintf(progressStr, sizeof(progressStr), "%s%d/%d  %.0f%%", estimatePrefix, currentPage, pageCount,
                bookProgress);
-    } else if (SETTINGS.statusBarBookProgressPercentage) {
+    } else if (sb.showBookProgressPercent) {
       snprintf(progressStr, sizeof(progressStr), "%.0f%%", bookProgress);
     } else {
       snprintf(progressStr, sizeof(progressStr), "%s%d/%d", estimatePrefix, currentPage, pageCount);
@@ -882,30 +952,28 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   }
 
   // Draw Progress Bar
-  if (SETTINGS.statusBarProgressBar != CrossPointSettings::STATUS_BAR_PROGRESS_BAR::HIDE_PROGRESS) {
+  if (sb.showsProgressBar()) {
     const int barMarginLeft = fillMargin ? 0 : orientedMarginLeft;
     const int barMarginRight = fillMargin ? 0 : orientedMarginRight;
     const int progressBarMaxWidth = renderer.getScreenWidth() - barMarginLeft - barMarginRight;
-    const int progressBarY = renderer.getScreenHeight() - orientedMarginBottom -
-                             ((SETTINGS.statusBarProgressBarThickness + 1) * 2) - paddingBottom + (fillMargin ? 1 : 0);
+    const int progressBarY = renderer.getScreenHeight() - orientedMarginBottom - sb.progressBarHeightPx -
+                             paddingBottom + (fillMargin ? 1 : 0);
     size_t progress;
-    if (SETTINGS.statusBarProgressBar == CrossPointSettings::STATUS_BAR_PROGRESS_BAR::BOOK_PROGRESS) {
+    if (sb.progressBarMode == CrossPointSettings::STATUS_BAR_PROGRESS_BAR::BOOK_PROGRESS) {
       progress = static_cast<size_t>(bookProgress);
     } else {
       // Chapter progress
       progress = (pageCount > 0) ? (static_cast<float>(currentPage) / pageCount) * 100 : 0;
     }
     const int barWidth = progressBarMaxWidth * progress / 100;
-    const int barHeight =
-        ((SETTINGS.statusBarProgressBarThickness + 1) * 2) + (fillMargin ? orientedMarginBottom - 1 : 0);
+    const int barHeight = sb.progressBarHeightPx + (fillMargin ? orientedMarginBottom - 1 : 0);
     renderer.fillRect(barMarginLeft, progressBarY, barWidth, barHeight, true);
   }
 
   // Draw Battery
-  const bool showBatteryPercentage =
-      SETTINGS.hideBatteryPercentage == CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_NEVER;
+  const bool showBatteryPercentage = sb.showBatteryPercent;
 
-  if (SETTINGS.statusBarBattery) {
+  if (sb.showBattery) {
     GUI.drawBatteryLeft(renderer,
                         Rect{leftClusterX + leftClusterWidth, textY, metrics.batteryWidth, metrics.batteryHeight},
                         showBatteryPercentage);
@@ -922,16 +990,16 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   }
 
   // Draw Clock (X3 only — DS3231 RTC)
-  if (SETTINGS.statusBarClock && halClock.isAvailable()) {
+  if (sb.showsClock() && halClock.isAvailable()) {
     char timeBuf[9];
-    if (halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockUtcOffsetQ, SETTINGS.clockFormat == 1)) {
+    if (halClock.formatTime(timeBuf, sizeof(timeBuf), sb.clockUtcOffsetQ, sb.clock12h)) {
       int clockTextWidth = renderer.getTextWidth(SMALL_FONT_ID, timeBuf);
       int clockX = 0;
       // Position to the left or right of the progress text (with a small gap)
-      if (SETTINGS.statusBarClock == CrossPointSettings::STATUS_BAR_CLOCK_LEFT) {
+      if (sb.clockMode == CrossPointSettings::STATUS_BAR_CLOCK_LEFT) {
         clockX = leftClusterX + leftClusterWidth + (leftClusterWidth > 0 ? 10 : 0);
         leftClusterWidth += clockTextWidth + 10;
-      } else if (SETTINGS.statusBarClock == CrossPointSettings::STATUS_BAR_CLOCK_RIGHT) {
+      } else if (sb.clockMode == CrossPointSettings::STATUS_BAR_CLOCK_RIGHT) {
         clockX = rightClusterX - rightClusterWidth - (rightClusterWidth > 0 ? 10 : 0) - clockTextWidth;
         rightClusterWidth += clockTextWidth + 10;
       }
