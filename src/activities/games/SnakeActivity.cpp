@@ -12,7 +12,7 @@
 #include "util/GameInputDiagLog.h"
 
 // 25% gray (light) — every other pixel in checkerboard on even rows only
-static void fillDithered25(GfxRenderer& r, int x, int y, int w, int h) {
+static void fillDithered25(const GfxRenderer& r, int x, int y, int w, int h) {
   for (int dy = 0; dy < h; dy += 2)
     for (int dx = ((dy / 2) % 2); dx < w; dx += 2) r.drawPixel(x + dx, y + dy, true);
 }
@@ -69,7 +69,7 @@ void SnakeActivity::spawnFood() {
 }
 
 bool SnakeActivity::isSnakeAt(int x, int y) const {
-  for (auto& seg : snake) {
+  for (const auto& seg : snake) {
     if (seg.x == x && seg.y == y) return true;
   }
   return false;

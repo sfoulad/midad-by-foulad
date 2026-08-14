@@ -14,7 +14,7 @@ constexpr char STATE_FILE_BIN[] = "/.crosspoint/state.bin";
 constexpr char STATE_FILE_BAK[] = "/.crosspoint/state.bin.bak";
 
 bool isRecentIndex(const uint16_t* recentImages, uint8_t recentPos, uint8_t recentFill, uint16_t idx,
-                    uint8_t checkCount) {
+                   uint8_t checkCount) {
   const uint8_t effectiveCount = std::min(checkCount, recentFill);
   for (uint8_t i = 0; i < effectiveCount; i++) {
     const uint8_t slot =
@@ -65,8 +65,8 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   memset(recentOverlaySleepImages, 0, sizeof(recentOverlaySleepImages));
   JsonArrayConst recentOverlayArr = doc["recentOverlaySleepImages"];
   const int actualOverlayCount = recentOverlayArr.isNull() ? 0
-                                                            : std::min(static_cast<int>(recentOverlayArr.size()),
-                                                                       static_cast<int>(SLEEP_RECENT_COUNT));
+                                                           : std::min(static_cast<int>(recentOverlayArr.size()),
+                                                                      static_cast<int>(SLEEP_RECENT_COUNT));
   for (int i = 0; i < actualOverlayCount; i++) {
     recentOverlaySleepImages[i] = recentOverlayArr[i] | static_cast<uint16_t>(0);
   }

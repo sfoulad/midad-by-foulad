@@ -521,7 +521,7 @@ bool CrossPointSettings::loadFromBinaryFile() {
 }
 
 ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWidth,
-                                                        const uint16_t viewportHeight) const {
+                                                      const uint16_t viewportHeight) const {
   ReaderRenderSpec spec;
   spec.fontId = getReaderFontId();
   spec.lineCompression = getReaderLineCompression();

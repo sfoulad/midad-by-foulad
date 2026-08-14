@@ -1611,10 +1611,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     const bool hasAnyKashida =
         std::any_of(kashidaExtraPxFinal.begin(), kashidaExtraPxFinal.end(), [](const uint16_t v) { return v != 0; });
     // TextBlock flattens the vectors into its arena; they stay owned here and die at return.
-    auto block = std::make_shared<TextBlock>(lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{},
-                                             std::vector<uint16_t>{}, blockStyle,
-                                             hasAnyKashida ? kashidaExtraPxFinal : std::vector<uint16_t>{},
-                                             std::move(lineRubyTexts));
+    auto block = std::make_shared<TextBlock>(
+        lineWords, lineXPos, lineWordStyles, std::vector<uint8_t>{}, std::vector<uint16_t>{}, blockStyle,
+        hasAnyKashida ? kashidaExtraPxFinal : std::vector<uint16_t>{}, std::move(lineRubyTexts));
     if (!block->valid()) {
       LOG_ERR("PTX", "Dropping line: TextBlock arena allocation failed");
       return;
@@ -1678,9 +1677,9 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
 
   const bool hasAnyKashida =
       std::any_of(outKashidaExtraPx.begin(), outKashidaExtraPx.end(), [](const uint16_t v) { return v != 0; });
-  auto block = std::make_shared<TextBlock>(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle,
-                                           hasAnyKashida ? outKashidaExtraPx : std::vector<uint16_t>{},
-                                           std::move(outRubyTexts));
+  auto block =
+      std::make_shared<TextBlock>(outWords, outXPos, outStyles, outBoundaries, outSuffixX, blockStyle,
+                                  hasAnyKashida ? outKashidaExtraPx : std::vector<uint16_t>{}, std::move(outRubyTexts));
   if (!block->valid()) {
     LOG_ERR("PTX", "Dropping line: TextBlock arena allocation failed");
     return;

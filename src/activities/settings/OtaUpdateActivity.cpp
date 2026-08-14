@@ -165,7 +165,8 @@ void OtaUpdateActivity::render(RenderLock&&) {
     // drawTextInWidth right-aligns Arabic strings within the row, so these two lines
     // anchor to the right edge under the Arabic UI language (proper RTL) while staying
     // left-anchored for English and other LTR languages.
-    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, infoTop, pageWidth - metrics.contentSidePadding * 2,
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, infoTop,
+                             pageWidth - metrics.contentSidePadding * 2,
                              (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
     // GitHub tag names are conventionally "v1.6.24"; strip the leading 'v'/'V' so this
     // reads consistently next to "Current version: 1.6.24" above instead of looking like
