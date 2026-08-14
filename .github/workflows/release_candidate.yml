@@ -45,6 +45,14 @@ jobs:
           CROSSPOINT_RC_HASH: ${{ env.SHORT_SHA }}
         run: pio run -e gh_release_rc
 
+      - name: Install espsecure
+        run: uv pip install --system esptool
+
+      - name: Sign firmware
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: ./scripts/sign_firmware.sh .pio/build/gh_release_rc/firmware.bin ota-signing-public-key.bin
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
