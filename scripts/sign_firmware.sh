@@ -43,12 +43,21 @@ trap 'rm -f "$KEY_FILE"' EXIT
 printf '%s' "$OTA_SIGNING_KEY" > "$KEY_FILE"
 
 SIGNED="${FIRMWARE%.bin}-signed.bin"
-espsecure sign-data --version 2 --keyfile "$KEY_FILE" -o "$SIGNED" "$FIRMWARE"
+# espsecure.py (with the .py suffix) and underscored subcommands: this is real,
+# PyPI-installable esptool (pinned to 4.12.0 in the workflow that calls this
+# script), NOT PlatformIO's bundled tool-esptoolpy copy -- that copy reports a
+# different internal version (5.1.2) that does not correspond to any published
+# PyPI esptool release, has no `pip install`-able equivalent, and uses the
+# newer hyphenated `espsecure`/`sign-data` command names. Confirmed by actually
+# running both: same signature format, same accept/reject behavior, functionally
+# interchangeable -- but the command names are not, and a `pip install esptool`
+# step can only ever produce the PyPI one.
+espsecure.py sign_data --version 2 --keyfile "$KEY_FILE" --output "$SIGNED" "$FIRMWARE"
 
 # Verify against the checked-in public key before trusting our own signing step's
 # exit code -- catches a wrong/corrupt key or a tooling regression before publish,
 # not after a device rejects it in the field.
-espsecure verify-signature --version 2 --keyfile "$PUBLIC_KEY" "$SIGNED"
+espsecure.py verify_signature --version 2 --keyfile "$PUBLIC_KEY" "$SIGNED"
 
 mv "$SIGNED" "$FIRMWARE"
 echo "Signed and verified: $FIRMWARE"
