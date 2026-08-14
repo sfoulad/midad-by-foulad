@@ -879,6 +879,14 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
   return runGetSecure(url, username, password, sink) == OK;
 }
 
+bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback& onData, const std::string& username,
+                                      const std::string& password) {
+  LOG_DBG("HTTP", "Fetching (verified): %s", url.c_str());
+  Sink sink;
+  sink.write = onData;
+  return runGet(url, username, password, sink) == OK;
+}
+
 bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
                               const std::string& username, const std::string& password) {
   LOG_DBG("HTTP", "Fetching (conditional): %s", url.c_str());

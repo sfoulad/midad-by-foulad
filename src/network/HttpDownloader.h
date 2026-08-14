@@ -85,6 +85,18 @@ class HttpDownloader {
                        const std::string& password = "");
 
   /**
+   * Same as fetchUrl(DataCallback), but always over the verified esp_http_client/
+   * mbedTLS path (TLS certificate chain checked against esp_crt_bundle_attach),
+   * regardless of FREEINK_NET_WOLFSSL. For fetches where an unverified connection
+   * is not an acceptable risk even though other traffic on this device currently
+   * runs unverified over wolfSSL (see HttpDownloader.cpp's runGetWolf) -- notably
+   * OTA firmware downloads, which don't need wolfSSL's TLS 1.3 support since
+   * GitHub's release CDN doesn't require it.
+   */
+  static bool fetchUrlVerified(const std::string& url, const DataCallback& onData, const std::string& username = "",
+                               const std::string& password = "");
+
+  /**
    * Download a file to the SD card with optional credentials.
    */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
