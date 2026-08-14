@@ -36,9 +36,11 @@ jobs:
 
       - name: Extract env
         run: |
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
-          echo "BRANCH_SUFFIX=${GITHUB_REF_NAME#release/}" >> $GITHUB_ENV
-          echo "CROSSPOINT_VERSION=$(grep -m1 '^version = ' platformio.ini | cut -d' ' -f3)" >> $GITHUB_ENV
+          {
+            echo "SHORT_SHA=${GITHUB_SHA::7}"
+            echo "BRANCH_SUFFIX=${GITHUB_REF_NAME#release/}"
+            echo "CROSSPOINT_VERSION=$(grep -m1 '^version = ' platformio.ini | cut -d' ' -f3)"
+          } >> "$GITHUB_ENV"
 
       - name: Build CrossPoint Release Candidate
         env:

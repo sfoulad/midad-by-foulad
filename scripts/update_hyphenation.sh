@@ -25,4 +25,5 @@ process it
 process uk
 process pl
 process sv
+# shellcheck disable=SC1010 # "fi" is the Finnish language code, not an if/fi typo
 process fi

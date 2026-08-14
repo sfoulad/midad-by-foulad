@@ -1,0 +1,38 @@
+name: actionlint
+
+# Lints this repo's own GitHub Actions workflows -- high value specifically
+# because a workflow-syntax mistake can silently disable a safety gate (a
+# required check that never runs is worse than one that fails loudly).
+# Scoped to .github/workflows/*.yml|*.yaml only, all of which are Midad-owned
+# in this repo; nothing third-party or vendored is ever scanned.
+
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
+  pull_request:
+    paths:
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install actionlint
+        # Pinned to a specific tagged commit of the installer script (not
+        # `main`) and a specific actionlint release, matching this repo's
+        # existing pin-third-party-tools convention (see
+        # pr-formatting-check.yml's harden-runner pin) -- avoids running a
+        # live, unpinned script from someone else's default branch.
+        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash) 1.7.12
+
+      - name: Run actionlint
+        run: ./actionlint -color .github/workflows/*.yml .github/workflows/*.yaml

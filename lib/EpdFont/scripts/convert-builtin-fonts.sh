@@ -38,22 +38,22 @@ echo "Generated ../builtinFonts/stopwatch_32_bold.h"
 # counterpart) -- EpdFontFamily::getFont() falls back to regular/bold for
 # italic/bold-italic requests when those slots are null, so this is a
 # non-issue, not a missing conversion step.
-for size in ${LEXENDDECA_FONT_SIZES[@]}; do
+for size in "${LEXENDDECA_FONT_SIZES[@]}"; do
   for style in "Regular" "Bold"; do
-    font_name="lexenddeca_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+    font_name="lexenddeca_${size}_$(echo "$style" | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/LexendDeca/LexendDeca-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
+    python fontconvert.py "$font_name" "$size" "$font_path" --2bit --compress --pnum > "$output_path"
     echo "Generated $output_path"
   done
 done
 
-for size in ${NOTOSANS_FONT_SIZES[@]}; do
-  for style in ${READER_FONT_STYLES[@]}; do
-    font_name="notosans_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+for size in "${NOTOSANS_FONT_SIZES[@]}"; do
+  for style in "${READER_FONT_STYLES[@]}"; do
+    font_name="notosans_${size}_$(echo "$style" | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
+    python fontconvert.py "$font_name" "$size" "$font_path" --2bit --compress --pnum > "$output_path"
     echo "Generated $output_path"
   done
 done
@@ -73,12 +73,12 @@ UI_FONT_STYLES=("Regular" "Bold")
 # 90/90 codepoints via fontTools' cmap), unlike Ubuntu, which needed the
 # Vietnamese-cut fallback for that block. Static instance pinned at
 # wght=400/700 from the variable font.
-for size in ${UI_FONT_SIZES[@]}; do
-  for style in ${UI_FONT_STYLES[@]}; do
-    font_name="inter_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
+for size in "${UI_FONT_SIZES[@]}"; do
+  for style in "${UI_FONT_STYLES[@]}"; do
+    font_name="inter_${size}_$(echo "$style" | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/Inter/Inter-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path > $output_path
+    python fontconvert.py "$font_name" "$size" "$font_path" > "$output_path"
     echo "Generated $output_path"
   done
 done
@@ -136,10 +136,10 @@ python fontconvert.py notosans_8_regular 8 \
 # fontconvert.py's default Latin/Cyrillic interval set for a minimal one sized for
 # this font alone (basic Latin + Arabic blocks only).
 ARABIC_UI_FONT_SIZES=(8 10 12)
-for size in ${ARABIC_UI_FONT_SIZES[@]}; do
-  python fontconvert.py notosansarabic_${size}_regular ${size} \
+for size in "${ARABIC_UI_FONT_SIZES[@]}"; do
+  python fontconvert.py notosansarabic_"${size}"_regular "${size}" \
     ../builtinFonts/source/NotoSansArabic/NotoSansArabic-Regular.ttf \
-    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notosansarabic_${size}_regular.h
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notosansarabic_"${size}"_regular.h
   echo "Generated ../builtinFonts/notosansarabic_${size}_regular.h"
 done
 
@@ -149,10 +149,10 @@ done
 # Arabic that ships no Arabic BOOK face, and puts one behind a sign-in and a phone app,
 # is not one. Tajawal is a UI sans and reads like one at paragraph length.
 ARABIC_READING_FONT_SIZES=(12 14 16 18)
-for size in ${ARABIC_READING_FONT_SIZES[@]}; do
-  python fontconvert.py notonaskharabic_${size}_regular ${size} \
+for size in "${ARABIC_READING_FONT_SIZES[@]}"; do
+  python fontconvert.py notonaskharabic_"${size}"_regular "${size}" \
     ../builtinFonts/source/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf \
-    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_${size}_regular.h
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/notonaskharabic_"${size}"_regular.h
   echo "Generated ../builtinFonts/notonaskharabic_${size}_regular.h"
 done
 
@@ -160,10 +160,10 @@ done
 # geometric-sans reading option alongside the two traditional book-printing styles
 # above. Has GPOS MarkBasePos/MarkMarkPos (confirmed via fontTools), same as the
 # other three Arabic fonts here -- --reposition-marks required.
-for size in ${ARABIC_READING_FONT_SIZES[@]}; do
-  python fontconvert.py tajawal_${size}_regular ${size} \
+for size in "${ARABIC_READING_FONT_SIZES[@]}"; do
+  python fontconvert.py tajawal_"${size}"_regular "${size}" \
     ../builtinFonts/source/Tajawal/Tajawal-Regular.ttf \
-    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_${size}_regular.h
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_"${size}"_regular.h
   echo "Generated ../builtinFonts/tajawal_${size}_regular.h"
 done
 # Tajawal also doubles as the Arabic UI-chrome font (headers, button hints, list
@@ -174,9 +174,9 @@ done
 # tajawal_12_regular.h with identical conversion flags, so UI_12_FONT_ID reuses
 # that file directly (see ArabicFontSystem.cpp's applyArabicMappings).
 for size in 8 10; do
-  python fontconvert.py tajawal_${size}_regular ${size} \
+  python fontconvert.py tajawal_"${size}"_regular "${size}" \
     ../builtinFonts/source/Tajawal/Tajawal-Regular.ttf \
-    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_${size}_regular.h
+    --2bit --compress --script arabic --reposition-marks > ../builtinFonts/tajawal_"${size}"_regular.h
   echo "Generated ../builtinFonts/tajawal_${size}_regular.h"
 done
 # KFGQPC Uthmanic Hafs: the Madinah Mushaf's own typeface, the Quran's default
@@ -193,11 +193,11 @@ done
 # started flattening the calligraphic stroke shape into a solid blob, 0.3 gave a
 # solidly black stroke while keeping the letterform's shape intact. Not applied
 # to the other Arabic fonts above; they weren't reported as faded.
-for size in ${ARABIC_READING_FONT_SIZES[@]}; do
-  python fontconvert.py uthmanichafs_${size}_regular ${size} \
+for size in "${ARABIC_READING_FONT_SIZES[@]}"; do
+  python fontconvert.py uthmanichafs_"${size}"_regular "${size}" \
     ../builtinFonts/source/UthmanicHafs/UthmanicHafs_V22.ttf \
     --2bit --compress --script arabic --reposition-marks --shape-fallback \
-    --contrast-gamma 0.3 > ../builtinFonts/uthmanichafs_${size}_regular.h
+    --contrast-gamma 0.3 > ../builtinFonts/uthmanichafs_"${size}"_regular.h
   echo "Generated ../builtinFonts/uthmanichafs_${size}_regular.h"
 done
 

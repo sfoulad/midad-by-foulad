@@ -1,0 +1,59 @@
+name: ShellCheck
+
+# Lints every Midad-owned shell script tracked in this repo -- discovered
+# dynamically via `git ls-files`, not a hardcoded list, so a newly added
+# script is covered automatically without a workflow edit. This naturally
+# excludes the freeink-sdk submodule (its own files aren't part of this
+# repo's `git ls-files` output) and any vendored/generated content, since
+# nothing outside this repo's own tracked tree is ever scanned. Particularly
+# relevant to the OTA signing script (scripts/sign_firmware.sh) and the
+# thin-fork/security scripts (scripts/thin-fork-guard.sh,
+# scripts/measure-conflicts.sh, scripts/test-thin-fork-guard.sh), where a
+# shell mistake has real consequences.
+#
+# shellcheck is preinstalled on GitHub's ubuntu-latest runner image, so no
+# separate install step is needed -- same "use what's already there" pattern
+# as this repo's clang-format/cppcheck jobs.
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Discover tracked shell scripts
+        id: scripts
+        run: |
+          set -euo pipefail
+          # .sh extension, plus extensionless files whose shebang names bash/sh.
+          {
+            git ls-files '*.sh'
+            git ls-files | while read -r f; do
+              [ -f "$f" ] || continue
+              # Check the basename for an extension, not the full path -- a
+              # dotted directory (e.g. .githooks/pre-commit) must not exclude
+              # an otherwise-extensionless file inside it.
+              case "$(basename "$f")" in *.*) continue ;; esac
+              head -c 64 "$f" 2>/dev/null | grep -qE '^#!.*\b(bash|sh)\b' && echo "$f"
+            done
+          } | sort -u > scripts.txt
+          echo "Scripts to check:"
+          cat scripts.txt
+          {
+            echo "files<<EOF"
+            cat scripts.txt
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run shellcheck
+        run: |
+          set -euo pipefail
+          xargs -a scripts.txt shellcheck

@@ -52,6 +52,9 @@ if [[ -z "${GIT_LS_FILES_FLAGS}" ]]; then
   GIT_LS_FILES_FLAGS="--cached --others"
 fi
 set +o pipefail
+# shellcheck disable=SC2086 # deliberately unquoted: GIT_LS_FILES_FLAGS holds
+# space-separated flags ("--cached --others") that must split into separate
+# arguments; quoting it would pass them as one malformed argument instead.
 git ls-files  --exclude-standard ${GIT_LS_FILES_FLAGS} \
     | grep -E '\.(c|cpp|h|hpp)$' \
     | grep -v -E '^lib/EpdFont/builtinFonts/' \

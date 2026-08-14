@@ -9,16 +9,19 @@ list_top_symbols() {
     
     # objdump -t format: address flags section size name
     # Filter by section, extract size and name, calculate total
-    local data=$(objdump -t "$ELF_FILE" | \
+    local data
+    data=$(objdump -t "$ELF_FILE" | \
         awk -v pattern="$section_pattern" '$4 ~ pattern { print $5, $6 }' | \
-        while read hex name; do
+        while read -r hex name; do
             dec=$((16#$hex))
             echo "$dec $hex $name"
         done | \
         sort -k1 -r -n)
-    
-    local total=$(echo "$data" | awk '{ sum += $1 } END { print sum }')
-    local total_kb=$(echo "$total" | awk '{ printf "%.2f", $1 / 1024 }')
+
+    local total
+    total=$(echo "$data" | awk '{ sum += $1 } END { print sum }')
+    local total_kb
+    total_kb=$(echo "$total" | awk '{ printf "%.2f", $1 / 1024 }')
     
     echo "============================================"
     echo "Top $num_symbols largest symbols in section: $section_name"
@@ -26,7 +29,7 @@ list_top_symbols() {
     echo "============================================"
     
     echo "$data" | \
-        head -$num_symbols | \
+        head -"$num_symbols" | \
         awk '{ 
             size_kb = $1 / 1024
             printf "  %10s (%7.2f KB)  %s\n", $2, size_kb, $3

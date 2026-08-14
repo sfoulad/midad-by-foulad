@@ -120,9 +120,11 @@ jobs:
           BASE=$(printf '%s\n%s\n' "${LATEST:-0.0.0}" "$INI" | sort -V | tail -1)
           NEXT=$(echo "$BASE" | awk -F. '{printf "%d.%d.%d", $1, $2, $3+1}')
           SHORT_SHA="${GITHUB_SHA::7}"
-          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "tag=v$NEXT-rc+$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "next=$NEXT"
+            echo "short_sha=$SHORT_SHA"
+            echo "tag=v$NEXT-rc+$SHORT_SHA"
+          } >> "$GITHUB_OUTPUT"
           echo "Latest tag: ${LATEST:-none} | platformio.ini: $INI | building: $NEXT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stamp version for this build
