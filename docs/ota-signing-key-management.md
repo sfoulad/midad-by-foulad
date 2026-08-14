@@ -71,22 +71,117 @@ CI-side delivery method. A hardware security module or signing service is a reas
 future upgrade but not a Phase 1 requirement -- the immediate goal is "not committed to
 git and not sitting in plaintext on a laptop," not HSM-grade custody.
 
-## Key rotation design
+## Key rotation design (revised -- corrects a wrong Milestone 1 assumption)
 
-RSA-3072 V2 signature blocks support up to 3 independent signature blocks per image
-(confirmed during the spike -- `espsecure.py`'s own output enumerates "Signature block
-0/1/2" slots). Rotation plan:
-1. Generate the new key.
-2. Sign one release with *both* the current and new key (multi-signature `sign-data`
-   invocation, or repeated `sign-data --append-signatures`).
-3. Ship that dual-signed release; devices already on the old key still verify
-   (old signature block still present and valid), devices that will trust the new key
-   going forward now have both.
-4. Once fleet adoption of the dual-signed release (or later) is confirmed via
-   `FouladDeviceTracking` check-ins, retire the old key from future signing.
+**Milestone 1's version of this section was wrong** and is superseded by this one.
+It assumed that because the RSA-3072 V2 signature *format* supports up to 3
+independent signature blocks per image, dual-signing a release (current key in
+block 0, new key appended in block 1) would let devices trusting either key accept
+it -- standard practice under real hardware Secure Boot, where eFuse can hold and
+independently revoke up to 3 trusted digests. **This does not hold under
+`CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`.**
 
-This should be rehearsed once, deliberately, before it is ever needed under pressure --
-tracked as a Milestone-4-or-later action item, not resolved by this document alone.
+### What Milestone 2 verified (source: `secure_boot_signatures_app.c`, both by
+reading the code and by an empirical dual-sign test with two throwaway keys)
+
+`esp_secure_boot_verify_sbv2_signature_block()` (`secure_boot_signatures_app.c:226-296`)
+declares:
+```c
+#ifdef CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+    const unsigned secure_boot_num_blocks = 1;
+#else
+    const unsigned secure_boot_num_blocks = SECURE_BOOT_NUM_BLOCKS;  // up to 3
+#endif
+```
+This constant bounds *both* loops: which signature block of the **incoming** image
+gets examined (`app_blk_idx < secure_boot_num_blocks`), and which trusted digest of
+the **running app** gets compared against (`trusted_key_idx < secure_boot_num_blocks`).
+Under our Kconfig, both are hard-limited to `1` -- **only block 0 on either side is
+ever consulted.** `calculate_image_public_key_digests()` (the function that reads the
+running app's own trusted digests) does structurally scan all 3 possible blocks and
+would happily populate `trusted.key_digests[1]`/`[2]` if present -- but the comparison
+loop that actually matters never reaches past index 0.
+
+Confirmed empirically: signed `firmware-signed-A.bin` with key A, then ran
+`espsecure.py sign-data --append-signatures --keyfile devkey-B-wrong.pem` on it.
+`signature-info-v2` confirmed the result has two valid blocks -- key A's digest at
+block 0 (unchanged), key B's digest at block 1. Nothing about that structure changes
+which key ends up read into `trusted.key_digests[0]` after this file becomes a
+running app: still whatever produced block 0.
+
+**Conclusion: appending additional signature blocks has no effect at all under this
+Kconfig combination.** There is no "either of N keys" trust model available here --
+only whichever key occupies block 0 of the currently-running app matters, ever. This
+is a real, if severe, simplification the "no Secure Boot hardware" trade-off carries:
+multi-key support fundamentally depends on eFuse-backed independent key-slot
+revocation, which doesn't exist when trust is instead read live from the running
+app's own flash content.
+
+### What this means: no OTA-only key rotation exists
+
+A key, once it occupies block 0 of a device's running app, is the trust anchor for
+that device until something with *physical* access changes it. There is no way,
+using signing alone, to make a fleet's next-accepted release carry a different
+block-0 key than the one already trusted -- the incoming image's block 0 must match
+the current trust anchor to be accepted at all, by construction.
+
+### Rotation option 1 (planned, remote, but reopens a real window -- the practical
+default)
+
+A working two-hop bridge, but with a cost that must be stated plainly, not glossed
+over:
+1. Ship a release signed with the **current** key (accepted normally), but built
+   with `CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT` **disabled**. The
+   OTA-install-time check that would reject an unsigned/wrong-key next image lives
+   in the *currently running* app's compiled code, not the incoming image's -- so a
+   validly-old-key-signed "verification-disabled" bridge is accepted exactly like
+   any other current-key-signed release.
+2. Once that bridge release is running on a device, it behaves exactly like today's
+   pre-Phase-1 firmware: it accepts **any** next image, signed or not, with no
+   signature check at all (`SECURE_BOOT_CHECK_SIGNATURE` compiled out again, same
+   mechanism that lets any existing unsigned device accept the *original* transition
+   release, see `docs/ota-migration-architecture.md`).
+3. Ship a release signed with the **new** key, verification re-enabled. Once
+   installed, its own block 0 (the new key) becomes the trust anchor going forward.
+4. **The cost**: every device sits, for however long it takes to receive step 3
+   after step 2, in the same unverified state Phase 1 exists to close -- a network
+   attacker who catches a device in that window can push an arbitrary image, exactly
+   as they can against today's shipped firmware. This is not a theoretical footnote;
+   it is a deliberate, temporary reopening of the release-blocker vulnerability,
+   traded off against not needing physical access to every device. Minimize the
+   window (push step 3 as soon as adoption of step 2 is confirmed via
+   `FouladDeviceTracking`), and treat this as an emergency-grade operation, not a
+   routine one.
+
+### Rotation option 2 (physical, no window, impractical at fleet scale)
+Re-flash each device via SD card / USB / web flasher with an image signed by the new
+key. No unverified window, since the physical path was never signature-gated to
+begin with (see `docs/ota-migration-architecture.md`'s "Design decision" section) --
+but requires physical access to every device, which is the whole reason a
+remote-rotation option is wanted in the first place.
+
+### Compromised key (attacker also has a copy, but we still have ours)
+Use Option 1 immediately -- sign the bridge-and-new-key releases with the
+compromised key one more time (a race against whoever else holds it, same race any
+rotation design would face), and treat the exposure window as already-live urgency,
+not routine timing.
+
+### Lost key (nobody, including us, has it anymore)
+**No remote recovery exists, under any design.** Devices that have already
+established the lost key as their trust anchor can never again accept a
+verification-passing OTA update -- Option 1 requires signing with the *current* key,
+which is exactly what's gone. The only recovery is Option 2, physical re-flash of
+every affected device. This is the single most important reason private-key custody
+(above) cannot be treated casually: unlike a typical credential leak, losing this key
+outright is not a "rotate and move on" incident -- it is closer to "every device in
+the field needs a truck roll."
+
+### Practical implication for Phase 1
+Given no graceful rotation exists, key custody is the primary control, not a rehearsed
+rotation drill. Still worth rehearsing Option 1 once, deliberately, before it's ever
+needed under pressure (tracked as a later-milestone action item) -- but the design
+goal should be "this key never needs rotating," not "rotation is cheap so custody can
+be looser."
 
 ## Compromised-key emergency process (draft, needs review before Milestone 4)
 
