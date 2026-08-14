@@ -1,10 +1,12 @@
 # Touch and UI Development
 
+**Status: this document describes CrossPoint's current upstream architecture — the target Midad is planned to converge toward, not what Midad's `develop` builds against today.** Midad's freeink-sdk submodule pin does not yet include `freeink::ui::ListNav` or the other SDK surface `UiListActivity`/`UiTabListActivity` depend on (tracked in `docs/freeink-sdk-modernization-audit.md` and `docs/crosspoint-freeink-convergence-audit.md`). **`UiListActivity` and `UiTabListActivity` do not exist in Midad's tree right now.** New Midad screens today should follow the existing hand-rolled `Activity` + `src/util/ButtonNavigator.h`/`GridNav.h` pattern used throughout `src/activities/`, not the classes described below. Once the SDK bump lands and the ~29-activity migration happens (a separate, controlled Phase 1/2 operation — Midad's Arabic/RTL navigation behavior needs its own design work first, since the SDK has no RTL-aware focus navigation), this document's guidance becomes current and this notice should be removed.
+
 CrossPoint runs on touch devices (Seeed Sticky, M5Paper, LilyGo T5) alongside the button-only Xteink X3/X4. Every screen must work with both input styles.
 
-**There is one supported way to build a new screen: FreeInkUI, hosted through the firmware base classes below.** Touch hit-testing, tap highlighting, long-press, swipe scrolling, and button focus navigation all come from the shared stack; you never hand-roll coordinate math.
+**On CrossPoint (and eventually Midad): there is one supported way to build a new screen: FreeInkUI, hosted through the firmware base classes below.** Touch hit-testing, tap highlighting, long-press, swipe scrolling, and button focus navigation all come from the shared stack; you never hand-roll coordinate math.
 
-The old bridge helpers (`rowTouch`, `colTouch`, `wasTapInRect`, manual rect `contains()` checks) are legacy. They survive only for the two remaining hand-rolled surfaces (the theme-driven home screen and the reader page) and must not appear in new code. PRs that add new uses will be asked to convert.
+The old bridge helpers (`rowTouch`, `colTouch`, `wasTapInRect`, manual rect `contains()` checks) are legacy on CrossPoint, where they survive only for two remaining hand-rolled surfaces. **On Midad today, these helpers (and `ButtonNavigator`/`GridNav`) are still the normal, current way to build a list/grid screen** — they are used throughout `src/activities/`, not just in two legacy surfaces. Once Midad completes the migration described above, this section's CrossPoint-current guidance will apply here too.
 
 ---
 
