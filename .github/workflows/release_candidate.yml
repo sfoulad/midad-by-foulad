@@ -46,7 +46,12 @@ jobs:
         run: pio run -e gh_release_rc
 
       - name: Install espsecure
-        run: uv pip install --system esptool
+        # Pinned to the exact version validated in Phase 1 Milestone 2 (real sign+
+        # verify round-trip run against it, not just --help). Do not bump casually:
+        # espsecure's CLI has changed command syntax across major versions before
+        # (underscored subcommands -> hyphenated, .py suffix -> bare command) --
+        # confirm scripts/sign_firmware.sh's exact invocation still matches first.
+        run: uv pip install --system esptool==4.12.0
 
       - name: Sign firmware
         env:
