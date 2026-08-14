@@ -32,10 +32,16 @@ never squashed sync commits.
   **deliberately not wired into `Test Status`** and is explicitly "not a
   required check" pending weeks of stability — a standing, deliberate decision,
   not an oversight.
-- **CodeRabbit**: reviews PRs today (confirmed via PR #148) but publishes only
-  as a PR **review** with state `COMMENTED` — never `APPROVED`/`CHANGES_REQUESTED`
-  — and posts **no check-run, no commit status** (empirically verified against
-  PR #148's actual check-runs/statuses via the GitHub API). See §6.
+- **CodeRabbit**: reviews PRs today (confirmed via PR #148) and publishes
+  **both** a PR **review** with state `COMMENTED` (never `APPROVED`/
+  `CHANGES_REQUESTED` on this repo so far) **and** a real commit **status**
+  named `CodeRabbit`, updated per-SHA on every push/synchronize. **Corrected
+  from an earlier draft of this document**, which checked the PR's merge
+  commit instead of its actual last head SHA and concluded no status existed
+  at all — it does. The status is real but is empirically proven **not** to
+  reflect finding severity (§6): it reports `success` even when the review
+  found unresolved Critical/Major issues, so it cannot serve as a severity
+  gate on its own. See §6 for the full investigation.
 - **No auto-merge exists anywhere today** — every merge, including CrossPoint
   syncs, is manual.
 
@@ -71,8 +77,8 @@ for Class A:
   conclusion directly — **not** by adding it to the ruleset's required checks,
   which would contradict that workflow's own documented "not required yet"
   decision (§1). The script can hold a stricter bar than the ruleset's floor.
-- CodeRabbit: **advisory only**, logged in the audit trail, never blocking
-  (see §6 for why).
+- CodeRabbit: **advisory only**, logged in the audit trail, never blocking —
+  its `success` status does not imply "no Major/Critical findings" (see §6).
 - The sync branch is still based on `develop`'s current tip — re-checked
   explicitly by the script immediately before calling `gh pr merge` (defense
   in depth; the ruleset's own `strict_required_status_checks_policy` is the
@@ -188,21 +194,114 @@ are checked against the policy, so a rename that moves a file **into** or
 
 ## 6. CodeRabbit feasibility — investigated, not assumed
 
-**Empirically checked** against PR #148 (`gh api .../commits/<sha>/check-runs`
-and `.../pulls/148/reviews`): CodeRabbit posts a PR **review** with state
-`COMMENTED` — GitHub's branch-protection model only recognizes `APPROVED`/
-`CHANGES_REQUESTED` review states for gating purposes, and `COMMENTED` carries
-no pass/fail semantics at all. There is **no check-run and no commit status**
-from CodeRabbit on this repo as currently configured — confirmed by listing
-every check-run and status on that commit and finding zero CodeRabbit entries.
+**This section was corrected after an initial error.** The first draft
+checked `gh api repos/.../commits/<sha>/status` against PR #148's *merge*
+commit and found nothing, concluding CodeRabbit publishes no check-run or
+commit status at all. That was the wrong commit. Checking the PR's actual
+final **head** SHA (`c853b85c`) shows a real commit status:
+`{"context":"CodeRabbit","state":"success","description":"Review completed"}`.
+The correction below re-investigates from real evidence, organized around
+eight specific questions.
 
-**Conclusion: CodeRabbit cannot be a deterministic auto-merge gate today.**
-Per your instruction, it stays **advisory only** — its review comment is
-recorded in the audit trail (link + timestamp) for a human to read on any
-Class B PR, but Class-A auto-merge does not wait for or depend on it, and the
-classifier never parses its comment text. If CodeRabbit's own account
-settings were ever changed to publish a structured check-run (some CodeRabbit
-plans support this), this could be revisited — not true of the current setup.
+**1. Does CodeRabbit always publish the status on every reviewed PR head?**
+Yes, once active on a repo — confirmed on all 3 head SHAs of PR #148
+(`8285959a`, `5726fb99` twice). Not retroactive: PRs #144/#142/#138 (merged
+before CodeRabbit's apparent install) show zero CodeRabbit status or review
+at any of their SHAs. No `.coderabbit.yaml` exists in this repo, so this is
+CodeRabbit's **default** behavior for a GitHub App install, not something
+Midad opted into.
+
+**2. Does a new synchronize/push create a fresh status against the new SHA?**
+Yes — confirmed directly: PR #148 has three distinct reviewed SHAs, each with
+its own review and (per CodeRabbit's documented `commit_status` behavior)
+its own status update.
+
+**3. What state does it publish while review is pending?**
+Not directly observed on this repo (every SHA checked had already finished
+reviewing by the time it was inspected), but per CodeRabbit's documentation
+the status is `pending` while the review is in progress and `success` once
+it completes — consistent with everything observed here.
+
+**4. What state does it publish if it finds Major/Critical issues?**
+**Still `success`.** This is the load-bearing finding: at `8285959a` — PR
+#148's very first head, before any of its 15 findings (including 1 CRITICAL,
+the wolfSSL `setInsecure()` issue) were fixed — the `CodeRabbit` status was
+already `"state":"success"`, `"description":"Review completed"`. Identical
+to the status after every finding was resolved.
+
+**5. Can "Review completed" still be success when unresolved serious comments
+exist?** Yes — directly proven by the `8285959a` evidence above. `success`
+means "CodeRabbit's review process finished," not "the code is clean."
+Per CodeRabbit's own configuration reference, the *only* documented way the
+status goes to `failure` is via `fail_commit_status: true`, and even that
+triggers only "when the PR cannot be reviewed by CodeRabbit for any reason"
+(e.g. CodeRabbit itself errored) — never on finding severity. Neither
+`commit_status` nor `fail_commit_status` is configured in this repo (no
+`.coderabbit.yaml`), so the status Midad currently sees is whatever
+CodeRabbit's platform default produces — matching everything observed.
+
+**6. Does Request Changes Workflow change the commit status or only the
+GitHub review state?** Per CodeRabbit's documentation, `request_changes_workflow`
+is a separate, opt-in setting that changes whether CodeRabbit submits a
+blocking `CHANGES_REQUESTED` **review** (vs. its default non-blocking
+`COMMENT` review) — it is documented as independent of the `commit_status`/
+`fail_commit_status` mechanism above. Not directly observable on this repo
+today (the setting isn't enabled here; all 3 observed reviews were
+`COMMENTED`), but the two mechanisms are configured, and documented, as
+separate features, not one derived from the other.
+
+**7. Can a ruleset safely require the CodeRabbit status context?**
+**No — not alone, and not for the purpose of proving "no Major/Critical
+issues."** Structurally a ruleset *can* require it (GitHub's required-status-
+checks mechanism treats a classic commit status the same as a check-run for
+this purpose — the same primitive `thin-fork-guard-trusted` already uses).
+But requiring it would be a false sense of security: question 4/5's evidence
+shows `CodeRabbit: success` is compatible with unresolved Critical findings,
+so a required-status gate on it would let exactly the kind of change it's
+meant to catch through unblocked. It would only meaningfully gate on
+"CodeRabbit's own process didn't error" — a much weaker property, and
+arguably not worth a required check at all given `fail_commit_status` isn't
+even enabled today.
+
+**8. Does CodeRabbit run on automated CrossPoint sync PRs created by
+`github-actions[bot]`?** **Unconfirmed — no direct evidence exists.** No
+`github-actions[bot]`-authored PR exists anywhere in this repo's history to
+test. The only bot-authored PRs are Dependabot's (#125, #65, #64, #63, #62,
+#53); the one checked (#125) shows zero CodeRabbit engagement, but #125 also
+predates CodeRabbit's apparent install window, so this is inconclusive for
+bot-authorship specifically, not just timing. **This must be verified
+empirically** the first time the auto-sync workflow itself produces a real
+`github-actions[bot]`-authored PR (the same "disposable test PR" discipline
+already used to validate `thin-fork-guard-trusted.yml`'s own rollout) —
+flagged here as an open verification item for implementation time, not
+something to assume either way.
+
+**Conclusion: CodeRabbit cannot be a deterministic Class-A auto-merge gate,
+now for a different and more precise reason than originally stated.** It is
+not "absent" — a real, per-SHA commit status exists — but it is proven
+**unreliable as a severity signal**: `success` does not imply "no Major/
+Critical findings," and no available configuration (`fail_commit_status`)
+changes that without CodeRabbit itself erroring. Recommended design, per
+your fallback framing:
+
+- **Do not** add the `CodeRabbit` status to the ruleset's required checks.
+- Keep CodeRabbit **advisory only**, exactly as this design already does
+  elsewhere (§3, §7-summary): its review link, status value, and timestamp
+  are recorded in the audit trail for every sync PR (Class A or B) so a human
+  has the signal available, but Class-A auto-merge never waits for or
+  depends on it, and the classifier never parses its comment text or status
+  value as a pass/fail input.
+- If stronger CodeRabbit-based gating is wanted later, the two-part condition
+  you proposed is the right shape — **both** `CodeRabbit` status `success`
+  **and** no outstanding `CHANGES_REQUESTED` review — but that requires
+  first deliberately enabling `request_changes_workflow` in
+  `.coderabbit.yaml` (explicitly out of scope for this document — reserved
+  for the separate consolidated CodeRabbit configuration step) and then
+  still would not fully close the gap, since CodeRabbit's severity judgment
+  is itself an LLM opinion, not a deterministic check. A CodeRabbit "pre-merge
+  check" (mentioned as available on some paid tiers) was not confirmed
+  present or absent on this repo's current plan and would need direct
+  verification before being relied on.
 
 ## 7. Ruleset interaction
 
@@ -368,8 +467,10 @@ and unconditional rather than left to the editable YAML config.
 ## Can this be done safely with the current GitHub/ruleset architecture?
 
 **YES**, with two caveats already built into the design above, not treated as
-blockers: (1) CodeRabbit is advisory-only, never a hard gate — the current
-integration provides no deterministic machine-readable signal (§6); (2) CodeQL
+blockers: (1) CodeRabbit is advisory-only, never a hard gate — a real
+per-SHA commit status exists, but is empirically proven to report `success`
+even with unresolved Critical findings, so it cannot be trusted as a severity
+signal (§6); (2) CodeQL
 is checked by the auto-merge script directly, not added to the ruleset's
 required checks, respecting that workflow's own explicit "not required yet"
 decision (§1, §3). Everything else — scheduling, dedup, path classification,
