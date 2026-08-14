@@ -73,6 +73,21 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
     // immediately; loop() starts the install from there.
     state = autoInstall ? UPDATE_IN_PROGRESS : WAITING_CONFIRMATION;
   }
+  const char* options[] = {tr(STR_CANCEL), tr(STR_UPDATE)};
+  // Default the selection to Update so the hardware Confirm button installs,
+  // matching the pre-popup layout (Back = cancel, Confirm = update).
+  confirmPopup.show(tr(STR_NEW_UPDATE), options, 2, 1, [this](const int idx) {
+    if (idx == 1) {
+      // Reboot into a fresh heap before the (memory-hungry) firmware download
+      // rather than attempting it in this already-fragmented session -- see
+      // silentRestartToOtaInstall(). Does not return.
+      LOG_DBG("OTA", "Update confirmed, rebooting into auto-install...");
+      silentRestartToOtaInstall();
+    } else {
+      finish();
+    }
+  });
+  requestUpdate();
 }
 
 void OtaUpdateActivity::onEnter() {
@@ -144,11 +159,13 @@ void OtaUpdateActivity::render(RenderLock&&) {
   if (state == CHECKING_FOR_UPDATE) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_CHECKING_UPDATE));
   } else if (state == WAITING_CONFIRMATION) {
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEW_UPDATE), true, EpdFontFamily::BOLD);
+    // Version info sits in the upper part of the screen so the centered
+    // Cancel/Update popup doesn't cover it (same layout as ConfirmationActivity).
+    const int infoTop = pageHeight / 6;
     // drawTextInWidth right-aligns Arabic strings within the row, so these two lines
     // anchor to the right edge under the Arabic UI language (proper RTL) while staying
     // left-anchored for English and other LTR languages.
-    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, top + height + metrics.verticalSpacing,
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, infoTop,
                              pageWidth - metrics.contentSidePadding * 2,
                              (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
     // GitHub tag names are conventionally "v1.6.24"; strip the leading 'v'/'V' so this
@@ -158,12 +175,11 @@ void OtaUpdateActivity::render(RenderLock&&) {
     if (!latestVersionDisplay.empty() && (latestVersionDisplay[0] == 'v' || latestVersionDisplay[0] == 'V')) {
       latestVersionDisplay.erase(0, 1);
     }
-    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, top + height * 2 + metrics.verticalSpacing * 2,
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, infoTop + height + metrics.verticalSpacing,
                              pageWidth - metrics.contentSidePadding * 2,
                              (std::string(tr(STR_NEW_VERSION)) + latestVersionDisplay).c_str());
 
-    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    if (confirmPopup.processRender(renderer, mappedInput)) return;
   } else if (state == UPDATE_IN_PROGRESS) {
     renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_UPDATING));
 
@@ -197,6 +213,10 @@ void OtaUpdateActivity::render(RenderLock&&) {
         failureHttpStage == static_cast<uint8_t>(HttpDownloader::FailStage::STATUS) && failureHttpDetail == 403;
 
     int diagY = top + height + metrics.verticalSpacing;
+    if (failedDetail != nullptr) {
+      renderer.drawCenteredText(UI_10_FONT_ID, diagY, failedDetail);
+      diagY += renderer.getLineHeight(UI_10_FONT_ID) + metrics.verticalSpacing;
+    }
     if (rateLimited) {
       // Wrapped, not single-line: it's a full sentence and overruns the panel at this
       // width, and drawCenteredText would clip it at both ends (same reasoning as
@@ -270,6 +290,7 @@ void OtaUpdateActivity::beginInstall() {
       lastErrorCode = res;
       failureFreeHeap = ESP.getFreeHeap();
       failureMaxBlock = ESP.getMaxAllocHeap();
+      failedDetail = res == OtaUpdater::WRONG_DEVICE_ERROR ? tr(STR_FIRMWARE_WRONG_DEVICE) : nullptr;
       state = FAILED;
     }
     requestUpdate();
@@ -302,31 +323,25 @@ void OtaUpdateActivity::loop() {
   }
 
   if (state == WAITING_CONFIRMATION) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      // Reboot into a fresh heap before the (memory-hungry) firmware download
-      // rather than attempting it in this already-fragmented session -- see
-      // silentRestartToOtaInstall(). Does not return.
-      LOG_DBG("OTA", "Update confirmed, rebooting into auto-install...");
-      silentRestartToOtaInstall();
-      return;
-    }
-
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      finish();
-    }
-
+    if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+    // Popup dismissed without a selection (Back button or tap outside): cancel.
+    finish();
     return;
   }
 
   if (state == FAILED) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    int x = 0;
+    int y = 0;
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
       finish();
     }
     return;
   }
 
   if (state == NO_UPDATE) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    int x = 0;
+    int y = 0;
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
       finish();
     }
     return;

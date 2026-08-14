@@ -556,8 +556,6 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
       renderer.drawTextInWidth(UI_10_FONT_ID, 20, y, pageWidth - 40, item.c_str(), i != selectorIndex);
       y += rowHeight;
     }
-    const int gridTop = gridTopFor(layout);
-
     const bool selectionInGrid = onGridItem;
     const int localSelector = selectionInGrid ? selectorIndex - layout.bookStart : 0;
     gridPageStart = (localSelector / layout.itemsPerPage) * layout.itemsPerPage;

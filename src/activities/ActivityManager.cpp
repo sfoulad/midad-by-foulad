@@ -1,6 +1,7 @@
 #include "ActivityManager.h"
 
 #include <FontCacheManager.h>
+#include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
 #ifndef SIMULATOR
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 
+#include "CrossPointSettings.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
@@ -33,12 +35,17 @@
 static portMUX_TYPE activityManagerSpinlock = portMUX_INITIALIZER_UNLOCKED;
 
 void ActivityManager::begin() {
+#if defined(configNUM_CORES) && configNUM_CORES > 1
+  constexpr BaseType_t renderTaskCore = 1;
+#else
+  constexpr BaseType_t renderTaskCore = 0;
+#endif
   xTaskCreatePinnedToCore(&renderTaskTrampoline, "ActivityManagerRender",
                           8192,               // Stack size
                           this,               // Parameters
                           1,                  // Priority
                           &renderTaskHandle,  // Task handle
-                          0                   // Pin to core 0 (PRO_CPU)
+                          renderTaskCore  // Keep long renders/cover decodes off CPU 0's idle watchdog when available
   );
   assert(renderTaskHandle != nullptr && "Failed to create render task");
 }
@@ -56,6 +63,10 @@ void ActivityManager::renderTaskLoop() {
     RenderLock lock;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
+      // Night mode inverts only the reading surfaces (appliesNightMode):
+      // resolving the output polarity here, per render, means menus, popups,
+      // and every other activity revert to normal automatically.
+      display.setInverted(SETTINGS.screenInverted != 0 && currentActivity->appliesNightMode());
       currentActivity->render(std::move(lock));
     }
 
@@ -83,6 +94,14 @@ void ActivityManager::renderTaskLoop() {
 
 void ActivityManager::loop() {
   if (currentActivity) {
+    if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
+      if (currentActivity->handleHomeGesture()) {
+        return;
+      }
+      goHome();
+      return;
+    }
+
     // Note: do not hold a lock here, the loop() method must be responsible for acquire one if needed
     currentActivity->loop();
   }
@@ -287,8 +306,8 @@ void ActivityManager::goToNews() {
   replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, std::move(news)));
 }
 
-void ActivityManager::goToReader(std::string path) {
-  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
+void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh) {
+  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh));
 }
 
 void ActivityManager::goToSleep(bool fromTimeout) {

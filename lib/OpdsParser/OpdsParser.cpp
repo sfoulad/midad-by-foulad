@@ -138,6 +138,7 @@ void OpdsParser::clear() {
   currentText.clear();
   inEntry = inTitle = inAuthor = inAuthorName = inId = false;
   truncated = false;
+  collectCurrentEntry = false;
 }
 
 std::vector<OpdsEntry> OpdsParser::getBooks() const {
@@ -158,6 +159,15 @@ const char* OpdsParser::findAttribute(const XML_Char** atts, const char* name) {
 void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
   auto* self = static_cast<OpdsParser*>(userData);
 
+  if (strcmp(name, "entry") == 0 || strstr(name, ":entry") != nullptr) {
+    self->inEntry = true;
+    self->collectCurrentEntry = self->entries.size() < MAX_ENTRIES;
+    self->currentEntry = OpdsEntry{};
+    self->currentText.clear();
+    self->inTitle = self->inAuthor = self->inAuthorName = self->inId = false;
+    return;
+  }
+
   if (strcmp(name, "link") == 0 || strstr(name, ":link") != nullptr) {
     const char* href = findAttribute(atts, "href");
     if (href) {
@@ -174,7 +184,7 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
         assignBounded(self->prevPageUrl, href, MAX_PAGE_URL_CHARS);
       }
 
-      if (self->inEntry) {
+      if (self->inEntry && self->collectCurrentEntry) {
         const bool isEpubAcquisition = type && strcmp(type, "application/epub+zip") == 0;
         // foulad-ebooks derives this MIME type from the stored file's own extension
         // (application/x-xtc or application/x-xtch) -- accept either, mirroring
@@ -233,13 +243,7 @@ void XMLCALL OpdsParser::startElement(void* userData, const XML_Char* name, cons
     }
   }
 
-  if (strcmp(name, "entry") == 0 || strstr(name, ":entry") != nullptr) {
-    self->inEntry = true;
-    self->currentEntry = OpdsEntry{};
-    return;
-  }
-
-  if (!self->inEntry) return;
+  if (!self->inEntry || !self->collectCurrentEntry) return;
 
   if (strcmp(name, "title") == 0 || strstr(name, ":title") != nullptr) {
     self->inTitle = true;
@@ -259,8 +263,8 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<OpdsParser*>(userData);
 
   if (strcmp(name, "entry") == 0 || strstr(name, ":entry") != nullptr) {
-    if (!self->currentEntry.title.empty() && !self->currentEntry.href.empty()) {
-      if (self->entries.size() < MAX_ENTRIES) {
+    if (self->collectCurrentEntry) {
+      if (!self->currentEntry.title.empty() && !self->currentEntry.href.empty()) {
         // MOVED, not copied. Copying an OpdsEntry copy-constructs all seven of its
         // std::string members, and every one of those that exceeds the small-string
         // buffer calls the THROWING operator new -- which, with -fno-exceptions, aborts
@@ -279,15 +283,16 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
         // Safe because currentEntry is dead after this: the branch sets inEntry = false
         // immediately below, and the next <entry> start assigns it a fresh OpdsEntry{}.
         self->entries.push_back(std::move(self->currentEntry));
-      } else {
-        if (!self->truncated) {
-          LOG_ERR("OPDS", "Feed has more than %u entries; truncating (server should paginate)",
-                  static_cast<unsigned>(MAX_ENTRIES));
-        }
-        self->truncated = true;
       }
+    } else {
+      if (!self->truncated) {
+        LOG_ERR("OPDS", "Feed has more than %u entries; truncating (server should paginate)",
+                static_cast<unsigned>(MAX_ENTRIES));
+      }
+      self->truncated = true;
     }
     self->inEntry = false;
+    self->collectCurrentEntry = false;
   } else if (self->inEntry) {
     if (strcmp(name, "title") == 0 || strstr(name, ":title") != nullptr) {
       if (self->inTitle) self->currentEntry.title = self->currentText;
@@ -306,6 +311,7 @@ void XMLCALL OpdsParser::endElement(void* userData, const XML_Char* name) {
 
 void XMLCALL OpdsParser::characterData(void* userData, const XML_Char* s, const int len) {
   auto* self = static_cast<OpdsParser*>(userData);
+  if (!self->collectCurrentEntry) return;
   if (self->inTitle) {
     appendBounded(self->currentText, s, len, MAX_TITLE_CHARS);
   } else if (self->inAuthorName) {

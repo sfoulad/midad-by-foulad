@@ -42,8 +42,10 @@ navigation, and features of the device on both supported models, the **Xteink X4
       - [3.9.6 OPDS Servers (Multiple Libraries)](#396-opds-servers-multiple-libraries)
       - [3.9.7 Web Settings (Wi-Fi + OPDS)](#397-web-settings-wi-fi--opds)
       - [3.9.8 KOReader Sync Quick Setup](#398-koreader-sync-quick-setup)
-        - [Option A: Free Public Server (`sync.koreader.rocks`)](#option-a-free-public-server-synckoreaderrocks)
-        - [Option B: Self-Hosted Server (Docker Compose)](#option-b-self-hosted-server-docker-compose)
+        - [Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)](#option-a-crosspoint-sync-server-synccrosspointreadercom-default)
+        - [Option B: Legacy Public KOReader Server (`sync.koreader.rocks`)](#option-b-legacy-public-koreader-server-synckoreaderrocks)
+        - [Option C: Self-Hosted Server (Docker Compose)](#option-c-self-hosted-server-docker-compose)
+        - [Syncing While Reading](#syncing-while-reading)
       - [3.9.9 Customise Status Bar](#399-customise-status-bar)
     - [3.10 Sleep Screen](#310-sleep-screen)
       - [Cover settings](#cover-settings)
@@ -342,6 +344,8 @@ The Settings screen is organized into five tabs: **Display**, **Reader**, **Cont
   - "None" — A blank screen.
   - "Quick Resume" — The text of the last page read is shown, with a moon icon at the screen edge. Waking the device
     returns straight to that page, for quickly resuming without a full reload.
+  - "Transparent" — A BMP overlay image drawn over the current screen; see [Sleep Screen](#310-sleep-screen) below for
+    more information.
 
 - **Sleep Screen Cover Mode**: How to display the book cover when "Cover" or "Cover + Custom" is selected:
 
@@ -422,6 +426,8 @@ The Settings screen is organized into five tabs: **Display**, **Reader**, **Cont
   - "ON" - Vertical space will be added between paragraphs in Reading Mode
   - "OFF" - Paragraphs will not have vertical space added, but will have first-line indentation
 
+- **Dictionary**: Select the StarDict dictionary used for word lookups while reading, or "None" to disable lookups. *(Only shown when at least one dictionary folder exists under `/dictionaries/` on the SD card — see [docs/dictionary.md](docs/dictionary.md) for setup and usage.)*
+
 - **Text Anti-Aliasing**: Whether to show smooth grey edges (anti-aliasing) on text in reading mode. Note this slows down page turns slightly.
 
 - **Images**: How to handle embedded images (JPG/PNG) found in EPUB files:
@@ -450,6 +456,7 @@ The Settings screen is organized into five tabs: **Display**, **Reader**, **Cont
 
   - "Bookmark" (default) - Hold Confirm (~0.4 second) to drop a bookmark at the current page.
   - "KOSync" - Hold Confirm (~1 second) to launch KOReader sync directly.
+  - "Dictionary" - Hold Confirm (~0.4 second) to start dictionary word selection on the current page (see [5.5 Dictionary Lookup](#55-dictionary-lookup)).
   - "Disabled" - Long-press is ignored; only short-press opens the reader drawer.
 
 - **Short Power Button Click**: Controls the effect of a short click of the power button:
@@ -471,7 +478,7 @@ The Settings screen is organized into five tabs: **Display**, **Reader**, **Cont
 - **Gym**: Pins a Gym tile — see [Gym](#gym).
 - **Weight Unit**: Kilograms (kg, default) or Pounds (lb) — used throughout the Gym workout screens.
 - **Dictionary**: Opens the [Dictionary](#38-dictionary) screen. Always available; no toggle to hide it.
-- **KOReader Sync**: Opens the KOReader Sync sub-screen — see [3.9.8 KOReader Sync Quick Setup](#398-koreader-sync-quick-setup).
+- **KOReader Sync**: Opens the KOReader Sync sub-screen — see [3.9.8 KOReader Sync Quick Setup](#398-koreader-sync-quick-setup). Includes a **Sync Behavior** choice between **Smart sync** (default for new configurations, auto-resolves simple push/pull decisions) and **Ask every time** (existing credential files keep this setting when migrated); switch it at any time.
 - **Debug**: Enables rolling diagnostic logs written to the SD card, useful when reporting an issue.
 
 #### 3.9.5 System
@@ -543,9 +550,37 @@ Behavior notes:
 Foulad eInk can sync reading progress with KOReader-compatible sync servers.
 It also interoperates with KOReader apps/devices when they use the same server and credentials.
 
-##### Option A: Free Public Server (`sync.koreader.rocks`)
+##### Option A: CrossPoint Sync Server (`sync.crosspointreader.com`, default)
 
-1. Register a user once (only if needed):
+When **Sync Server URL** is left empty, CrossPoint uses the free CrossPoint sync server at `https://sync.crosspointreader.com`. It speaks the standard KOReader sync protocol (so KOReader apps can use it too). CrossPoint records page starts as chapter-content offsets and sends the corresponding standard KOReader XPath, so devices with different fonts or layouts can return to the same text.
+
+1. On each CrossPoint device:
+
+   - Go to **Settings -> System -> KOReader Sync**.
+
+   - Set **Username** and **Password** (enter the plain password; CrossPoint computes MD5 internally, and use the same values on all devices).
+
+   - Leave **Sync Server URL** empty (or set it to `https://sync.crosspointreader.com`).
+
+   - On the first device, run **Sign Up** once to create the account directly from the device. On every other device, just run **Authenticate**.
+
+Accounts are per server. Existing `sync.koreader.rocks` credentials do not exist on the CrossPoint server; either sign up again with the same username/password or use Option B to keep using the legacy server.
+
+##### Option B: Legacy Public KOReader Server (`sync.koreader.rocks`)
+
+Use this if you already sync KOReader devices against the official public server.
+
+1. On each CrossPoint device:
+
+   - Go to **Settings -> System -> KOReader Sync**.
+
+   - Set **Sync Server URL** to `https://sync.koreader.rocks` (required; an empty URL now points at the CrossPoint server instead).
+
+   - Set **Username** and **Password** to your existing KOReader Sync credentials.
+
+   - Run **Authenticate**.
+
+2. If you do not have an account yet, run **Sign Up** on the device, or register once with curl:
 
 ```bash
 USERNAME="user"
@@ -558,27 +593,9 @@ curl -i "https://sync.koreader.rocks/users/create" \
   --data "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD_MD5\"}"
 ```
 
-Already have KOReader Sync credentials? Skip registration; basic sync only requires using the same existing username/password on all devices.
-
 When this returns `HTTP 402` with `{"code":2002,"message":"Username is already registered."}`, pick a different username or use that existing account.
 
-2. On each device:
-
-   - Go to **Settings -> Apps -> KOReader Sync**.
-
-   - Set **Username** and **Password** (enter the plain password; the device computes MD5 internally, and use the same values on all devices).
-
-   - Set **Sync Server URL** to `https://sync.koreader.rocks`, or leave it empty (both use the same default KOReader sync server).
-
-   - Run **Authenticate**.
-
-3. While reading, open the **[Reader Drawer](#5-reader-drawer)** and select **Sync Progress** from the Settings tab.
-
-   - Choose **Apply Remote** to jump to remote progress.
-
-   - Choose **Upload Local** to push current progress.
-
-##### Option B: Self-Hosted Server (Docker Compose)
+##### Option C: Self-Hosted Server (Docker Compose)
 
 1. Start a sync server:
 
@@ -651,11 +668,12 @@ If this returns `HTTP 402` with `{"code":2002,"message":"Username is already reg
 
 If you use the HTTPS listener, use `https://<server-ip>:7200` (`curl -k` only for self-signed certificate testing).
 
-5. While reading, open the **[Reader Drawer](#5-reader-drawer)** and select **Sync Progress** from the Settings tab.
+##### Syncing While Reading
 
-   - Choose **Apply Remote** to jump to remote progress.
+Once any of the options above is set up, press **Confirm** while reading to open the reader menu, then select **Sync Progress**. Alternatively, set **Settings -> Controls -> Long-press Menu** to **KOSync** and hold Confirm to launch sync directly.
 
-   - Choose **Upload Local** to push current progress.
+- With **Sync Behavior** set to **Ask every time**, choose **Apply Remote** to jump to remote progress or **Upload Local** to push current progress.
+- With **Sync Behavior** set to **Smart sync**, CrossPoint auto-resolves simple cases: upload when no remote progress exists, confirm and leave both unchanged when local and remote progress are already synchronized, upload when local progress is further ahead, or apply remote when remote progress is further ahead.
 
 #### 3.9.9 Customise Status Bar
 
@@ -684,6 +702,7 @@ The **Sleep Screen** setting controls what is displayed when the device goes to 
 | **Custom**             | A custom image from the SD card (see below). Falls back to **Dark** if no custom image is found.                             |
 | **Cover**              | The cover of the currently open book. Falls back to **Dark** if no book is open.                                             |
 | **Cover + Custom**     | The cover of the currently open book, shown only while actively reading. Falls back to **Custom** behavior when not reading. |
+| **Transparent**        | A BMP overlay drawn over the current screen. Supports alpha transparency in 32-bit BGRA images and treats white as transparent in regular BMPs. Falls back to **Dark** if no valid overlay image is found. |
 | **None**               | A blank screen.                                                                                                              |
 | **Quick Resume**       | The text of the last page read, for near-instant resume.                                                                     |
 
@@ -699,12 +718,22 @@ When using **Cover** or **Cover + Custom**, two additional settings apply:
 To use custom sleep images, set the sleep screen mode to **Custom** or **Cover + Custom**, then place images on the SD card:
 
 - **Multiple Images (recommended):** Create a `.sleep` directory in the root of the SD card and place any number of `.bmp` images inside. One will be randomly selected each time the device sleeps. (A directory named `sleep` is also accepted as a fallback.)
-- **Single Image:** Place a file named `sleep.bmp` in the root directory. This is used as a fallback if no valid images are found in the `.sleep`/`sleep` directory.
+- **Single Image:** Place a file named `sleep.bmp` in the root directory. This takes priority over the `.sleep`/`sleep` directories.
+
+#### Transparent overlay images
+
+To use transparent sleep overlays, set the sleep screen mode to **Transparent**, then place BMP files on the SD card:
+
+- **Multiple Images (recommended):** Create a `.sleep-overlay` directory in the root of the SD card and place any number of valid overlay `.bmp` images inside. One will be randomly selected each time the device sleeps. A directory named `sleep-overlay` is also accepted as a fallback.
+- **Single Image:** Place a file named `sleep-overlay.bmp` in the root directory. This takes priority over the `.sleep-overlay`/`sleep-overlay` directories.
+
+Transparent overlay files are intentionally separate from normal sleep images. Regular BMP formats supported by CrossPoint are accepted; white pixels leave the existing screen unchanged. For per-pixel alpha transparency, use a 32-bit BGRA BMP with both visible and non-opaque pixels. Opaque white pixels in these alpha images erase the content behind them.
 
 > [!TIP]
 > For best results:
 >
-> - Use uncompressed BMP files with 24-bit color depth
+> - For non-transparent **Custom** mode, use uncompressed BMP files with 24-bit color depth.
+> - For **Transparent** mode, use a regular BMP for white-as-transparent artwork or an uncompressed 32-bit BGRA BMP for per-pixel alpha.
 > - X4: Use a resolution of 480x800 pixels to match the device's screen resolution.
 > - X3: Use a resolution of 528x792 pixels to match the device's screen resolution.
 
@@ -777,7 +806,7 @@ If the device goes to sleep or you close the book while viewing a footnote, the 
 * **Return to Home:** Press the **Back** button to close the book and return to the **[Home](#31-home-screen)** screen.
 * **Return to Browse Files:** Press and hold the **Back** button to close the book and return to the **[Browse Files](#33-browse-files-screen)** screen.
 * **Reader Drawer:** Press **Confirm** to open the **[Reader Drawer](#5-reader-drawer)**, which includes chapter navigation, reading options, dictionary lookup, and more.
-* **Long-press Confirm (configurable):** Holding **Confirm** runs the function chosen by the **Long-press Menu** setting in **[Controls Settings](#393-controls)** — "Bookmark" (default) drops a bookmark, "KOSync" launches KOReader Sync, "Disabled" does nothing. A short press always opens the Reader Drawer.
+* **Long-press Confirm (configurable):** Holding **Confirm** runs the function chosen by the **Long-press Menu** setting in **[Controls Settings](#393-controls)** — "Bookmark" (default) drops a bookmark, "KOSync" launches KOReader Sync, "Dictionary" starts a word lookup, "Disabled" does nothing. A short press always opens the Reader Drawer.
 
 ### Arabic & Right-to-Left Reading
 

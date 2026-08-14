@@ -3,6 +3,8 @@
 #include <Epub/FootnoteEntry.h>
 #include <Epub/Section.h>
 
+#include <atomic>
+#include <memory>
 #include <optional>
 
 #include "BookmarkEntry.h"
@@ -34,8 +36,21 @@ class EpubReaderActivity final : public Activity {
   bool forcedRefreshPending = false;
   int cachedSpineIndex = 0;
   int cachedChapterTotalPageCount = 0;
+  std::optional<uint32_t> cachedVisibleTextOffset;
+  // Visible-codepoint offset of the page currently on screen, captured when the page is loaded
+  // (Page::visibleTextOffset). Lets saveProgress persist the offset without reopening section.bin.
+  std::optional<uint32_t> currentPageVisibleOffset;
+  // Explicit "land at this visible-codepoint offset in the target spine" request (bookmark open).
+  // Resolved in render() once the section is loaded/built far enough, then cleared. Unlike a
+  // settings-change reposition it always resolves by content, so it survives any re-pagination.
+  std::optional<uint32_t> pendingOffsetJump;
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageTurnDuration = 0UL;
+  // A turn that arrived while a render was in flight (or inside the debounce
+  // gap), latched instead of dropped: -1 back, +1 forward, 0 none. Holds at
+  // most one turn — mashing collapses to the latest direction — and is
+  // executed by loop() once the render task is idle again.
+  int8_t pendingManualTurn = 0;
   // Signals that the next render should reposition within the newly loaded section
   // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
@@ -50,6 +65,9 @@ class EpubReaderActivity final : public Activity {
   bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
   bool automaticPageTurnActive = false;
   bool showBookmarkMessage = false;
+  // "No dictionary set" popup, shown when a lookup is triggered without a configured dictionary.
+  bool showDictionaryMessage = false;
+  unsigned long dictionaryMessageTime = 0UL;
   bool ignoreNextConfirmRelease = false;
   bool currentPageBookmarked = false;
   // Idle-time glyph prewarm: after a page settles, scan the LIKELY next page
@@ -68,8 +86,16 @@ class EpubReaderActivity final : public Activity {
   // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
   // Consumed in onExit() to relocate the finished book into /Read/.
   bool pendingReadFolderMove = false;
-  // Next-book suggestion menu for the End-of-Book screen
-  EndOfBookOptions endOfBookOptions;
+  // Next-book suggestion menu for the End-of-Book screen. Lazy: it embeds a
+  // GfxRendererTarget + FreeInkApp (theme tokens by value, ~2KB), so it only
+  // exists while the end screen is actually showing — created at the render
+  // path's sole load site, dropped by loop() when the user pages back in.
+  std::unique_ptr<EndOfBookOptions> endOfBookOptions;
+  // Publication flag for the pointer above: the render task creates the object
+  // and release-stores true; the main task acquire-loads before dereferencing,
+  // so it never sees a partially constructed object. Cleared (main task, under
+  // RenderLock) before reset.
+  std::atomic<bool> endOfBookOptionsReady{false};
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -80,6 +106,15 @@ class EpubReaderActivity final : public Activity {
   static constexpr int MAX_FOOTNOTE_DEPTH = 3;
   SavedPosition savedPositions[MAX_FOOTNOTE_DEPTH] = {};
   int footnoteDepth = 0;
+
+  // Viewport of the last render(), captured so loop()'s lazy partial-extension start
+  // builds with IDENTICAL layout parameters to the pages already rendered (a mismatch
+  // would paginate differently than the partial being extended). 0 = no render yet.
+  uint16_t buildViewportWidth = 0;
+  uint16_t buildViewportHeight = 0;
+  // Set when the lazy extension start failed, so loop() doesn't retry (and log) every
+  // tick; the blocking extension in render() remains the fallback past the watermark.
+  bool partialRebuildStartFailed = false;
 
   // Last position persisted by render()'s saveProgress, used to skip redundant
   // writeAtomic calls on no-op re-renders (menu/bookmark/screenshot).
@@ -127,6 +162,13 @@ class EpubReaderActivity final : public Activity {
   // Set when a background tick was skipped for the heap gate above. Read by skipLoopDelay() so
   // a paused build doesn't spin the reader at full CPU/no-delay for nothing -- see its comment.
   bool buildHeapPaused = false;
+  // Reopening a partial does NOT immediately restart its extension build (a whole-chapter
+  // re-layout from page 0 -- minutes of background CPU + SD writes on a giant spine, wasted
+  // when the reader never crosses the watermark that session). Instead loop() starts it once
+  // the reader is within this many pages of the watermark: at ~30s per page read and ~100-300ms
+  // per page rebuilt, this margin gives the rebuild ample runway to catch up (and finalize)
+  // before the reader arrives.
+  static constexpr int PARTIAL_REBUILD_START_MARGIN = 15;
   // Show the indexing popup when an initial build must lay out more than this many pages up front
   // (a deep resume/jump into a not-yet-built section), so it isn't a silent wait. Kept independent
   // of the small look-ahead window so ordinary landings stay popup-free.
@@ -161,6 +203,11 @@ class EpubReaderActivity final : public Activity {
   // (used after a settings change re-paginates a chapter). Returns true if currentPage moved.
   // No-op while the section is still building or when the pagination is unchanged (plain resume).
   bool applyDeferredReposition();
+  // The saved resume/reflow anchor is only valid until it has established the
+  // initial landing page. Later user navigation must never be overwritten when
+  // a background section build finishes.
+  void clearDeferredReposition();
+  void rememberCurrentContentOffset();
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
   // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
@@ -175,6 +222,7 @@ class EpubReaderActivity final : public Activity {
   std::shared_ptr<Page> loadCurrentPageForLookup(int& outMarginLeft, int& outMarginTop);
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
+  void openDictionaryWordSelect();
   // Returns true if sync acted (launched, or surfaced a save error); false if it was a no-op
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();
@@ -230,23 +278,34 @@ class EpubReaderActivity final : public Activity {
   uint8_t currentBookProgressPercent() const;
 
  public:
-  explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub)
-      : Activity("EpubReader", renderer, mappedInput), epub(std::move(epub)) {}
+  explicit EpubReaderActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::unique_ptr<Epub> epub,
+                              int initialRefreshCountdown)
+      : Activity("EpubReader", renderer, mappedInput),
+        epub(std::move(epub)),
+        pagesUntilFullRefresh(initialRefreshCountdown) {}
   void onEnter() override;
   void onExit() override;
   void loop() override;
   void render(RenderLock&& lock) override;
+  // Full CPU speed + fast loop ticks while a section build runs: at the low-power
+  // frequency a giant chapter's background rebuild stretches from ~40s to many
+  // minutes, so the reader exits before it can finalize and the next open restarts
+  // it from page 0. Reverts to normal power behavior the moment the build finishes,
+  // and while the build is heap-paused (no work is happening, so spinning at full
+  // speed would only burn battery; the paused gate still retries every loop pass).
+  // The watermark window below MUST mirror the background-build gate in loop() (the
+  // isPartial()/BUILD_WINDOW_AHEAD test): once a first-open build has laid out its
+  // look-ahead window it parks (isBuilding() stays true but loop() stops pumping it),
+  // so keying only on isBuilding() would spin at full clock indefinitely while idle on
+  // a page -- doing no build work and blocking idle light-sleep. Gate on "a build tick
+  // will actually run this pass" instead. Read unlocked like the other power heuristics
+  // (setPowerSaving/lightSleep): a stale read costs at most one loop pass either way.
+  bool skipLoopDelay() override {
+    return section && section->isBuilding() && !buildHeapPaused &&
+           (section->isPartial() || static_cast<int>(section->pageCount) < section->currentPage + BUILD_WINDOW_AHEAD);
+  }
   bool isReaderActivity() const override { return true; }
-  // Full performance while a background section build is in flight: after just
-  // IDLE_POWER_SAVING_MS (3s) without a button press -- i.e. always, while the
-  // user reads quietly -- the main loop drops the CPU clock and inserts a 50ms
-  // tick delay, stretching each (input-blind) build chunk 3-4x and the post-open
-  // watermark-rebuild storm to a minute-plus of degraded responsiveness. Race to
-  // idle instead: build at full clock, then let power saving resume. Auto-sleep
-  // is unaffected (its timer doesn't consult this). Excludes buildHeapPaused: a build
-  // that's paused for the heap gate makes no progress, so racing to idle for it would
-  // just burn battery at full clock while doing nothing.
-  bool skipLoopDelay() override { return section && section->isBuilding() && !buildHeapPaused; }
+  bool appliesNightMode() const override { return true; }
   bool handleForcedRefresh() override {
     {
       RenderLock lock(*this);

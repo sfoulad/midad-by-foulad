@@ -7,6 +7,7 @@
 
 #include "CrossPointSettings.h"
 #include "ReaderFontSizes.h"
+#include "fontIds.h"
 
 namespace {
 
@@ -48,6 +49,19 @@ void clearWantedFamily() {
   }
 }
 
+// Built-in UI fonts and their physical point sizes (at 150 DPI, matching the
+// SD-font converter). Each is paired with a same-size SD fallback so CJK UI
+// text matches the surrounding Latin. See SdCardFontSystem::setupUiFallbacks.
+struct UiFontSize {
+  int fontId;
+  uint8_t pointSize;
+};
+constexpr UiFontSize kUiFontSizes[] = {
+    {SMALL_FONT_ID, 8},
+    {UI_10_FONT_ID, 10},
+    {UI_12_FONT_ID, 12},
+};
+
 }  // namespace
 
 void SdCardFontSystem::begin(GfxRenderer& renderer) {
@@ -68,6 +82,7 @@ void SdCardFontSystem::begin(GfxRenderer& renderer) {
     if (family) {
       if (manager_.loadFamily(*family, renderer, SETTINGS.effFontSize())) {
         snapEffectiveFontPointSizeTo(manager_.currentPointSize());
+        setupUiFallbacks(renderer);
         LOG_DBG("SDFS", "Loaded SD card font family: %s", SETTINGS.sdFontFamilyName);
       } else {
         LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", SETTINGS.sdFontFamilyName);
@@ -123,6 +138,8 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
     }
     const auto* selected = family->findNearestSize(wantedPointSize);
     const uint8_t wantedPt = selected ? selected->pointSize : 0;
+    // Snap before the early return: the wanted size can already be loaded while
+    // the setting still names a size this family does not ship.
     snapEffectiveFontPointSizeTo(wantedPt);
     if (!registryWasDirty && wantedPt == manager_.currentPointSize()) return;
     LOG_DBG("SDFS", "Reloading %s: size %u -> %u%s", wantedFamily, manager_.currentPointSize(), wantedPt,
@@ -137,6 +154,7 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   if (family) {
     if (manager_.loadFamily(*family, renderer, wantedPointSize)) {
       snapEffectiveFontPointSizeTo(manager_.currentPointSize());
+      setupUiFallbacks(renderer);
       LOG_DBG("SDFS", "Loaded SD font family: %s", wantedFamily);
     } else {
       LOG_ERR("SDFS", "Failed to load SD font family: %s (clearing)", wantedFamily);
@@ -145,6 +163,42 @@ void SdCardFontSystem::ensureLoaded(GfxRenderer& renderer) {
   } else {
     LOG_DBG("SDFS", "SD font family not found: %s (clearing)", wantedFamily);
     clearWantedFamily();
+  }
+}
+
+void SdCardFontSystem::setupUiFallbacks(GfxRenderer& renderer) {
+  const std::string& familyName = manager_.currentFamilyName();
+  if (familyName.empty()) return;  // no SD family loaded — nothing to fall back to
+
+  const auto* family = registry_.findFamily(familyName);
+  if (!family) return;
+
+  // Probe the already-loaded reader-size font before paying for the UI sizes:
+  // resolveTextFontId only redirects on CJK codepoints, so a Latin-only family
+  // can never act as a fallback and its UI sizes would be dead weight in RAM.
+  const auto readerIt = renderer.getFontMap().find(manager_.getFontId(familyName));
+  if (readerIt == renderer.getFontMap().end()) return;
+  // One representative codepoint per script: Han, Hiragana, Katakana, Hangul.
+  static constexpr uint32_t kCjkProbes[] = {0x4E00, 0x3042, 0x30A2, 0xAC00};
+  bool hasCjk = false;
+  for (const uint32_t cp : kCjkProbes) {
+    if (readerIt->second.hasCodepoint(cp)) {
+      hasCjk = true;
+      break;
+    }
+  }
+  if (!hasCjk) {
+    LOG_DBG("SDFS", "%s has no CJK coverage - skipping UI fallback sizes", familyName.c_str());
+    return;
+  }
+
+  for (const auto& ui : kUiFontSizes) {
+    const int sdFontId = manager_.loadFamilyExtraSize(*family, renderer, ui.pointSize);
+    if (sdFontId != 0) {
+      renderer.setFallbackFont(ui.fontId, sdFontId);
+    } else {
+      LOG_DBG("SDFS", "No %u pt SD glyphs for UI fallback in %s", ui.pointSize, familyName.c_str());
+    }
   }
 }
 

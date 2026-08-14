@@ -1,6 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
+#include "components/OptionPopup.h"
 #include "network/OtaUpdater.h"
 
 class OtaUpdateActivity : public Activity {
@@ -31,6 +32,13 @@ class OtaUpdateActivity : public Activity {
   // directly and doesn't set these. 0/0 (FailStage::NONE) otherwise.
   uint8_t failureHttpStage = 0;
   int failureHttpDetail = 0;
+  // Optional detail line shown under the generic "Update failed" heading.
+  // Points into the i18n string table (flash-resident, so no lifetime concern);
+  // nullptr means no extra detail.
+  const char* failedDetail = nullptr;
+  // Cancel/Update confirmation over the version info (replaces the old
+  // hand-rolled bottom tap rects).
+  OptionPopup confirmPopup;
   // True only on the fresh boot landed on by silentRestartToOtaInstall(): the
   // user already confirmed this update before that reboot, so WAITING_CONFIRMATION
   // proceeds straight to install instead of waiting for another button press.

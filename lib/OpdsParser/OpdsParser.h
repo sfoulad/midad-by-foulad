@@ -138,6 +138,7 @@ class OpdsParser final : public Print {
   bool inAuthor = false;
   bool inAuthorName = false;
   bool inId = false;
+  bool collectCurrentEntry = false;
 
   bool errorOccured = false;
   bool truncated = false;

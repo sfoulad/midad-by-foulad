@@ -1,13 +1,11 @@
 #pragma once
+#include <ArduinoJson.h>
 #include <PersistableStore.h>
 
 #include <cstdint>
-#include <mutex>
 #include <string>
 
 class CrossPointState : public PersistableStore<CrossPointState> {
-  mutable std::mutex _mutex;
-
   // Private constructor for singleton (see PersistableStore.h)
   CrossPointState() = default;
   ~CrossPointState() = default;
@@ -15,19 +13,15 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   friend class PersistableStore<CrossPointState>;
 
  public:
-  // Access the state mutex for protecting multi-field reads/writes from other cores.
-  std::mutex& getMutex() const { return _mutex; }
-
-  static const char* getFilePath() { return "/.crosspoint/state.json"; }
-  void toJson(JsonDocument& doc) const;
-  bool fromJson(JsonVariantConst doc);
-
   static constexpr uint8_t SLEEP_RECENT_COUNT = 16;
 
   std::string openEpubPath;
-  uint16_t recentSleepImages[SLEEP_RECENT_COUNT] = {};  // circular buffer of recent wallpaper indices
-  uint8_t recentSleepPos = 0;                           // next write slot
-  uint8_t recentSleepFill = 0;                          // valid entries (0..SLEEP_RECENT_COUNT)
+  uint16_t recentSleepImages[SLEEP_RECENT_COUNT] = {};
+  uint8_t recentSleepPos = 0;
+  uint8_t recentSleepFill = 0;
+  uint16_t recentOverlaySleepImages[SLEEP_RECENT_COUNT] = {};
+  uint8_t recentOverlaySleepPos = 0;
+  uint8_t recentOverlaySleepFill = 0;
   uint8_t readerActivityLoadCount = 0;
   // Cross-device jump handed from the Midad sync activity to the reader
   // (EINK_PAGE_SYNC_TASKS.md). The sync replaces the reader to free ~65KB for the
@@ -49,13 +43,15 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
 
-  // Returns true if idx was shown within the last checkCount picks.
-  // Walks backwards from the most recently written slot.
+  static const char* getFilePath() { return "/.crosspoint/state.json"; }
+  void toJson(JsonDocument& doc) const;
+  bool fromJson(JsonVariantConst doc);
+
   bool isRecentSleep(uint16_t idx, uint8_t checkCount) const;
+  bool isRecentOverlaySleep(uint16_t idx, uint8_t checkCount) const;
 
   void pushRecentSleep(uint16_t idx);
-
-  bool saveToFile() const;
+  void pushRecentOverlaySleep(uint16_t idx);
 
   bool loadFromFile();
 
@@ -63,5 +59,4 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   bool loadFromBinaryFile();
 };
 
-// Helper macro to access settings
 #define APP_STATE CrossPointState::getInstance()

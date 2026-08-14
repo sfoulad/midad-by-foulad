@@ -7,6 +7,7 @@
 #include <ObfuscationUtils.h>
 #include <Serialization.h>
 
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -26,6 +27,11 @@ void readAndValidate(HalFile& file, uint8_t& member, const uint8_t maxValue) {
 }
 
 namespace {
+
+// Stack buffer for "<key>_obf" key construction — avoids a std::string
+// allocation per obfuscated setting on every save and load.
+constexpr size_t OBF_KEY_BUF = 64;
+
 constexpr uint8_t SETTINGS_FILE_VERSION = 2;
 constexpr char SETTINGS_FILE_BIN[] = "/.crosspoint/settings.bin";
 constexpr char SETTINGS_FILE_BAK[] = "/.crosspoint/settings.bin.bak";
@@ -112,6 +118,12 @@ void applyLegacyFrontButtonLayout(CrossPointSettings& settings) {
   }
 }
 
+// Null-terminated copy into a fixed-size settings field.
+void copyToField(char* dest, const char* src, const size_t maxLen) {
+  strncpy(dest, src, maxLen - 1);
+  dest[maxLen - 1] = '\0';
+}
+
 }  // namespace
 
 void CrossPointSettings::validateFrontButtonMapping(CrossPointSettings& settings) {
@@ -147,20 +159,24 @@ uint8_t CrossPointSettings::sleepTimeoutEnumToMinutes(const uint8_t legacyValue)
 }
 
 void CrossPointSettings::toJson(JsonDocument& doc) const {
+  const CrossPointSettings& s = *this;
+
   for (const auto& info : getSettingsList()) {
     if (!info.key) continue;
     // Dynamic entries (KOReader etc.) are stored in their own files — skip.
     if (!info.valuePtr && !info.stringOffset) continue;
 
     if (info.stringOffset) {
-      const char* strPtr = (const char*)this + info.stringOffset;
+      const char* strPtr = (const char*)&s + info.stringOffset;
       if (info.obfuscated) {
-        doc[std::string(info.key) + "_obf"] = obfuscation::obfuscateToBase64(strPtr);
+        char obfKey[OBF_KEY_BUF];
+        snprintf(obfKey, sizeof(obfKey), "%s_obf", info.key);
+        doc[obfKey] = obfuscation::obfuscateToBase64(strPtr);
       } else {
         doc[info.key] = strPtr;
       }
     } else {
-      doc[info.key] = this->*(info.valuePtr);
+      doc[info.key] = s.*(info.valuePtr);
     }
   }
 
@@ -180,20 +196,21 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (sdArabicFontFamilyName[0] != '\0') {
     doc["sdArabicFontFamilyName"] = sdArabicFontFamilyName;
   }
-
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
-  _needsResaveAfterLoad = false;
+  CrossPointSettings& s = *this;
+  bool needsResave = false;
+
   auto clamp = [](uint8_t val, uint8_t maxVal, uint8_t def) -> uint8_t { return val < maxVal ? val : def; };
 
   // Legacy migration: if statusBarChapterPageCount is absent this is a pre-refactor settings file.
   // Populate this with migrated values now so the generic loop below picks them up as defaults and clamps them.
   if (doc["statusBarChapterPageCount"].isNull()) {
-    applyLegacyStatusBarSettings(*this);
+    applyLegacyStatusBarSettings(s);
   }
 
   for (const auto& info : getSettingsList()) {
@@ -202,30 +219,46 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     if (!info.valuePtr && !info.stringOffset) continue;
 
     if (info.stringOffset) {
-      const char* strPtr = (const char*)this + info.stringOffset;
-      const std::string fieldDefault = strPtr;  // current buffer = struct-initializer default
-      std::string val;
-      if (info.obfuscated) {
-        bool ok = false;
-        val = obfuscation::deobfuscateFromBase64(doc[std::string(info.key) + "_obf"] | "", &ok);
-        if (!ok || val.empty()) {
-          val = doc[info.key] | fieldDefault;
-          if (val != fieldDefault) _needsResaveAfterLoad = true;
-        }
-      } else {
-        val = doc[info.key] | fieldDefault;
-      }
-      char* destPtr = (char*)this + info.stringOffset;
+      // destPtr starts out holding the struct-initializer default; it stays that
+      // way unless the document actually carries a value for this key.
+      char* destPtr = (char*)&s + info.stringOffset;
       if (info.stringMaxLen == 0) {
         LOG_ERR("CPS", "Misconfigured SettingInfo: stringMaxLen is 0 for key '%s'", info.key);
         destPtr[0] = '\0';
-        _needsResaveAfterLoad = true;
+        needsResave = true;
         continue;
       }
-      strncpy(destPtr, val.c_str(), info.stringMaxLen - 1);
-      destPtr[info.stringMaxLen - 1] = '\0';
+
+      bool loaded = false;
+      if (info.obfuscated) {
+        char obfKey[OBF_KEY_BUF];
+        snprintf(obfKey, sizeof(obfKey), "%s_obf", info.key);
+        bool ok = false;
+        bool tooLong = false;
+        const std::string decoded =
+            obfuscation::deobfuscateFromBase64(doc[obfKey] | "", info.stringMaxLen - 1, &ok, &tooLong);
+        if (tooLong) {
+          LOG_ERR("CPS", "Oversized obfuscated value for key '%s'", info.key);
+          needsResave = true;
+        }
+        if (ok && !decoded.empty()) {
+          copyToField(destPtr, decoded.c_str(), info.stringMaxLen);
+          loaded = true;
+        }
+      }
+      if (!loaded) {
+        // Read as const char*, never `| std::string(...)`: ArduinoJson's
+        // std::string converter drags a per-TU copy of the serializer into
+        // flash. See the note in PersistableStore.h.
+        const char* raw = doc[info.key].is<const char*>() ? doc[info.key].as<const char*>() : nullptr;
+        if (raw) {
+          // Obfuscated field recovered from a legacy plaintext value -> resave.
+          if (info.obfuscated && strcmp(raw, destPtr) != 0) needsResave = true;
+          copyToField(destPtr, raw, info.stringMaxLen);
+        }
+      }
     } else {
-      const uint8_t fieldDefault = this->*(info.valuePtr);  // struct-initializer default, read before we overwrite it
+      const uint8_t fieldDefault = s.*(info.valuePtr);  // struct-initializer default, read before we overwrite it
       uint8_t v = doc[info.key] | fieldDefault;
       if (info.type == SettingType::ENUM) {
         v = clamp(v, (uint8_t)info.enumValues.size(), fieldDefault);
@@ -237,7 +270,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
         else if (v > info.valueRange.max)
           v = info.valueRange.max;
       }
-      this->*(info.valuePtr) = v;
+      s.*(info.valuePtr) = v;
     }
   }
 
@@ -245,7 +278,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);
     sleepTimeoutMinutes = sleepTimeoutEnumToMinutes(legacyValue);
-    _needsResaveAfterLoad = true;
+    needsResave = true;
   }
   // Front button remap — managed by RemapFrontButtons sub-activity, not in SettingsList.
   frontButtonBack = clamp(doc["frontButtonBack"] | (uint8_t)FRONT_HW_BACK, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_BACK);
@@ -254,7 +287,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   frontButtonLeft = clamp(doc["frontButtonLeft"] | (uint8_t)FRONT_HW_LEFT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_LEFT);
   frontButtonRight =
       clamp(doc["frontButtonRight"] | (uint8_t)FRONT_HW_RIGHT, FRONT_BUTTON_HARDWARE_COUNT, FRONT_HW_RIGHT);
-  CrossPointSettings::validateFrontButtonMapping(*this);
+  validateFrontButtonMapping(s);
 
   // Reader font size — an actual point size since the point-size migration. Files
   // written before it hold the old SMALL/MEDIUM/LARGE/EXTRA_LARGE slot in 0..3; no
@@ -263,7 +296,7 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   uint8_t storedFontSize = doc["fontSize"] | DEFAULT_FONT_POINT_SIZE;
   if (storedFontSize <= LEGACY_FONT_SIZE_MAX) {
     storedFontSize = 12 + storedFontSize * 2;  // 0,1,2,3 -> 12,14,16,18
-    _needsResaveAfterLoad = true;
+    needsResave = true;
   }
   fontPointSize = storedFontSize;
 
@@ -281,14 +314,18 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     fontFamily = LEXENDDECA;
     strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
     sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
-    _needsResaveAfterLoad = true;
+    needsResave = true;
   } else if (storedFontFamily >= BUILTIN_FONT_COUNT) {
-    _needsResaveAfterLoad = true;
+    needsResave = true;
   }
-
   // Language -- stored as code string for stability across enum reorders.
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
+  }
+
+  if (needsResave) {
+    LOG_DBG("CPS", "Resaving settings to update format");
+    requestResave();
   }
 
   LOG_DBG("CPS", "Settings loaded from file");
@@ -296,35 +333,17 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   return true;
 }
 
-bool CrossPointSettings::saveToFile() const {
-  std::lock_guard<std::mutex> lock(_mutex);
-  return PersistableStore<CrossPointSettings>::saveToFile();
-}
-
 bool CrossPointSettings::loadFromFile() {
-  // Try JSON first. PersistableStore::loadFromFile() returns false uniformly
-  // for a missing, empty, OR corrupt settings.json -- a deliberate widening
-  // from the pre-migration code, which only fell through to the binary
-  // migration below for missing/empty. Recovering a corrupt settings.json
-  // from settings.bin.bak (when one exists) is strictly better than
-  // discarding every setting, so this is an intentional improvement, not an
-  // accidental behavior change. Same widening applied to CrossPointState.
-  bool result;
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    result = PersistableStore<CrossPointSettings>::loadFromFile();
-  }
-  // Resave (if fromJson silently migrated a legacy field) strictly outside
-  // the lock above: saveToFile() takes the same mutex, and it is not
-  // recursive.
-  if (result && _needsResaveAfterLoad) {
-    if (saveToFile()) {
-      LOG_DBG("CPS", "Resaved settings to update format");
-    } else {
-      LOG_ERR("CPS", "Failed to resave settings after format update");
-    }
-  }
-  if (result) {
+  // PersistableStore::loadFromFile() returns false uniformly for a missing,
+  // empty, OR corrupt settings.json -- a deliberate widening from the
+  // pre-migration code, which only fell through to the binary migration below
+  // for missing/empty. Recovering a corrupt settings.json from
+  // settings.bin.bak (when one exists) is strictly better than discarding
+  // every setting, so this is an intentional improvement, not an accidental
+  // behavior change. Same widening applied to CrossPointState. Locking and
+  // the post-fromJson resave (via requestResave()) are handled by the base
+  // class now -- see PersistableStore.h.
+  if (PersistableStore<CrossPointSettings>::loadFromFile()) {
     migrateLanguageBinaryFile();
     return true;
   }
@@ -371,12 +390,29 @@ bool CrossPointSettings::migrateLanguageBinaryFile() {
   return true;
 }
 
+CrossPointSettings::StatusBarSpec CrossPointSettings::statusBarSpec() const {
+  StatusBarSpec spec;
+  spec.showChapterPageCount = statusBarChapterPageCount != 0;
+  spec.showBookProgressPercent = statusBarBookProgressPercentage != 0;
+  spec.titleMode = statusBarTitle;
+  spec.showBattery = statusBarBattery != 0;
+  spec.showBatteryPercent = hideBatteryPercentage == HIDE_NEVER;
+  spec.clockMode = statusBarClock;
+  spec.clock12h = clockFormat == 1;
+  spec.clockUtcOffsetQ = clockUtcOffsetQ;
+  spec.progressBarMode = statusBarProgressBar;
+  spec.progressBarHeightPx =
+      statusBarProgressBar != HIDE_PROGRESS ? static_cast<uint8_t>((statusBarProgressBarThickness + 1) * 2) : 0;
+  spec.xtcMode = xtcStatusBarMode;
+  return spec;
+}
+
 bool CrossPointSettings::loadFromBinaryFile() {
   HalFile inputFile;
   if (!Storage.openFileForRead("CPS", SETTINGS_FILE_BIN, inputFile)) {
     return false;
   }
-  std::lock_guard<std::mutex> lock(_mutex);
+  std::lock_guard<std::mutex> lock(storeMutex);
 
   uint8_t version;
   serialization::readPod(inputFile, version);
@@ -482,6 +518,22 @@ bool CrossPointSettings::loadFromBinaryFile() {
 
   LOG_DBG("CPS", "Settings loaded from binary file");
   return true;
+}
+
+ReaderRenderSpec CrossPointSettings::readerRenderSpec(const uint16_t viewportWidth,
+                                                      const uint16_t viewportHeight) const {
+  ReaderRenderSpec spec;
+  spec.fontId = getReaderFontId();
+  spec.lineCompression = getReaderLineCompression();
+  spec.extraParagraphSpacing = extraParagraphSpacing != 0;
+  spec.paragraphAlignment = paragraphAlignment;
+  spec.viewportWidth = viewportWidth;
+  spec.viewportHeight = viewportHeight;
+  spec.hyphenationEnabled = hyphenationEnabled != 0;
+  spec.embeddedStyle = embeddedStyle != 0;
+  spec.imageRendering = imageRendering;
+  spec.focusReadingEnabled = focusReadingEnabled != 0;
+  return spec;
 }
 
 float CrossPointSettings::getReaderLineCompression() const {

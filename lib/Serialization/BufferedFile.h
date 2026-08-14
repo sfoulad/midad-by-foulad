@@ -12,9 +12,9 @@ namespace serialization {
 //
 // SdFat keeps ONE shared 512-byte sector cache per volume, so interleaving small
 // reads/writes across two or more files evicts and reloads that sector on nearly
-// every call -- each 4-byte pod becomes a full SD transaction (measured upstream:
-// 31s to stream ~200KB through BookMetadataCache::buildBookBin on a 1,732-spine
-// EPUB). Batching into chunk-sized transfers keeps each file at sequential SD speed.
+// every call -- each 4-byte pod becomes a full SD transaction (measured: 31s to
+// stream ~200KB through BookMetadataCache::buildBookBin on a 1,732-spine EPUB).
+// Batching into chunk-sized transfers keeps each file at sequential SD speed.
 //
 // Heap: one fixed buffer per wrapper, allocated once at construction and freed at
 // scope exit. If the allocation fails the wrapper degrades to unbuffered

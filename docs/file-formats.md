@@ -98,11 +98,25 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 39
+### Version 40
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 40 is an upstream merge. TextBlock gained `<ruby>`/`<rt>` support:
+rubies are serialized per-block alongside the existing `kashidaExtraPx` array,
+so a line can carry both Arabic kashida justification and CJK ruby annotations
+at once. Word-gap suppression is now scoped to tokens glued together in the
+source only, so ruby element boundaries no longer collapse the spaces between
+Hangul words (previously handled by dropping the gap at any CJK break
+opportunity). The header now reads its fields from a `ReaderRenderSpec`
+parameter instead of bare `Section` members -- no on-disk layout change, but
+`arabicFontId` is derived from `spec.fontId` rather than a stored member. A
+fifth placeholder `uint32_t` (visible-offset LUT) joins the header, and each
+page persists a `uint32_t` visible-text start offset. `FootnoteEntry::href`
+grew from 96 to 256 bytes, changing each serialized footnote record from 128
+to 288 bytes. All of the above invalidates every cache from v39 and earlier.
 
 Version 39 adds the book-internal source href to each serialized ImageBlock,
 written right after the cache path (lazy image extraction: section builds only
@@ -185,8 +199,9 @@ Version 35 includes:
 - cache-busting fields for paragraph alignment, hyphenation, embedded CSS,
   image rendering mode, and Focus Reading
 - page offset LUT
+- per-page visible-text offset LUT (zero-based Unicode codepoints in `<body>`)
 - anchor-to-page map for fragment and footnote navigation
-- paragraph and list-item LUTs used by KOReader sync page refinement
+- paragraph and list-item LUTs retained for navigation and legacy sync fallback
 - optional per-word Focus Reading split metadata
 - per-page footnote entries
 - serialized word style bits for underline, strikethrough, superscript, and
@@ -203,10 +218,10 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 35
+#define EXPECTED_VERSION 40
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
-#define FOOTNOTE_HREF_LEN 96
+#define FOOTNOTE_HREF_LEN 256
 
 struct String {
     u32 length [[hidden, comment("String byte length")]];
@@ -372,6 +387,7 @@ struct SectionBin {
     u32 anchorMapOffset;
     u32 paragraphLutOffset;
     u32 listItemLutOffset;
+    u32 visibleTextLutOffset;
 
     Page pages[pageCount];
 
@@ -392,6 +408,10 @@ struct SectionBin {
 
     if (listItemLutOffset != 0 && paragraphLutOffset != 0) {
         u16 listItemIndex[paragraphLut.count] @ listItemLutOffset;
+    }
+
+    if (visibleTextLutOffset != 0) {
+	u32 visibleTextOffset[pageCount] @ visibleTextLutOffset;
     }
 };
 

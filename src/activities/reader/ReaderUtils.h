@@ -2,17 +2,30 @@
 
 #include <CrossPointSettings.h>
 #include <GfxRenderer.h>
+#include <HalGPIO.h>
 #include <HalTiltSensor.h>
 #include <Logging.h>
+#ifndef SIMULATOR
+#include <components/bars/tap-zones.h>
+#endif
 
 #include "MappedInputManager.h"
+#include "activities/ActivityManager.h"
 
 namespace ReaderUtils {
 
 constexpr unsigned long GO_HOME_MS = 1000;
+constexpr unsigned long GO_BACK_OR_HOME_MS = GO_HOME_MS;
 constexpr unsigned long SKIP_HOLD_MS = 700;
 constexpr unsigned long BOOKMARK_HOLD_MS = 400;
 constexpr unsigned long BOOKMARK_MESSAGE_DURATION_MS = 2500;
+
+#ifndef SIMULATOR
+enum ReaderTouchAction : freeink::ui::ActionId {
+  READER_TOUCH_PREV = 1,
+  READER_TOUCH_NEXT = 3,
+};
+#endif
 
 inline void applyOrientation(GfxRenderer& renderer, const uint8_t orientation) {
   switch (orientation) {
@@ -57,6 +70,75 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
                                           : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
                                              input.wasReleased(nextButton)));
   return {prev, next, tiltPrev || tiltNext};
+}
+
+struct TouchPageTurn {
+  bool prev;
+  bool next;
+  unsigned long heldMs;
+};
+
+inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInputManager& input) {
+  TouchPageTurn result{false, false, 0};
+  if (!SETTINGS.touchReaderControls || !input.hasTouch()) {
+    return result;
+  }
+
+  int x = 0;
+  int y = 0;
+  if (!input.wasScreenTapped(x, y)) {
+    return result;
+  }
+
+  // Unreachable on the simulator: input.hasTouch() is always false there, so
+  // the early return above already exits before this point. Compiled out
+  // anyway since FreeInkUI's TapZone/Rect have no simulator build.
+#ifndef SIMULATOR
+  const int16_t width = static_cast<int16_t>(renderer.getScreenWidth());
+  const int16_t height = static_cast<int16_t>(renderer.getScreenHeight());
+  // Outer thirds only: the middle third is the reader-menu tap
+  // (isTouchMenuTap below), so it must not double as a page turn.
+  const int16_t zoneWidth = width / 3;
+  const freeink::ui::TapZone zones[] = {
+      {freeink::ui::Rect{0, 0, zoneWidth, height}, READER_TOUCH_PREV},
+      {freeink::ui::Rect{static_cast<int16_t>(width - zoneWidth), 0, zoneWidth, height}, READER_TOUCH_NEXT},
+  };
+
+  for (const auto& zone : zones) {
+    if (!zone.enabled || !zone.rect.contains(static_cast<int16_t>(x), static_cast<int16_t>(y))) continue;
+    result.prev = zone.action == READER_TOUCH_PREV;
+    result.next = zone.action == READER_TOUCH_NEXT;
+    break;
+  }
+  result.heldMs = gpio.lastTouchHeldMs();
+#endif
+  return result;
+}
+
+// Tap in the middle third of the screen: the tap path into the reader menu on
+// every touch board. The page-turn tap zones are the outer thirds, so the
+// middle is free in tap mode.
+inline bool isTouchMenuTap(const GfxRenderer& renderer, const MappedInputManager& input) {
+  if (!input.hasTouch()) return false;
+  int x = 0;
+  int y = 0;
+  if (!input.wasScreenTapped(x, y)) return false;
+  const int width = renderer.getScreenWidth();
+  // Same boundary math as detectTouchPageTurn's outer zones, so the middle
+  // band meets them with no dead column when width % 3 != 0.
+  const int zoneWidth = width / 3;
+  return x >= zoneWidth && x < width - zoneWidth;
+}
+
+// Reader menu opens on the menu edge-swipe or a middle-third tap. On home-key
+// boards a long press of the capacitive key runs the user-selected long-press
+// function instead (SETTINGS.longPressMenuFunction), not the menu.
+// With touch reader controls Off the reading surface ignores touch entirely,
+// menu included, so a stray brush of the screen can't open it; the menu stays
+// reachable via the Confirm button.
+inline bool isTouchMenuGesture(const GfxRenderer& renderer, const MappedInputManager& input) {
+  if (!SETTINGS.touchReaderControls) return false;
+  return (input.hasTouch() && input.wasMenuGesture()) || isTouchMenuTap(renderer, input);
 }
 
 // async=true starts the panel waveform and returns so the caller can overlap
@@ -111,6 +193,49 @@ void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
   renderer.setRenderMode(GfxRenderer::BW);
 
   renderer.restoreBwBuffer();
+}
+
+struct BackNavCallback {
+  void* ctx;
+  void (*fn)(void*);
+};
+
+// Returns true if the back button was consumed (caller should return).
+// Long press (>= GO_BACK_OR_HOME_MS):
+// - default: go to file browser
+// - with backShortToFileBrowser: go home
+// Short press (< GO_BACK_OR_HOME_MS):
+// - default: go home
+// - with backShortToFileBrowser: go to file browser.
+inline bool handleBackNavigation(const MappedInputManager& mappedInput, ActivityManager& activityManager,
+                                 const char* filePath, BackNavCallback goHome) {
+  // The reading surface deliberately has no swipe-to-exit path on any touch
+  // board: the bottom-edge up-swipe already exits, and in swipe page-turn
+  // mode a right swipe must page back instead. Back swipes stay available in menus and other activities; only
+  // this reader-surface handler ignores them. Physical Back buttons are
+  // unaffected: isPressed() is button-only, and this guard skips just the
+  // gesture's own release frame.
+  if (mappedInput.wasBackGesture()) {
+    return false;
+  }
+
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= GO_BACK_OR_HOME_MS) {
+    if (SETTINGS.backShortToFileBrowser) {
+      goHome.fn(goHome.ctx);
+    } else {
+      activityManager.goToFileBrowser(filePath);
+    }
+    return true;
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && mappedInput.getHeldTime() < GO_BACK_OR_HOME_MS) {
+    if (SETTINGS.backShortToFileBrowser) {
+      activityManager.goToFileBrowser(filePath);
+    } else {
+      goHome.fn(goHome.ctx);
+    }
+    return true;
+  }
+  return false;
 }
 
 }  // namespace ReaderUtils

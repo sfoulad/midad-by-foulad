@@ -315,6 +315,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
     fileProgress_ = 0;
     fileTotal_ = 0;
     cancelRequested_ = false;
+    goHomeRequested_ = false;
   }
   requestUpdateAndWait();
 
@@ -350,6 +351,13 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
               mappedInput.wasPressed(MappedInputManager::Button::Back)) {
             cancelRequested_ = true;
           }
+          // This update() consumes the one-shot home event before the central
+          // ActivityManager dispatch can see it, so honor it here: abort the
+          // download, then exit to home once the abort unwinds.
+          if (mappedInput.wasHomeGesture()) {
+            cancelRequested_ = true;
+            goHomeRequested_ = true;
+          }
           requestUpdate(true);
         },
         &cancelRequested_);
@@ -358,6 +366,10 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       fontInstaller_.deleteFamily(family.name.c_str());
       family.installed = false;
       family.hasUpdate = false;
+      if (goHomeRequested_) {
+        onGoHome();
+        return;
+      }
       {
         RenderLock lock(*this);
         state_ = FAMILY_LIST;

@@ -16,7 +16,7 @@
 // a filled-in shape competing with the actual board/piece for attention
 // (user report: the previous 25% fill looked too heavy/dark). Every other
 // row is left fully blank, and the active rows only light 1 pixel in 4.
-static void fillDitheredGhost(GfxRenderer& r, int x, int y, int w, int h) {
+static void fillDitheredGhost(const GfxRenderer& r, int x, int y, int w, int h) {
   for (int dy = 0; dy < h; dy += 2)
     for (int dx = ((dy / 2) % 2); dx < w; dx += 4) r.drawPixel(x + dx, y + dy, true);
 }
