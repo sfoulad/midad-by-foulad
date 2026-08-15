@@ -212,6 +212,18 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
   return fontId;
 }
 
+void GfxRenderer::ensureSdGlyphsResident(const int fontId, const char* text, const EpdFontFamily::Style style,
+                                         const bool metadataOnly) const {
+  const auto sdIt = sdCardFonts_.find(fontId);
+  if (sdIt == sdCardFonts_.end()) {
+    return;
+  }
+  // SUP/SUB bits don't select a distinct .cpfont style bitstream — mask to the
+  // base style. resolveStyleMask() inside prewarm folds absent styles.
+  const uint8_t styleMask = static_cast<uint8_t>(1u << (static_cast<uint8_t>(style) & 0x03));
+  sdIt->second->prewarm(text, styleMask, metadataOnly);
+}
+
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
 // This should always be inlined for better performance
 static inline void rotateCoordinates(const GfxRenderer::Orientation orientation, const int x, const int y, int* phyX,
@@ -642,6 +654,13 @@ int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontF
 
   std::string visual;
   const char* renderedText = resolveVisualText(text, visual, baseDir);
+
+  // Redirected to the SD fallback: batch-load the string's glyphs so the
+  // per-codepoint measurement loop below doesn't fault them in one SD read
+  // at a time (#2725).
+  if (resolvedFontId != fontId) {
+    ensureSdGlyphsResident(resolvedFontId, renderedText, style, true);
+  }
 
   int w = 0, h = 0;
   fontIt->second.getTextDimensions(renderedText, &w, &h, style);
@@ -1618,6 +1637,12 @@ void GfxRenderer::drawText(const int fontId, const int x, const int y, const cha
     return;
   }
 
+  // Redirected to the SD fallback: batch-load the string's glyphs so the draw
+  // loop below doesn't fault them in one SD read at a time (#2725).
+  if (resolvedFontId != fontId) {
+    ensureSdGlyphsResident(resolvedFontId, renderedText, style, false);
+  }
+
   const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", resolvedFontId);
@@ -2398,6 +2423,10 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
         drawPixel(screenX, screenY, false);
       } else if (renderMode == GRAYSCALE_LSB && val == 1) {
         drawPixel(screenX, screenY, false);
+      } else if (renderMode == FACTORY_GRAY_LSB && !(val & 1)) {
+        drawPixel(screenX, screenY, false);
+      } else if (renderMode == FACTORY_GRAY_MSB && val < 2) {
+        drawPixel(screenX, screenY, false);
       }
     }
   }
@@ -2455,6 +2484,9 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     return;
   }
 
+  // Factory grayscale inverts the pixel values
+  const bool full = !(renderMode == FACTORY_GRAY_LSB || renderMode == FACTORY_GRAY_MSB);
+
   // Emit one accumulated destination row: 3-tone re-dither of the bucket
   // averages -- dark buckets go black, light ones stay white, and mid-tones
   // render as a pixel checkerboard so downscaled dither still reads as gray.
@@ -2471,7 +2503,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
         // Dark mode: pre-invert (see drawBitmap) so the panel-push inversion
         // restores the cover's true polarity.
         if (darkMode_ ? !drawBlack : drawBlack) {
-          drawPixel(screenX, screenY, true);
+          drawPixel(screenX, screenY, full);
         }
       }
     }
@@ -2537,7 +2569,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       // drawBitmap) so the panel-push inversion restores true polarity --
       // the WHITE source pixels get drawn instead.
       if (darkMode_ ? (val == 3) : (val < 3)) {
-        drawPixel(screenX, screenY, true);
+        drawPixel(screenX, screenY, full);
       }
     }
   }
@@ -2706,13 +2738,20 @@ void GfxRenderer::invertScreen() const {
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
+  // After a factory LUT render, RED RAM still contains the grayscale MSB plane.
+  // Promote the first normal FAST refresh to HALF so both RAM banks are rebased
+  // before differential updates resume.
+  const bool afterFactoryLut = displayState == DisplayState::FactoryLut;
+  const auto effectiveRefreshMode =
+      afterFactoryLut && refreshMode == HalDisplay::FAST_REFRESH ? HalDisplay::HALF_REFRESH : refreshMode;
   // Dark mode inverts only for the panel push, then restores -- everything
   // that reads the framebuffer afterwards sees normal polarity (see
   // setDarkMode). Two 48KB XOR passes ~= 1-2ms at 160MHz, negligible next to
   // the e-ink refresh itself. Same wrap on every other pixel-push below.
   if (darkMode_) invertScreen();
-  display.displayBuffer(refreshMode, fadingFix, forceCleanBaseOnHalf);
+  display.displayBuffer(effectiveRefreshMode, fadingFix, forceCleanBaseOnHalf);
   if (darkMode_) invertScreen();
+  displayState = DisplayState::BW;
 }
 
 void GfxRenderer::displayBufferAsync(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
@@ -3226,6 +3265,11 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
   // Route CJK-bearing strings to the fallback font (see resolveTextFontId).
   const int resolvedFontId = resolveTextFontId(fontId, text, style);
+  // Redirected to the SD fallback: batch-load the string's glyphs so the draw
+  // loop below doesn't fault them in one SD read at a time (#2725).
+  if (resolvedFontId != fontId) {
+    ensureSdGlyphsResident(resolvedFontId, text, style, false);
+  }
   const auto fontIt = fontMap.find(resolvedFontId);
   if (fontIt == fontMap.end()) {
     LOG_ERR("GFX", "Font %d not found", resolvedFontId);
@@ -3331,7 +3375,14 @@ void GfxRenderer::copyGrayscaleMsbBuffers() const {
   if (darkMode_) invertScreen();
 }
 
-void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
+void GfxRenderer::displayGrayBuffer(const unsigned char* lut, bool factoryMode) const {
+  display.displayGrayBuffer(fadingFix, lut, factoryMode);
+  if (factoryMode) {
+    displayState = DisplayState::FactoryLut;
+  } else {
+    displayState = DisplayState::BW;
+  }
+}
 
 void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const {
   // Guard the uint16_t casts below: a negative would wrap to a huge length.
