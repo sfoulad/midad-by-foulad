@@ -1,10 +1,12 @@
 # OTA Signing: Key Management
 
-Status: design only, Phase 1 Milestone 1. No production key exists yet. Nothing in
-this document has been implemented in the release pipeline -- that is Milestone 4
-("OTA signing implementation") per `phase-1-plan.md`'s milestone sequence. This
-document exists so that when Milestone 4 starts, the key-handling decisions are
-already made and reviewed, not improvised under release pressure.
+Status: the CI/release integration design below is implemented -- `scripts/sign_firmware.sh`
+and its call sites in `release.yml`/`release_candidate.yml`/`auto-release.yml` are live and
+fail closed (see the "CI / release integration" section). **No production key exists yet**
+(that provisioning step is owner-gated, not a Phase 1 software task), so every real release
+workflow run currently refuses to publish -- correct, expected behavior until the key exists,
+not a bug. The key-rotation design below is settled, corrected from Milestone 1's original
+(wrong) assumption during Milestone 2 -- see that section for the source-verified reasoning.
 
 ## Scheme
 
@@ -46,19 +48,24 @@ completes -- confirmed during the spike that PlatformIO's SCons/esptool pipeline
 not auto-invoke ESP-IDF's `idf.py`-only CMake signing target, so this cannot be wired
 up as a Kconfig-only change.
 
-## CI / release integration design (not yet implemented)
+## CI / release integration (implemented)
 
-- Add a signing step to whichever GitHub Actions workflow produces the public release
-  artifact (`gh_release`/`gh_release_rc` envs) -- after `pio run`, before the artifact is
-  attached to the GitHub Release.
-- The private key must be a GitHub Actions encrypted secret, injected only into that
-  one step, never written to a file the rest of the job can read, never logged.
-- The workflow should fail closed: if the secret is unavailable (e.g. a fork PR run,
-  which doesn't get repo secrets), the job must fail rather than publish an unsigned
-  release artifact under a real release tag.
-- CI (`ci.yml`, PR builds) never needs the private key -- ordinary PR/branch builds
-  stay unsigned, matching `CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n`'s default in
-  `platformio.ini`. Only the actual release-publish job signs.
+- `scripts/sign_firmware.sh` signs and verifies the artifact; a "Sign firmware" step
+  calls it in each of `release.yml`, `release_candidate.yml`, and `auto-release.yml`,
+  after `pio run` (`gh_release`/`gh_release_rc` envs) and before the artifact is
+  attached to the GitHub Release/pre-release.
+- The private key is `secrets.OTA_SIGNING_KEY`, a GitHub Actions encrypted secret,
+  injected only as an env var into that one step, written only to a `mktemp` file
+  cleaned up via `trap ... EXIT`, never logged.
+- Fails closed, confirmed in `sign_firmware.sh` itself: missing `OTA_SIGNING_KEY`,
+  missing public key file, or missing firmware artifact are each a hard `exit 1`
+  with an explanatory `::error::` before any publish step runs. A fork PR run
+  (no repo secrets) or a run before the production key is provisioned both refuse
+  to publish rather than shipping an unsigned artifact under a real release tag --
+  the second case is exactly today's state, and is correct, not a bug.
+- CI (`ci.yml`, PR builds) never touches the private key -- ordinary PR/branch
+  builds stay unsigned, matching `CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n`'s
+  default in `platformio.ini`. Only the three release-publish workflows sign.
 
 ## Private-key storage expectation
 
