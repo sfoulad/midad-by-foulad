@@ -125,20 +125,27 @@ jobs:
             echo "Last known synced ancestor: \`${last_ancestor:-none -- no prior sync recognized}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Dedup: at most one open sync PR at a time, identified by branch
-      # name prefix (not a label, so no repo-config prerequisite) AND
-      # authored by github-actions[bot] specifically -- both the branch
-      # prefix and the crosspoint-sync-target-sha body marker checked below
-      # are public, forgeable text, not a secret. Without the author check,
-      # anyone able to open a PR against this repo could name a branch
-      # `sync/crosspoint-*` and cause this job to treat it as "the" active
-      # sync PR, at best a denial-of-service on this automation (see the
-      # security-audit note in the Stage 1 stop-gate report for the full
-      # trace of why that's the worst case, not code execution or a
-      # privileged push to an attacker-controlled destination). The newest
-      # one wins if more than one somehow exists (should never happen given
-      # the concurrency group above, but fail toward "pick one
-      # deterministically" rather than erroring).
+      # Dedup: at most one open sync PR at a time, identified by THREE
+      # independent signals combined, not any single one alone (per the
+      # 2026-08-15 audit review of this workflow):
+      #   1. base == develop (already applied via --base above)
+      #   2. headRefName starts with `sync/crosspoint-`
+      #   3. author.login == "github-actions[bot]"
+      # (1) and (2) are public, forgeable text -- anyone able to open a PR
+      # against this repo could match them. (3) is NOT forgeable: GitHub
+      # attributes PR authorship to the actual authenticated token/identity
+      # server-side, and no git/PR operation available to an external
+      # contributor can make a PR appear authored by github-actions[bot].
+      # Combined with the crosspoint-sync-target-sha body marker checked
+      # below (also public text, so also not load-bearing alone), the
+      # worst case for an attacker who matches every forgeable signal is a
+      # denial-of-service on this automation ("leave_unrecognized" or a
+      # missed update) -- never code execution or a push to attacker-
+      # controlled content, since `sync`'s checkout always starts from
+      # trusted `develop`, never from whatever a matched PR's branch
+      # actually contains. The newest one wins if more than one somehow
+      # exists (should never happen given the concurrency group above, but
+      # fail toward "pick one deterministically" rather than erroring).
       - name: Find existing open sync PR
         id: existing
         env:
@@ -213,6 +220,8 @@ jobs:
       contents: write
     outputs:
       conflict: ${{ steps.merge.outputs.conflict }}
+      stale: ${{ steps.merge.outputs.stale }}
+      pushed: ${{ steps.merge.outputs.pushed }}
       branch: ${{ steps.merge.outputs.branch }}
       base_sha: ${{ steps.merge.outputs.base_sha }}
       upstream_sha: ${{ steps.fetch.outputs.upstream_sha }}
@@ -281,17 +290,51 @@ jobs:
           if git merge "crosspoint-reader/$UPSTREAM_REF" --no-ff \
               -m "Merge crosspoint-reader/$UPSTREAM_REF @ $UPSTREAM_SHA"; then
             echo "conflict=false" >> "$GITHUB_OUTPUT"
-            if [ "$ACTION" = "update_existing" ]; then
-              git push origin "$branch" --force
+
+            # Re-check develop's remote tip immediately before pushing --
+            # closes the narrow window between this step's earlier
+            # `git rev-parse develop` (base_sha, from the checkout at job
+            # start) and the push below, during which a genuinely
+            # concurrent Midad-side merge (not another run of THIS
+            # workflow -- the concurrency group already serializes those --
+            # a human merging an unrelated PR at the same moment) could
+            # move develop out from under this merge. If it has, don't
+            # push a result that's already behind: abort, leave whatever
+            # was there before untouched, and let the next scheduled/
+            # manual run pick up the newer develop tip on its own --
+            # never publish a merge silently built on a stale base.
+            git fetch origin develop
+            current_develop_sha=$(git rev-parse origin/develop)
+            if [ "$current_develop_sha" != "$base_sha" ]; then
+              {
+                echo "stale=true"
+                echo "pushed=false"
+              } >> "$GITHUB_OUTPUT"
+              {
+                echo "## Merge: stale, not pushed"
+                echo "develop moved from \`$base_sha\` to \`$current_develop_sha\` while this merge was in progress. Not pushing a result already built on a stale base -- the next run will pick up the current tip."
+              } >> "$GITHUB_STEP_SUMMARY"
             else
-              git push origin "$branch"
+              {
+                echo "stale=false"
+                echo "pushed=true"
+              } >> "$GITHUB_OUTPUT"
+              if [ "$ACTION" = "update_existing" ]; then
+                git push origin "$branch" --force
+              else
+                git push origin "$branch"
+              fi
+              {
+                echo "## Merge: clean"
+                echo "Merged crosspoint-reader/$UPSTREAM_REF @ \`$UPSTREAM_SHA\` into \`$branch\` (from develop @ \`$base_sha\`) with no conflicts."
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
-            {
-              echo "## Merge: clean"
-              echo "Merged crosspoint-reader/$UPSTREAM_REF @ \`$UPSTREAM_SHA\` into \`$branch\` (from develop @ \`$base_sha\`) with no conflicts."
-            } >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "conflict=true"
+              echo "stale=false"
+              echo "pushed=false"
+            } >> "$GITHUB_OUTPUT"
             {
               echo "## Merge: conflict"
               if [ "$ACTION" = "update_existing" ]; then
@@ -320,7 +363,7 @@ jobs:
   # writes into the PR body only, never gates or merges anything.
   classify:
     needs: [check, sync]
-    if: needs.sync.outputs.conflict == 'false'
+    if: needs.sync.outputs.pushed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -356,7 +399,7 @@ jobs:
 
   ci:
     needs: [check, sync]
-    if: needs.sync.outputs.conflict == 'false'
+    if: needs.sync.outputs.pushed == 'true'
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.sync.outputs.branch }}
@@ -373,7 +416,7 @@ jobs:
     if: |
       always() &&
       needs.sync.result == 'success' &&
-      needs.sync.outputs.conflict == 'false' &&
+      needs.sync.outputs.pushed == 'true' &&
       needs.check.outputs.effective_dry_run == 'false'
     runs-on: ubuntu-latest
     permissions:
@@ -508,6 +551,21 @@ jobs:
         run: |
           echo "Merge conflicted -- see the sync job's summary above for the file list and manual-resolution steps."
           exit 1
+
+  # develop moved out from under a clean merge between this job's checkout
+  # and its push -- not a conflict (the merge itself succeeded), and
+  # nothing was pushed, so nothing needs manual resolution either. Distinct
+  # from report-conflict so a step summary reader isn't told "conflict"
+  # when the real story is "retry, which the next scheduled run does on
+  # its own."
+  report-stale:
+    needs: [check, sync]
+    if: needs.sync.result == 'success' && needs.sync.outputs.stale == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No push -- develop moved during processing
+        run: |
+          echo "See the sync job's summary above -- develop advanced while this merge was being built, so nothing was pushed. The next scheduled or manual run will pick up the current tip."
 
   report-no-action:
     needs: check
