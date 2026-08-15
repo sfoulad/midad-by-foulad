@@ -1,19 +1,38 @@
 name: Update from CrossPoint
 
-# Manually triggered fork-sync: mirrors crosspoint-reader/crosspoint-reader's
-# develop branch into `upstream`, merges it into a disposable sync branch off
-# `develop` (a real `git merge`, never a cherry-pick or rebase -- see
-# docs/upstream-sync-architecture.md), runs the exact same CI jobs a normal PR
-# would, and opens a PR. If the merge itself conflicts, this reports which
-# files and stops -- it never attempts to resolve or redesign anything, per
-# docs/upstream-sync-architecture.md's explicit "don't second-guess a clean
-# merge, don't auto-redesign a conflicted one" principle.
+# CrossPoint auto-sync, Stage 0 + Stage 1 (docs/crosspoint-auto-sync-design.md).
+# Preserves the original, already-approved foundation: a real `git merge
+# --no-ff` of crosspoint-reader/crosspoint-reader's develop branch, never a
+# cherry-pick or rebase (see docs/upstream-sync-architecture.md), running
+# the exact same CI jobs a normal PR would. If the merge conflicts, this
+# reports which files and stops -- it never attempts to resolve or redesign
+# anything.
+#
+# Stage 0 adds a deterministic classifier (scripts/classify-crosspoint-sync.sh)
+# that labels a clean merge Class A (no sensitive-path hits) or Class B
+# (touches a sensitive category -- human review required). Classification
+# is informational only: it is written into the PR body, never used to
+# merge anything automatically.
+#
+# Stage 1 adds a daily `schedule` trigger alongside the existing manual
+# `workflow_dispatch`, with dedup (only one active sync PR at a time,
+# updated in place rather than duplicated) and a no-op when CrossPoint
+# hasn't advanced since the last sync. NO AUTO-MERGE EXISTS ANYWHERE IN
+# THIS WORKFLOW -- every PR this creates or updates still requires a human
+# to merge it, exactly as before.
 
 on:
+  schedule:
+    # Once daily. A schedule trigger has no `inputs` context at all, so the
+    # dry_run input's own default (true) never applies here -- see the
+    # "Resolve inputs" step below, which treats every schedule-triggered
+    # run as effectively dry_run=false (the whole point of the schedule is
+    # to actually open/update a PR when CrossPoint has moved).
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run: update the upstream mirror and report the merge/CI result, but do not open a PR"
+        description: "Dry run: report the merge/classification/CI result, but do not open or update a PR"
         type: boolean
         default: true
       upstream_ref:
@@ -21,17 +40,182 @@ on:
         type: string
         default: develop
 
+# Serializes the whole workflow (not just one job) so a scheduled run
+# overlapping a manual dispatch queues instead of racing -- see docs/
+# crosspoint-auto-sync-design.md §8. Never cancels a run that's mid-merge.
+concurrency:
+  group: crosspoint-auto-sync
+  cancel-in-progress: false
+
+# Minimal baseline; jobs that need more (contents: write to push a sync
+# branch, pull-requests: write to create/edit a PR) declare it themselves.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  sync:
+  # Decides, before anything else, whether there is anything to do at all:
+  # has CrossPoint advanced since the last sync, and does an active sync PR
+  # already exist. Never merges or pushes anything itself.
+  check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.decide.outputs.action }}
+      upstream_ref: ${{ steps.resolve.outputs.upstream_ref }}
+      effective_dry_run: ${{ steps.resolve.outputs.effective_dry_run }}
+      upstream_sha: ${{ steps.fetch.outputs.upstream_sha }}
+      last_ancestor: ${{ steps.fetch.outputs.last_ancestor }}
+      existing_pr_number: ${{ steps.existing.outputs.number }}
+      existing_branch: ${{ steps.existing.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      # Routed through `env`, not inline `${{ }}` interpolation, even
+      # though these values (a workflow_dispatch input, github.event_name)
+      # require repo write access to influence and are not attacker-
+      # controlled in the untrusted-PR sense -- consistent with this repo's
+      # existing convention (see thin-fork-guard-trusted.yml's PR_HEAD_REF
+      # handling) of never splicing event-derived text directly into a
+      # shell script body.
+      - name: Resolve inputs (schedule vs workflow_dispatch)
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_UPSTREAM_REF: ${{ inputs.upstream_ref }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "upstream_ref=${INPUT_UPSTREAM_REF:-develop}" >> "$GITHUB_OUTPUT"
+            echo "effective_dry_run=${INPUT_DRY_RUN:-true}" >> "$GITHUB_OUTPUT"
+          else
+            echo "upstream_ref=develop" >> "$GITHUB_OUTPUT"
+            echo "effective_dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch CrossPoint and compute advancement
+        id: fetch
+        env:
+          UPSTREAM_REF: ${{ steps.resolve.outputs.upstream_ref }}
+        run: |
+          set -euo pipefail
+          git remote add crosspoint-reader https://github.com/crosspoint-reader/crosspoint-reader.git
+          git fetch crosspoint-reader "$UPSTREAM_REF"
+          # Best-effort: only used as an ancestry witness by
+          # find-last-crosspoint-sync.sh below, and the crosspoint-reader
+          # fetch above already gives a fresher one for that purpose --
+          # this mirror fetch is not load-bearing if it's absent (first
+          # run ever) or stale.
+          git fetch origin upstream:refs/remotes/origin/upstream || true
+
+          upstream_sha=$(git rev-parse "crosspoint-reader/$UPSTREAM_REF")
+          chmod +x scripts/find-last-crosspoint-sync.sh
+          last_ancestor=$(scripts/find-last-crosspoint-sync.sh origin/develop "crosspoint-reader/$UPSTREAM_REF")
+
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          echo "last_ancestor=$last_ancestor" >> "$GITHUB_OUTPUT"
+          {
+            echo "## CrossPoint Sync Check"
+            echo "Target upstream SHA: \`$upstream_sha\`"
+            echo "Last known synced ancestor: \`${last_ancestor:-none -- no prior sync recognized}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Dedup: at most one open sync PR at a time, identified by branch
+      # name prefix (not a label, so no repo-config prerequisite) AND
+      # authored by github-actions[bot] specifically -- both the branch
+      # prefix and the crosspoint-sync-target-sha body marker checked below
+      # are public, forgeable text, not a secret. Without the author check,
+      # anyone able to open a PR against this repo could name a branch
+      # `sync/crosspoint-*` and cause this job to treat it as "the" active
+      # sync PR, at best a denial-of-service on this automation (see the
+      # security-audit note in the Stage 1 stop-gate report for the full
+      # trace of why that's the worst case, not code execution or a
+      # privileged push to an attacker-controlled destination). The newest
+      # one wins if more than one somehow exists (should never happen given
+      # the concurrency group above, but fail toward "pick one
+      # deterministically" rather than erroring).
+      - name: Find existing open sync PR
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr_json=$(gh pr list --state open --base develop --json number,headRefName,body,author \
+            --jq '[.[] | select(.headRefName | startswith("sync/crosspoint-")) | select(.author.login == "github-actions[bot]")] | sort_by(.number) | reverse | .[0] // empty')
+
+          if [ -z "$pr_json" ]; then
+            {
+              echo "number="
+              echo "branch="
+              echo "target_sha="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          number=$(echo "$pr_json" | jq -r '.number')
+          branch=$(echo "$pr_json" | jq -r '.headRefName')
+          body=$(echo "$pr_json" | jq -r '.body')
+          # Machine-readable marker this same workflow writes into every PR
+          # body it creates (see the "open-or-update-pr" job) -- absence
+          # means a PR that merely happens to match the branch-name prefix
+          # but wasn't produced by this workflow (or predates this marker);
+          # treated conservatively below, never touched automatically.
+          target_sha=$(echo "$body" | grep -oE 'crosspoint-sync-target-sha: [0-9a-f]{40}' | awk '{print $2}' || true)
+
+          {
+            echo "number=$number"
+            echo "branch=$branch"
+            echo "target_sha=$target_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide action
+        id: decide
+        env:
+          UPSTREAM_SHA: ${{ steps.fetch.outputs.upstream_sha }}
+          LAST_ANCESTOR: ${{ steps.fetch.outputs.last_ancestor }}
+          EXISTING_NUMBER: ${{ steps.existing.outputs.number }}
+          EXISTING_TARGET_SHA: ${{ steps.existing.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$EXISTING_NUMBER" ]; then
+            if [ -z "$EXISTING_TARGET_SHA" ]; then
+              echo "action=leave_unrecognized" >> "$GITHUB_OUTPUT"
+              echo "PR #$EXISTING_NUMBER matches the sync/crosspoint-* branch prefix but has no recognized crosspoint-sync-target-sha marker -- not touching it automatically." >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$EXISTING_TARGET_SHA" = "$UPSTREAM_SHA" ]; then
+              echo "action=skip_no_advance" >> "$GITHUB_OUTPUT"
+              echo "Existing PR #$EXISTING_NUMBER already targets \`$UPSTREAM_SHA\` -- CrossPoint has not advanced. Nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "action=update_existing" >> "$GITHUB_OUTPUT"
+              echo "Existing PR #$EXISTING_NUMBER targets \`$EXISTING_TARGET_SHA\`; CrossPoint has advanced to \`$UPSTREAM_SHA\` -- will update it in place." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            if [ -n "$LAST_ANCESTOR" ] && git merge-base --is-ancestor "$UPSTREAM_SHA" "$LAST_ANCESTOR" 2>/dev/null; then
+              echo "action=skip_no_advance" >> "$GITHUB_OUTPUT"
+              echo "CrossPoint's \`$UPSTREAM_SHA\` is already reflected in develop's history (last sync ancestor \`$LAST_ANCESTOR\`). Nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "action=create_new" >> "$GITHUB_OUTPUT"
+              echo "No open sync PR, and CrossPoint has advanced (target \`$UPSTREAM_SHA\`; last known ancestor: \`${LAST_ANCESTOR:-none, first sync}\`). Will create a new sync PR." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+  # The real merge -- unchanged in spirit from the original workflow, now
+  # driven by `check`'s decision instead of always running unconditionally.
+  sync:
+    needs: check
+    if: needs.check.outputs.action == 'create_new' || needs.check.outputs.action == 'update_existing'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       conflict: ${{ steps.merge.outputs.conflict }}
       branch: ${{ steps.merge.outputs.branch }}
-      upstream_sha: ${{ steps.fetch.outputs.sha }}
+      base_sha: ${{ steps.merge.outputs.base_sha }}
+      upstream_sha: ${{ steps.fetch.outputs.upstream_sha }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,45 +229,76 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch crosspoint-reader
+      # Fetched fresh here, never reusing `check`'s earlier snapshot --
+      # narrows the window between "decided to sync" and "actually merged"
+      # to this job's own runtime, rather than compounding it with the time
+      # since `check` ran.
+      - name: Fetch crosspoint-reader (fresh)
         id: fetch
+        env:
+          UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
         run: |
           set -euo pipefail
           git remote add crosspoint-reader https://github.com/crosspoint-reader/crosspoint-reader.git
-          git fetch crosspoint-reader "${{ inputs.upstream_ref }}"
-          sha=$(git rev-parse crosspoint-reader/${{ inputs.upstream_ref }})
+          git fetch crosspoint-reader "$UPSTREAM_REF"
+          sha=$(git rev-parse "crosspoint-reader/$UPSTREAM_REF")
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "Fetched crosspoint-reader/${{ inputs.upstream_ref }} @ $sha"
+          echo "upstream_sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Update the upstream mirror branch
-        # Exact mirror, zero Midad commits, force-updated -- see
-        # docs/upstream-sync-architecture.md's branch structure. Safe to
-        # force-push: this branch has no history of its own to lose.
+        env:
+          UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
         run: |
           set -euo pipefail
-          git push origin "crosspoint-reader/${{ inputs.upstream_ref }}:refs/heads/upstream" --force
+          git push origin "crosspoint-reader/$UPSTREAM_REF:refs/heads/upstream" --force
 
-      - name: Create sync branch and merge
+      # -B (reset), not -b (create): for update_existing this MUST reset
+      # the branch to develop's CURRENT tip rather than building on the
+      # branch's own prior state -- "never reuse a stale merge result if
+      # develop changed underneath it." For create_new this is equivalent
+      # to a plain create, since the branch doesn't exist yet.
+      - name: Create/reset sync branch and merge
         id: merge
+        env:
+          ACTION: ${{ needs.check.outputs.action }}
+          EXISTING_BRANCH: ${{ needs.check.outputs.existing_branch }}
+          UPSTREAM_SHA: ${{ steps.fetch.outputs.sha }}
+          UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
         run: |
           set -euo pipefail
-          branch="sync/crosspoint-$(date +%Y%m%d-%H%M%S)"
-          echo "branch=$branch" >> "$GITHUB_OUTPUT"
-          git checkout -b "$branch"
+          base_sha=$(git rev-parse develop)
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
 
-          if git merge "crosspoint-reader/${{ inputs.upstream_ref }}" --no-ff \
-              -m "Merge crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ steps.fetch.outputs.sha }}"; then
+          if [ "$ACTION" = "update_existing" ]; then
+            branch="$EXISTING_BRANCH"
+          else
+            branch="sync/crosspoint-$(date +%Y%m%d-%H%M%S)"
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          git checkout -B "$branch" develop
+
+          if git merge "crosspoint-reader/$UPSTREAM_REF" --no-ff \
+              -m "Merge crosspoint-reader/$UPSTREAM_REF @ $UPSTREAM_SHA"; then
             echo "conflict=false" >> "$GITHUB_OUTPUT"
-            git push origin "$branch"
+            if [ "$ACTION" = "update_existing" ]; then
+              git push origin "$branch" --force
+            else
+              git push origin "$branch"
+            fi
             {
               echo "## Merge: clean"
-              echo "Merged crosspoint-reader/${{ inputs.upstream_ref }} @ \`${{ steps.fetch.outputs.sha }}\` into \`$branch\` with no conflicts."
+              echo "Merged crosspoint-reader/$UPSTREAM_REF @ \`$UPSTREAM_SHA\` into \`$branch\` (from develop @ \`$base_sha\`) with no conflicts."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "conflict=true" >> "$GITHUB_OUTPUT"
             {
               echo "## Merge: conflict"
-              echo "Merging crosspoint-reader/${{ inputs.upstream_ref }} @ \`${{ steps.fetch.outputs.sha }}\` conflicts in:"
+              if [ "$ACTION" = "update_existing" ]; then
+                echo "CrossPoint has advanced to \`$UPSTREAM_SHA\`, but merging it into \`$branch\` now conflicts. **The existing PR is left untouched** at its previous (still clean) state -- newer upstream commits are waiting and need manual resolution."
+                echo
+              fi
+              echo "Merging crosspoint-reader/$UPSTREAM_REF @ \`$UPSTREAM_SHA\` conflicts in:"
               echo '```'
               git diff --name-only --diff-filter=U
               echo '```'
@@ -101,42 +316,204 @@ jobs:
             git merge --abort
           fi
 
+  # Stage 0: classify a clean merge as A or B. Purely informational --
+  # writes into the PR body only, never gates or merges anything.
+  classify:
+    needs: [check, sync]
+    if: needs.sync.outputs.conflict == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      class: ${{ steps.classify.outputs.class }}
+      categories: ${{ steps.classify.outputs.categories }}
+      report: ${{ steps.classify.outputs.report }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.sync.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Classify sync (Stage 0)
+        id: classify
+        env:
+          BASE_SHA: ${{ needs.sync.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/classify-crosspoint-sync.sh
+          scripts/classify-crosspoint-sync.sh "$BASE_SHA" HEAD >classify-output.txt
+          cat classify-output.txt >>"$GITHUB_STEP_SUMMARY"
+
+          class=$(grep -E '^CLASS=' classify-output.txt | tail -1 | cut -d= -f2)
+          categories=$(grep -E '^CATEGORIES=' classify-output.txt | tail -1 | cut -d= -f2)
+          {
+            echo "class=$class"
+            echo "categories=$categories"
+            echo "report<<CLASSIFY_REPORT_EOF"
+            grep -v -E '^(CLASS|CATEGORIES)=' classify-output.txt
+            echo "CLASSIFY_REPORT_EOF"
+          } >>"$GITHUB_OUTPUT"
+
   ci:
-    needs: sync
+    needs: [check, sync]
     if: needs.sync.outputs.conflict == 'false'
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.sync.outputs.branch }}
     secrets: inherit
 
-  open-pr:
-    needs: [sync, ci]
-    if: needs.sync.outputs.conflict == 'false' && inputs.dry_run == false
+  # Runs regardless of the ci job's PASS/FAIL result (`always()`, with an
+  # explicit re-check of sync's own success) -- per instruction, "CI
+  # failures must prevent a sync PR from being described as eligible," not
+  # "prevent a sync PR from existing at all." A PR still gets opened/
+  # updated so the failure is visible, but its body records CI FAILED and
+  # never claims Class-A eligibility language when that's true.
+  open-or-update-pr:
+    needs: [check, sync, classify, ci]
+    if: |
+      always() &&
+      needs.sync.result == 'success' &&
+      needs.sync.outputs.conflict == 'false' &&
+      needs.check.outputs.effective_dry_run == 'false'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.sync.outputs.branch }}
+          fetch-depth: 0
 
-      - name: Open PR against develop
+      - name: Fetch crosspoint-reader (for the upstream-commit list only)
         env:
-          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
         run: |
           set -euo pipefail
-          gh pr create \
-            --base develop \
-            --head "${{ needs.sync.outputs.branch }}" \
-            --title "Sync crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ needs.sync.outputs.upstream_sha }}" \
-            --body "**MERGE METHOD: Create a merge commit. Do NOT squash/rebase this sync PR** -- squashing or rebasing discards the real merge commit that \`thin-fork-guard.sh\` relies on to recognize this as a genuine sync and to reason about upstream divergence going forward. See CLAUDE.md's \"Midad Thin-Fork Architecture\" section.
+          git remote add crosspoint-reader https://github.com/crosspoint-reader/crosspoint-reader.git
+          git fetch crosspoint-reader "$UPSTREAM_REF"
 
-          Automated sync from crosspoint-reader/crosspoint-reader (\`${{ inputs.upstream_ref }}\` @ \`${{ needs.sync.outputs.upstream_sha }}\`). Merged cleanly; CI passed on the sync branch before this PR was opened. See docs/upstream-sync-architecture.md for the review checklist -- this still needs a human check for anything touching freeink-sdk/HAL/display code, which CI cannot verify on real hardware."
+      - name: Build PR body
+        id: body
+        env:
+          CLASS: ${{ needs.classify.outputs.class }}
+          CATEGORIES: ${{ needs.classify.outputs.categories }}
+          CLASSIFY_REPORT: ${{ needs.classify.outputs.report }}
+          CI_RESULT: ${{ needs.ci.result }}
+          BASE_SHA: ${{ needs.sync.outputs.base_sha }}
+          UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+          LAST_ANCESTOR: ${{ needs.check.outputs.last_ancestor }}
+          UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
+          BRANCH: ${{ needs.sync.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          class="${CLASS:-B}"
+          class_note=""
+          if [ -z "$CLASS" ]; then
+            class_note="**Classifier did not complete for this run -- defaulting to Class B (human review required) as a fail-closed measure.**"$'\n\n'
+          fi
+
+          if [ -n "$LAST_ANCESTOR" ]; then
+            commit_list=$(git log --oneline "$LAST_ANCESTOR..$UPSTREAM_SHA" 2>&1 || echo "(could not enumerate -- see $LAST_ANCESTOR..$UPSTREAM_SHA manually)")
+          else
+            commit_list="(first recognized sync -- full upstream history not enumerated; showing the 20 most recent commits)"$'\n'"$(git log --oneline -20 "$UPSTREAM_SHA")"
+          fi
+
+          changed_files=$(git diff --stat "$BASE_SHA" HEAD)
+
+          if [ "$CI_RESULT" = "success" ]; then
+            ci_line="PASSED"
+          elif [ "$CI_RESULT" = "failure" ]; then
+            ci_line="**FAILED** -- see the \`ci\` job's run for details"
+          else
+            ci_line="$CI_RESULT"
+          fi
+
+          if [ "$class" = "A" ] && [ "$CI_RESULT" = "success" ]; then
+            eligibility="**FUTURE AUTO-MERGE ELIGIBLE**"$'\n'"AUTO-MERGE CURRENTLY DISABLED -- this design has no Stage 2 implementation yet; every sync PR, Class A or B, still requires a human to merge it."
+            hardware_note=""
+          elif [ "$class" = "A" ]; then
+            eligibility="Class A (no sensitive-path hits), but CI did not pass -- **not eligible for anything until CI is green.**"
+            hardware_note=""
+          else
+            eligibility="**HUMAN REVIEW REQUIRED**"
+            hardware_note=""
+            case ",$CATEGORIES," in
+              *,hardware_sdk,*) hardware_note="Touches hardware_sdk-category paths -- hardware review recommended before merge (see docs/upstream-sync-architecture.md's human-review checklist)."$'\n' ;;
+            esac
+          fi
+
+          {
+            echo "**MERGE METHOD: Create a merge commit. Do NOT squash/rebase this sync PR** -- squashing or rebasing discards the real merge commit that \`thin-fork-guard.sh\` relies on to recognize this as a genuine sync and to reason about upstream divergence going forward. See CLAUDE.md's \"Midad Thin-Fork Architecture\" section."
+            echo
+            echo "$class_note$eligibility"
+            echo
+            echo "$hardware_note"
+            echo "## Sync details"
+            echo "- Classification: **Class $class**"
+            echo "- Sensitive categories touched: ${CATEGORIES:-none}"
+            echo "- Midad base SHA: \`$BASE_SHA\`"
+            echo "- Previous known CrossPoint ancestor: \`${LAST_ANCESTOR:-none (first recognized sync)}\`"
+            echo "- Target CrossPoint SHA: \`$UPSTREAM_SHA\`"
+            echo "- CI result: $ci_line"
+            echo
+            echo "## Upstream commits included"
+            echo '```'
+            echo "$commit_list"
+            echo '```'
+            echo
+            echo "## Changed files"
+            echo '```'
+            echo "$changed_files"
+            echo '```'
+            echo
+            echo "## Classifier report"
+            echo '```'
+            echo "$CLASSIFY_REPORT"
+            echo '```'
+            echo
+            echo "See docs/upstream-sync-architecture.md for the human-review checklist -- this still needs a human check for anything touching freeink-sdk/HAL/display code, which CI cannot verify on real hardware."
+            echo
+            echo "<!-- crosspoint-sync-target-sha: $UPSTREAM_SHA -->"
+          } >pr-body.md
+
+      - name: Create or update PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTION: ${{ needs.check.outputs.action }}
+          EXISTING_NUMBER: ${{ needs.check.outputs.existing_pr_number }}
+          BRANCH: ${{ needs.sync.outputs.branch }}
+          CLASS: ${{ needs.classify.outputs.class }}
+          UPSTREAM_SHA: ${{ needs.sync.outputs.upstream_sha }}
+          UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
+        run: |
+          set -euo pipefail
+          class="${CLASS:-B}"
+          title="Sync crosspoint-reader/$UPSTREAM_REF @ ${UPSTREAM_SHA:0:7} -- Class $class"
+
+          if [ "$ACTION" = "update_existing" ]; then
+            gh pr edit "$EXISTING_NUMBER" --title "$title" --body-file pr-body.md
+            echo "Updated PR #$EXISTING_NUMBER." >>"$GITHUB_STEP_SUMMARY"
+          else
+            gh pr create --base develop --head "$BRANCH" --title "$title" --body-file pr-body.md
+          fi
 
   report-conflict:
-    needs: sync
-    if: needs.sync.outputs.conflict == 'true'
+    needs: [check, sync]
+    if: needs.sync.result == 'success' && needs.sync.outputs.conflict == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Fail with conflict summary already posted
         run: |
           echo "Merge conflicted -- see the sync job's summary above for the file list and manual-resolution steps."
           exit 1
+
+  report-no-action:
+    needs: check
+    if: needs.check.outputs.action == 'skip_no_advance' || needs.check.outputs.action == 'leave_unrecognized'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No action needed
+        run: |
+          echo "See the check job's summary above for why no sync branch/PR was created or updated this run."

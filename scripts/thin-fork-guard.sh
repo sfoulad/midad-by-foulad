@@ -327,14 +327,18 @@ done <<<"$UPSTREAM_TOUCHED"
 GOVERNANCE_FILES=(
   ".skills/SKILL.md"
   "docs/upstream-sync-architecture.md"
+  "docs/crosspoint-auto-sync-design.md"
   ".github/workflows/update-from-crosspoint.yml"
   ".github/workflows/thin-fork-guard.yml"
   ".github/workflows/thin-fork-guard-trusted.yml"
   ".github/workflows/ci.yml"
+  ".github/crosspoint-sensitive-paths.yml"
   "scripts/thin-fork-guard.sh"
   "scripts/measure-conflicts.sh"
   "scripts/check-workflow-permissions.rb"
   "scripts/test-thin-fork-guard.sh"
+  "scripts/classify-crosspoint-sync.sh"
+  "scripts/find-last-crosspoint-sync.sh"
 )
 GOVERNANCE_TOUCHED=""
 while IFS= read -r path; do

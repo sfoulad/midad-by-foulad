@@ -1,0 +1,71 @@
+# Sensitive-path policy for the CrossPoint sync classifier
+# (scripts/classify-crosspoint-sync.sh). Any path matching a pattern below
+# routes an otherwise-clean CrossPoint sync merge to Class B (human review
+# required) instead of Class A (future auto-merge eligible -- auto-merge
+# itself does not exist yet, see docs/crosspoint-auto-sync-design.md).
+#
+# Deliberately a small set of glob-pattern CATEGORIES, not an exhaustive
+# file inventory -- periodically reviewed, not maintained file-by-file.
+# Patterns use bash `[[ path == pattern ]]` matching (classify-crosspoint-
+# sync.sh), where `*` already matches `/` in this non-filesystem context,
+# so `**` and `*` behave the same -- `**` is used below purely for
+# readability, to mark "any depth."
+#
+# Two rules are hard-coded in classify-crosspoint-sync.sh itself, NOT here,
+# and are not overridable by editing this file: any diff touching
+# `.github/**`, and any change to the `freeink-sdk` gitlink itself. See
+# that script's header for why.
+
+hardware_sdk:
+  - "freeink-sdk"
+  - "lib/hal/**"
+  - "platformio.ini"
+  - "partitions.csv"
+  - "sdkconfig*"
+  - "lib/GfxRenderer/**"
+  - "src/platform/**"
+  - "**/*XteinkDetect*"
+  - "lib/hal/HalGPIO*"
+  - "src/MappedInputManager*"
+  - "src/util/ButtonNavigator*"
+  - "src/util/GridNav*"
+  - "**/*PowerManager*"
+  - "**/*Sleep*"
+  - "**/*Wake*"
+  - "**/*Touch*"
+  - "**/*Usb*"
+  - "**/*USB*"
+
+security:
+  - "src/network/OtaUpdater*"
+  - "src/network/FirmwareFlasher*"
+  - "src/network/OtaBootSwitch*"
+  - "src/network/HttpDownloader*"
+  - "src/network/SecureClient*"
+  - "src/network/SecureNet*"
+  - "lib/KOReaderSync/**"
+  - "scripts/sign_firmware.sh"
+  - "docs/ota-signing-key-management.md"
+  - "ota-signing-public-key.bin"
+
+midad_deltas:
+  - "lib/ArabicShaper/**"
+  - "lib/MiniBidi/**"
+  - "lib/I18n/translations/arabic.yaml"
+  - "lib/I18n/translations/farsi.yaml"
+  - "src/activities/util/KeyboardEntryActivity*"
+  - "lib/Epub/Epub/ParsedText*"
+  - "src/components/themes/foulad/**"
+  - "**/*Foulad*"
+  - "**/*Midad*"
+  - "lib/hal/BlePeripheralManager*"
+  - "src/BleCommandDispatcher*"
+  - "src/CrossPointSettings.h"
+
+reader_architecture:
+  # Phase 2 (Reader & Dictionary Convergence) is not complete -- until it
+  # is, any change to the reader activity/framework stays Class B
+  # regardless of how clean the merge is.
+  - "src/activities/reader/**"
+  - "src/activities/UiListActivity*"
+  - "src/activities/UiTabListActivity*"
