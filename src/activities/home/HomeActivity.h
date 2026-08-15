@@ -45,6 +45,14 @@ class HomeActivity final : public Activity {
   static constexpr unsigned long kBleLongPressMs = 1000;
   bool bleLongPressFired = false;
 
+  // A Back press from SettingsActivity::loop() fires onGoHome() on the press
+  // edge; Home is then entered fresh and would otherwise see the trailing
+  // release of that SAME physical press and mistake it for "open the most
+  // recent book" (see the Back handling in loop()). Same
+  // held-on-entry-locks-the-release idiom as FileBrowserActivity's
+  // lockNextConfirmRelease.
+  bool lockNextBackRelease = false;
+
   // Convert HomeMenuItem to menu index (used in onEnter). Order matches render()'s
   // menuItems construction: eBooks, Stats, Files, Settings ("Continue Reading" isn't
   // a HomeMenuItem -- it's a prepended label tied to the recentBooks selection range,

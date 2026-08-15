@@ -30,6 +30,11 @@ void EpubReaderBookmarksActivity::onEnter() {
     return;
   }
 
+  // buildScreen() runs on the render task and reads the ListItem label/
+  // subtitle pointers into `bookmarks`/`bookmarkSubtitles`; UiListActivity's
+  // base onEnter() above may already have queued a render, so populate them
+  // only under the render lock.
+  RenderLock lock(*this);
   if (!BookmarkFile::load(epubPath, bookmarks)) {
     bookmarks.shrink_to_fit();
   }
@@ -163,17 +168,23 @@ void EpubReaderBookmarksActivity::showDeleteConfirmation() {
 }
 
 void EpubReaderBookmarksActivity::deleteSelectedBookmark() {
-  bookmarks.erase(bookmarks.begin() + nav.selected);
-  if (!BookmarkFile::save(epubPath, bookmarks)) {
-    LOG_ERR("EPB", "Failed to save bookmarks after delete");
-  }
-  // Deleting shifts every later bookmark's index, so the cached subtitles and
-  // actionValues must be re-derived, not just trimmed.
-  rebuildBookmarkRowItems();
+  {
+    // buildScreen() runs on the render task and reads the ListItem label/
+    // subtitle pointers into `bookmarks` and `bookmarkSubtitles`; mutate only
+    // under the render lock.
+    RenderLock lock(*this);
+    bookmarks.erase(bookmarks.begin() + nav.selected);
+    if (!BookmarkFile::save(epubPath, bookmarks)) {
+      LOG_ERR("EPB", "Failed to save bookmarks after delete");
+    }
+    // Deleting shifts every later bookmark's index, so the cached subtitles and
+    // actionValues must be re-derived, not just trimmed.
+    rebuildBookmarkRowItems();
 
-  // Move selector up if we deleted the last item
-  if (nav.selected >= static_cast<int>(bookmarks.size()) && nav.selected > 0) {
-    nav.selected--;
+    // Move selector up if we deleted the last item
+    if (nav.selected >= static_cast<int>(bookmarks.size()) && nav.selected > 0) {
+      nav.selected--;
+    }
   }
 
   if (bookmarks.empty()) {

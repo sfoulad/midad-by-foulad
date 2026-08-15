@@ -224,6 +224,14 @@ void BmpViewerActivity::doSetSleepCover() {
   }
 
   if (success) {
+    if (transparentMode) {
+      // Only one root transparent overlay may exist; SleepActivity tries the
+      // BMP path before the PNG path and renders whichever it finds first, so
+      // a stale file in the other format would mask the one just set here.
+      const char* stale =
+          (destination == TRANSPARENT_SLEEP_ROOT_PNG) ? TRANSPARENT_SLEEP_ROOT_BMP : TRANSPARENT_SLEEP_ROOT_PNG;
+      if (Storage.exists(stale)) Storage.remove(stale);
+    }
     if (!transparentMode) SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
     SETTINGS.saveToFile();
     GUI.drawPopup(renderer, tr(STR_DONE));

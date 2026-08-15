@@ -1238,8 +1238,16 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     }
 
     const bool needsHyphen = info.requiresInsertedHyphen;
-    const int prefixWidth = measureFocusWordWidth(renderer, fontId, word.substr(0, offset), style,
-                                                  focusBoundaryBefore(focusBoundary, offset), needsHyphen);
+    // Measure the actual final prefix (hyphen included) against the boundary the
+    // prefix will carry after the split, so a hyphen exactly at the boundary is
+    // measured in the same style (bold or regular) it will actually be drawn in --
+    // see focusBoundaryBefore()/wordFocusBoundary[wordIndex] below.
+    std::string measuredPrefix = word.substr(0, offset);
+    if (needsHyphen) {
+      measuredPrefix.push_back('-');
+    }
+    const int prefixWidth =
+        measureFocusWordWidth(renderer, fontId, measuredPrefix, style, focusBoundaryBefore(focusBoundary, offset));
     if (prefixWidth > availableWidth || prefixWidth <= chosenWidth) {
       continue;  // Skip if too wide or not an improvement
     }

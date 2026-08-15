@@ -205,6 +205,11 @@ void HomeActivity::onEnter() {
   const auto base = static_cast<int>(recentBooks.size());
   selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem);
 
+  // If Back was held while this activity opened (typical when a Back press in
+  // another activity navigated here), ignore its release -- otherwise it would
+  // immediately re-open the most recent book (see loop()).
+  lockNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
+
   lastIdleWhitenMs = millis();
 
   // Trigger first update
@@ -391,9 +396,13 @@ void HomeActivity::loop() {
   // Back is otherwise unused on the home menu: open the most recently read
   // book directly (recentBooks is most-recent-first and already pruned of
   // files missing from the SD card).
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && !recentBooks.empty()) {
-    onSelectBook(recentBooks[0].path);
-    return;
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    const bool locked = lockNextBackRelease;
+    lockNextBackRelease = false;
+    if (!locked && !recentBooks.empty()) {
+      onSelectBook(recentBooks[0].path);
+      return;
+    }
   }
 
   const int coverColumnCount = std::max(1, metrics.homeRecentBooksCount);

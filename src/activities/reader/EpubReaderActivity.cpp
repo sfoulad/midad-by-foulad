@@ -359,7 +359,7 @@ void EpubReaderActivity::onExit() {
     uint32_t timeLeft = 0;
     const bool haveEstimate = estimateTimeLeftSeconds(timeLeft);
     const uint8_t progressPercent = currentBookProgressPercent();
-    const bool finishedBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
+    const bool finishedBook = isAtEndOfBook();
     READING_STATS.endSession(haveEstimate ? timeLeft : 0, progressPercent, finishedBook);
 
     // Foulad eInk device tracking (EINK_DEVICE_TRACKING_TASKS.md): opportunistic
@@ -738,7 +738,7 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  const bool atEndOfBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
+  const bool atEndOfBook = isAtEndOfBook();
   clearEndOfBookOptionsIfNeeded();
 
   if (SETTINGS.removeReadBooksFromRecents) {

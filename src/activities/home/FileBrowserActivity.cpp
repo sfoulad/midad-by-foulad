@@ -131,6 +131,10 @@ void FileBrowserActivity::onEnter() {
     return;
   }
 
+  // buildScreen() runs on the render task and reads basepath plus the row
+  // caches loadFiles() rebuilds; a queued render can otherwise land here
+  // before onEnter() finishes. Mutate only under the render lock.
+  RenderLock lock(*this);
   auto root = Storage.open(basepath.c_str());
   if (!root) {
     basepath = "/";
