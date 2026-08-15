@@ -2423,10 +2423,6 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
         drawPixel(screenX, screenY, false);
       } else if (renderMode == GRAYSCALE_LSB && val == 1) {
         drawPixel(screenX, screenY, false);
-      } else if (renderMode == FACTORY_GRAY_LSB && !(val & 1)) {
-        drawPixel(screenX, screenY, false);
-      } else if (renderMode == FACTORY_GRAY_MSB && val < 2) {
-        drawPixel(screenX, screenY, false);
       }
     }
   }
@@ -2484,9 +2480,6 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     return;
   }
 
-  // Factory grayscale inverts the pixel values
-  const bool full = !(renderMode == FACTORY_GRAY_LSB || renderMode == FACTORY_GRAY_MSB);
-
   // Emit one accumulated destination row: 3-tone re-dither of the bucket
   // averages -- dark buckets go black, light ones stay white, and mid-tones
   // render as a pixel checkerboard so downscaled dither still reads as gray.
@@ -2503,7 +2496,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
         // Dark mode: pre-invert (see drawBitmap) so the panel-push inversion
         // restores the cover's true polarity.
         if (darkMode_ ? !drawBlack : drawBlack) {
-          drawPixel(screenX, screenY, full);
+          drawPixel(screenX, screenY, true);
         }
       }
     }
@@ -2569,7 +2562,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       // drawBitmap) so the panel-push inversion restores true polarity --
       // the WHITE source pixels get drawn instead.
       if (darkMode_ ? (val == 3) : (val < 3)) {
-        drawPixel(screenX, screenY, full);
+        drawPixel(screenX, screenY, true);
       }
     }
   }
@@ -2738,20 +2731,13 @@ void GfxRenderer::invertScreen() const {
 void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
-  // After a factory LUT render, RED RAM still contains the grayscale MSB plane.
-  // Promote the first normal FAST refresh to HALF so both RAM banks are rebased
-  // before differential updates resume.
-  const bool afterFactoryLut = displayState == DisplayState::FactoryLut;
-  const auto effectiveRefreshMode =
-      afterFactoryLut && refreshMode == HalDisplay::FAST_REFRESH ? HalDisplay::HALF_REFRESH : refreshMode;
   // Dark mode inverts only for the panel push, then restores -- everything
   // that reads the framebuffer afterwards sees normal polarity (see
   // setDarkMode). Two 48KB XOR passes ~= 1-2ms at 160MHz, negligible next to
   // the e-ink refresh itself. Same wrap on every other pixel-push below.
   if (darkMode_) invertScreen();
-  display.displayBuffer(effectiveRefreshMode, fadingFix, forceCleanBaseOnHalf);
+  display.displayBuffer(refreshMode, fadingFix, forceCleanBaseOnHalf);
   if (darkMode_) invertScreen();
-  displayState = DisplayState::BW;
 }
 
 void GfxRenderer::displayBufferAsync(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
@@ -3375,14 +3361,7 @@ void GfxRenderer::copyGrayscaleMsbBuffers() const {
   if (darkMode_) invertScreen();
 }
 
-void GfxRenderer::displayGrayBuffer(const unsigned char* lut, bool factoryMode) const {
-  display.displayGrayBuffer(fadingFix, lut, factoryMode);
-  if (factoryMode) {
-    displayState = DisplayState::FactoryLut;
-  } else {
-    displayState = DisplayState::BW;
-  }
-}
+void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
 
 void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const {
   // Guard the uint16_t casts below: a negative would wrap to a huge length.
