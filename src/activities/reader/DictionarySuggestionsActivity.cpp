@@ -23,10 +23,10 @@ void DictionarySuggestionsActivity::lookupSelected() {
   const auto lookup = DICTIONARIES.lookup(suggestions[selectedIndex], false);
   if (lookup.status != DictionaryLookupResult::Status::Found) {
     const char* msg = lookup.status == DictionaryLookupResult::Status::LowMemory ? tr(STR_DICTIONARY_LOW_MEMORY)
-                      : (lookup.status == DictionaryLookupResult::Status::DecompressError ||
-                         lookup.status == DictionaryLookupResult::Status::ReadError)
-                          ? tr(STR_DICTIONARY_READ_ERROR)
-                          : tr(STR_DEFINITION_NOT_FOUND);
+                      : lookup.status == DictionaryLookupResult::Status::DecompressError
+                          ? tr(STR_DICTIONARY_DECOMPRESS_ERROR)
+                      : lookup.status == DictionaryLookupResult::Status::ReadError ? tr(STR_DICTIONARY_READ_ERROR)
+                                                                                   : tr(STR_DEFINITION_NOT_FOUND);
     GUI.drawPopup(renderer, msg);
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     delay(700);

@@ -1838,8 +1838,11 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
     const int bytesRead = in.read(raw.data(), readBytes);
     in.close();
     Storage.remove(tempPath.c_str());
-    if (bytesRead <= 0) return fail(DictionaryLookupResult::Status::ReadError);
-    raw.resize(static_cast<size_t>(bytesRead));
+    // A short read (0 < bytesRead < readBytes) would otherwise decode as a
+    // truncated-but-nonempty definition and report Found with corrupt text.
+    if (bytesRead < 0 || static_cast<size_t>(bytesRead) != readBytes) {
+      return fail(DictionaryLookupResult::Status::ReadError);
+    }
   } else {
     HalFile dict;
     if (!Storage.openFileForRead("DICT", entry.dictPath, dict)) return fail(DictionaryLookupResult::Status::ReadError);
@@ -1864,8 +1867,11 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
     raw.resize(readBytes);
     const int bytesRead = dict.read(raw.data(), readBytes);
     dict.close();
-    if (bytesRead <= 0) return fail(DictionaryLookupResult::Status::ReadError);
-    raw.resize(static_cast<size_t>(bytesRead));
+    // A short read (0 < bytesRead < readBytes) would otherwise decode as a
+    // truncated-but-nonempty definition and report Found with corrupt text.
+    if (bytesRead < 0 || static_cast<size_t>(bytesRead) != readBytes) {
+      return fail(DictionaryLookupResult::Status::ReadError);
+    }
   }
 
   std::string decoded = decodeStarDictData(raw, entry.sameTypeSequence);

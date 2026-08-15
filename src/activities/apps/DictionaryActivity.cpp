@@ -65,6 +65,8 @@ void DictionaryActivity::lookupTypedWord(const std::string& word) {
       msg = tr(STR_DICTIONARY_LOW_MEMORY);
       break;
     case DictionaryLookupResult::Status::DecompressError:
+      msg = tr(STR_DICTIONARY_DECOMPRESS_ERROR);
+      break;
     case DictionaryLookupResult::Status::ReadError:
       msg = tr(STR_DICTIONARY_READ_ERROR);
       break;
