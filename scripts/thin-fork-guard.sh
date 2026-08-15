@@ -2,11 +2,22 @@
 # thin-fork-guard.sh <base-ref> <head-ref> [upstream-ref] [head-branch-name]
 #
 # Reports, and gates on, three THIN-FORK things <head-ref> may do relative
-# to <base-ref>, all measured against the LIVE upstream mirror (default
-# origin/upstream, the maintained CrossPoint mirror kept current by
-# .github/workflows/update-from-crosspoint.yml), PLUS two independent
-# SECURITY-BOUNDARY gates (sections 6-7 below) that protect the guard's own
-# enforcement machinery and are not about thin-fork divergence at all:
+# to <base-ref>, all measured against <upstream-ref> -- the caller's job to
+# resolve to a genuinely current CrossPoint ref before invoking this script
+# (both thin-fork-guard.yml and thin-fork-guard-trusted.yml fetch
+# crosspoint-reader/crosspoint-reader directly, read-only, for exactly this
+# reason -- see their own headers). [upstream-ref] falls back to
+# `origin/upstream` only for manual/local invocation convenience; that
+# mirror branch is maintained by .github/workflows/update-from-crosspoint.yml
+# for ITS OWN sync mechanics (an ancestry witness, a disposable sync-branch
+# base) and can silently go stale -- a failed sync dispatch leaves it
+# pinned at an old commit with no visible symptom until this guard
+# misjudges a PR against it (see docs/upstream-sync-architecture.md's
+# incident note). Neither guard workflow relies on it being fresh; do not
+# reintroduce that dependency without re-reading that incident. PLUS two
+# independent SECURITY-BOUNDARY gates (sections 6-7 below) that protect the
+# guard's own enforcement machinery and are not about thin-fork divergence
+# at all:
 #
 #   1. Introduce new fixed-upstream MERGE-CONFLICT surface (simulated real
 #      merge of <upstream-ref> into each side).
@@ -89,11 +100,14 @@
 # See CLAUDE.md's "Midad Thin-Fork Architecture" section and
 # docs/upstream-sync-architecture.md for why any of this matters.
 #
-# Deliberately compares against the LIVE upstream mirror at run time, not a
-# hard-coded historical commit: base and head are measured against the
-# identical mirror snapshot within one run, so the only variable is the
-# PR's own diff -- that stays correct forever, including after the first
-# full CrossPoint merge, without ever needing today's number hard-coded.
+# Deliberately compares against whatever <upstream-ref> resolves to at run
+# time, not a hard-coded historical commit: base and head are measured
+# against the identical snapshot within one run, so the only variable is
+# the PR's own diff -- that stays correct forever, including after the
+# first full CrossPoint merge, without ever needing today's number
+# hard-coded. This only holds if the caller actually resolved <upstream-ref>
+# freshly for this run (see the top-of-file note on why the caller, not
+# this script, owns that).
 #
 # A recognized genuine CrossPoint sync PR (see is_recognized_sync_pr below)
 # is NOT exempted from any of these -- a real sync is expected to pass all

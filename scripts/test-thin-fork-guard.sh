@@ -46,6 +46,21 @@
 # write (routes through the existing forbidden-permission rule, not the
 # missing-declaration one), and the mapping-form/array-form trigger
 # spellings (both must be recognized, not just the bare scalar form).
+# Scenario 33 is a regression test for a real incident (PR #149, 2026-08-15):
+# thin-fork-guard.yml/thin-fork-guard-trusted.yml used to pass the
+# `origin/upstream` mirror branch as <upstream-ref>, and that mirror silently
+# went stale (a failed update-from-crosspoint.yml dispatch left it pinned at
+# an old CrossPoint commit). A PR that correctly adopted upstream's CURRENT
+# content for a file it had never touched before was misreported as
+# introducing new Midad-side divergence, purely because it was compared
+# against the stale snapshot instead of upstream's real current tip. Both
+# workflows now fetch crosspoint-reader/crosspoint-reader directly instead of
+# relying on the mirror (see their headers and thin-fork-guard.sh's header)
+# -- this scenario pins the algorithm-level property that fix depends on:
+# given the correct (fresh) ref, an upstream-identical file must classify as
+# "converged", not "new_divergence"; given a stale ref, the guard correctly
+# (if unhelpfully) still flags it, which is exactly why the ref itself must
+# be fresh.
 #
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
@@ -206,6 +221,48 @@ new_fixture_synced_base() {
     git branch -qf develop main
     git checkout -q develop
     git merge -q --no-ff upstream_mirror -m "Merge crosspoint-reader/develop @ deadbeef0001"
+  )
+  echo "$dir"
+}
+
+# Fixture for scenario 33 (the PR #149 stale-mirror regression). Two upstream
+# refs exist: `upstream_mirror` (STALE -- simulates origin/upstream pinned at
+# an old commit) and `upstream_mirror_live` (FRESH -- one commit ahead,
+# simulating the real crosspoint-reader/crosspoint-reader tip). `cleanfile.txt`
+# is untouched by `develop` (Midad-clean relative to either upstream ref) --
+# `head_branch` then updates it to match upstream_mirror_live's content
+# exactly, simulating a merge that correctly adopted upstream's current
+# version of a file Midad had never touched before.
+new_fixture_stale_upstream() {
+  local dir="$WORKDIR/$1"
+  mkdir -p "$dir"
+  (
+    cd "$dir" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+
+    echo "line1" >shared.txt
+    echo "clean-v1" >cleanfile.txt
+    git add -A
+    git commit -q -m "initial"
+
+    git branch -q upstream_mirror
+    git checkout -q upstream_mirror
+    echo "line1-upstream-change" >shared.txt
+    git commit -aqm "upstream changes shared.txt (mirror pinned here -- now stale)"
+
+    git branch -q upstream_mirror_live upstream_mirror
+    git checkout -q upstream_mirror_live
+    echo "clean-v2" >cleanfile.txt
+    git commit -aqm "upstream (live, post-mirror-staleness) changes cleanfile.txt"
+
+    git checkout -q main
+    git branch -qf develop main
+    git checkout -q develop
+    echo "midad content" >midad_only.txt
+    git add -A
+    git commit -qm "midad: add midad-only file, cleanfile.txt still untouched"
   )
   echo "$dir"
 }
@@ -782,6 +839,45 @@ echo "=== Scenario 32: mapping-form and array-form pull_request_target triggers 
   ec=$?
   assert_exit "mapping-form and array-form pull_request_target with explicit permissions passes" 0 "$ec"
   assert_contains "mapping-form and array-form pull_request_target reports PASS" "PASS" "$out"
+}
+
+echo "=== Scenario 33: stale upstream ref misreports divergence; fresh ref does not (PR #149 regression) ==="
+{
+  dir="$(new_fixture_stale_upstream scenario33)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch
+  # Adopt upstream_mirror_live's exact current content -- exactly what a
+  # correct merge does for a file it had never touched before.
+  git show upstream_mirror_live:cleanfile.txt >cleanfile.txt
+  git commit -aqm "midad: merge adopts upstream's current cleanfile.txt content"
+
+  # Against the STALE ref (simulates a stale origin/upstream mirror): the
+  # guard cannot know cleanfile.txt's new content is actually upstream's own
+  # -- from its perspective HEAD just edited a file that was clean at the
+  # stale snapshot. This is the exact false positive PR #149 hit; asserted
+  # here to pin the failure mode this fix depends on, not because a stale
+  # ref is ever intentionally correct to pass in production.
+  out_stale="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec_stale=$?
+  assert_exit "stale ref misreports cleanfile.txt as new divergence" 1 "$ec_stale"
+  assert_contains "stale ref names cleanfile.txt as newly diverged" "cleanfile.txt" "$out_stale"
+  assert_contains "stale ref reports the Midad-side divergence section" "New Midad-side divergence" "$out_stale"
+
+  # Against the FRESH ref (simulates thin-fork-guard.yml/-trusted.yml fetching
+  # crosspoint-reader/crosspoint-reader directly): HEAD's cleanfile.txt now
+  # matches UPSTREAM_REF's exactly -> "converged", not "new_divergence" ->
+  # PASS. This is the property the live-fetch fix restores.
+  out_fresh="$("$GUARD" develop head_branch upstream_mirror_live 2>&1)"
+  ec_fresh=$?
+  assert_exit "fresh ref correctly passes" 0 "$ec_fresh"
+  assert_contains "fresh ref reports cleanfile.txt as converged, not diverged" "cleanfile.txt" "$out_fresh"
+  assert_contains "fresh ref reports the converged section" "Files converged to upstream's current content" "$out_fresh"
+  case "$out_fresh" in
+    *"New Midad-side divergence"*) fail "fresh ref must NOT report New Midad-side divergence" ;;
+    *) pass "fresh ref reports no new Midad-side divergence" ;;
+  esac
+  TESTS_RUN=$((TESTS_RUN + 1))
 }
 
 echo
