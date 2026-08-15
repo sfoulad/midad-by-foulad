@@ -266,12 +266,39 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "upstream_sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Update the upstream mirror branch
+      # Best-effort, not fatal: the default GITHUB_TOKEN can NEVER push a
+      # ref whose diff touches .github/workflows/* -- a hard GitHub
+      # platform restriction with no `permissions:` YAML key that unlocks
+      # it (confirmed live: "refusing to allow a GitHub App to create or
+      # update workflow ... without `workflows` permission" -- that
+      # `workflows` scope doesn't exist in the permissions schema at all;
+      # the only fix is a PAT with the classic `workflow` OAuth scope,
+      # which is a new credential, not a routine change). Since
+      # crosspoint-reader/develop carries its own .github/workflows/*.yml
+      # files, mirroring it verbatim will hit this whenever that content
+      # differs from what's already on our `upstream` branch -- plausible
+      # on many real runs, not a one-off. thin-fork-guard.sh's own
+      # comments already treat this mirror as best-effort/non-load-bearing
+      # (its divergence checks degrade gracefully to a stale mirror, they
+      # don't fail on one), so a failed mirror update here must not fail
+      # the sync/merge/PR pipeline that's this workflow's actual job.
+      - name: Update the upstream mirror branch (best-effort)
         env:
           UPSTREAM_REF: ${{ needs.check.outputs.upstream_ref }}
         run: |
-          set -euo pipefail
-          git push origin "crosspoint-reader/$UPSTREAM_REF:refs/heads/upstream" --force
+          set +e
+          push_output=$(git push origin "crosspoint-reader/$UPSTREAM_REF:refs/heads/upstream" --force 2>&1)
+          push_exit=$?
+          set -e
+          if [ "$push_exit" -ne 0 ]; then
+            {
+              echo "## Upstream mirror branch: not updated"
+              echo "Non-fatal -- see the comment on this step in the workflow file. Likely cause: GITHUB_TOKEN cannot push .github/workflows/* changes, and crosspoint-reader/$UPSTREAM_REF's own workflow files differ from what's currently mirrored."
+              echo '```'
+              echo "$push_output"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # -B (reset), not -b (create): for update_existing this MUST reset
       # the branch to develop's CURRENT tip rather than building on the
