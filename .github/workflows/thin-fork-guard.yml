@@ -23,7 +23,13 @@ name: Thin-Fork Guard
 # docs/upstream-sync-architecture.md. Automates the manual `git merge --no-ff`
 # dry-run methodology used during BLE-R1/R2 review (see
 # docs/upstream-sync-architecture.md's "Phase A results" section), against
-# the live `upstream` mirror kept current by update-from-crosspoint.yml.
+# crosspoint-reader/crosspoint-reader's real `develop` branch, fetched
+# directly and read-only below -- NOT the `origin/upstream` mirror branch.
+# That mirror is update-from-crosspoint.yml's own sync-mechanics cache and
+# can silently go stale (a failed sync dispatch leaves it pinned at an old
+# commit with no visible symptom until this guard misjudges a PR against
+# it); this workflow fetching upstream itself removes that failure mode
+# entirely. See scripts/thin-fork-guard.sh's header for the same note.
 #
 # Recognizes genuine CrossPoint sync PRs (opened by update-from-crosspoint.yml)
 # via git ancestry, not branch-name trust -- see scripts/thin-fork-guard.sh's
@@ -63,11 +69,18 @@ jobs:
           chmod +x scripts/measure-conflicts.sh scripts/thin-fork-guard.sh scripts/test-thin-fork-guard.sh
           scripts/test-thin-fork-guard.sh
 
-      - name: Fetch PR base and upstream mirror
+      - name: Fetch PR base and live CrossPoint upstream
+        # Fetches crosspoint-reader/crosspoint-reader directly -- a plain
+        # anonymous HTTPS fetch of a public repository, same pattern
+        # update-from-crosspoint.yml itself already uses, needing no
+        # credentials and no permissions beyond this job's existing
+        # `contents: read`. Deliberately NOT the `origin/upstream` mirror
+        # branch -- see this workflow's header for why.
         run: |
           set -euo pipefail
           git fetch origin ${{ github.event.pull_request.base.sha }}
-          git fetch origin upstream:refs/remotes/origin/upstream
+          git remote add crosspoint-reader-live https://github.com/crosspoint-reader/crosspoint-reader.git
+          git fetch crosspoint-reader-live develop:refs/remotes/crosspoint-reader-live/develop
 
       - name: Run Thin-Fork Guard
         # PR_HEAD_REF is passed via `env`, not interpolated directly with
@@ -86,6 +99,6 @@ jobs:
           scripts/thin-fork-guard.sh \
             "$PR_BASE_SHA" \
             "$PR_HEAD_SHA" \
-            "origin/upstream" \
+            "crosspoint-reader-live/develop" \
             "$PR_HEAD_REF" \
             | tee -a "$GITHUB_STEP_SUMMARY"
