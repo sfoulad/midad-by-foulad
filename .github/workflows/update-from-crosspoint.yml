@@ -70,9 +70,21 @@ jobs:
       existing_pr_number: ${{ steps.existing.outputs.number }}
       existing_branch: ${{ steps.existing.outputs.branch }}
     steps:
+      # No `ref:` override -- this job runs ITS OWN helper scripts
+      # (scripts/find-last-crosspoint-sync.sh) from whatever ref the
+      # workflow itself is running under (github.ref, actions/checkout's
+      # default): `develop` for a real scheduled/production run, but a
+      # feature branch when testing via workflow_dispatch from one. The
+      # job's actual DATA about develop's real state comes from
+      # `origin/develop` as a git-plumbing ref argument below (populated
+      # regardless of what's checked out, since fetch-depth:0 fetches all
+      # branches) -- never from this checkout's working-tree content.
+      # Checking out a hardcoded `develop` here would run develop's OLD
+      # copy of this script even when testing a change to it, the same
+      # class of bug ci.yml's build-sticky job had before its own
+      # `ref: inputs.ref || github.ref` fix.
       - uses: actions/checkout@v7
         with:
-          ref: develop
           fetch-depth: 0
 
       # Routed through `env`, not inline `${{ }}` interpolation, even
