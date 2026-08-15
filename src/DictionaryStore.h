@@ -31,7 +31,18 @@ struct DictionaryEntry {
 };
 
 struct DictionaryLookupResult {
-  enum class Status { Found, NotFound, NoDictionary, NotReady };
+  // A headword was located in the index but its definition could not be
+  // read back -- distinct from NotFound (the word genuinely isn't in the
+  // dictionary) so the UI never reports a real hit as a silent miss.
+  enum class Status {
+    Found,
+    NotFound,
+    NoDictionary,
+    NotReady,
+    LowMemory,        // fragmented-heap allocation failure reading/decompressing
+    DecompressError,  // .dict.dz stream was corrupt/truncated
+    ReadError,        // SD open/seek/read failure, or a bogus .idx offset
+  };
 
   Status status = Status::NotFound;
   std::string query;
@@ -122,7 +133,8 @@ class DictionaryStore {
   bool findIndexHit(const DictionaryEntry& entry, const std::string& word, IndexHit& hit) const;
   bool lookupSynonym(const DictionaryEntry& entry, const std::string& word, std::string& canonical) const;
   std::string headwordAtOrdinal(const DictionaryEntry& entry, uint32_t ordinal) const;
-  std::string readDefinition(const DictionaryEntry& entry, const IndexHit& hit, bool& truncated) const;
+  std::string readDefinition(const DictionaryEntry& entry, const IndexHit& hit, bool& truncated,
+                             DictionaryLookupResult::Status* outFailureStatus = nullptr) const;
   std::vector<std::string> findSuggestions(const DictionaryEntry& entry, const std::string& word, int maxResults) const;
   std::vector<std::string> getFallbackForms(const DictionaryEntry& entry, const std::string& word) const;
 };

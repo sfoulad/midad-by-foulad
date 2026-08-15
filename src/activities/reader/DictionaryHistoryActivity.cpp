@@ -25,7 +25,12 @@ void DictionaryHistoryActivity::lookupSelected() {
   if (selectedIndex < 0 || selectedIndex >= static_cast<int>(history.size())) return;
   const auto lookup = DICTIONARIES.lookup(history[selectedIndex], true);
   if (lookup.status != DictionaryLookupResult::Status::Found) {
-    GUI.drawPopup(renderer, tr(STR_DEFINITION_NOT_FOUND));
+    const char* msg = lookup.status == DictionaryLookupResult::Status::LowMemory ? tr(STR_DICTIONARY_LOW_MEMORY)
+                      : (lookup.status == DictionaryLookupResult::Status::DecompressError ||
+                         lookup.status == DictionaryLookupResult::Status::ReadError)
+                          ? tr(STR_DICTIONARY_READ_ERROR)
+                          : tr(STR_DEFINITION_NOT_FOUND);
+    GUI.drawPopup(renderer, msg);
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     delay(800);
     requestUpdate();

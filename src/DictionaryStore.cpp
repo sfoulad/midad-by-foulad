@@ -1785,10 +1785,16 @@ linearSyn:
   return !canonical.empty();
 }
 
-std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const IndexHit& hit, bool& truncated) const {
+std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const IndexHit& hit, bool& truncated,
+                                            DictionaryLookupResult::Status* outFailureStatus) const {
+  const auto fail = [&](DictionaryLookupResult::Status status) {
+    if (outFailureStatus) *outFailureStatus = status;
+    return std::string();
+  };
+
   const size_t readBytes = safeDefinitionReadBytes(hit.dictSize);
   truncated = readBytes == 0 || hit.dictSize > readBytes;
-  if (readBytes == 0) return "";
+  if (readBytes == 0) return fail(DictionaryLookupResult::Status::LowMemory);
 
   std::string raw;
   if (entry.compressed) {
@@ -1802,7 +1808,7 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
     const std::string tempPath = entry.dictPath + ".dz.tmp";
     Storage.remove(tempPath.c_str());
     HalFile out;
-    if (!Storage.openFileForWrite("DICT", tempPath, out)) return "";
+    if (!Storage.openFileForWrite("DICT", tempPath, out)) return fail(DictionaryLookupResult::Status::ReadError);
     DictZip::ExtractError dzErr = DictZip::ExtractError::None;
     const bool extracted =
         DictZip::extractEntry(dzPath.c_str(), hit.dictOffset, static_cast<uint32_t>(readBytes), out, &dzErr);
@@ -1811,23 +1817,32 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
       LOG_ERR("DICT", "dictzip extract failed: off=%u size=%zu err=%d", hit.dictOffset, readBytes,
               static_cast<int>(dzErr));
       Storage.remove(tempPath.c_str());
-      return "";
+      switch (dzErr) {
+        case DictZip::ExtractError::LowMemory:
+          return fail(DictionaryLookupResult::Status::LowMemory);
+        case DictZip::ExtractError::Decompress:
+          return fail(DictionaryLookupResult::Status::DecompressError);
+        case DictZip::ExtractError::ReadError:
+        case DictZip::ExtractError::None:
+        default:
+          return fail(DictionaryLookupResult::Status::ReadError);
+      }
     }
 
     HalFile in;
     if (!Storage.openFileForRead("DICT", tempPath, in)) {
       Storage.remove(tempPath.c_str());
-      return "";
+      return fail(DictionaryLookupResult::Status::ReadError);
     }
     raw.resize(readBytes);
     const int bytesRead = in.read(raw.data(), readBytes);
     in.close();
     Storage.remove(tempPath.c_str());
-    if (bytesRead <= 0) return "";
+    if (bytesRead <= 0) return fail(DictionaryLookupResult::Status::ReadError);
     raw.resize(static_cast<size_t>(bytesRead));
   } else {
     HalFile dict;
-    if (!Storage.openFileForRead("DICT", entry.dictPath, dict)) return "";
+    if (!Storage.openFileForRead("DICT", entry.dictPath, dict)) return fail(DictionaryLookupResult::Status::ReadError);
 
     // The offset/size pair comes from the .idx, i.e. from untrusted SD content: a
     // truncated .dict, an .idx/.dict pair from different builds, or a corrupt
@@ -1838,18 +1853,18 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
     if (hit.dictOffset > dictFileSize || hit.dictSize > dictFileSize - hit.dictOffset) {
       LOG_ERR("DICT", "Definition out of range: off=%u size=%u file=%u", hit.dictOffset, hit.dictSize, dictFileSize);
       dict.close();
-      return "";
+      return fail(DictionaryLookupResult::Status::ReadError);
     }
 
     if (!dict.seekSet(hit.dictOffset)) {
       dict.close();
-      return "";
+      return fail(DictionaryLookupResult::Status::ReadError);
     }
 
     raw.resize(readBytes);
     const int bytesRead = dict.read(raw.data(), readBytes);
     dict.close();
-    if (bytesRead <= 0) return "";
+    if (bytesRead <= 0) return fail(DictionaryLookupResult::Status::ReadError);
     raw.resize(static_cast<size_t>(bytesRead));
   }
 
@@ -2029,33 +2044,56 @@ DictionaryLookupResult DictionaryStore::lookup(const std::string& rawWord, const
   // Returns false when the index pointed at a headword but the definition bytes
   // couldn't actually be read (SD read/seek failure, corrupt offset, OOM) --
   // those aren't a legitimate empty entry and must not report Found with a
-  // blank body. Caller keeps searching fallbacks / falls through to NotFound.
+  // blank body, nor collapse into a plain NotFound. The first such failure is
+  // remembered in readFailure and reported to the caller if every fallback
+  // also comes up empty, so the UI can tell a genuine miss apart from a
+  // definition that existed but couldn't be read.
+  DictionaryLookupResult::Status readFailure = DictionaryLookupResult::Status::NotFound;
+  bool haveReadFailure = false;
+  // Heap state doesn't improve between immediate successive lookups, so once
+  // one hit fails with LowMemory every fallback attempt would too -- retrying
+  // just burns more heap-hostile allocations (dictzip's inflate window, the
+  // temp-file round trip) for a result already known to fail.
+  bool lowMemoryAbort = false;
+
   auto finishFound = [&](const IndexHit& hit) {
     result.headword = hit.headword;
-    result.definition = readDefinition(*entry, hit, result.truncated);
-    if (result.definition.empty()) return false;
+    DictionaryLookupResult::Status failStatus = DictionaryLookupResult::Status::NotFound;
+    result.definition = readDefinition(*entry, hit, result.truncated, &failStatus);
+    if (result.definition.empty()) {
+      if (!haveReadFailure) {
+        readFailure = failStatus;
+        haveReadFailure = true;
+      }
+      if (failStatus == DictionaryLookupResult::Status::LowMemory) lowMemoryAbort = true;
+      return false;
+    }
     result.status = DictionaryLookupResult::Status::Found;
     addHistory(result.headword.empty() ? result.query : result.headword);
     return true;
   };
 
   IndexHit hit;
-  if (findIndexHit(*entry, result.query, hit)) {
-    if (finishFound(hit)) return result;
-  }
+  if (findIndexHit(*entry, result.query, hit) && finishFound(hit)) return result;
 
   std::string canonical;
-  if (lookupSynonym(*entry, result.query, canonical) && findIndexHit(*entry, canonical, hit)) {
-    if (finishFound(hit)) return result;
+  if (!lowMemoryAbort && lookupSynonym(*entry, result.query, canonical) && findIndexHit(*entry, canonical, hit) &&
+      finishFound(hit)) {
+    return result;
   }
 
   for (const std::string& fallback : getFallbackForms(*entry, result.query)) {
-    if (findIndexHit(*entry, fallback, hit)) {
-      if (finishFound(hit)) return result;
+    if (lowMemoryAbort) break;
+    if (findIndexHit(*entry, fallback, hit) && finishFound(hit)) return result;
+    if (lowMemoryAbort) break;
+    if (lookupSynonym(*entry, fallback, canonical) && findIndexHit(*entry, canonical, hit) && finishFound(hit)) {
+      return result;
     }
-    if (lookupSynonym(*entry, fallback, canonical) && findIndexHit(*entry, canonical, hit)) {
-      if (finishFound(hit)) return result;
-    }
+  }
+
+  if (haveReadFailure) {
+    result.status = readFailure;
+    return result;
   }
 
   result.status = DictionaryLookupResult::Status::NotFound;

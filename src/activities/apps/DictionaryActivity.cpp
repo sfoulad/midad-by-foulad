@@ -53,9 +53,25 @@ void DictionaryActivity::lookupTypedWord(const std::string& word) {
                            [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
-  const char* msg = lookup.status == DictionaryLookupResult::Status::NoDictionary ? tr(STR_NO_DICTIONARIES)
-                    : lookup.status == DictionaryLookupResult::Status::NotReady   ? tr(STR_DICTIONARY_PREPARE_FAILED)
-                                                                                  : tr(STR_DEFINITION_NOT_FOUND);
+  const char* msg;
+  switch (lookup.status) {
+    case DictionaryLookupResult::Status::NoDictionary:
+      msg = tr(STR_NO_DICTIONARIES);
+      break;
+    case DictionaryLookupResult::Status::NotReady:
+      msg = tr(STR_DICTIONARY_PREPARE_FAILED);
+      break;
+    case DictionaryLookupResult::Status::LowMemory:
+      msg = tr(STR_DICTIONARY_LOW_MEMORY);
+      break;
+    case DictionaryLookupResult::Status::DecompressError:
+    case DictionaryLookupResult::Status::ReadError:
+      msg = tr(STR_DICTIONARY_READ_ERROR);
+      break;
+    default:
+      msg = tr(STR_DEFINITION_NOT_FOUND);
+      break;
+  }
   GUI.drawPopup(renderer, msg);
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   delay(900);
