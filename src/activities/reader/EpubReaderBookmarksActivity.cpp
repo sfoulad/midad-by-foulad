@@ -7,8 +7,8 @@
 #include <algorithm>
 
 #include "MappedInputManager.h"
-#include "components/UiAppHelpers.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;

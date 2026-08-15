@@ -12,8 +12,8 @@
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "activities/util/ConfirmationActivity.h"
-#include "components/UiAppHelpers.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "fontIds.h"
 #include "util/BookCacheUtils.h"
 
@@ -532,8 +532,7 @@ void FileBrowserActivity::drawFooter() {
   // In PickFirmware mode, Confirm on a .bin returns the path to the caller (not "open"); show
   // STR_SELECT instead. Directories in the same picker still descend, so keep STR_OPEN there.
   // The synthetic File Transfer row (never present in PickFirmware mode) always reads "Open".
-  const bool selectingFirmwareFile =
-      mode == Mode::PickFirmware && !files.empty() && files[nav.selected].back() != '/';
+  const bool selectingFirmwareFile = mode == Mode::PickFirmware && !files.empty() && files[nav.selected].back() != '/';
   const char* confirmLabel = !hasRows ? "" : (selectingFirmwareFile ? tr(STR_SELECT) : tr(STR_OPEN));
   const auto labels =
       mappedInput.mapLabels(backLabel, confirmLabel, hasRows ? tr(STR_DIR_UP) : "", hasRows ? tr(STR_DIR_DOWN) : "");
