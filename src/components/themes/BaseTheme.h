@@ -295,6 +295,12 @@ class BaseTheme {
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                               const std::function<std::string(int index)>& buttonLabel,
                               const std::function<UIIcon(int index)>& rowIcon) const;
+  // Hit-test counterpart to drawButtonMenu(), same shape as tabIndexFromPoint()
+  // above: HomeActivity's touch grid must match whatever a theme override
+  // actually draws (e.g. FouladTheme's horizontal icon bar vs. this class's
+  // vertical rows), so each override owns its own inverse of its draw math.
+  virtual bool buttonMenuIndexFromPoint(const GfxRenderer& renderer, Rect rect, int buttonCount, int x, int y,
+                                        int& index) const;
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
   virtual void drawOptionPopup(const GfxRenderer& renderer, const char* title, const std::vector<std::string>& options,
                                int selectedIndex) const;

@@ -430,15 +430,24 @@ void HomeActivity::loop() {
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size();
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
-  int menuRow = -1;
-  // Row height from the theme, not the metrics table: RoundedRaff draws
-  // font-derived rows and the touch grid must match the visuals exactly.
-  const int menuRowHeight = GUI.getMenuRowHeight(renderer);
-  const auto menuTouch = mappedInput.rowTouch(menuRow, menuTop, menuRowHeight + metrics.menuSpacing, renderedMenuCount,
-                                              0, INT32_MAX, menuRowHeight);
+  // Hit-test through the theme, not a fixed row grid: FouladTheme draws this
+  // as a horizontal icon bar (see FouladTheme::drawButtonMenu), and the touch
+  // grid must match whatever the active theme actually drew.
+  const Rect menuRect{0, menuTop, renderer.getScreenWidth(), renderer.getScreenHeight() - menuTop};
+  int menuButton = -1;
+  int touchX = 0;
+  int touchY = 0;
+  MappedInputManager::RowTouch menuTouch = MappedInputManager::RowTouch::None;
+  if (mappedInput.wasScreenTouchDown(touchX, touchY) &&
+      GUI.buttonMenuIndexFromPoint(renderer, menuRect, renderedMenuCount, touchX, touchY, menuButton)) {
+    menuTouch = MappedInputManager::RowTouch::Down;
+  } else if (mappedInput.wasScreenTapped(touchX, touchY) &&
+             GUI.buttonMenuIndexFromPoint(renderer, menuRect, renderedMenuCount, touchX, touchY, menuButton)) {
+    menuTouch = MappedInputManager::RowTouch::Tap;
+  }
   if (menuTouch != MappedInputManager::RowTouch::None) {
     const int touchedIndex =
-        metrics.homeContinueReadingInMenu ? menuRow : menuRow + static_cast<int>(recentBooks.size());
+        metrics.homeContinueReadingInMenu ? menuButton : menuButton + static_cast<int>(recentBooks.size());
     if (menuTouch == MappedInputManager::RowTouch::Down) {
       if (selectorIndex != touchedIndex) {
         selectorIndex = touchedIndex;

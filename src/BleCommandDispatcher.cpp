@@ -62,6 +62,13 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
     return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
   }
 
+  // BLE has no guarantee WifiSelectionActivity ever ran this boot to populate
+  // WIFI_STORE's in-memory state; without this, addCredential() below would
+  // save over wifi.json with only this one credential, discarding every
+  // previously-saved network. fromJson() fully replaces in-memory state from
+  // disk, so this is safe to call unconditionally.
+  WIFI_STORE.loadFromFile();
+
   if (!WIFI_STORE.addCredential(ssid, password)) {
     LOG_ERR(TAG, "wifi.provision: addCredential failed for ssid=%s", ssid);
     return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");
