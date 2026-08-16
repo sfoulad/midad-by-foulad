@@ -1,0 +1,38 @@
+# Reviewed upstream backports -- see scripts/thin-fork-guard.sh's header
+# comment ("Reviewed upstream backport" section) for the full design and
+# verify_reviewed_backport()'s exact 7-point runtime verification.
+#
+# This is NOT a path allowlist, a permanent per-file exemption, or a way to
+# approve a range of commits. Each record authorizes exactly one reviewed
+# file state, derived from exactly one named, already-accepted official
+# CrossPoint commit, applied to one exact recorded base blob. One extra
+# Midad-authored line, the wrong upstream SHA, or a target commit that also
+# touches unrelated content each cause the record to stop matching.
+#
+# This file is a SECURITY_BOUNDARY_FILES entry (see thin-fork-guard.sh) --
+# an ordinary PR cannot modify it. Changing it requires the same human
+# security-boundary maintenance procedure as thin-fork-guard.sh itself
+# (docs/upstream-sync-architecture.md's "Security-boundary file maintenance"
+# section).
+#
+# Format: TSV, one record per line.
+#   PATH<TAB>UPSTREAM_COMMIT_SHA<TAB>BASE_BLOB_SHA<TAB>APPROVED_HEAD_BLOB_SHA<TAB>NOTE
+# BASE_BLOB_SHA is the EFFECTIVE base for that path: the path's adopted-
+# upstream blob (see find_adopted_upstream_blob) when this PR's own history
+# contains a qualifying real merge for it, otherwise BASE_REF's own blob.
+#
+# src/activities/reader/TxtReaderActivity.cpp: PR #149 (phase2/reader-
+# dictionary-convergence) real-merged CrossPoint through commit 080b1d71
+# (adopted baseline blob 55dea5bea040c7f5ee4d734590d82cb09d01860f, verified
+# identical back to 33f07db7 -- upstream never touched this file in
+# between). CrossPoint later added an unrelated x4pro/papermono commit
+# (bbca4886, intentionally deferred out of Phase 2) and then, on top of
+# that, accepted Midad's own independently-authored skipPages() end-of-book
+# clamp fix as CrossPoint PR #3061 (commit 63fcbab0). This record authorizes
+# exactly that isolated fix, applied to the adopted baseline, independent of
+# bbca4886's unrelated changes to the same file -- see
+# scripts/test-thin-fork-guard.sh's regression test for this exact scenario
+# (an unrelated upstream commit touching the same file before the accepted
+# fix must not block the narrow backport, and must not smuggle its own
+# changes in).
+src/activities/reader/TxtReaderActivity.cpp	63fcbab02c99fc61969c65c25c539c021c12ece5	55dea5bea040c7f5ee4d734590d82cb09d01860f	6d7e1d328d37abf79ee10570b8cda555ac6c857b	CrossPoint PR #3061

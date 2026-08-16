@@ -131,6 +131,85 @@
 #         ancestor at all (merge-base itself fails -- cannot reason about
 #         divergence without one).
 #
+# --- Baseline-aware classification (adopted-upstream-blob) ------------------
+# A long-running PR that performs its own real `git merge --no-ff` of
+# <upstream-ref> directly on its branch (not yet via <base-ref>) creates a
+# blind spot in the four-state table above: the moment ANY of that
+# real-merge content lands on HEAD, `classify_divergence` sees
+# `base(==common) != head` and reports "new_divergence" -- indistinguishable
+# from a hand-authored Midad edit -- even though the content came from a
+# genuine, ancestry-verified merge of upstream and Midad wrote none of it.
+# Worse, if <upstream-ref> keeps moving afterward (as it always will), a PR
+# that has not changed AT ALL since its own real merge starts failing this
+# gate purely because the live comparison target moved, not because of
+# anything the PR did. See docs/upstream-sync-architecture.md's "Baseline-
+# aware divergence classification" section for the incident (PR #149,
+# src/activities/reader/TxtReaderActivity.cpp) that surfaced this.
+#
+# find_adopted_upstream_blob() answers a narrower, per-path question:
+# "did this PR itself, via a real, ancestry-verified merge, ever adopt a
+# specific upstream blob for this path?" -- and if so, treats HEAD matching
+# THAT blob as good news (a new `adopted_baseline` classification state),
+# independent of where <upstream-ref> has drifted to since. It reuses the
+# exact same trust primitive as is_recognized_sync_pr() below (a merge
+# commit's parent must be an ancestor of the freshly-fetched, live
+# <upstream-ref> -- not a text/branch-name match, not attacker-forgeable
+# without controlling the real crosspoint-reader remote), but drops that
+# function's stronger "head has fully caught up to today's tip" precondition,
+# since a staged/partial real merge (this PR's actual situation) never
+# satisfies that and was never meant to.
+#
+# A candidate merge M qualifies for a path ONLY if BOTH hold:
+#   1. one of M's parents U is an ancestor of the live <upstream-ref>, and
+#      M's own blob for the path equals U's blob for the path exactly (the
+#      merge took upstream's content for this path wholesale) -- this is
+#      what proves the resulting content is genuinely upstream-derived, not
+#      Midad's own prior edit merely surviving the merge unresolved; and
+#   2. at least one of M's OTHER parents has a DIFFERENT blob for the path
+#      (the merge was non-trivial for this path -- it actually changed
+#      something). Without this, a path M never touched at all would
+#      "accidentally qualify" any time its content coincidentally matches
+#      across parents, mislabeling an ordinary untouched file.
+# Requirement 1 is also what closes a subtler attack: if Midad had ALREADY
+# diverged a path before a later real merge, that merge's own blob for the
+# path would need to differ from its own upstream parent's blob (since the
+# prior divergence survived) -- which fails requirement 1 and correctly
+# refuses to launder that prior divergence into a trusted baseline.
+#
+# The most recent (first found, since `git log` defaults to reverse-
+# chronological order) qualifying merge wins. If none is found, the path
+# behaves exactly as before this section existed -- this only ever adds a
+# new PASS state; it never changes what already failed.
+#
+# --- Reviewed upstream backport (exact-content exception) -------------------
+# Baseline-awareness alone does not, and must not, pass a path whose HEAD
+# content is genuinely new relative to its adopted baseline (or plain
+# BASE_REF, for a path with no real-merge history) -- that is still real,
+# first-time Midad-side divergence and stays gated. scripts/reviewed-
+# upstream-backports.tsv authorizes exactly one further, narrow exception
+# for that remaining case: HEAD matches the EXACT byte-for-byte result of
+# applying one specific, named, already-accepted official CrossPoint
+# commit's ISOLATED per-path patch to the effective base blob (the adopted
+# baseline above when one exists, else BASE_REF's own blob). It is NOT an
+# allowlist for a path, a permanent per-file exemption, or a way to approve
+# a range of commits -- one extra Midad-authored line, or the wrong upstream
+# SHA, or a target commit that also touches unrelated content, each cause it
+# to stop matching and fall back to an ordinary, gated new_divergence.
+#
+# Trust boundary: the manifest is read via `git show "$BASE_REF:..."` --
+# BASE_REF, never HEAD_REF -- so an ordinary PR editing its own copy has no
+# effect on what this run of the guard trusts. The manifest is also listed
+# in SECURITY_BOUNDARY_FILES below, so an ordinary PR cannot edit it at all;
+# changing it requires the same human security-boundary maintenance
+# procedure as thin-fork-guard.sh itself (docs/upstream-sync-architecture.md).
+# See verify_reviewed_backport() below for the exact 7-point verification
+# (manifest record exists; recorded base/head blobs match exactly; the named
+# commit resolves, is a single-parent commit, is an ancestor of live
+# <upstream-ref>, and touches this exact path; and applying that commit's
+# isolated per-path patch to the recorded base blob reproduces the recorded
+# head blob byte-for-byte via `git apply` + `git hash-object`, never a
+# "contains a subset of the changed lines" check).
+#
 # Requires measure-conflicts.sh in the same directory. Both refs and
 # <upstream-ref> must already be resolvable (fetched) by the caller.
 set -euo pipefail
@@ -292,17 +371,189 @@ NEW_DIVERGED="$(comm -13 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
 RESOLVED_DIVERGED="$(comm -23 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
 ALREADY_DIVERGED="$(comm -12 "$BASE_DIVERGED_FILE" "$HEAD_DIVERGED_FILE")"
 
+# --- 3a-2. Reviewed-upstream-backport manifest (trust boundary: BASE_REF only) ---
+# See the header comment's "Reviewed upstream backport" section for the full
+# design. Format: TSV, one record per line, `#`-prefixed and blank lines
+# ignored:
+#   PATH<TAB>UPSTREAM_COMMIT_SHA<TAB>BASE_BLOB_SHA<TAB>APPROVED_HEAD_BLOB_SHA[<TAB>NOTE]
+# BASE_BLOB_SHA means the EFFECTIVE base for that path -- the path's
+# adopted-upstream blob (find_adopted_upstream_blob above) when one exists,
+# otherwise BASE_REF's own blob for that path; verify_reviewed_backport
+# below is always called with whichever one actually applies. Any
+# non-comment, non-blank line missing one of the first four fields, or any
+# duplicate PATH, is a malformed manifest -- fails the whole run closed
+# (checked immediately below), the same posture as the workflow-permission
+# audit's WORKFLOW_AUDIT_ERROR: a manifest that fails to parse must never
+# silently be read as "zero backport records."
+MANIFEST_PATH="scripts/reviewed-upstream-backports.tsv"
+REVIEWED_BACKPORT_PATHS=()
+REVIEWED_BACKPORT_UPSTREAM_SHAS=()
+REVIEWED_BACKPORT_BASE_BLOBS=()
+REVIEWED_BACKPORT_HEAD_BLOBS=()
+REVIEWED_BACKPORT_NOTES=()
+REVIEWED_BACKPORT_MANIFEST_ERROR=""
+
+load_reviewed_backport_manifest() {
+  if ! git cat-file -e "$BASE_REF:$MANIFEST_PATH" 2>/dev/null; then
+    return 0 # no manifest at BASE_REF yet -- zero records, not an error
+  fi
+  local content
+  if ! content="$(git show "$BASE_REF:$MANIFEST_PATH" 2>&1)"; then
+    REVIEWED_BACKPORT_MANIFEST_ERROR="failed to read '$MANIFEST_PATH' at '$BASE_REF': $content"
+    return 1
+  fi
+  local line lineno=0 f_path f_upstream f_base f_head f_note seen="|"
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    [ -z "$line" ] && continue
+    case "$line" in '#'*) continue ;; esac
+    IFS=$'\t' read -r f_path f_upstream f_base f_head f_note <<<"$line"
+    if [ -z "$f_path" ] || [ -z "$f_upstream" ] || [ -z "$f_base" ] || [ -z "$f_head" ]; then
+      REVIEWED_BACKPORT_MANIFEST_ERROR="malformed manifest line $lineno (need PATH<TAB>UPSTREAM_COMMIT_SHA<TAB>BASE_BLOB_SHA<TAB>APPROVED_HEAD_BLOB_SHA[<TAB>NOTE]): $line"
+      return 1
+    fi
+    case "$seen" in
+      *"|${f_path}|"*)
+        REVIEWED_BACKPORT_MANIFEST_ERROR="malformed manifest: duplicate record for path '$f_path' (line $lineno)"
+        return 1
+        ;;
+    esac
+    seen="${seen}${f_path}|"
+    REVIEWED_BACKPORT_PATHS+=("$f_path")
+    REVIEWED_BACKPORT_UPSTREAM_SHAS+=("$f_upstream")
+    REVIEWED_BACKPORT_BASE_BLOBS+=("$f_base")
+    REVIEWED_BACKPORT_HEAD_BLOBS+=("$f_head")
+    REVIEWED_BACKPORT_NOTES+=("$f_note")
+  done <<<"$content"
+  return 0
+}
+
+if ! load_reviewed_backport_manifest; then
+  echo "thin-fork-guard.sh: reviewed-upstream-backports manifest is malformed -- failing closed:" >&2
+  echo "$REVIEWED_BACKPORT_MANIFEST_ERROR" >&2
+  exit 1
+fi
+
+# lookup_reviewed_backport_record <path>: sets RB_UPSTREAM_SHA/RB_BASE_BLOB/
+# RB_HEAD_BLOB/RB_NOTE and returns 0 if a manifest record exists for <path>;
+# returns 1 (nothing set) otherwise.
+lookup_reviewed_backport_record() {
+  local search_path="$1" i
+  for ((i = 0; i < ${#REVIEWED_BACKPORT_PATHS[@]}; i++)); do
+    if [ "${REVIEWED_BACKPORT_PATHS[$i]}" = "$search_path" ]; then
+      RB_UPSTREAM_SHA="${REVIEWED_BACKPORT_UPSTREAM_SHAS[$i]}"
+      RB_BASE_BLOB="${REVIEWED_BACKPORT_BASE_BLOBS[$i]}"
+      RB_HEAD_BLOB="${REVIEWED_BACKPORT_HEAD_BLOBS[$i]}"
+      RB_NOTE="${REVIEWED_BACKPORT_NOTES[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# verify_reviewed_backport <path> <effective_base_sha> <head_sha>: returns 0
+# only if ALL of the following hold (see the header comment's "Reviewed
+# upstream backport" section):
+#   1. an exact manifest record exists for <path>
+#   2. <effective_base_sha> equals the record's BASE_BLOB_SHA
+#   3. <head_sha> equals the record's APPROVED_HEAD_BLOB_SHA
+#   4. the record's UPSTREAM_COMMIT_SHA resolves to a real commit (present
+#      because the caller fetched live upstream before this script ran)
+#   5. that commit is a single-parent (non-merge) commit and an ancestor of
+#      the freshly fetched UPSTREAM_REF
+#   6. that commit's own diff touches exactly <path>
+#   7. applying that commit's ISOLATED diff for <path> (not the whole
+#      commit) to the recorded base blob reproduces APPROVED_HEAD_BLOB_SHA
+#      byte-for-byte
+# Any failure at any step -- including a git/patch-apply error that isn't a
+# clean "no" -- returns 1 (fail closed). This is deliberately NOT "contains
+# a subset of the named commit's changed lines"; #7 is exact-content
+# verification via git apply + git hash-object, so an unrelated upstream
+# commit touching the same file (e.g. CrossPoint's bbca4886 alongside the
+# accepted 63fcbab02c99fc61969c65c25c539c021c12ece5) cannot smuggle its own
+# changes in under cover of a narrow, isolated, already-reviewed backport.
+verify_reviewed_backport() {
+  local path="$1" effective_base_sha="$2" head_sha="$3"
+  local upstream_sha approved_base approved_head
+
+  lookup_reviewed_backport_record "$path" || return 1
+  upstream_sha="$RB_UPSTREAM_SHA"
+  approved_base="$RB_BASE_BLOB"
+  approved_head="$RB_HEAD_BLOB"
+
+  [ "$effective_base_sha" = "$approved_base" ] || return 1
+  [ "$head_sha" = "$approved_head" ] || return 1
+  git cat-file -e "${upstream_sha}^{commit}" 2>/dev/null || return 1
+
+  local parents
+  parents="$(git rev-list --parents -n1 "$upstream_sha" 2>/dev/null)" || return 1
+  [ "$(wc -w <<<"$parents")" -eq 2 ] || return 1
+
+  git merge-base --is-ancestor "$upstream_sha" "$UPSTREAM_REF" 2>/dev/null || return 1
+
+  local touched
+  touched="$(git diff --name-only "${upstream_sha}^" "$upstream_sha" -- "$path" 2>/dev/null)" || return 1
+  [ -n "$touched" ] || return 1
+
+  local work base_content patch_file result_sha apply_status
+  work="$(mktemp -d)" || return 1
+  base_content="$work/base_blob"
+  patch_file="$work/patch.diff"
+
+  if ! git cat-file blob "$approved_base" >"$base_content" 2>/dev/null; then
+    rm -rf "$work"
+    return 1
+  fi
+  if ! git diff "${upstream_sha}^" "$upstream_sha" -- "$path" >"$patch_file" 2>/dev/null; then
+    rm -rf "$work"
+    return 1
+  fi
+
+  (
+    set +e
+    cd "$work" &&
+      git init -q . &&
+      mkdir -p "$(dirname "$path")" &&
+      cp "$base_content" "$path" &&
+      git apply --check "$patch_file" 2>/dev/null &&
+      git apply "$patch_file" 2>/dev/null
+  )
+  apply_status=$?
+  if [ "$apply_status" -ne 0 ]; then
+    rm -rf "$work"
+    return 1
+  fi
+
+  result_sha="$(git hash-object "$work/$path" 2>/dev/null)" || {
+    rm -rf "$work"
+    return 1
+  }
+  rm -rf "$work"
+  [ "$result_sha" = "$approved_head" ]
+}
+
 # --- 3b. Midad-side divergence vs. COMMON_REF (authoritative gate) ----------
-# classify_divergence <common_sha> <base_sha> <head_sha> <upstream_sha>
-# Echoes one of: clean | converged | new_divergence | already_diverged.
+# classify_divergence <common_sha> <base_sha> <head_sha> <upstream_sha> <adopted_sha>
+# Echoes one of: clean | converged | adopted_baseline | new_divergence | already_diverged.
 # See the header comment's four-state table for the exact rule; convergence
 # (HEAD == UPSTREAM) is checked first and wins regardless of BASE's prior
 # state, since adopting upstream's exact current content is always good
-# news, including when it resolves a pre-existing divergence.
+# news, including when it resolves a pre-existing divergence. adopted_baseline
+# (HEAD == the path's own real-merge-derived adopted blob, see
+# find_adopted_upstream_blob below) is checked next, for the same reason:
+# matching what this PR itself genuinely, verifiably merged from upstream is
+# good news independent of where live upstream has since drifted to.
+# <adopted_sha> may be empty (no qualifying real merge found for this path),
+# in which case this check is skipped and behavior is unchanged from before
+# this state existed.
 classify_divergence() {
-  local common="$1" base="$2" head="$3" upstream="$4"
+  local common="$1" base="$2" head="$3" upstream="$4" adopted="$5"
   if [ "$head" = "$upstream" ]; then
     echo "converged"
+    return
+  fi
+  if [ -n "$adopted" ] && [ "$head" = "$adopted" ]; then
+    echo "adopted_baseline"
     return
   fi
   if [ "$base" = "$common" ]; then
@@ -316,22 +567,95 @@ classify_divergence() {
   fi
 }
 
+# All real merge commits in base..head, cached once (not per-path) as
+# "<commit> <parent> [<parent> ...]" lines -- find_adopted_upstream_blob and
+# is_recognized_sync_pr both need this same enumeration; computing it once
+# avoids re-running `git log --merges` for every shared path.
+MERGE_COMMITS_IN_RANGE="$(git log --merges --format='%H %P' "$BASE_REF..$HEAD_REF" 2>/dev/null || true)"
+
+# find_adopted_upstream_blob <path>: echoes the path's adopted-upstream blob
+# SHA and returns 0 if this PR's own history contains a qualifying real
+# merge for it (see the header comment's "Baseline-aware classification"
+# section for the exact two-part qualification rule); returns 1 (nothing
+# echoed) otherwise.
+find_adopted_upstream_blob() {
+  local path="$1"
+  local line commit parents p m_blob p_blob other_differs
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    commit="${line%% *}"
+    parents="${line#* }"
+    m_blob="$(git rev-parse -q --verify "$commit:$path" 2>/dev/null || true)"
+    [ -z "$m_blob" ] && continue
+    other_differs=false
+    for p in $parents; do
+      p_blob="$(git rev-parse -q --verify "$p:$path" 2>/dev/null || true)"
+      [ "$p_blob" != "$m_blob" ] && other_differs=true
+    done
+    # Only a genuine adoption event if the merge actually changed this path
+    # relative to at least one parent -- otherwise the blob match is
+    # coincidental (e.g. a path neither side ever touched), not evidence of
+    # a real-merge-driven adoption.
+    [ "$other_differs" = true ] || continue
+    for p in $parents; do
+      if git merge-base --is-ancestor "$p" "$UPSTREAM_REF" 2>/dev/null; then
+        p_blob="$(git rev-parse -q --verify "$p:$path" 2>/dev/null || true)"
+        if [ -n "$p_blob" ] && [ "$m_blob" = "$p_blob" ]; then
+          echo "$m_blob"
+          return 0
+        fi
+      fi
+    done
+  done <<<"$MERGE_COMMITS_IN_RANGE"
+  return 1
+}
+
 MIDAD_NEW_DIVERGED=""
 MIDAD_CONVERGED=""
 MIDAD_ALREADY_DIVERGED=""
+MIDAD_ADOPTED_BASELINE=""
+MIDAD_REVIEWED_BACKPORT=""
+MIDAD_REVIEWED_BACKPORT_DETAIL=""
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   common_sha="$(git rev-parse -q --verify "$COMMON_REF:$path" 2>/dev/null || true)"
   base_sha="$(git rev-parse -q --verify "$BASE_REF:$path" 2>/dev/null || true)"
   head_sha="$(git rev-parse -q --verify "$HEAD_REF:$path" 2>/dev/null || true)"
   upstream_sha="$(git rev-parse -q --verify "$UPSTREAM_REF:$path" 2>/dev/null || true)"
-  case "$(classify_divergence "$common_sha" "$base_sha" "$head_sha" "$upstream_sha")" in
-    new_divergence) MIDAD_NEW_DIVERGED="${MIDAD_NEW_DIVERGED}${path}"$'\n' ;;
+  adopted_sha="$(find_adopted_upstream_blob "$path" || true)"
+  case "$(classify_divergence "$common_sha" "$base_sha" "$head_sha" "$upstream_sha" "$adopted_sha")" in
+    new_divergence)
+      effective_base_sha="${adopted_sha:-$base_sha}"
+      if verify_reviewed_backport "$path" "$effective_base_sha" "$head_sha"; then
+        MIDAD_REVIEWED_BACKPORT="${MIDAD_REVIEWED_BACKPORT}${path}"$'\n'
+        MIDAD_REVIEWED_BACKPORT_DETAIL="${MIDAD_REVIEWED_BACKPORT_DETAIL}${path} <- CrossPoint ${RB_UPSTREAM_SHA}${RB_NOTE:+ (${RB_NOTE})}"$'\n'
+      else
+        MIDAD_NEW_DIVERGED="${MIDAD_NEW_DIVERGED}${path}"$'\n'
+      fi
+      ;;
     converged) MIDAD_CONVERGED="${MIDAD_CONVERGED}${path}"$'\n' ;;
+    adopted_baseline) MIDAD_ADOPTED_BASELINE="${MIDAD_ADOPTED_BASELINE}${path}"$'\n' ;;
     already_diverged) MIDAD_ALREADY_DIVERGED="${MIDAD_ALREADY_DIVERGED}${path}"$'\n' ;;
     clean) : ;;
   esac
 done <<<"$UPSTREAM_TOUCHED"
+
+# --- 3c. Stale reviewed-backport manifest entries (informational only) ------
+# A manifest record becomes obsolete the moment live upstream's CURRENT tip
+# blob for that path equals the record's own APPROVED_HEAD_BLOB_SHA -- at
+# that point classify_divergence's HEAD==UPSTREAM check already resolves the
+# path as ordinary "converged" (see its "always wins" comment above), so the
+# backport record is no longer doing any work. Reported so the manifest can
+# be cleaned up; never fails a PR on its own.
+STALE_REVIEWED_BACKPORTS=""
+for ((rb_i = 0; rb_i < ${#REVIEWED_BACKPORT_PATHS[@]}; rb_i++)); do
+  rb_path="${REVIEWED_BACKPORT_PATHS[$rb_i]}"
+  rb_approved_head="${REVIEWED_BACKPORT_HEAD_BLOBS[$rb_i]}"
+  rb_upstream_now="$(git rev-parse -q --verify "$UPSTREAM_REF:$rb_path" 2>/dev/null || true)"
+  if [ -n "$rb_upstream_now" ] && [ "$rb_upstream_now" = "$rb_approved_head" ]; then
+    STALE_REVIEWED_BACKPORTS="${STALE_REVIEWED_BACKPORTS}${rb_path}"$'\n'
+  fi
+done
 
 # Architecture-governance files: no branch-protection review requirement is
 # possible on a solo-owner repo (see thin-fork-guard PR's own description
@@ -349,6 +673,7 @@ GOVERNANCE_FILES=(
   "scripts/measure-conflicts.sh"
   "scripts/check-workflow-permissions.rb"
   "scripts/test-thin-fork-guard.sh"
+  "scripts/reviewed-upstream-backports.tsv"
 )
 GOVERNANCE_TOUCHED=""
 while IFS= read -r path; do
@@ -381,6 +706,7 @@ SECURITY_BOUNDARY_FILES=(
   "scripts/measure-conflicts.sh"
   "scripts/check-workflow-permissions.rb"
   "scripts/test-thin-fork-guard.sh"
+  "scripts/reviewed-upstream-backports.tsv"
 )
 SECURITY_BOUNDARY_TOUCHED=""
 # Plain modify/delete: PR_DIFF_FILES (git diff --name-only) reliably lists
@@ -553,6 +879,33 @@ fi
     echo "### Files converged to upstream's current content"
     echo '```'
     echo "$MIDAD_CONVERGED"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$MIDAD_ADOPTED_BASELINE" ]; then
+    echo "### Files matching this PR's own adopted-upstream baseline (not gated)"
+    echo "HEAD matches a blob this PR itself genuinely adopted via a real, ancestry-verified merge of upstream -- see find_adopted_upstream_blob's header comment. Live upstream may have moved further since; that is reported separately (below) as drift, not treated as Midad-side divergence:"
+    echo '```'
+    echo "$MIDAD_ADOPTED_BASELINE"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$MIDAD_REVIEWED_BACKPORT" ]; then
+    echo "### Reviewed upstream backports (exempted from new-divergence gate)"
+    echo "Each of these matched an exact, content-verified record in \`scripts/reviewed-upstream-backports.tsv\` (read from \`$BASE_REF\`, never from this PR's own copy):"
+    echo '```'
+    echo "$MIDAD_REVIEWED_BACKPORT_DETAIL"
+    echo '```'
+    echo
+  fi
+
+  if [ -n "$STALE_REVIEWED_BACKPORTS" ]; then
+    echo "### Stale reviewed-backport manifest entries"
+    echo "Live upstream's current tip now matches the approved backport content for these paths directly -- ordinary convergence applies, and these \`scripts/reviewed-upstream-backports.tsv\` entries can be removed:"
+    echo '```'
+    echo "$STALE_REVIEWED_BACKPORTS"
     echo '```'
     echo
   fi
