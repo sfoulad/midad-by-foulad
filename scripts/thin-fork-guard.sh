@@ -205,9 +205,11 @@
 # See verify_reviewed_backport() below for the exact 7-point verification
 # (manifest record exists; recorded base/head blobs match exactly; the named
 # commit resolves, is a single-parent commit, is an ancestor of live
-# <upstream-ref>, and touches this exact path; and applying that commit's
-# isolated per-path patch to the recorded base blob reproduces the recorded
-# head blob byte-for-byte via `git apply` + `git hash-object`, never a
+# <upstream-ref>, and touches this path; and applying that commit's isolated
+# per-path patch to the recorded base blob reproduces the recorded head blob
+# byte-for-byte via `git apply` + `git hash-object` -- step 7, not step 6, is
+# what pins the exact content (a commit can legitimately touch other files
+# too; step 6 alone doesn't rule that out, and doesn't need to), never a
 # "contains a subset of the changed lines" check).
 #
 # Requires measure-conflicts.sh in the same directory. Both refs and
@@ -461,7 +463,9 @@ lookup_reviewed_backport_record() {
 #      because the caller fetched live upstream before this script ran)
 #   5. that commit is a single-parent (non-merge) commit and an ancestor of
 #      the freshly fetched UPSTREAM_REF
-#   6. that commit's own diff touches exactly <path>
+#   6. that commit's own diff touches <path> (the commit may also touch
+#      other files -- this step alone does not rule that out, and doesn't
+#      need to; step 7 is what pins the exact content)
 #   7. applying that commit's ISOLATED diff for <path> (not the whole
 #      commit) to the recorded base blob reproduces APPROVED_HEAD_BLOB_SHA
 #      byte-for-byte
@@ -568,10 +572,30 @@ classify_divergence() {
 }
 
 # All real merge commits in base..head, cached once (not per-path) as
-# "<commit> <parent> [<parent> ...]" lines -- find_adopted_upstream_blob and
-# is_recognized_sync_pr both need this same enumeration; computing it once
-# avoids re-running `git log --merges` for every shared path.
+# "<commit> <parent> [<parent> ...]" lines -- find_adopted_upstream_blob
+# consumes this; computing it once avoids re-running `git log --merges` for
+# every shared path.
 MERGE_COMMITS_IN_RANGE="$(git log --merges --format='%H %P' "$BASE_REF..$HEAD_REF" 2>/dev/null || true)"
+
+# Parents of in-range merge commits that are ancestors of the live
+# <upstream-ref>, computed once. This decision is path-independent (it
+# depends only on the commit graph, not on any single path's blob), so
+# find_adopted_upstream_blob would otherwise fork one `git merge-base
+# --is-ancestor` per (path, parent) pair -- for a thin fork where
+# UPSTREAM_TOUCHED can hold every upstream-owned path, that's a lot of
+# identical, wasted subprocess calls. `|`-delimited membership string,
+# matching the style already used for GOVERNANCE_FILES/SECURITY_BOUNDARY_FILES
+# membership checks elsewhere in this script.
+UPSTREAM_ANCESTOR_PARENTS="|"
+while IFS= read -r _mc_line; do
+  [ -z "$_mc_line" ] && continue
+  for _mc_p in ${_mc_line#* }; do
+    case "$UPSTREAM_ANCESTOR_PARENTS" in *"|${_mc_p}|"*) continue ;; esac
+    if git merge-base --is-ancestor "$_mc_p" "$UPSTREAM_REF" 2>/dev/null; then
+      UPSTREAM_ANCESTOR_PARENTS="${UPSTREAM_ANCESTOR_PARENTS}${_mc_p}|"
+    fi
+  done
+done <<<"$MERGE_COMMITS_IN_RANGE"
 
 # find_adopted_upstream_blob <path>: echoes the path's adopted-upstream blob
 # SHA and returns 0 if this PR's own history contains a qualifying real
@@ -598,12 +622,11 @@ find_adopted_upstream_blob() {
     # a real-merge-driven adoption.
     [ "$other_differs" = true ] || continue
     for p in $parents; do
-      if git merge-base --is-ancestor "$p" "$UPSTREAM_REF" 2>/dev/null; then
-        p_blob="$(git rev-parse -q --verify "$p:$path" 2>/dev/null || true)"
-        if [ -n "$p_blob" ] && [ "$m_blob" = "$p_blob" ]; then
-          echo "$m_blob"
-          return 0
-        fi
+      case "$UPSTREAM_ANCESTOR_PARENTS" in *"|${p}|"*) ;; *) continue ;; esac
+      p_blob="$(git rev-parse -q --verify "$p:$path" 2>/dev/null || true)"
+      if [ -n "$p_blob" ] && [ "$m_blob" = "$p_blob" ]; then
+        echo "$m_blob"
+        return 0
       fi
     done
   done <<<"$MERGE_COMMITS_IN_RANGE"

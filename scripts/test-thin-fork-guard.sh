@@ -84,8 +84,9 @@
 # unrelated commit's own changes (37, the key regression test); one extra
 # unauthorized Midad line stops the match (38); a wrong upstream SHA (39);
 # a named commit that doesn't touch the path (40); a named commit not
-# reachable from the live upstream ref (41); a malformed manifest fails the
-# whole run closed (42); an ordinary PR cannot modify the manifest itself
+# reachable from the live upstream ref (41); a well-formed but nonexistent
+# commit SHA (41b); a malformed manifest fails the whole run closed (42);
+# an ordinary PR cannot modify the manifest itself
 # (43, the security-boundary gate); a manifest record whose recorded base
 # blob no longer matches reality simply stops applying (44); and a fully
 # future-converged file reports ordinary convergence plus a stale-manifest
@@ -138,17 +139,53 @@ assert_contains() {
 compute_patched_blob() {
   local base_sha="$1" commit_sha="$2" path="$3"
   local work result
-  work="$(mktemp -d)"
-  git cat-file blob "$base_sha" >"$work/content" 2>/dev/null
-  git diff "${commit_sha}^" "$commit_sha" -- "$path" >"$work/patch.diff" 2>/dev/null
+  work="$(mktemp -d)" || {
+    echo "compute_patched_blob: mktemp failed" >&2
+    exit 1
+  }
+  if ! git cat-file blob "$base_sha" >"$work/content" 2>/dev/null; then
+    echo "compute_patched_blob: base blob '$base_sha' not readable" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if ! git diff "${commit_sha}^" "$commit_sha" -- "$path" >"$work/patch.diff" 2>/dev/null; then
+    echo "compute_patched_blob: cannot diff '$commit_sha' for '$path'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if [ ! -s "$work/patch.diff" ]; then
+    echo "compute_patched_blob: commit '$commit_sha' produces no patch for '$path'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
   mkdir -p "$work/$(dirname "$path")"
   cp "$work/content" "$work/$path"
-  (cd "$work" && git init -q . && git apply "patch.diff") >/dev/null 2>&1
+  # Fail loudly, not silently: a swallowed `git apply` failure here would
+  # leave $work/$path holding the UNPATCHED base content, which
+  # compute_patched_blob would then happily hash and hand back as if it were
+  # the approved head blob -- turning every negative-outcome scenario that
+  # calls this helper into a vacuous pass (asserting "still fails" is true
+  # regardless of whether verify_reviewed_backport's own rejection logic
+  # ever actually ran).
+  if ! (cd "$work" && git init -q . && git apply "patch.diff") >/dev/null 2>&1; then
+    echo "compute_patched_blob: isolated patch for '$path' from '$commit_sha' did not apply to '$base_sha'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
   # -w: write the resulting blob into the CURRENT repo's object database
   # (CWD at call time, i.e. the fixture repo) -- without it, callers that
   # later `git cat-file blob $result` from the fixture repo would find
   # nothing, since a bare `git hash-object` only computes the hash.
-  result="$(git hash-object -w "$work/$path" 2>/dev/null)"
+  if ! result="$(git hash-object -w "$work/$path" 2>/dev/null)" || [ -z "$result" ]; then
+    echo "compute_patched_blob: hash-object failed for '$path'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if [ "$result" = "$base_sha" ]; then
+    echo "compute_patched_blob: patched blob equals the base blob -- the patch was a no-op" >&2
+    rm -rf "$work"
+    exit 1
+  fi
   rm -rf "$work"
   echo "$result"
 }
@@ -166,7 +203,10 @@ commit_manifest_on_develop() {
   printf '%s\n' "$content" >scripts/reviewed-upstream-backports.tsv
   git add scripts/reviewed-upstream-backports.tsv
   git commit -qm "test: add reviewed-upstream-backports.tsv manifest"
-  [ -n "$prev_branch" ] && git checkout -q "$prev_branch"
+  if [ -n "$prev_branch" ]; then
+    git checkout -q "$prev_branch"
+  fi
+  return 0
 }
 
 # Builds a fresh fixture repo at $WORKDIR/<name> with:
@@ -1187,6 +1227,31 @@ echo "=== Scenario 41: reviewed upstream backport -- named commit not an ancesto
   ec=$?
   assert_exit "rogue (non-ancestor) commit sha fails" 1 "$ec"
   assert_contains "rogue commit sha reports New Midad-side divergence" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 41b: reviewed upstream backport -- named commit does not resolve at all -> FAIL ==="
+{
+  dir="$(new_fixture_baseline scenario41b)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt the fix"
+
+  # Well-formed but nonexistent object id -- exercises step 4 (the named
+  # commit must resolve) rather than scenario 41's step 5 (ancestry).
+  missing_sha="1111111111111111111111111111111111111111"
+  commit_manifest_on_develop "reader.txt	${missing_sha}	${base_blob}	${approved_head_blob}	test backport (nonexistent sha)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "nonexistent commit sha fails" 1 "$ec"
+  assert_contains "nonexistent commit sha reports New Midad-side divergence" "New Midad-side divergence" "$out"
 }
 
 echo "=== Scenario 42: malformed reviewed-backport manifest -> guard fails closed ==="
