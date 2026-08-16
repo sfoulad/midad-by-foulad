@@ -1,9 +1,11 @@
 #include "ActivityManager.h"
 
 #include <FontCacheManager.h>
+#include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#include <Memory.h>
 #ifndef SIMULATOR
 #include <BlePeripheralManager.h>
 #endif
@@ -29,6 +31,7 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "util/BmpViewerActivity.h"
 #include "util/FullScreenMessageActivity.h"
 #include "util/StackDiagLog.h"
 
@@ -307,7 +310,25 @@ void ActivityManager::goToNews() {
 }
 
 void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh) {
-  replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh));
+  if (path.empty()) {
+    goToFileBrowser("/");
+    return;
+  }
+
+  if (FsHelpers::hasBmpExtension(path) || FsHelpers::hasPngExtension(path)) {
+    auto activity = makeUniqueNoThrow<BmpViewerActivity>(renderer, mappedInput, std::move(path));
+    if (!activity) {
+      LOG_ERR("ACT", "OOM: bitmap viewer activity");
+      return;
+    }
+    replaceActivity(std::move(activity));
+    return;
+  }
+
+  auto activity = ReaderActivity::create(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
+  if (activity) {
+    replaceActivity(std::move(activity));
+  }
 }
 
 void ActivityManager::goToSleep(bool fromTimeout) {

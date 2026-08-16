@@ -22,9 +22,6 @@ class HomeActivity final : public Activity {
   bool idleWhitenPending = false;
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
-  // Home can be entered while Back is still held (e.g. leaving Settings with
-  // Back): ignore that stale release until a fresh press is seen here.
-  bool backPressSeen = false;
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
   size_t coverBufferSize = 0;      // Bytes allocated to coverBuffer
   // Logical rect last passed to drawRecentBookCover. The cover snapshot only
@@ -47,6 +44,14 @@ class HomeActivity final : public Activity {
   // long-press-to-remove (RecentBooksActivity.cpp).
   static constexpr unsigned long kBleLongPressMs = 1000;
   bool bleLongPressFired = false;
+
+  // A Back press from SettingsActivity::loop() fires onGoHome() on the press
+  // edge; Home is then entered fresh and would otherwise see the trailing
+  // release of that SAME physical press and mistake it for "open the most
+  // recent book" (see the Back handling in loop()). Same
+  // held-on-entry-locks-the-release idiom as FileBrowserActivity's
+  // lockNextConfirmRelease.
+  bool lockNextBackRelease = false;
 
   // Convert HomeMenuItem to menu index (used in onEnter). Order matches render()'s
   // menuItems construction: eBooks, Stats, Files, Settings ("Continue Reading" isn't

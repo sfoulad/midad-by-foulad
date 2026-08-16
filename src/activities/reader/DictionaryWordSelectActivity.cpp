@@ -436,9 +436,25 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
     return;
   }
 
-  GUI.drawPopup(renderer, lookup.status == DictionaryLookupResult::Status::NoDictionary
-                              ? tr(STR_DICTIONARY_NONE_SELECTED)
-                              : tr(STR_DEFINITION_NOT_FOUND));
+  const char* msg;
+  switch (lookup.status) {
+    case DictionaryLookupResult::Status::NoDictionary:
+      msg = tr(STR_DICTIONARY_NONE_SELECTED);
+      break;
+    case DictionaryLookupResult::Status::LowMemory:
+      msg = tr(STR_DICTIONARY_LOW_MEMORY);
+      break;
+    case DictionaryLookupResult::Status::DecompressError:
+      msg = tr(STR_DICTIONARY_DECOMPRESS_ERROR);
+      break;
+    case DictionaryLookupResult::Status::ReadError:
+      msg = tr(STR_DICTIONARY_READ_ERROR);
+      break;
+    default:
+      msg = tr(STR_DEFINITION_NOT_FOUND);
+      break;
+  }
+  GUI.drawPopup(renderer, msg);
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
   delay(900);
   requestUpdate();

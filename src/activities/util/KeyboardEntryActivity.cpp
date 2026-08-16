@@ -425,7 +425,7 @@ void KeyboardEntryActivity::loop() {
     confirmLongHandled = false;
   }
 
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     onCancel();
   }
 
