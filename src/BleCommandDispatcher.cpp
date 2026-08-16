@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <BlePeripheralManager.h>
+#include <HalStorage.h>
 #include <Logging.h>
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "WifiCredentialStore.h"
+#include "activities/RenderLock.h"
 
 namespace BleCommandDispatcher {
 
@@ -66,8 +68,21 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
   // WIFI_STORE's in-memory state; without this, addCredential() below would
   // save over wifi.json with only this one credential, discarding every
   // previously-saved network. fromJson() fully replaces in-memory state from
-  // disk, so this is safe to call unconditionally.
-  WIFI_STORE.loadFromFile();
+  // disk, so this is safe to call unconditionally. Storage.exists() decides
+  // "missing" (fine, first boot) vs. "exists but failed to load" (real
+  // corruption -- bail rather than saving over it) the same way
+  // MidadAppSettings::loadFromFile() does, since loadFromFile()'s plain bool
+  // return collapses both cases into false.
+  //
+  // Mirrors WifiSelectionActivity::onEnter(): SD and the e-ink display share
+  // one SPI bus, so a task doing blocking SD I/O off the render task holds
+  // RenderLock for the duration.
+  RenderLock lock;
+  const bool wifiStoreExists = Storage.exists(WifiCredentialStore::getFilePath());
+  if (wifiStoreExists && !WIFI_STORE.loadFromFile()) {
+    LOG_ERR(TAG, "wifi.provision: wifi.json exists but failed to load");
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");
+  }
 
   if (!WIFI_STORE.addCredential(ssid, password)) {
     LOG_ERR(TAG, "wifi.provision: addCredential failed for ssid=%s", ssid);

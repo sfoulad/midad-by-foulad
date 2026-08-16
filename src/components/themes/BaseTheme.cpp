@@ -863,13 +863,18 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
-bool BaseTheme::buttonMenuIndexFromPoint(const GfxRenderer&, const Rect rect, const int buttonCount, const int,
+bool BaseTheme::buttonMenuIndexFromPoint(const GfxRenderer&, const Rect rect, const int buttonCount, const int x,
                                          const int y, int& index) const {
   if (buttonCount <= 0) return false;
   const int rowStep = BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing;
-  if (rowStep <= 0 || y < rect.y) return false;
-  const int row = (y - rect.y) / rowStep;
-  if (row >= buttonCount || (y - rect.y) % rowStep >= BaseMetrics::values.menuRowHeight) return false;
+  if (rowStep <= 0) return false;
+  const int left = rect.x + BaseMetrics::values.contentSidePadding;
+  const int right = rect.x + rect.width - BaseMetrics::values.contentSidePadding;
+  if (x < left || x >= right) return false;
+  const int top = rect.y + BaseMetrics::values.verticalSpacing;
+  if (y < top) return false;
+  const int row = (y - top) / rowStep;
+  if (row >= buttonCount || (y - top) % rowStep >= BaseMetrics::values.menuRowHeight) return false;
   index = row;
   return true;
 }
