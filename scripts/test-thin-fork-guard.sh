@@ -62,6 +62,36 @@
 # (if unhelpfully) still flags it, which is exactly why the ref itself must
 # be fresh.
 #
+# Scenarios 34-45 cover the two mechanisms added for a real incident (PR
+# #149, 2026-08-15/16): a long-running branch had real-merged CrossPoint
+# through a deliberately-adopted baseline; CrossPoint then advanced the same
+# file further (an unrelated, intentionally-deferred feature, then an
+# accepted narrow fix) -- see docs/upstream-sync-architecture.md's
+# "Baseline-aware divergence classification" and "Reviewed upstream
+# backport" sections and thin-fork-guard.sh's own header comment for the
+# full design. Scenarios 34-36 cover find_adopted_upstream_blob() /
+# classify_divergence()'s new `adopted_baseline` state: a real,
+# ancestry-verified merge that this PR itself performed passes even though
+# live upstream has since drifted further (34); Midad content added on top
+# of that adopted baseline still fails (35); a later real merge that would
+# "launder" prior, already-existing Midad divergence into a trusted
+# baseline is refused, because that merge's own resulting blob does not
+# equal its upstream parent's blob for the path (36) -- see
+# find_adopted_upstream_blob's two-part qualification rule. Scenarios 37-45
+# cover verify_reviewed_backport()'s exact-content manifest exception: the
+# accepted patch applies cleanly and is exempted even though an unrelated
+# upstream commit touched the same file first, without importing that
+# unrelated commit's own changes (37, the key regression test); one extra
+# unauthorized Midad line stops the match (38); a wrong upstream SHA (39);
+# a named commit that doesn't touch the path (40); a named commit not
+# reachable from the live upstream ref (41); a well-formed but nonexistent
+# commit SHA (41b); a malformed manifest fails the whole run closed (42);
+# an ordinary PR cannot modify the manifest itself
+# (43, the security-boundary gate); a manifest record whose recorded base
+# blob no longer matches reality simply stops applying (44); and a fully
+# future-converged file reports ordinary convergence plus a stale-manifest
+# note (45).
+#
 # Usage: scripts/test-thin-fork-guard.sh
 set -uo pipefail
 
@@ -97,6 +127,86 @@ assert_contains() {
   else
     fail "$desc (output did not contain: $needle)"
   fi
+}
+
+# compute_patched_blob <base_blob_sha> <commit_sha> <path>: applies
+# <commit_sha>'s ISOLATED per-path patch for <path> to <base_blob_sha> in a
+# throwaway worktree and echoes the resulting blob SHA. Mirrors exactly what
+# thin-fork-guard.sh's own verify_reviewed_backport() does at runtime, so
+# scenarios can compute the correct APPROVED_HEAD_BLOB_SHA for a manifest
+# record without hand-deriving it. Must be run with CWD inside the git repo
+# that already contains both objects.
+compute_patched_blob() {
+  local base_sha="$1" commit_sha="$2" path="$3"
+  local work result
+  work="$(mktemp -d)" || {
+    echo "compute_patched_blob: mktemp failed" >&2
+    exit 1
+  }
+  if ! git cat-file blob "$base_sha" >"$work/content" 2>/dev/null; then
+    echo "compute_patched_blob: base blob '$base_sha' not readable" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if ! git diff "${commit_sha}^" "$commit_sha" -- "$path" >"$work/patch.diff" 2>/dev/null; then
+    echo "compute_patched_blob: cannot diff '$commit_sha' for '$path'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if [ ! -s "$work/patch.diff" ]; then
+    echo "compute_patched_blob: commit '$commit_sha' produces no patch for '$path'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  mkdir -p "$work/$(dirname "$path")"
+  cp "$work/content" "$work/$path"
+  # Fail loudly, not silently: a swallowed `git apply` failure here would
+  # leave $work/$path holding the UNPATCHED base content, which
+  # compute_patched_blob would then happily hash and hand back as if it were
+  # the approved head blob -- turning every negative-outcome scenario that
+  # calls this helper into a vacuous pass (asserting "still fails" is true
+  # regardless of whether verify_reviewed_backport's own rejection logic
+  # ever actually ran).
+  if ! (cd "$work" && git init -q . && git apply "patch.diff") >/dev/null 2>&1; then
+    echo "compute_patched_blob: isolated patch for '$path' from '$commit_sha' did not apply to '$base_sha'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  # -w: write the resulting blob into the CURRENT repo's object database
+  # (CWD at call time, i.e. the fixture repo) -- without it, callers that
+  # later `git cat-file blob $result` from the fixture repo would find
+  # nothing, since a bare `git hash-object` only computes the hash.
+  if ! result="$(git hash-object -w "$work/$path" 2>/dev/null)" || [ -z "$result" ]; then
+    echo "compute_patched_blob: hash-object failed for '$path'" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if [ "$result" = "$base_sha" ]; then
+    echo "compute_patched_blob: patched blob equals the base blob -- the patch was a no-op" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  rm -rf "$work"
+  echo "$result"
+}
+
+# commit_manifest_on_develop <tsv_content>: writes scripts/reviewed-upstream-
+# backports.tsv with the given content and commits it on `develop` (the
+# BASE_REF the guard trusts the manifest from), then returns to whatever
+# branch was checked out before. Must be called with CWD inside the fixture
+# repo.
+commit_manifest_on_develop() {
+  local content="$1" prev_branch
+  prev_branch="$(git branch --show-current)"
+  git checkout -q develop
+  mkdir -p scripts
+  printf '%s\n' "$content" >scripts/reviewed-upstream-backports.tsv
+  git add scripts/reviewed-upstream-backports.tsv
+  git commit -qm "test: add reviewed-upstream-backports.tsv manifest"
+  if [ -n "$prev_branch" ]; then
+    git checkout -q "$prev_branch"
+  fi
+  return 0
 }
 
 # Builds a fresh fixture repo at $WORKDIR/<name> with:
@@ -263,6 +373,58 @@ new_fixture_stale_upstream() {
     echo "midad content" >midad_only.txt
     git add -A
     git commit -qm "midad: add midad-only file, cleanfile.txt still untouched"
+  )
+  echo "$dir"
+}
+
+# Fixture for the baseline-aware classification and reviewed-backport
+# scenarios (34-45). `develop` never touches reader.txt (matches the real
+# PR #149 incident: Midad's own base was still pre-refactor). `upstream_mirror`
+# carries three real, linear upstream commits on reader.txt:
+#   R (upstream_at_R) -- a substantial refactor, tagged with its own branch
+#     pointer so later scenarios can real-merge exactly this point without
+#     the commits that come after it.
+#   X -- an unrelated later feature touching ONLY the funcA line (stands in
+#     for CrossPoint's real bbca4886 x4pro/papermono commit -- deliberately
+#     NOT wanted in these branches).
+#   F (upstream_mirror's tip) -- an accepted fix touching ONLY the funcB
+#     line, several lines away from X's change (stands in for the real
+#     63fcbab0 skipPages fix) -- its ISOLATED patch for reader.txt therefore
+#     has no context-line overlap with X's change at all.
+# `head_branch` performs one real `--no-ff` merge of `upstream_at_R` (R)
+# only -- exactly PR #149's actual situation: a genuine, ancestry-verified,
+# partial real merge, with X and F still ahead on live upstream.
+new_fixture_baseline() {
+  local dir="$WORKDIR/$1"
+  mkdir -p "$dir"
+  (
+    cd "$dir" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "Test"
+
+    printf 'old structure\nline2\n' >reader.txt
+    git add -A
+    git commit -q -m "initial"
+
+    git branch -q upstream_mirror
+    git checkout -q upstream_mirror
+    printf 'new structure\nfuncA\npad1\npad2\npad3\nfuncB\n' >reader.txt
+    git commit -aqm "upstream: refactor reader.txt (R)"
+    git branch -q upstream_at_R
+
+    printf 'new structure\nfuncA-x4pro\npad1\npad2\npad3\nfuncB\n' >reader.txt
+    git commit -aqm "upstream: unrelated feature touching funcA only (X)"
+
+    printf 'new structure\nfuncA-x4pro\npad1\npad2\npad3\nfuncB-fixed\n' >reader.txt
+    git commit -aqm "upstream: accepted fix touching funcB only (F)"
+
+    git checkout -q main
+    git branch -qf develop main
+
+    git checkout -q develop
+    git checkout -qb head_branch
+    git merge -q --no-ff upstream_at_R -m "Merge crosspoint-reader/develop @ $(git rev-parse upstream_at_R)"
   )
   echo "$dir"
 }
@@ -878,6 +1040,299 @@ echo "=== Scenario 33: stale upstream ref misreports divergence; fresh ref does 
     *) pass "fresh ref reports no new Midad-side divergence" ;;
   esac
   TESTS_RUN=$((TESTS_RUN + 1))
+}
+
+echo "=== Scenario 34: real ancestry-verified merge -> adopted_baseline PASS despite live upstream drift ==="
+{
+  dir="$(new_fixture_baseline scenario34)"
+  cd "$dir" || exit 1
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "adopted-baseline merge passes despite upstream drift" 0 "$ec"
+  assert_contains "adopted-baseline merge reports the adopted-baseline section" "Files matching this PR's own adopted-upstream baseline" "$out"
+  assert_contains "adopted-baseline merge names reader.txt" "reader.txt" "$out"
+  case "$out" in
+    *"New Midad-side divergence"*) fail "adopted-baseline merge must not also report New Midad-side divergence" ;;
+    *) pass "adopted-baseline merge reports no new Midad-side divergence" ;;
+  esac
+  TESTS_RUN=$((TESTS_RUN + 1))
+}
+
+echo "=== Scenario 35: Midad content added on top of an adopted baseline -> still FAIL ==="
+{
+  dir="$(new_fixture_baseline scenario35)"
+  cd "$dir" || exit 1
+  git checkout -q head_branch
+  echo "midad extra unrelated line" >>reader.txt
+  git commit -aqm "midad: add content on top of the adopted baseline"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "content on top of adopted baseline fails" 1 "$ec"
+  assert_contains "content on top of adopted baseline reports New Midad-side divergence" "New Midad-side divergence" "$out"
+  assert_contains "content on top of adopted baseline names reader.txt" "reader.txt" "$out"
+}
+
+echo "=== Scenario 36: later real merge that would launder prior Midad divergence -> must NOT gain an exemption ==="
+{
+  dir="$(new_fixture_baseline scenario36)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  git checkout -qb head_branch_laundering
+  printf 'old structure\nline2\nmidad divergence before any merge\n' >reader.txt
+  git commit -aqm "midad: diverge reader.txt before any real merge"
+  # A real merge commit whose OWN resulting blob for reader.txt does NOT
+  # equal its upstream parent's blob (kept Midad's prior divergence via
+  # merge strategy "ours") -- must not qualify as an adoption point.
+  git merge -q --no-ff -s ours upstream_at_R -m "Merge crosspoint-reader/develop @ $(git rev-parse upstream_at_R) (kept ours)"
+  out="$("$GUARD" develop head_branch_laundering upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "laundering attempt still fails" 1 "$ec"
+  assert_contains "laundering attempt reports New Midad-side divergence" "New Midad-side divergence" "$out"
+  assert_contains "laundering attempt names reader.txt" "reader.txt" "$out"
+  case "$out" in
+    *"Files matching this PR's own adopted-upstream baseline"*"reader.txt"*) fail "laundering attempt must not be classified as adopted_baseline" ;;
+    *) pass "laundering attempt correctly not classified as adopted_baseline" ;;
+  esac
+  TESTS_RUN=$((TESTS_RUN + 1))
+}
+
+echo "=== Scenario 37: reviewed upstream backport -- exact official patch applies cleanly, skips an unrelated intervening commit -> PASS ==="
+{
+  dir="$(new_fixture_baseline scenario37)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt CrossPoint's accepted reader.txt fix"
+
+  commit_manifest_on_develop "reader.txt	${f_sha}	${base_blob}	${approved_head_blob}	test backport"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "reviewed backport applies cleanly" 0 "$ec"
+  assert_contains "reviewed backport reports the exemption section" "Reviewed upstream backports" "$out"
+  assert_contains "reviewed backport names reader.txt" "reader.txt" "$out"
+  case "$out" in
+    *"New Midad-side divergence"*) fail "reviewed backport must not also report New Midad-side divergence" ;;
+    *) pass "reviewed backport reports no new Midad-side divergence" ;;
+  esac
+  TESTS_RUN=$((TESTS_RUN + 1))
+}
+
+echo "=== Scenario 38: reviewed upstream backport -- one extra unauthorized Midad line -> FAIL (content-exact) ==="
+{
+  dir="$(new_fixture_baseline scenario38)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  echo "midad extra unauthorized line" >>reader.txt
+  git commit -aqm "midad: adopt the fix plus one extra line"
+
+  commit_manifest_on_develop "reader.txt	${f_sha}	${base_blob}	${approved_head_blob}	test backport"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "extra unauthorized line fails" 1 "$ec"
+  assert_contains "extra unauthorized line reports New Midad-side divergence" "New Midad-side divergence" "$out"
+  assert_contains "extra unauthorized line names reader.txt" "reader.txt" "$out"
+}
+
+echo "=== Scenario 39: reviewed upstream backport -- wrong upstream SHA in manifest -> FAIL ==="
+{
+  dir="$(new_fixture_baseline scenario39)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt the fix"
+
+  # Wrong SHA: names R (the refactor commit) instead of F (the fix) -- R's
+  # own isolated patch does not reproduce approved_head_blob when applied to
+  # base_blob (base_blob IS R's content already).
+  commit_manifest_on_develop "reader.txt	${r_sha}	${base_blob}	${approved_head_blob}	test backport (wrong sha)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "wrong upstream SHA fails" 1 "$ec"
+  assert_contains "wrong upstream SHA reports New Midad-side divergence" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 40: reviewed upstream backport -- named commit does not touch the path -> FAIL ==="
+{
+  dir="$(new_fixture_baseline scenario40)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q upstream_mirror
+  echo "unrelated" >other.txt
+  git add other.txt
+  git commit -qm "upstream: unrelated commit, does not touch reader.txt"
+  offtopic_sha="$(git rev-parse upstream_mirror)"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt the fix"
+
+  commit_manifest_on_develop "reader.txt	${offtopic_sha}	${base_blob}	${approved_head_blob}	test backport (off-topic sha)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "off-topic commit sha fails" 1 "$ec"
+  assert_contains "off-topic commit sha reports New Midad-side divergence" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 41: reviewed upstream backport -- named commit not an ancestor of live upstream ref -> FAIL ==="
+{
+  dir="$(new_fixture_baseline scenario41)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q main
+  git checkout -qb rogue_branch
+  echo "rogue" >reader.txt
+  git commit -aqm "rogue: not part of upstream_mirror's real history"
+  rogue_sha="$(git rev-parse rogue_branch)"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt the fix"
+
+  commit_manifest_on_develop "reader.txt	${rogue_sha}	${base_blob}	${approved_head_blob}	test backport (rogue sha)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "rogue (non-ancestor) commit sha fails" 1 "$ec"
+  assert_contains "rogue commit sha reports New Midad-side divergence" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 41b: reviewed upstream backport -- named commit does not resolve at all -> FAIL ==="
+{
+  dir="$(new_fixture_baseline scenario41b)"
+  cd "$dir" || exit 1
+  r_sha="$(git rev-parse upstream_at_R)"
+  f_sha="$(git rev-parse upstream_mirror)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt the fix"
+
+  # Well-formed but nonexistent object id -- exercises step 4 (the named
+  # commit must resolve) rather than scenario 41's step 5 (ancestry).
+  missing_sha="1111111111111111111111111111111111111111"
+  commit_manifest_on_develop "reader.txt	${missing_sha}	${base_blob}	${approved_head_blob}	test backport (nonexistent sha)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "nonexistent commit sha fails" 1 "$ec"
+  assert_contains "nonexistent commit sha reports New Midad-side divergence" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 42: malformed reviewed-backport manifest -> guard fails closed ==="
+{
+  dir="$(new_fixture_baseline scenario42)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  printf 'reader.txt\tonly-two-fields\n' >scripts/reviewed-upstream-backports.tsv
+  git add scripts/reviewed-upstream-backports.tsv
+  git commit -qm "test: add malformed manifest"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "malformed manifest fails closed" 1 "$ec"
+  assert_contains "malformed manifest reports failing closed" "reviewed-upstream-backports manifest is malformed -- failing closed" "$out"
+}
+
+echo "=== Scenario 43: ordinary PR modifies scripts/reviewed-upstream-backports.tsv -> FAIL (security-boundary) ==="
+{
+  dir="$(new_fixture scenario43)"
+  cd "$dir" || exit 1
+  git checkout -q develop
+  mkdir -p scripts
+  echo "# placeholder" >scripts/reviewed-upstream-backports.tsv
+  git add scripts/reviewed-upstream-backports.tsv
+  git commit -qm "develop: placeholder manifest"
+  git checkout -qb head_branch
+  echo "path.txt	deadbeef	deadbeef	deadbeef	note" >>scripts/reviewed-upstream-backports.tsv
+  git commit -aqm "ordinary: modify the reviewed-backport manifest (should be blocked)"
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "modify reviewed-backport manifest fails" 1 "$ec"
+  assert_contains "modify reviewed-backport manifest names it" "scripts/reviewed-upstream-backports.tsv (modified/deleted)" "$out"
+  assert_contains "modify reviewed-backport manifest reports FAIL with the right reason" "security-boundary file modified -- explicit guard-maintenance procedure required" "$out"
+}
+
+echo "=== Scenario 44: reviewed backport -- recorded base blob no longer matches reality -> FAIL (record no longer applicable) ==="
+{
+  dir="$(new_fixture_baseline scenario44)"
+  cd "$dir" || exit 1
+  f_sha="$(git rev-parse upstream_mirror)"
+  r_sha="$(git rev-parse upstream_at_R)"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+  approved_head_blob="$(compute_patched_blob "$base_blob" "$f_sha" "reader.txt")"
+
+  git checkout -q head_branch
+  git cat-file blob "$approved_head_blob" >reader.txt
+  git commit -aqm "midad: adopt the fix"
+
+  wrong_base="0000000000000000000000000000000000000000"
+  commit_manifest_on_develop "reader.txt	${f_sha}	${wrong_base}	${approved_head_blob}	test backport (wrong recorded base)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "wrong recorded base blob fails" 1 "$ec"
+  assert_contains "wrong recorded base blob reports New Midad-side divergence" "New Midad-side divergence" "$out"
+}
+
+echo "=== Scenario 45: full future convergence -> normal converged PASS + stale-backport-entry report ==="
+{
+  dir="$(new_fixture_baseline scenario45)"
+  cd "$dir" || exit 1
+  f_sha="$(git rev-parse upstream_mirror)"
+  r_sha="$(git rev-parse upstream_at_R)"
+  full_blob="$(git rev-parse "upstream_mirror:reader.txt")"
+  base_blob="$(git rev-parse "$r_sha:reader.txt")"
+
+  git checkout -q head_branch
+  git show upstream_mirror:reader.txt >reader.txt
+  git commit -aqm "midad: full real merge, now byte-identical to live upstream tip"
+
+  commit_manifest_on_develop "reader.txt	${f_sha}	${base_blob}	${full_blob}	test backport (now stale)"
+  git checkout -q head_branch
+
+  out="$("$GUARD" develop head_branch upstream_mirror 2>&1)"
+  ec=$?
+  assert_exit "full convergence passes" 0 "$ec"
+  assert_contains "full convergence reports converged section" "Files converged to upstream's current content" "$out"
+  assert_contains "full convergence reports stale backport entry" "Stale reviewed-backport manifest entries" "$out"
+  assert_contains "full convergence names reader.txt as stale" "reader.txt" "$out"
 }
 
 echo
