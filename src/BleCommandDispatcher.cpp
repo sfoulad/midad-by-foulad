@@ -2,11 +2,15 @@
 
 #include <ArduinoJson.h>
 #include <BlePeripheralManager.h>
+#include <HalGPIO.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <WiFi.h>
+#include <esp_mac.h>
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
@@ -93,9 +97,52 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
+// Read-only device identification -- no side effects, no state mutation, works
+// whether the device is claimed or not. Physical possession of the reader (it's
+// sitting there, in BluetoothActivity, advertising) is the security model for this
+// and every other unclaimed-device BLE command, not a credential check.
+size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
+  JsonDocument doc;
+  doc["cmd"] = "device.info";
+  doc["state"] = "ok";
+  // Not FouladDeviceTracking::getSerialNumber() -- it derives from WiFi.macAddress(),
+  // which reads the STA netif's MAC and is only valid while that netif exists.
+  // esp_efuse_mac_get_default() reads the same base MAC directly from eFuse, with no
+  // netif dependency, and on ESP32-C3 the STA MAC equals the base eFuse MAC unmodified
+  // -- same value, no WiFi-state dependency to get wrong.
+  {
+    uint8_t mac[6] = {};
+    esp_efuse_mac_get_default(mac);
+    char serial[18];
+    snprintf(serial, sizeof(serial), "XTE-%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    doc["serial"] = serial;
+  }
+  doc["model"] = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
+  doc["firmware_version"] = CROSSPOINT_VERSION;
+  doc["wifi_connected"] = WiFi.status() == WL_CONNECTED;
+  doc["claimed"] = deviceIsClaimed();
+
+  // CROSSPOINT_VERSION embeds the branch name + short SHA on dev/RC builds
+  // (scripts/git_branch.py) and can run long enough to blow the BLE payload budget
+  // together with the other fields. Truncate just this field rather than dropping
+  // the whole reply -- the phone only needs enough to identify the base version, not
+  // the exact dev tag, in this fallback case.
+  while (measureJson(doc) > outBufLen) {
+    std::string fw = doc["firmware_version"].as<std::string>();
+    if (fw.size() <= 1) break;  // give up rather than loop forever
+    fw.resize(fw.size() - 1);
+    doc["firmware_version"] = fw;
+  }
+
+  return serializeJson(doc, outBuf, outBufLen);
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   if (strcmp(cmd, "wifi.provision") == 0) {
     return handleWifiProvision(payload, outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "device.info") == 0) {
+    return handleDeviceInfo(outBuf, outBufLen);
   }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
