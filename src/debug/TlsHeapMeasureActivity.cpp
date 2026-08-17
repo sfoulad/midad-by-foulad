@@ -60,13 +60,15 @@ struct HandshakeHeapSampler {
     }
   }
 
-  // Signals the task to stop and blocks until it confirms exit, so the
-  // caller never reads minHeap/maxHeap while the task might still be
-  // writing them.
   void stop() {
     if (!doneSem) return;
     running = false;
-    xSemaphoreTake(doneSem, pdMS_TO_TICKS(500));
+    // Must not return while the task is alive: it writes through `self`, which
+    // is a stack object in runCycle(). The task exits within one 15ms tick
+    // once `running` is false, so this loop is bounded in practice.
+    while (xSemaphoreTake(doneSem, pdMS_TO_TICKS(500)) != pdTRUE) {
+      LOG_ERR("TLSHEAP", "sampler task has not exited yet; still waiting");
+    }
     vSemaphoreDelete(doneSem);
     doneSem = nullptr;
   }
