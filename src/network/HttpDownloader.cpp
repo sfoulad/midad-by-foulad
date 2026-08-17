@@ -131,6 +131,20 @@ bool isRedirect(int status) {
   return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
+// scheme://host[:port] prefix, i.e. everything before the first '/', '?', or
+// '#' after the scheme separator (a URL with no path but a query/fragment --
+// e.g. "https://host?key=value" -- has no '/' at all, so stopping at '/' alone
+// would fold the query string into the "origin" and misclassify a same-origin
+// redirect as cross-origin). Used to decide whether a redirect crosses trust
+// boundaries -- see the Authorization/X-Device-Serial-stripping logic in
+// runGet() and runGetWolf() below.
+std::string urlOrigin(const std::string& url) {
+  const size_t schemeEnd = url.find("://");
+  if (schemeEnd == std::string::npos) return url;
+  const size_t pathStart = url.find_first_of("/?#", schemeEnd + 3);
+  return pathStart == std::string::npos ? url : url.substr(0, pathStart);
+}
+
 // Disables WiFi modem-sleep power-save for the duration of an HTTP operation,
 // restoring the default on scope exit regardless of which return path is taken.
 // OtaUpdater.cpp already does this for firmware downloads ("For better timing and
@@ -155,6 +169,13 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
   WifiPowerSaveGuard psGuard;
 
   std::string url = startUrl;
+  const std::string startOrigin = urlOrigin(startUrl);
+  // Unlike runGet(), each hop here builds a fresh SecureHttpClient, so
+  // Authorization isn't "carried over" by a reused handle -- but nothing
+  // stopped it from being unconditionally re-added on every hop regardless of
+  // which host that hop's url now pointed at. Latches permanently once any hop
+  // lands off the original origin, same rule as runGet()'s stripping logic.
+  bool crossOriginSeen = false;
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
     freeink::SecureHttpClient http;
@@ -169,7 +190,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     // append a second User-Agent header, which strict servers reject (aiohttp
     // answers 400 "Duplicate 'User-Agent' header found").
     http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
-    if (!username.empty() && !password.empty()) {
+    if (!crossOriginSeen && !username.empty() && !password.empty()) {
       const std::string credentials = username + ":" + password;
       const String encoded = base64::encode(credentials.c_str());
       http.addHeader("Authorization", std::string("Basic ") + encoded.c_str());
@@ -200,6 +221,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
         setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
         return HttpDownloader::HTTP_ERROR;
       }
+      if (urlOrigin(url) != startOrigin) crossOriginSeen = true;
       continue;
     }
     if (status != 200) {
@@ -355,6 +377,29 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     LOG_DBG("HTTP", "following redirect %d (status %d)", hop + 1, status);
     esp_http_client_close(client);
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
+
+    // esp_http_client_set_redirection() only refuses an HTTPS-to-HTTP downgrade;
+    // it does not refuse a same-scheme redirect to a different host. Both
+    // Authorization (Basic-auth callers) and X-Device-Serial (any Foulad
+    // eBooks request, see setDeviceSerialHeader() above) stay on this reused
+    // client handle across the hop, so a compromised or malicious server could
+    // otherwise redirect to attacker infrastructure and receive either. Runs
+    // for every request, not just credentialed ones -- a serial-only request
+    // needs the same origin check. Strips once the origin changes; neither
+    // header comes back even if a later hop redirects back to the original
+    // origin.
+    {
+      constexpr size_t kUrlBufLen = 512;
+      auto urlBuf = makeUniqueNoThrow<char[]>(kUrlBufLen);
+      const bool sameOrigin = urlBuf && esp_http_client_get_url(client, urlBuf.get(), kUrlBufLen) == ESP_OK &&
+                              urlOrigin(urlBuf.get()) == urlOrigin(url);
+      if (!sameOrigin) {
+        LOG_DBG("HTTP", "redirect changed origin -- dropping Authorization/X-Device-Serial headers");
+        esp_http_client_delete_header(client, "Authorization");
+        esp_http_client_delete_header(client, "X-Device-Serial");
+      }
+    }
+
     esp_http_client_close(client);
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
