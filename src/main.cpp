@@ -39,12 +39,15 @@
 #include "MappedInputManager.h"
 #include "MidadAppSettings.h"
 #include "OpdsServerStore.h"
+#include "OtaRollbackDetection.h"
+#include "OtaRollbackRecoveryPlan.h"
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "TasbihStore.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/settings/OtaRollbackRecoveryActivity.h"
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
@@ -593,6 +596,12 @@ void setup() {
   // dump, so retain the boot classification for the later activity route.
   const bool rebootedFromPanic = HalSystem::isRebootFromPanic();
 
+  // Flash-persisted signal (otadata), not a one-boot event -- see
+  // OtaRollbackDetection.h. Captured here, unconditionally, so it's available
+  // before the routing chain below decides whether to act on it.
+  std::string lastInvalidOtaDigestHex;
+  const bool hasLastInvalidOtaPartition = captureLastInvalidOtaPartitionDigest(lastInvalidOtaDigestHex);
+
   // Read-and-clear so a panic later in setup() doesn't loop into silent reboot.
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
@@ -793,9 +802,21 @@ void setup() {
     // checking), OTA_INSTALL means the user already confirmed the update before
     // the reboot, so auto-install is armed -- see silentRestartToOtaCheck() /
     // silentRestartToOtaInstall().
-    activityManager.replaceActivity(
-        std::make_unique<OtaUpdateActivity>(renderer, mappedInputManager,
-                                            /*autoInstall=*/snapshotTarget == SILENT_REBOOT_TARGET_OTA_INSTALL));
+    //
+    // Gated on OtaRollbackRecoveryPlan: if the bootloader has ever rolled back to
+    // an OTA slot the user hasn't explicitly acknowledged, this specific entry
+    // point is blocked in favor of OtaRollbackRecoveryActivity -- see
+    // OtaRollbackRecoveryPlan.h. Every other branch in this chain is untouched.
+    if (hasLastInvalidOtaPartition &&
+        planOtaRollbackRecovery(hasLastInvalidOtaPartition,
+                                lastInvalidOtaDigestHex == APP_STATE.acknowledgedOtaRollbackDigestHex) ==
+            OtaRollbackRecoveryPlan::EnterRestrictedRecovery) {
+      activityManager.replaceActivity(
+          std::make_unique<OtaRollbackRecoveryActivity>(renderer, mappedInputManager, lastInvalidOtaDigestHex));
+    } else {
+      activityManager.replaceActivity(std::make_unique<OtaUpdateActivity>(
+          renderer, mappedInputManager, /*autoInstall=*/snapshotTarget == SILENT_REBOOT_TARGET_OTA_INSTALL));
+    }
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_FILE_TRANSFER) {
     // Same fresh-heap treatment as OTA: the web server needs large contiguous
     // allocations for the WiFi driver and TCP buffers, and a fragmented heap

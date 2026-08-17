@@ -34,6 +34,7 @@ void pushRecentIndex(uint16_t* recentImages, uint8_t& recentPos, uint8_t& recent
 
 void CrossPointState::toJson(JsonDocument& doc) const {
   doc["openEpubPath"] = openEpubPath;
+  doc["acknowledgedOtaRollbackDigestHex"] = acknowledgedOtaRollbackDigestHex;
   JsonArray recentArr = doc["recentSleepImages"].to<JsonArray>();
   for (int i = 0; i < SLEEP_RECENT_COUNT; i++) recentArr.add(recentSleepImages[i]);
   doc["recentSleepPos"] = recentSleepPos;
@@ -51,6 +52,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
   openEpubPath = doc["openEpubPath"] | "";
+  acknowledgedOtaRollbackDigestHex = doc["acknowledgedOtaRollbackDigestHex"] | "";
 
   memset(recentSleepImages, 0, sizeof(recentSleepImages));
   JsonArrayConst recentArr = doc["recentSleepImages"];
