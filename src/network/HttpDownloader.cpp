@@ -131,6 +131,16 @@ bool isRedirect(int status) {
   return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
+// scheme://host[:port] prefix, i.e. everything before the first '/' after the
+// scheme separator. Used to decide whether a redirect crosses trust boundaries --
+// see the Authorization-header-stripping comment in runGet() below.
+std::string urlOrigin(const std::string& url) {
+  const size_t schemeEnd = url.find("://");
+  if (schemeEnd == std::string::npos) return url;
+  const size_t pathStart = url.find('/', schemeEnd + 3);
+  return pathStart == std::string::npos ? url : url.substr(0, pathStart);
+}
+
 // Disables WiFi modem-sleep power-save for the duration of an HTTP operation,
 // restoring the default on scope exit regardless of which return path is taken.
 // OtaUpdater.cpp already does this for firmware downloads ("For better timing and
@@ -355,6 +365,25 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     LOG_DBG("HTTP", "following redirect %d (status %d)", hop + 1, status);
     esp_http_client_close(client);
     if (esp_http_client_set_redirection(client) != ESP_OK) break;
+
+    // esp_http_client_set_redirection() only refuses an HTTPS-to-HTTP downgrade;
+    // it does not refuse a same-scheme redirect to a different host. The
+    // Authorization header set above (if any) stays on this reused client handle
+    // across the hop, so an OPDS/KOSync server -- compromised or malicious --
+    // could otherwise redirect to attacker infrastructure and receive this
+    // request's credentials. Strip it once the origin changes; it never comes
+    // back even if a later hop redirects back to the original origin.
+    if (!username.empty() && !password.empty()) {
+      constexpr size_t kUrlBufLen = 512;
+      auto urlBuf = makeUniqueNoThrow<char[]>(kUrlBufLen);
+      const bool sameOrigin = urlBuf && esp_http_client_get_url(client, urlBuf.get(), kUrlBufLen) == ESP_OK &&
+                              urlOrigin(urlBuf.get()) == urlOrigin(url);
+      if (!sameOrigin) {
+        LOG_DBG("HTTP", "redirect changed origin -- dropping Authorization header");
+        esp_http_client_delete_header(client, "Authorization");
+      }
+    }
+
     esp_http_client_close(client);
     err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
