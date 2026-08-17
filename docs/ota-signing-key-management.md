@@ -1,10 +1,15 @@
 # OTA Signing: Key Management
 
-Status: design only, Phase 1 Milestone 1. No production key exists yet. Nothing in
-this document has been implemented in the release pipeline -- that is Milestone 4
-("OTA signing implementation") per `phase-1-plan.md`'s milestone sequence. This
-document exists so that when Milestone 4 starts, the key-handling decisions are
-already made and reviewed, not improvised under release pressure.
+Status: the signing script and release-workflow wiring described below are
+implemented (`scripts/sign_firmware.sh`, invoked from `.github/workflows/release.yml`,
+`release_candidate.yml`, and `auto-release.yml`). **No production key exists yet**:
+`OTA_SIGNING_KEY` is not set as a repository secret and `ota-signing-public-key.bin`
+is not committed, so every real release run fails closed at the signing step (see
+`scripts/sign_firmware.sh`'s own missing-input checks) until both are provisioned.
+Provisioning the actual production keypair is a separate, deliberate action --
+generating it, registering the private half as a GitHub Actions secret, and
+committing the public half -- not something to do casually while wiring the
+pipeline.
 
 ## Scheme
 
@@ -19,43 +24,60 @@ not the repo, since they're throwaway-key experiment output, not a design decisi
 RSA-3072 is the only scheme `SOC_SECURE_BOOT_V2_RSA` supports on both ESP32-C3 and
 ESP32-S3 -- one key format, one signing command, works for X3/X4/Sticky identically.
 
-## Where the public verification key lives
+## Where the runtime trust anchor lives
 
-Compiled into the firmware itself, as a `static const` byte array in a Midad-owned
-source file (not a CrossPoint-owned one -- see `CLAUDE.md`'s thin-fork rule), embedded
-via `extract-public-key`'s raw binary output. This is the trust anchor `esp_ota_ops.c`'s
-`esp_image_verify()` checks OTA-installed images against (see `CLAUDE.md`'s Kconfig
-Secure Boot notes: trust is anchored in the running app, not eFuse, since Secure Boot
-hardware is off).
+**Corrected** (this Milestone 1 section originally assumed a compiled-in `static
+const` key array; Milestone 2's source-level trace, `docs/ota-migration-architecture.md`
+Part A, found that is not how `CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT` actually
+works): the trust anchor is read live from the **currently-running app's own
+appended signature block** (`calculate_image_public_key_digests()` in
+`secure_boot_signatures_app.c`), not from any Midad source file. There is nothing to
+compile in -- whichever key signed the app that is presently running is the one
+`esp_ota_ops.c`'s `esp_image_verify()` checks the next OTA image against. This also
+means the trust anchor changes automatically, without a code change, every time a
+device installs a release signed with a different key -- see "Key rotation design"
+below for why that is a one-way door, not a feature.
 
-Flash-resident (`static const`), not a runtime-loaded value -- this is exactly the kind
-of compile-time lookup table CLAUDE.md's Flash Persistence rule calls for, and there is
-no scenario where this key should ever change without a full firmware rebuild anyway.
+`ota-signing-public-key.pem` (referenced by `scripts/sign_firmware.sh` and the
+release workflows) is a **separate** artifact: it is `espsecure.py extract_public_key`'s
+PEM-format output, used only to let the CI signing step verify its own signature
+before publishing (`espsecure.py verify_signature`), the same self-check any signer
+should run before trusting its own output. It plays no role in what the device
+trusts at OTA-install time.
 
 ## Release-signing command
 
 ```
-espsecure.py sign-data --version 2 --keyfile <private-key.pem> \
-  -o firmware-signed.bin firmware.bin
+espsecure.py sign_data --version 2 --keyfile <private-key.pem> \
+  --output firmware-signed.bin firmware.bin
 ```
 
-Confirmed working against this project's actual `firmware.bin` output during the
+**Corrected from Milestone 1's `sign-data`/`-o` (hyphenated, PyPI-`esptool`-incompatible)
+syntax** -- see `scripts/sign_firmware.sh`'s own comment for why: that syntax matched
+PlatformIO's bundled `tool-esptoolpy` copy (an internal version with no published PyPI
+equivalent), not the `pip install esptool==4.12.0` the release workflows actually
+install. Confirmed against this project's actual `firmware.bin` output during the
 Milestone 1-B spike (adds a fixed 4096-byte signature block plus up-to-4095 bytes of
 sector-alignment padding). Run as an explicit step *after* PlatformIO's own build
 completes -- confirmed during the spike that PlatformIO's SCons/esptool pipeline does
 not auto-invoke ESP-IDF's `idf.py`-only CMake signing target, so this cannot be wired
 up as a Kconfig-only change.
 
-## CI / release integration design (not yet implemented)
+## CI / release integration
 
-- Add a signing step to whichever GitHub Actions workflow produces the public release
-  artifact (`gh_release`/`gh_release_rc` envs) -- after `pio run`, before the artifact is
-  attached to the GitHub Release.
-- The private key must be a GitHub Actions encrypted secret, injected only into that
-  one step, never written to a file the rest of the job can read, never logged.
-- The workflow should fail closed: if the secret is unavailable (e.g. a fork PR run,
-  which doesn't get repo secrets), the job must fail rather than publish an unsigned
-  release artifact under a real release tag.
+Implemented in `.github/workflows/release.yml`, `release_candidate.yml`, and
+`auto-release.yml`: a signing step runs after `pio run`, before the built artifact is
+attached to the GitHub Release, invoking `scripts/sign_firmware.sh`.
+
+- The private key is read from the `OTA_SIGNING_KEY` encrypted secret, injected only
+  into that one step's environment, written only to a `mktemp` file the script itself
+  deletes on exit (see `scripts/sign_firmware.sh`), never logged.
+- Fails closed by construction: `scripts/sign_firmware.sh` hard-exits if
+  `OTA_SIGNING_KEY` is unset (e.g. a fork PR run, which doesn't get repo secrets) or if
+  `ota-signing-public-key.pem` is missing -- **both are true right now**, since no
+  production key has been provisioned yet (see Status above). Real release runs will
+  fail at this step until that happens; that is the intended fail-closed behavior, not
+  a bug to work around.
 - CI (`ci.yml`, PR builds) never needs the private key -- ordinary PR/branch builds
   stay unsigned, matching `CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n`'s default in
   `platformio.ini`. Only the actual release-publish job signs.
@@ -186,9 +208,12 @@ be looser."
 ## Compromised-key emergency process (draft, needs review before Milestone 4)
 
 1. Stop signing new releases with the compromised key immediately.
-2. If a replacement key was already staged per the rotation design above, ship a
-   dual-signed release with the new key added and the compromised key's trust
-   *retained* only long enough for the fleet to update past it, then dropped.
+2. If a replacement key was already staged, use Rotation option 1 above (the
+   verification-disabled bridge release, then the new-key release) -- **not**
+   dual-signing: "Key rotation design" above establishes that appending a second
+   signature block has no effect under this Kconfig, since only block 0 is ever
+   consulted. There is no way to stage a replacement key via a second signature
+   block; the bridge is the only remote path.
 3. If no replacement key was staged (worse case), the fleet has no path to a
    remotely-verified update until a new key reaches devices some other way -- this is
    the known, accepted limit of anchoring trust in the running app instead of eFuse

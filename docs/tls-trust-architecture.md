@@ -109,16 +109,25 @@ knowing before assuming "load once, forget about it."
 1. **Curated CA bundle** (flash-resident PEM, wired through the *already-existing*
    `setCACert()`) becomes the default trust check for OPDS and KOSync/CWA
    connections, replacing the blanket `setInsecure()`.
-2. When a handshake's certificate verification fails against that bundle
-   (a self-signed server, or a public server on a CA the bundle doesn't
-   include), fall through to a **TOFU prompt**: show the user the server's
-   certificate fingerprint, let them explicitly accept it, then pin its SPKI
-   hash for that host going forward. Never silently fall back to
-   `setInsecure()` in that case — that's today's blanket-unverified behavior,
-   the exact thing this milestone exists to close.
+2. **TOFU is not a catch-all for verification failure.** A generic certificate
+   error can mean a self-signed/local server (the case TOFU is actually for), but
+   it can equally mean a hostname mismatch, an expired certificate, an invalid
+   chain, or an active man-in-the-middle — prompting to accept in all of those
+   cases lets an attacker replace a known host's key if the user clicks through.
+   Offer the TOFU prompt **only** for a server the user has explicitly configured
+   as local/self-signed (a per-server setting, not an automatic fallback from any
+   verification failure) and only after showing the fingerprint. **Fail closed**
+   — no prompt, connection refused — on hostname mismatch, expiry, or
+   invalid-chain errors against an ordinary (non-self-signed-flagged) server.
+   Never silently fall back to `setInsecure()` in either case — that's today's
+   blanket-unverified behavior, the exact thing this milestone exists to close.
 3. Re-verify against the pinned SPKI on every subsequent connection to that
-   host; if the server's key ever changes unexpectedly, treat it the same as
-   a first-time untrusted server (re-prompt), not a silent pass-through.
+   host. If the server's key ever changes unexpectedly, **do not** re-prompt as
+   though it were a first-time untrusted server — that lets a MITM attacker who
+   intercepts after the initial pin simply wait for the user to click through
+   again. Require an explicit, deliberate pin-reset action (not an inline accept
+   prompt) with out-of-band fingerprint verification before trusting a changed
+   key.
 4. Calibre-Web-Automated's Basic-auth semantics are completely unaffected by
    any of this — this design only changes *transport* trust (is this
    connection to *this* server verified), never *authentication* (the

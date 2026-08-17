@@ -48,7 +48,7 @@ jobs:
       - name: Sign firmware
         env:
           OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
-        run: ./scripts/sign_firmware.sh .pio/build/gh_release/firmware.bin ota-signing-public-key.bin
+        run: ./scripts/sign_firmware.sh .pio/build/gh_release/firmware.bin ota-signing-public-key.pem
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

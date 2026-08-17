@@ -199,6 +199,15 @@ exit code alone).
   already-installed one). Rolling back to an old, unsigned-checking slot is
   uneventful: the device just runs that old firmware again, with no OTA
   verification until it once again installs and boots into a signed release.
+  **This is a known, currently-open gap, not a resolved one**: the running app after
+  such a rollback has signature verification compiled out, so its *next* OTA install
+  can accept an unsigned or wrong-key image -- the exact pre-migration trust model,
+  reopened. No policy decision has been made yet on how to handle it (options include:
+  block rollback to a signature-unaware slot entirely, flag the device for mandatory
+  physical recovery instead of an automatic rollback, or explicitly accept this as a
+  bounded exception and test it). Treat this as unresolved until one of those is
+  chosen and documented here, not as already covered by the "uneventful" framing
+  above.
 - **Interrupted transition (power/connectivity loss mid-download)**: already
   handled by existing code, independent of signing -- see point 4 above.
 - **SD-card / USB / web-flasher / factory recovery**: deliberately unauthenticated,

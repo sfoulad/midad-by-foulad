@@ -881,6 +881,16 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 
 bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback& onData, const std::string& username,
                                       const std::string& password) {
+  // "Verified" means TLS too, not just certificate-chain checking once connected --
+  // reject plaintext up front rather than relying on every caller to only ever pass
+  // an https:// URL. esp_http_client_set_redirection() already refuses an
+  // HTTPS-to-HTTP downgrade mid-request, so this closes the one gap it doesn't
+  // cover: a caller-supplied URL that starts as http:// in the first place.
+  if (url.rfind("https://", 0) != 0) {
+    LOG_ERR("HTTP", "Refusing unverified fetch of non-HTTPS URL");
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return false;
+  }
   LOG_DBG("HTTP", "Fetching (verified): %s", url.c_str());
   Sink sink;
   sink.write = onData;
