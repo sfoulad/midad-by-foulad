@@ -16,6 +16,12 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   static constexpr uint8_t SLEEP_RECENT_COUNT = 16;
 
   std::string openEpubPath;
+  // Digest (hex app_elf_sha256) of the last OTA-rollback-invalidated image the user
+  // explicitly acknowledged via OtaRollbackRecoveryActivity's "continue anyway" --
+  // empty if never acknowledged. Keyed to image identity, not partition label, so a
+  // brand new rollback event (different image) is never silently treated as
+  // already-acknowledged. See OtaRollbackRecoveryPlan.h.
+  std::string acknowledgedOtaRollbackDigestHex;
   uint16_t recentSleepImages[SLEEP_RECENT_COUNT] = {};
   uint8_t recentSleepPos = 0;
   uint8_t recentSleepFill = 0;
