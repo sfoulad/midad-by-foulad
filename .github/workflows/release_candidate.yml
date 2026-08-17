@@ -45,6 +45,19 @@ jobs:
           CROSSPOINT_RC_HASH: ${{ env.SHORT_SHA }}
         run: pio run -e gh_release_rc
 
+      - name: Install espsecure
+        # Pinned to the exact version validated in Phase 1 Milestone 2 (real sign+
+        # verify round-trip run against it, not just --help). Do not bump casually:
+        # espsecure's CLI has changed command syntax across major versions before
+        # (underscored subcommands -> hyphenated, .py suffix -> bare command) --
+        # confirm scripts/sign_firmware.sh's exact invocation still matches first.
+        run: uv pip install --system esptool==4.12.0
+
+      - name: Sign firmware
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: ./scripts/sign_firmware.sh .pio/build/gh_release_rc/firmware.bin ota-signing-public-key.pem
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:

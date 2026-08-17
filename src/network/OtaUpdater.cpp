@@ -193,11 +193,14 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return UPDATE_OLDER_ERROR;
   }
 
-  // esp_https_ota is hardwired to esp-tls/mbedTLS, whose precompiled build on this
-  // package can't negotiate TLS 1.3 (see SecureClient.h). Drive the OTA partition
-  // ourselves and stream the firmware through HttpDownloader, which runs over
-  // wolfSSL when FREEINK_NET_WOLFSSL is set, reusing its redirect handling for the
-  // GitHub -> CDN hop.
+  // Drive the OTA partition ourselves and stream the firmware through
+  // HttpDownloader::fetchUrlVerified, reusing its redirect handling for the
+  // GitHub -> CDN hop. Deliberately the *verified* entry point, not fetchUrl:
+  // GitHub's release CDN doesn't need wolfSSL's TLS 1.3 support (that's only
+  // needed for some KOSync/OPDS servers), so the firmware binary -- the one
+  // download on this device where an unverified TLS connection is a full
+  // remote-code-execution risk -- goes over esp_http_client/mbedTLS with the
+  // certificate chain checked against esp_crt_bundle_attach instead.
   const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
   if (!updatePartition) {
     LOG_ERR("OTA", "No OTA partition available");
@@ -223,7 +226,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   uint8_t hdr[14];
   size_t hdrLen = 0;
   bool wrongChip = false;
-  const bool fetchOk = HttpDownloader::fetchUrl(otaUrl, [&](const uint8_t* data, size_t len) {
+  const bool fetchOk = HttpDownloader::fetchUrlVerified(otaUrl, [&](const uint8_t* data, size_t len) {
     if (hdrLen < sizeof(hdr)) {
       const size_t take = std::min(len, sizeof(hdr) - hdrLen);
       std::memcpy(hdr + hdrLen, data, take);
