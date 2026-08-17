@@ -566,3 +566,27 @@ void FouladTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, const int but
     }
   }
 }
+
+// Inverse of drawButtonMenu()'s tile geometry above -- barY/tileWidth/tileX
+// must be derived the same way or taps land on the wrong tile (or none).
+bool FouladTheme::buttonMenuIndexFromPoint(const GfxRenderer& renderer, const Rect rect, const int buttonCount,
+                                           const int x, const int y, int& index) const {
+  if (buttonCount <= 0) return false;
+  constexpr int kGlyphStripHeight = 20;
+  const int barY = renderer.getScreenHeight() - kMenuBandHeight - kGlyphStripHeight;
+  if (y < barY || y >= barY + kMenuBandHeight) return false;
+
+  const int totalGaps = kMenuGap * (buttonCount - 1);
+  const int tileWidth = (rect.width - kMenuPadding * 2 - totalGaps) / buttonCount;
+  const int tileStep = tileWidth + kMenuGap;
+  if (tileWidth <= 0 || tileStep <= 0) return false;
+
+  const int relX = x - (rect.x + kMenuPadding);
+  if (relX < 0) return false;
+  const int slotIndex = relX / tileStep;
+  if (slotIndex >= buttonCount || relX % tileStep >= tileWidth) return false;
+
+  const bool rtl = I18N.isRtl();
+  index = rtl ? buttonCount - 1 - slotIndex : slotIndex;
+  return true;
+}
