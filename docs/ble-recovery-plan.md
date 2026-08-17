@@ -19,12 +19,15 @@ released in `onExit()` via an ephemeral (non-persisted)
 entirely, not carried forward. See §4's BLE-R2 entry for the corrected
 description and §1 for what's actually on `develop` now.
 
-**BLE-R3 is next but has not started.** Do not begin it without a fresh
-audit turn — this plan's own §4 BLE-R3 description predates BLE-R2's
-architecture change and needs re-scoping against the new screen-scoped model
-before work starts (in particular: `wifi.scan`'s cache-before-radio-switch
-design and any future discovery/claim command must respect that BLE now only
-runs inside `BluetoothActivity`, not in the background).
+**BLE-R3 is underway.** `device.info` shipped (PR #158, read-only, no
+WiFi/radio timing involved). `wifi.scan` is explicitly **deferred, requires
+live hardware validation** — see §4's BLE-R3 entry for the two documented
+historical hang modes and the design requirements for whoever picks it up
+with real hardware access. `account.claim`/`device.challenge` remain
+unblocked by that deferral (no WiFi/radio timing of their own) but are their
+own later batch. Any future discovery/claim command must respect that BLE
+now only runs inside `BluetoothActivity`, not in the background — the
+screen-scoped model BLE-R2 established.
 
 For the historical design/debugging narrative this plan is derived from, see
 [`docs/history/ble-module-tasks-pre-thin-fork.md`](history/ble-module-tasks-pre-thin-fork.md)
@@ -189,8 +192,58 @@ actually shipped:
   command can drive BLE independently of `BluetoothActivity`).
 
 ### BLE-R3 — Discovery/claim commands
-`device.info`, `account.claim`, `device.challenge`, `wifi.scan` (including
-`BleWifiScanCache`), plus the headless-verify portion of `804cfacd`.
+
+**`device.info` — complete, merged (PR #158).** Read-only, reimplemented fresh
+against current `BleCommandDispatcher.cpp`, not ported from the stale branch.
+Confirmed compatible with the live Midad phone-app parser
+(`foulad-one/lib/data/ble/midad_ble_client.dart`): field-by-field extraction
+from a plain decoded map, tolerant of extra/unknown keys by construction, and
+`wifi_connected`/`claimed` were already coded nullable specifically
+anticipating the firmware not sending them yet — no protocol change needed.
+
+**`wifi.scan` — DEFERRED, REQUIRES LIVE HARDWARE VALIDATION.** Scoped out of
+the current recovery batch (2026-08-17): unlike `device.info`, this needs a
+new `BleWifiScanCache` module plus changes to `BluetoothActivity.cpp`/`.h`
+and `main.cpp` — real WiFi/BLE radio-ownership timing, not just dispatcher
+wiring — and the stale branch's own history records two real, hardware-only
+hangs while building it the first time:
+
+1. **Synchronous scan blocking ~60s.** `WiFi.scanNetworks(false)` hung the
+   device solid — `WiFiScanClass`'s sync path waits on an internal ~60s
+   timeout with nothing to force it to give up, unlike a busy-loop that would
+   at least trip the watchdog. Every other WiFi-scan use in this codebase
+   already uses the async `scanNetworks(true)`/`scanComplete()` form for this
+   exact reason.
+2. **`WiFi.mode()` racing the render task's `HalPowerManager::Lock`.**
+   Intermittent (~50% of attempts): the render task holds that lock for the
+   full duration of every E-ink refresh (forces full CPU speed), and a
+   `WiFi.mode(WIFI_STA)` call issued while it's held hung the device. Every
+   real hang traced back to that exact call; incidental delay before it
+   (logging, etc.) reliably avoided the hang, confirming the race rather than
+   a different root cause.
+
+Both were fixed once, on the stale branch, and confirmed with 28 consecutive
+live trials — but that architecture and hardware state are gone, and the
+current `BluetoothActivity` (BLE-R2's screen-scoped rewrite, simulator-safe
+guards) has diverged enough that the old fix should not be revived or copied
+blindly. **Do not attempt this command without a disposable test device.**
+When a hardware-enabled round picks it up, design around:
+
+- Fully asynchronous scan, no synchronous WiFi API call on any path.
+- An explicit scan state machine (not implicit timing/ordering assumptions).
+- No blocking call from a BLE callback or the render/UI thread.
+- Defined, explicit radio ownership/locking between WiFi and BLE (this
+  SoC cannot run both at once).
+- A bounded timeout and a real cancel path if the scan doesn't finish.
+- A repeated-scan stress test, not just one clean run.
+- Whether the BLE connection can be retained during the scan on hardware
+  that supports it, rather than assuming it must drop.
+- Physical validation on both X3 and X4, not just one board.
+
+`account.claim`, `device.challenge` remain classified valid (FE-P3-RECOVERY-001)
+and unblocked by any of the above — they don't touch WiFi/radio timing — but
+are their own later batch, not bundled with `wifi.scan`. Also includes the
+headless-verify portion of `804cfacd` when picked up.
 
 ### BLE-R4 — Auth + settings.push
 Lowest re-architecture cost of the feature phases: `applySettingsFromServer()`
