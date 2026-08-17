@@ -208,12 +208,13 @@ be looser."
 ## Compromised-key emergency process (draft, needs review before Milestone 4)
 
 1. Stop signing new releases with the compromised key immediately.
-2. If a replacement key was already staged, use Rotation option 1 above (the
-   verification-disabled bridge release, then the new-key release) -- **not**
-   dual-signing: "Key rotation design" above establishes that appending a second
-   signature block has no effect under this Kconfig, since only block 0 is ever
-   consulted. There is no way to stage a replacement key via a second signature
-   block; the bridge is the only remote path.
+2. If the key compromise is confirmed or the private key may be controlled by an
+   attacker, do not use Rotation option 1. Use physical reflashing or an
+   independently authenticated recovery channel. The bridge procedure is only
+   for planned rotation before compromise -- an attacker holding the compromised
+   key can forge an indistinguishable bridge release signed with it, and once a
+   device installs that, verification is disabled and the same attacker's
+   subsequent unsigned image is accepted with no remaining check at all.
 3. If no replacement key was staged (worse case), the fleet has no path to a
    remotely-verified update until a new key reaches devices some other way -- this is
    the known, accepted limit of anchoring trust in the running app instead of eFuse

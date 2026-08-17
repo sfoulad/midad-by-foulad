@@ -886,7 +886,9 @@ bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback
   // an https:// URL. esp_http_client_set_redirection() already refuses an
   // HTTPS-to-HTTP downgrade mid-request, so this closes the one gap it doesn't
   // cover: a caller-supplied URL that starts as http:// in the first place.
-  if (url.rfind("https://", 0) != 0) {
+  // Case-insensitive: esp_http_client itself parses the scheme that way.
+  constexpr char kHttpsScheme[] = "https://";
+  if (url.size() < sizeof(kHttpsScheme) - 1 || strncasecmp(url.c_str(), kHttpsScheme, sizeof(kHttpsScheme) - 1) != 0) {
     LOG_ERR("HTTP", "Refusing unverified fetch of non-HTTPS URL");
     setLastFailure(HttpDownloader::FailStage::OPEN, 0);
     return false;
