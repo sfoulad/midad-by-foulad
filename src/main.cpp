@@ -48,6 +48,9 @@
 #include "activities/settings/OtaUpdateActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
+#ifdef TLS_HEAP_MEASURE_HARNESS
+#include "debug/TlsHeapMeasureActivity.h"
+#endif
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "util/BatteryDiagLog.h"
@@ -726,6 +729,15 @@ void setup() {
       (snapshotTarget == SILENT_REBOOT_TARGET_OTA_CHECK || snapshotTarget == SILENT_REBOOT_TARGET_OTA_INSTALL);
 
   setupDisplayAndFonts(resume != BootResume::Splash, otaBoot);
+
+#ifdef TLS_HEAP_MEASURE_HARNESS
+  // Debug-only entry point (default_tls_measure env, see platformio.ini):
+  // this build exists only to run the TLS heap measurement harness, so it
+  // bypasses the normal home/reader/OTA routing below entirely.
+  activityManager.replaceActivity(std::make_unique<TlsHeapMeasureActivity>(renderer, mappedInputManager));
+  activityManager.requestUpdateAndWait();
+  return;
+#endif
 
   switch (resume) {
     case BootResume::Silent:
