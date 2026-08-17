@@ -18,15 +18,7 @@ constexpr char DEVICE_ID[] = "crosspoint-reader";
 
 // KOSync's TLS-1.3 servers can't be reached through the precompiled system
 // mbedTLS (TLS 1.3 is stubbed out), so requests run over wolfSSL via
-// SecureHttpClient. setInsecure() below means these connections (including the
-// Basic-auth credentials sent on every request) are not currently verified --
-// a known, tracked gap, not an oversight: unlike the OTA firmware download (see
-// HttpDownloader::fetchUrlVerified), this path cannot simply revert to the
-// verified esp_http_client/mbedTLS route without breaking sync against
-// TLS-1.3-only servers. Closing it needs a CA-bundle facility SecureHttpClient
-// doesn't have yet (Phase 1's TLS-trust-architecture milestone), not a
-// blanket setInsecure() removal. The handshake still needs working heap; gate
-// on it. wolfSSL's
+// SecureHttpClient. The handshake still needs working heap; gate on it. wolfSSL's
 // footprint is smaller than mbedTLS's old ~48KB peak, but keep a conservative
 // floor. Check both total free heap and largest contiguous block so fragmented
 // heap does not fall through into a failed TLS allocation path.
