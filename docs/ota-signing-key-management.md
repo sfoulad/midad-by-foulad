@@ -3,7 +3,7 @@
 Status: the signing script and release-workflow wiring described below are
 implemented (`scripts/sign_firmware.sh`, invoked from `.github/workflows/release.yml`,
 `release_candidate.yml`, and `auto-release.yml`). **No production key exists yet**:
-`OTA_SIGNING_KEY` is not set as a repository secret and `ota-signing-public-key.bin`
+`OTA_SIGNING_KEY` is not set as a repository secret and `ota-signing-public-key.pem`
 is not committed, so every real release run fails closed at the signing step (see
 `scripts/sign_firmware.sh`'s own missing-input checks) until both are provisioned.
 Provisioning the actual production keypair is a separate, deliberate action --
