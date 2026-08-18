@@ -8,6 +8,12 @@ name: Update from CrossPoint
 # Manual workflow_dispatch remains available for dry runs or an explicit ref.
 # If the merge itself conflicts, this reports which files and stops -- it never
 # attempts to resolve or redesign anything, per docs/upstream-sync-architecture.md.
+#
+# CROSSPOINT_SYNC_TOKEN is intentionally separate from GITHUB_TOKEN. CrossPoint
+# may legitimately change files under .github/workflows/, and GitHub refuses a
+# ref update containing those files unless the credential has Workflows write.
+# Scope that fine-grained token to this repository only, with Contents: write
+# and Workflows: write; PR creation continues to use the normal GITHUB_TOKEN.
 
 on:
   workflow_dispatch:
@@ -40,12 +46,25 @@ jobs:
       branch: ${{ steps.merge.outputs.branch }}
       upstream_sha: ${{ steps.fetch.outputs.sha }}
     steps:
+      - name: Require scoped CrossPoint sync credential
+        env:
+          CROSSPOINT_SYNC_TOKEN: ${{ secrets.CROSSPOINT_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CROSSPOINT_SYNC_TOKEN" ]; then
+            echo "::error::Repository secret CROSSPOINT_SYNC_TOKEN is required. Use a fine-grained token scoped only to this repo with Contents: write and Workflows: write."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           ref: develop
           fetch-depth: 0
           submodules: recursive
-          token: ${{ github.token }}
+          # Persist this narrowly-scoped credential so both the exact upstream
+          # mirror ref and the disposable sync branch can carry legitimate
+          # CrossPoint workflow-file changes. GITHUB_TOKEN cannot do that.
+          token: ${{ secrets.CROSSPOINT_SYNC_TOKEN }}
 
       - name: Configure git identity
         run: |
