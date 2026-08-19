@@ -102,7 +102,7 @@ void tick() {
       WiFi.disconnect();
       delay(100);
       WiFi.scanNetworks(true);  // async -- see docs/ble-recovery-plan.md's
-                                 // BLE-R3 entry for why the sync form hung
+                                // BLE-R3 entry for why the sync form hung
       scanStartMillis = millis();
       state = State::Scanning;
       return;
@@ -133,7 +133,7 @@ void tick() {
         const int32_t rssi = WiFi.RSSI(i);
         const bool encrypted = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
         auto it = std::find_if(cachedNetworks.begin(), cachedNetworks.end(),
-                                [&ssid](const Network& n) { return n.ssid == ssid; });
+                               [&ssid](const Network& n) { return n.ssid == ssid; });
         if (it != cachedNetworks.end()) {
           if (rssi > it->rssi) {
             it->rssi = rssi;
