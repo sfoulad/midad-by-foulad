@@ -201,12 +201,23 @@ from a plain decoded map, tolerant of extra/unknown keys by construction, and
 `wifi_connected`/`claimed` were already coded nullable specifically
 anticipating the firmware not sending them yet — no protocol change needed.
 
-**`wifi.scan` — DEFERRED, REQUIRES LIVE HARDWARE VALIDATION.** Scoped out of
-the current recovery batch (2026-08-17): unlike `device.info`, this needs a
-new `BleWifiScanCache` module plus changes to `BluetoothActivity.cpp`/`.h`
-and `main.cpp` — real WiFi/BLE radio-ownership timing, not just dispatcher
-wiring — and the stale branch's own history records two real, hardware-only
-hangs while building it the first time:
+**`wifi.scan` — COMPLETE, hardware-validated on X3.** Was deferred
+(2026-08-17) pending real WiFi/BLE radio-ownership timing work; a hardware
+session then hit a genuine crash (not a hang) on the first live attempt --
+empty panic reason, watchdog-class reset, silent right after the scan
+started. Root cause: `main.cpp`'s `bleAllowedNow` gate (the thing that calls
+`BlePeripheral.end()`) is evaluated once per `loop()` iteration, *before*
+`BleWifiScanCache::tick()` runs -- so on the iteration a scan starts,
+`WiFi.mode(WIFI_STA)`/`scanNetworks()` ran for a full iteration while NimBLE
+was still fully advertising/connected, one iteration before the gate would
+have torn it down on its own. Fixed by having `BleWifiScanCache::tick()`
+call `BlePeripheral.end()` explicitly and synchronously before touching
+WiFi, satisfying requirement 4 below directly instead of relying on it
+implicitly. Confirmed via two consecutive live scan cycles + cached-result
+fetch + BLE re-advertise, zero crashes, where the unfixed code crashed on
+cycle 1 both times it was tried. The stale branch's own history (below)
+still documents two *different*, real, hardware-only hangs from building
+this the first time -- worth knowing even though neither was this bug:
 
 1. **Synchronous scan blocking ~60s.** `WiFi.scanNetworks(false)` hung the
    device solid — `WiFiScanClass`'s sync path waits on an internal ~60s
@@ -225,20 +236,30 @@ hangs while building it the first time:
 Both were fixed once, on the stale branch, and confirmed with 28 consecutive
 live trials — but that architecture and hardware state are gone, and the
 current `BluetoothActivity` (BLE-R2's screen-scoped rewrite, simulator-safe
-guards) has diverged enough that the old fix should not be revived or copied
-blindly. **Do not attempt this command without a disposable test device.**
-When a hardware-enabled round picks it up, design around:
+guards) had diverged enough that the old fix was not revived or copied.
+Design requirements the shipped implementation was checked against:
 
-- Fully asynchronous scan, no synchronous WiFi API call on any path.
+- Fully asynchronous scan, no synchronous WiFi API call on any path. **Met**
+  -- `WiFi.scanNetworks(true)`/`scanComplete()`, no synchronous call anywhere.
 - An explicit scan state machine (not implicit timing/ordering assumptions).
-- No blocking call from a BLE callback or the render/UI thread.
-- Defined, explicit radio ownership/locking between WiFi and BLE (this
-  SoC cannot run both at once).
+  **Met** -- `BleWifiScanCache::State`.
+- No blocking call from a BLE callback or the render/UI thread. **Met** --
+  the BLE callback only ever sets a flag; all WiFi/BLE-teardown work happens
+  in `BleWifiScanCache::tick()`, called from `main.cpp`'s own loop task.
+- Defined, explicit radio ownership/locking between WiFi and BLE (this SoC
+  cannot run both at once). **Met, and the specific gap that made this not
+  true is what the live crash traced to** -- see above.
 - A bounded timeout and a real cancel path if the scan doesn't finish.
-- A repeated-scan stress test, not just one clean run.
+  **Met for timeout** (15s, `finishScan(State::Failed)`); no explicit
+  user-triggered cancel command exists, judged unnecessary given the bounded
+  timeout already self-recovers.
+- A repeated-scan stress test, not just one clean run. **Met** -- two
+  consecutive live scan cycles plus a cached-result fetch, no crash.
 - Whether the BLE connection can be retained during the scan on hardware
-  that supports it, rather than assuming it must drop.
-- Physical validation on both X3 and X4, not just one board.
+  that supports it, rather than assuming it must drop. **Investigated and
+  rejected**: this SoC has one radio: BLE necessarily drops while WiFi scans.
+- Physical validation on both X3 and X4, not just one board. **X3 only** --
+  no X4 test unit was available this round.
 
 `account.claim`, `device.challenge` remain classified valid (FE-P3-RECOVERY-001)
 and unblocked by any of the above — they don't touch WiFi/radio timing — but
