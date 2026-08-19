@@ -30,6 +30,7 @@
 
 #include "ArabicFontSystem.h"
 #include "BleCommandDispatcher.h"
+#include "BleWifiScanCache.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "GameHighScoresStore.h"
@@ -944,6 +945,7 @@ void loop() {
   }
   BlePeripheral.poll();
   BleCommandDispatcher::pump();
+  BleWifiScanCache::tick();
 
   // Diagnostics + repaint nudge. The "BT" indicator in BaseTheme::drawHeader() reads
   // live BlePeripheral state, but e-ink screens don't repaint on a timer -- without an

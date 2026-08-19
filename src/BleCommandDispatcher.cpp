@@ -12,6 +12,7 @@
 #include <cstring>
 #include <string>
 
+#include "BleWifiScanCache.h"
 #include "FouladEbooksConfig.h"
 #include "OpdsServerStore.h"
 #include "WifiCredentialStore.h"
@@ -137,12 +138,64 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
   return serializeJson(doc, outBuf, outBufLen);
 }
 
+// Async, cross-reconnect: the actual scan runs entirely in BleWifiScanCache::tick()
+// (src/main.cpp's loop, never here) because starting it changes WiFi mode away from
+// WIFI_MODE_NULL, which drops BLE via main.cpp's existing bleAllowedNow mutual-
+// exclusion gate before a scan could ever finish on this same connection. See
+// BleWifiScanCache.h for why. A phone call sequence is: call 1 kicks off the scan and
+// gets "started" (BLE disconnects shortly after); once WiFi mode returns to NULL BLE
+// re-advertises; call 2 (after reconnect) gets "ok" with the cached results, or
+// "failed" if the scan didn't find anything usable -- either way the cache resets to
+// Idle so a further call starts a fresh scan rather than replaying the same list.
+size_t handleWifiScan(char* outBuf, size_t outBufLen) {
+  constexpr char kCmd[] = "wifi.scan";
+  switch (BleWifiScanCache::currentState()) {
+    case BleWifiScanCache::State::Idle:
+      BleWifiScanCache::requestScan();
+      return formatReply(outBuf, outBufLen, kCmd, "started", nullptr);
+
+    case BleWifiScanCache::State::PendingStart:
+    case BleWifiScanCache::State::Scanning:
+      return formatReply(outBuf, outBufLen, kCmd, "in_progress", nullptr);
+
+    case BleWifiScanCache::State::Failed:
+      BleWifiScanCache::consume();
+      return formatReply(outBuf, outBufLen, kCmd, "failed", nullptr);
+
+    case BleWifiScanCache::State::Done: {
+      JsonDocument doc;
+      doc["cmd"] = kCmd;
+      doc["state"] = "ok";
+      JsonArray arr = doc["networks"].to<JsonArray>();
+      for (const auto& n : BleWifiScanCache::networks()) {
+        JsonObject obj = arr.add<JsonObject>();
+        obj["ssid"] = n.ssid;
+        obj["rssi"] = n.rssi;
+        obj["sec"] = n.encrypted;
+      }
+      // kMaxPayloadLen (160 bytes) can't fit every scanned network with room for
+      // 32-byte SSIDs -- drop from the weakest-signal end (the array is already
+      // sorted strongest-first) until it fits, same shrink-to-fit approach
+      // handleDeviceInfo() uses for its version string.
+      while (measureJson(doc) > outBufLen && arr.size() > 0) {
+        arr.remove(arr.size() - 1);
+      }
+      BleWifiScanCache::consume();
+      return serializeJson(doc, outBuf, outBufLen);
+    }
+  }
+  return 0;
+}
+
 size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   if (strcmp(cmd, "wifi.provision") == 0) {
     return handleWifiProvision(payload, outBuf, outBufLen);
   }
   if (strcmp(cmd, "device.info") == 0) {
     return handleDeviceInfo(outBuf, outBufLen);
+  }
+  if (strcmp(cmd, "wifi.scan") == 0) {
+    return handleWifiScan(outBuf, outBufLen);
   }
   // Explicit reply, not silence -- an older reader talking to a newer phone app
   // should fail as "needs a firmware update," not hang. See docs/ble-module-tasks.md's
