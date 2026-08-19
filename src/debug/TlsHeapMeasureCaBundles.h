@@ -20,33 +20,52 @@
 // rather than hand-typed, so they can't drift from the embedded literals.
 
 // --- 1-root bundle -----------------------------------------------------
-// Literally the first complete cert block in the source file: "GlobalSign
-// Root CA" (C=BE, O=GlobalSign nv-sa, OU=Root CA; valid 1998-09-01 to
-// 2028-01-28). Verified (openssl s_client -showcerts) that
-// www.globalsign.com's own live chain resolves to exactly this root: its
-// sent chain is leaf -> "GlobalSign GCC R3 EV TLS CA 2025" ->
-// "GlobalSign Root CA - R3" (a certificate cross-signed BY this original
-// root, not the commonly-deployed self-signed R3) -> trust anchor
-// "GlobalSign Root CA". No other root is needed to validate that chain.
+// "GlobalSign Root CA - R3" (self-signed; OU=GlobalSign Root CA - R3,
+// O=GlobalSign, CN=GlobalSign; valid 2009-03-18 to 2029-03-18) -- the second
+// cert block under that name in the Mozilla source file (there are two
+// entries named "GlobalSign Root CA - R3" further down; this is the
+// self-signed one, confirmed by issuer==subject).
+//
+// This replaces a prior version of this bundle that instead embedded the
+// original 1998 self-signed "GlobalSign Root CA" (C=BE, O=GlobalSign nv-sa,
+// OU=Root CA). That was a real, hardware-confirmed bug, not a naming
+// nitpick: live-tested on an X3 (default_tls_measure, develop @ 81158f84),
+// every one of 10 handshake attempts against www.globalsign.com failed with
+// wolfSSL's ASN_NO_SIGNER_E ("ASN no signer to confirm failure"). Root
+// cause, verified directly (openssl s_client -showcerts, then openssl
+// verify against each candidate root):
+// www.globalsign.com's live chain today is leaf ->
+// "GlobalSign GCC R3 EV TLS CA 2025" -> issuer
+// "CN=GlobalSign,O=GlobalSign,OU=GlobalSign Root CA - R3" -- a *different*
+// certificate, with a different subject and key, than the old self-signed
+// "GlobalSign Root CA" this bundle previously embedded. The server does not
+// send that bridging cert itself (routine -- roots are assumed already
+// trusted), so a client holding only the old root has no path to the live
+// intermediate at all: `openssl verify -CAfile <old-root> -untrusted
+// <intermediate> <leaf>` fails; the same command against this replacement
+// root succeeds. GlobalSign's own root hierarchy changed since this bundle
+// was first written -- the earlier code comment's "verified via openssl
+// s_client" claim was accurate for whatever chain glabalsign.com served at
+// the time, not evidence of a bundle-selection mistake.
 constexpr size_t kOneRootCertCount = 1;
 static constexpr char kOneRootCaBundle[] =
     R"PEMCERT(-----BEGIN CERTIFICATE-----
-MIIDdTCCAl2gAwIBAgILBAAAAAABFUtaw5QwDQYJKoZIhvcNAQEFBQAwVzELMAkGA1UEBhMCQkUx
-GTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExEDAOBgNVBAsTB1Jvb3QgQ0ExGzAZBgNVBAMTEkds
-b2JhbFNpZ24gUm9vdCBDQTAeFw05ODA5MDExMjAwMDBaFw0yODAxMjgxMjAwMDBaMFcxCzAJBgNV
-BAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYD
-VQQDExJHbG9iYWxTaWduIFJvb3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDa
-DuaZjc6j40+Kfvvxi4Mla+pIH/EqsLmVEQS98GPR4mdmzxzdzxtIK+6NiY6arymAZavpxy0Sy6sc
-THAHoT0KMM0VjU/43dSMUBUc71DuxC73/OlS8pF94G3VNTCOXkNz8kHp1Wrjsok6Vjk4bwY8iGlb
-Kk3Fp1S4bInMm/k8yuX9ifUSPJJ4ltbcdG6TRGHRjcdGsnUOhugZitVtbNV4FpWi6cgKOOvyJBNP
-c1STE4U6G7weNLWLBYy5d4ux2x8gkasJU26Qzns3dLlwR5EiUWMWea6xrkEmCMgZK9FGqkjWZCrX
-gzT/LCrBbBlDSgeF59N89iFo7+ryUp9/k5DPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
-HRMBAf8EBTADAQH/MB0GA1UdDgQWBBRge2YaRQ2XyolQL30EzTSo//z9SzANBgkqhkiG9w0BAQUF
-AAOCAQEA1nPnfE920I2/7LqivjTFKDK1fPxsnCwrvQmeU79rXqoRSLblCKOzyj1hTdNGCbM+w6Dj
-Y1Ub8rrvrTnhQ7k4o+YviiY776BQVvnGCv04zcQLcFGUl5gE38NflNUVyRRBnMRddWQVDf9VMOyG
-j/8N7yy5Y0b2qvzfvGn9LhJIZJrglfCm7ymPAbEVtQwdpf5pLGkkeB6zpxxxYu7KyJesF12KwvhH
-hm4qxFYxldBniYUr+WymXUadDKqC5JlR3XC321Y9YeRq4VzW9v493kHMB65jUr9TU/Qr6cf9tveC
-X4XSQRjbgbMEHMUfpIBvFSDJ3gyICh3WZlXi/EjJKSZp4A==
+MIIDXzCCAkegAwIBAgILBAAAAAABIVhTCKIwDQYJKoZIhvcNAQELBQAwTDEgMB4GA1UECxMXR2xv
+YmFsU2lnbiBSb290IENBIC0gUjMxEzARBgNVBAoTCkdsb2JhbFNpZ24xEzARBgNVBAMTCkdsb2Jh
+bFNpZ24wHhcNMDkwMzE4MTAwMDAwWhcNMjkwMzE4MTAwMDAwWjBMMSAwHgYDVQQLExdHbG9iYWxT
+aWduIFJvb3QgQ0EgLSBSMzETMBEGA1UEChMKR2xvYmFsU2lnbjETMBEGA1UEAxMKR2xvYmFsU2ln
+bjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMwldpB5BngiFvXAg7aEyiie/QV2EcWt
+iHL8RgJDx7KKnQRfJMsuS+FggkbhUqsMgUdwbN1k0ev1LKMPgj0MK66X17YUhhB5uzsTgHeMCOFJ
+0mpiLx9e+pZo34knlTifBtc+ycsmWQ1z3rDI6SYOgxXG71uL0gRgykmmKPZpO/bLyCiR5Z2KYVc3
+rHQU3HTgOu5yLy6c+9C7v/U9AOEGM+iCK65TpjoWc4zdQQ4gOsC0p6Hpsk+QLjJg6VfLuQSSaGjl
+OCZgdbKfd/+RFO+uIEn8rUAVSNECMWEZXriX7613t2Saer9fwRPvm2L7DWzgVGkWqQPabumDk3F2
+xmmFghcCAwEAAaNCMEAwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYE
+FI/wS3+oLkUkrk1Q+mOai97i3Ru8MA0GCSqGSIb3DQEBCwUAA4IBAQBLQNvAUKr+yAzv95ZURUm7
+lgAJQayzE4aGKAczymvmdLm6AC2upArT9fHxD4q/c2dKg8dEe3jgr25sbwMpjjM5RcOO5LlXbKr8
+EpbsU8Yt5CRsuZRj+9xTaGdWPoO4zzUhw8lo/s7awlOqzJCK6fBdRoyV3XpYKBovHd7NADdBj+1E
+bddTKJd+82cEHhXXipa0095MJ6RMG3NzdvQXmcIfeg7jLQitChws/zyrVQ4PkX4268NXSb7hLi18
+YIvDQVETI53O9zJrlAGomecsMx86OyXShkDOOyyGeMlhLxS67ttVb9+E7gUJTb0o2HLO02JQZR7r
+kpeDMdmztcpHWD9f
 -----END CERTIFICATE-----
 )PEMCERT";
 constexpr size_t kOneRootBundleBytes = sizeof(kOneRootCaBundle) - 1;
