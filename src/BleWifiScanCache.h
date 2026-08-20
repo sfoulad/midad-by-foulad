@@ -32,7 +32,11 @@ void tick();
 State currentState();
 
 // Only meaningful when Idle -- starts the scan on the next tick(). A no-op if a
-// scan is already pending/in-flight (idempotent against a phone retry).
+// scan is already pending/in-flight (idempotent against a phone retry), AND a no-op
+// if BleWifiAutoConnectCache is mid-connect (see requestScan()'s .cpp comment --
+// confirmed live that without this guard, an overlapping wifi.scan call kills an
+// in-flight saved-network connection attempt). Check currentState() after calling to
+// see whether the request actually took.
 void requestScan();
 
 // Valid only right after currentState() == Done.
