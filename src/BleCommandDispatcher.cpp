@@ -127,6 +127,10 @@ size_t handleAccountClaim(JsonVariantConst payload, char* outBuf, size_t outBufL
 
   // Same sink the QR flow writes to (FouladQrLoginActivity.cpp's Approved case) --
   // every existing OPDS call keeps working unchanged, no new credential type.
+  // RenderLock, same as handleWifiProvision(): SD and the e-ink display share one
+  // SPI bus, so a task doing blocking SD I/O (addServer() persists to opds.json) off
+  // the render task holds this for the duration.
+  RenderLock lock;
   OpdsServer server;
   server.name = FOULAD_EBOOKS_NAME;
   server.url = FOULAD_EBOOKS_URL;
@@ -134,7 +138,8 @@ size_t handleAccountClaim(JsonVariantConst payload, char* outBuf, size_t outBufL
   server.password = token;
   server.isDeviceToken = true;
   if (!OPDS_STORE.addServer(server)) {
-    LOG_ERR(TAG, "account.claim: addServer failed for username=%s", username);
+    // Username only, never here either -- see the success log below for why.
+    LOG_ERR(TAG, "account.claim: addServer failed");
     return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");
   }
 
@@ -144,7 +149,10 @@ size_t handleAccountClaim(JsonVariantConst payload, char* outBuf, size_t outBufL
   // notify and any further commands the phone still means to send (e.g. this is
   // commonly followed by wifi.provision in the same session). The device picks the
   // credential up naturally next time it navigates to Foulad eBooks.
-  LOG_INF(TAG, "account.claim: signed in as '%s'", username);
+  // Outcome only, not the username: pump()'s own policy (see its comment) is no
+  // identifier/credential data in the serial/debug log for any command past this
+  // dispatcher, and username is an account identifier by that same standard.
+  LOG_INF(TAG, "account.claim: ok");
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
@@ -158,11 +166,18 @@ size_t handleDeviceChallenge(JsonVariantConst payload, char* outBuf, size_t outB
   // verbatim so the phone can forward it to claim-by-serial. See foulad-ebooks'
   // docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md for why this alone is a sufficient check
   // (the nonce is single-use, 60s TTL, and only reaches this device over an
-  // already-connected BLE session with whoever is physically holding it).
+  // already-connected BLE session with whoever is physically holding it). The
+  // real challenge is a fixed 32 chars (DeviceClaimChallenge::issue()), but a
+  // malformed/oversized nonce from a non-conforming caller must not silently
+  // truncate into invalid JSON the same way device.info's reply once did --
+  // measure before serializing rather than assume it fits.
   JsonDocument doc;
   doc["cmd"] = kCmd;
   doc["state"] = "ok";
   doc["echo"] = nonce;
+  if (measureJson(doc) > outBufLen) {
+    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+  }
   return serializeJson(doc, outBuf, outBufLen);
 }
 

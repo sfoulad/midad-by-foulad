@@ -60,6 +60,14 @@ std::optional<WifiCredential> pickCredential() {
 void finishConnect(State result) {
   activityManager.requestUpdateAndWait();  // see tick()'s PendingStart case
   if (result != State::Done) {
+    // Every non-Done exit clears the cached success fields here, centrally --
+    // confirmed live this was missed on the PendingStart error paths (no saved
+    // credential / storage load failure), which left a stale lastConnected=true
+    // from an earlier successful attempt sitting behind a state that had already
+    // moved to Failed, so device.info would report a connection that was no longer
+    // real. The Connecting-timeout path used to set this locally before calling in
+    // here too; centralizing removes the second place this could be forgotten.
+    lastConnected = false;
     WiFi.disconnect(true, true);
   }
   WiFi.mode(WIFI_MODE_NULL);
@@ -155,7 +163,6 @@ void tick() {
       }
       if (millis() - connectStartMillis > kConnectTimeoutMs) {
         LOG_DBG(TAG, "connect timed out after %u ms", static_cast<unsigned>(kConnectTimeoutMs));
-        lastConnected = false;
         finishConnect(State::Failed);
         return;
       }
