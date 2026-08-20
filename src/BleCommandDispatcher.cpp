@@ -203,21 +203,27 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
   // Fit into the BLE payload budget (kMaxPayloadLen, 160 bytes). Measured live: even
   // with a short release-style firmware_version, cmd/state/serial/model/claimed plus
   // BOTH full Wi-Fi representations runs to ~250+ bytes -- there is no way to always
-  // send everything, so this trims in priority order, least-consumed-today first.
-  // serializeJson() below has no bounds awareness of its own: given a doc that
-  // doesn't fit, it silently writes a truncated (and therefore unparseable) prefix
-  // rather than erroring, which is exactly what shipped here once wifi{} first
-  // pushed a real dev-build firmware_version over the edge -- confirmed live: a
-  // reply cut off mid-object at "wifi":{"saved":. Order below: drop what nothing
-  // shipped reads yet (nested saved/rssi/ssid, flat saved) before touching what the
-  // currently-shipped app actually depends on (flat connected/ssid/rssi), and drop
-  // nested "connected" -- the one nested field with real near-term value -- only
-  // once firmware_version is already fully shrunk and there's truly nothing else
-  // left to give up.
-  if (measureJson(doc) > outBufLen) wifi.remove("saved");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_saved");
+  // send everything, so this trims in priority order. serializeJson() below has no
+  // bounds awareness of its own: given a doc that doesn't fit, it silently writes a
+  // truncated (and therefore unparseable) prefix rather than erroring, which is
+  // exactly what shipped here once wifi{} first pushed a real dev-build
+  // firmware_version over the edge -- confirmed live: a reply cut off mid-object at
+  // "wifi":{"saved":.
+  //
+  // Order below is corrected from an earlier version that dropped "saved" first on
+  // the assumption nothing shipped read it yet -- confirmed live (HANDOFF
+  // MIDAD-E2E-TF168-001) that assumption was wrong: the real shipped app's
+  // BleProvisionScreen decides whether to show the Wi-Fi entry form at all from
+  // wifi.saved, and a trimmed-away "saved" made a reader with saved credentials look
+  // like it had none, sending every setup attempt through the manual Wi-Fi form
+  // regardless of what was actually on the SD card. "saved" and "connected" (both
+  // booleans, a few bytes each) now survive as long as possible; the cosmetic
+  // ssid/rssi strings/ints (nested and flat) and firmware_version are what actually
+  // give the budget back, so those go first.
   if (wifiConnected && measureJson(doc) > outBufLen) wifi.remove("rssi");
   if (wifiConnected && measureJson(doc) > outBufLen) wifi.remove("ssid");
+  if (wifiConnected && measureJson(doc) > outBufLen) doc.remove("wifi_rssi");
+  if (wifiConnected && measureJson(doc) > outBufLen) doc.remove("wifi_ssid");
   while (measureJson(doc) > outBufLen) {
     std::string fw = doc["firmware_version"].as<std::string>();
     // Must stop at size()==0, not size()<=1: fw.size() is unsigned, and resize(size()-1)
@@ -230,19 +236,15 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
     fw.resize(fw.size() - 1);
     doc["firmware_version"] = fw;
   }
-  // Below this point, none of the remaining removals are gated on wifiConnected --
-  // confirmed live that the disconnected case (wifi:{"connected":false} plus flat
-  // wifi_saved/wifi_connected, no ssid/rssi to have dropped yet) is the tighter one,
-  // not the connected case: with firmware_version already empty there was still
-  // nothing left to trim and the reply truncated ("wifi_connect...). Order: flat
-  // rssi/ssid first (only reachable with an unusually long SSID even after
-  // firmware_version is empty) -- these are what the shipped app actually depends
-  // on, so kept as long as possible; then nested "connected" and finally the whole
-  // nested "wifi" object, since flat "wifi_connected" (never touched here) is the
-  // one field this whole compat layer exists to guarantee reaches the app.
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_rssi");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_ssid");
+  // "connected" before "saved": saved is the earlier, more foundational routing
+  // decision (whether to attempt provisioning at all vs. skip straight to the
+  // account-claim step), so it stays if only one of the two can survive. Flat and
+  // nested versions of each are dropped together so the compatibility fallback
+  // (used only once "wifi" is removed entirely below) never ends up half-populated.
   if (measureJson(doc) > outBufLen) wifi.remove("connected");
+  if (measureJson(doc) > outBufLen) doc.remove("wifi_connected");
+  if (measureJson(doc) > outBufLen) doc.remove("wifi_saved");
+  if (measureJson(doc) > outBufLen) wifi.remove("saved");
   if (measureJson(doc) > outBufLen) doc.remove("wifi");
 
   return serializeJson(doc, outBuf, outBufLen);
