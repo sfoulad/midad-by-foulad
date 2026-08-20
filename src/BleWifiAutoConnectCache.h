@@ -20,10 +20,17 @@ namespace BleWifiAutoConnectCache {
 
 enum class State { Idle, PendingStart, Connecting, Done, Failed };
 
+// NoCredential and StoreLoadFailed both mean "nothing to attempt," but for different
+// reasons the phone shouldn't see as the same thing: a genuinely unconfigured reader
+// vs. a corrupted/unreadable wifi.json. Collapsing them (an earlier version of this
+// function just returned bool) made a real storage error look identical to "nothing
+// saved yet" over BLE, masking it from the client entirely.
+enum class CredentialCheckResult { NoCredential, HasCredential, StoreLoadFailed };
+
 // Whether a saved credential exists to even attempt -- cheap, synchronous, lazy-loads
 // WIFI_STORE from SD if not already loaded this boot (RenderLock-guarded, mirrors
 // BleCommandDispatcher's own wifi.provision lazy-load pattern). Safe to call anytime.
-bool hasSavedCredential();
+CredentialCheckResult checkSavedCredential();
 
 // Call once per main-loop tick (src/main.cpp), after BleWifiScanCache::tick().
 void tick();

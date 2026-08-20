@@ -217,7 +217,12 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
   //     lib/data/ble/midad_ble_client.dart's DeviceInfo.fromReply()), which only
   //     knows these flat keys. Deprecate the flat fields once that app ships a build
   //     reading the nested form instead -- not yet.
-  const bool wifiSaved = BleWifiAutoConnectCache::hasSavedCredential();
+  // device.info's wifi.saved has no room for a third "couldn't check" state (unlike
+  // wifi.autoconnect's dedicated reply below, which does) -- StoreLoadFailed reports
+  // as false here, the conservative choice: claiming "saved" when the store couldn't
+  // actually be read would be worse than under-reporting it.
+  const bool wifiSaved =
+      BleWifiAutoConnectCache::checkSavedCredential() == BleWifiAutoConnectCache::CredentialCheckResult::HasCredential;
   const bool wifiConnected = BleWifiAutoConnectCache::lastKnownConnected();
   const std::string& wifiSsid = BleWifiAutoConnectCache::lastKnownSsid();
   const int32_t wifiRssi = BleWifiAutoConnectCache::lastKnownRssi();
@@ -294,8 +299,16 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
 size_t handleWifiAutoconnect(char* outBuf, size_t outBufLen) {
   constexpr char kCmd[] = "wifi.autoconnect";
   switch (BleWifiAutoConnectCache::currentState()) {
-    case BleWifiAutoConnectCache::State::Idle:
-      if (!BleWifiAutoConnectCache::hasSavedCredential()) {
+    case BleWifiAutoConnectCache::State::Idle: {
+      // StoreLoadFailed and NoCredential both mean "nothing to attempt," but not for
+      // the same reason -- collapsing them once made a real wifi.json read failure
+      // report identically to a reader that was simply never configured, hiding a
+      // genuine storage problem from the phone.
+      const auto credCheck = BleWifiAutoConnectCache::checkSavedCredential();
+      if (credCheck == BleWifiAutoConnectCache::CredentialCheckResult::StoreLoadFailed) {
+        return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");
+      }
+      if (credCheck == BleWifiAutoConnectCache::CredentialCheckResult::NoCredential) {
         return formatReply(outBuf, outBufLen, kCmd, "skipped", "no_saved_credentials");
       }
       BleWifiAutoConnectCache::requestConnect();
@@ -308,6 +321,7 @@ size_t handleWifiAutoconnect(char* outBuf, size_t outBufLen) {
         return formatReply(outBuf, outBufLen, kCmd, "failed", "busy");
       }
       return formatReply(outBuf, outBufLen, kCmd, "started", nullptr);
+    }
 
     case BleWifiAutoConnectCache::State::PendingStart:
     case BleWifiAutoConnectCache::State::Connecting:

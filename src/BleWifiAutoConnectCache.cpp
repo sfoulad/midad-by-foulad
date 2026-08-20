@@ -75,9 +75,10 @@ void finishConnect(State result) {
 }
 }  // namespace
 
-bool hasSavedCredential() {
-  if (!ensureWifiStoreLoaded()) return false;
-  return WIFI_STORE.getCredentialCount() > 0;
+CredentialCheckResult checkSavedCredential() {
+  if (!ensureWifiStoreLoaded()) return CredentialCheckResult::StoreLoadFailed;
+  return WIFI_STORE.getCredentialCount() > 0 ? CredentialCheckResult::HasCredential
+                                             : CredentialCheckResult::NoCredential;
 }
 
 State currentState() { return state; }
@@ -131,7 +132,7 @@ void tick() {
       }
       const auto cred = pickCredential();
       if (!cred) {
-        LOG_ERR(TAG, "requestConnect() with no saved credential -- caller should have checked hasSavedCredential()");
+        LOG_ERR(TAG, "requestConnect() with no saved credential -- caller should have checked checkSavedCredential()");
         finishConnect(State::Failed);
         return;
       }
