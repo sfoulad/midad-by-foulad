@@ -292,8 +292,23 @@ size_t handleWifiAutoconnect(char* outBuf, size_t outBufLen) {
       doc["state"] = "ok";
       doc["ssid"] = BleWifiAutoConnectCache::lastKnownSsid();
       doc["rssi"] = BleWifiAutoConnectCache::lastKnownRssi();
+      // ssid is Wi-Fi-network-controlled (JSON-escaping an adversarial SSID can push
+      // the reply past outBufLen) -- measure before serializing rather than assume it
+      // fits, same rule as device.info/device.challenge. Only consume() once the
+      // reply is known to fit: otherwise a truncated reply goes out AND the cached
+      // result is gone, leaving the phone with no way to ever learn the real outcome.
+      if (measureJson(doc) > outBufLen) {
+        doc.remove("ssid");
+      }
+      if (measureJson(doc) > outBufLen) {
+        return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+      }
+      const size_t replyLen = serializeJson(doc, outBuf, outBufLen);
+      if (replyLen == 0) {
+        return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
+      }
       BleWifiAutoConnectCache::consume();
-      return serializeJson(doc, outBuf, outBufLen);
+      return replyLen;
     }
 
     case BleWifiAutoConnectCache::State::Failed:
