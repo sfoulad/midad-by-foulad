@@ -69,23 +69,67 @@ void publishStatus() {
   g_statusChar->notify();
 }
 
+// FE-P3-RC-BLE-PAIRING-001 diagnostic instrumentation: logs the full SMP/GAP security
+// path NimBLEServerCallbacks exposes, to see what the pairing procedure actually does
+// on the peripheral side rather than inferring it from a central-side ATT timeout.
+// Read-only logging only -- no behavior changes. The passkey/confirm hooks below
+// shouldn't ever fire with mitm=false (Just Works needs none of them); logging their
+// invocation is itself diagnostic signal if they do. Each still calls through to the
+// exact NimBLEServerCallbacks base-class default so behavior is unchanged either way.
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& /*connInfo*/) override {
-    LOG_DBG(TAG, "central connected");
+  void onConnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& connInfo) override {
+    LOG_DBG(TAG, "central connected: addr=%s connHandle=%u bondsBefore=%d", connInfo.getAddress().toString().c_str(),
+            connInfo.getConnHandle(), NimBLEDevice::getNumBonds());
     BlePeripheral.onConnected();
     publishStatus();
   }
-  void onDisconnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& /*connInfo*/, int reason) override {
-    LOG_DBG(TAG, "central disconnected, reason=%d", reason);
+  void onDisconnect(NimBLEServer* /*pServer*/, NimBLEConnInfo& connInfo, int reason) override {
+    LOG_DBG(TAG,
+            "central disconnected, reason=%d: encrypted=%d authenticated=%d bonded=%d "
+            "keySize=%u bondsAfter=%d",
+            reason, connInfo.isEncrypted(), connInfo.isAuthenticated(), connInfo.isBonded(), connInfo.getSecKeySize(),
+            NimBLEDevice::getNumBonds());
     BlePeripheral.onDisconnected();
     publishStatus();
+  }
+  // Fired on BLE_GAP_EVENT_ENC_CHANGE -- the actual pairing/encryption-establishment
+  // outcome, success or failure. NimBLEConnInfo doesn't expose the raw SMP/HCI status
+  // code (not surfaced by this library's public callback API); encrypted/authenticated/
+  // bonded state here is the closest observable proxy for "did it work."
+  void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+    // NimBLE's public API doesn't expose a separate "was this SC (vs legacy) pairing"
+    // flag; keySize==16 is a reasonable proxy (SC pairing always negotiates 128-bit
+    // keys) but not a direct signal, so it's omitted here rather than faked.
+    LOG_DBG(TAG,
+            "auth complete: addr=%s connHandle=%u encrypted=%d authenticated=%d bonded=%d "
+            "keySize=%u bondsAfter=%d",
+            connInfo.getAddress().toString().c_str(), connInfo.getConnHandle(), connInfo.isEncrypted(),
+            connInfo.isAuthenticated(), connInfo.isBonded(), connInfo.getSecKeySize(), NimBLEDevice::getNumBonds());
+  }
+  void onIdentity(NimBLEConnInfo& connInfo) override {
+    LOG_DBG(TAG, "peer identity resolved: idAddr=%s connHandle=%u", connInfo.getIdAddress().toString().c_str(),
+            connInfo.getConnHandle());
+    NimBLEServerCallbacks::onIdentity(connInfo);
+  }
+  uint32_t onPassKeyDisplay() override {
+    LOG_DBG(TAG, "onPassKeyDisplay invoked (unexpected with mitm=false)");
+    return NimBLEServerCallbacks::onPassKeyDisplay();
+  }
+  void onPassKeyEntry(NimBLEConnInfo& connInfo) override {
+    LOG_DBG(TAG, "onPassKeyEntry invoked (unexpected with mitm=false)");
+    NimBLEServerCallbacks::onPassKeyEntry(connInfo);
+  }
+  void onConfirmPassKey(NimBLEConnInfo& connInfo, uint32_t pin) override {
+    LOG_DBG(TAG, "onConfirmPassKey invoked (unexpected with mitm=false)");
+    NimBLEServerCallbacks::onConfirmPassKey(connInfo, pin);
   }
 };
 
 class AuthCharCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& /*connInfo*/) override {
+  void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
     const NimBLEAttValue value = pCharacteristic->getValue();
-    LOG_DBG(TAG, "auth write, %u bytes", static_cast<unsigned>(value.size()));
+    LOG_DBG(TAG, "auth write, %u bytes: encrypted=%d authenticated=%d bonded=%d", static_cast<unsigned>(value.size()),
+            connInfo.isEncrypted(), connInfo.isAuthenticated(), connInfo.isBonded());
     BlePeripheral.onAuthWritten(value.data(), value.size());
   }
 };
@@ -112,6 +156,38 @@ void BlePeripheralManager::getAdvertisedName(char* outBuf, size_t outBufLen) {
   uint8_t mac[6] = {};
   esp_efuse_mac_get_default(mac);
   snprintf(outBuf, outBufLen, "Midad-%02X%02X%02X", mac[3], mac[4], mac[5]);
+}
+
+int BlePeripheralManager::getBondCount() {
+  // NimBLEDevice::init() sets up the underlying NimBLE host task and its port-layer
+  // mutexes (including the ones the NVS-backed bond store depends on) -- before that's
+  // ever run this boot (fresh boot, BluetoothActivity never entered yet),
+  // getNumBonds()'s call chain dereferences a mutex handle that doesn't exist yet and
+  // crashes (confirmed on hardware: "assert failed: npl_freertos_mutex_pend ...
+  // (mu->handle)"). end() calls deinit(true), which clears m_initialized right back to
+  // false, so this same guard also covers "BLE was on, user left the screen" -- not
+  // just "never started this boot." Correct outcome either way: no bond count is
+  // meaningfully available when the host stack isn't currently running.
+  if (!NimBLEDevice::isInitialized()) return 0;
+  return NimBLEDevice::getNumBonds();
+}
+
+bool BlePeripheralManager::clearAllBonds() {
+  if (!NimBLEDevice::isInitialized()) return false;
+
+  // ble_gap_unpair() (what deleteAllBonds() calls per-bond) refuses to remove a bond
+  // that distributed an IRK while advertising is active -- BLE_HS_EBUSY, since it can't
+  // safely drop the peer from the controller's resolving list mid-advertisement. Any
+  // bond formed under this device's old mitm=true config did distribute an IRK, so
+  // clearing needs advertising paused for the duration.
+  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  const bool wasAdvertising = advertising != nullptr && advertising->isAdvertising();
+  if (wasAdvertising) advertising->stop();
+
+  const bool cleared = NimBLEDevice::deleteAllBonds();
+
+  if (wasAdvertising) advertising->start();
+  return cleared;
 }
 
 bool BlePeripheralManager::begin() {
@@ -204,7 +280,14 @@ bool BlePeripheralManager::begin() {
 
   service->start();
 
-  NimBLEDevice::setSecurityAuth(/*bonding=*/true, /*mitm=*/true, /*sc=*/true);
+  // mitm=false: this hardware has no display/keyboard (BLE_HS_IO_NO_INPUT_OUTPUT), so
+  // it cannot perform passkey entry or numeric comparison. Requesting mitm=true with
+  // NoInputNoOutput is unsatisfiable per the BLE spec's pairing method selection --
+  // confirmed on real hardware to leave the Auth characteristic's encrypted write
+  // hanging until the central times out ("Encryption is insufficient"). bonding and sc
+  // stay on: the link is still encrypted (LE Secure Connections) and bonded, just via
+  // unauthenticated Just Works, which is standard for headless IoT peripherals.
+  NimBLEDevice::setSecurityAuth(/*bonding=*/true, /*mitm=*/false, /*sc=*/true);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();

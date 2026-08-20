@@ -30,6 +30,7 @@
 
 #include "ArabicFontSystem.h"
 #include "BleCommandDispatcher.h"
+#include "BleWifiAutoConnectCache.h"
 #include "BleWifiScanCache.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -946,6 +947,7 @@ void loop() {
   BlePeripheral.poll();
   BleCommandDispatcher::pump();
   BleWifiScanCache::tick();
+  BleWifiAutoConnectCache::tick();
 
   // Diagnostics + repaint nudge. The "BT" indicator in BaseTheme::drawHeader() reads
   // live BlePeripheral state, but e-ink screens don't repaint on a timer -- without an
@@ -1028,13 +1030,22 @@ void loop() {
         BlePeripheralManager::getAdvertisedName(advName, sizeof(advName));
         logSerial.printf(
             "BLE_STATUS: userRequested=%d activity=%s wifiMode=%d isReader=%d freeHeap=%u maxAlloc=%u gate=%u "
-            "floor=%u bleState=%d name=%s\n",
+            "floor=%u bleState=%d name=%s bonds=%d\n",
             BlePeripheral.isUserRequested(), activityManager.currentActivityDebugName(),
             static_cast<int>(WiFi.getMode()), activityManager.isReaderActivity(),
             static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
             static_cast<unsigned>(BlePeripheralManager::kHeapGateBytes),
             static_cast<unsigned>(BlePeripheralManager::kRunningFloorBytes), static_cast<int>(BlePeripheral.state()),
-            advName);
+            advName, BlePeripheralManager::getBondCount());
+#endif
+      } else if (cmd == "BLE_CLEAR_BONDS") {
+#ifndef SIMULATOR
+        // Debug tooling only, same rationale as BLE_STATUS above: exercises the
+        // "forget device, re-pair from scratch" path from a USB test harness without
+        // needing OS-level "forget this device" UI on the central side.
+        const bool cleared = BlePeripheralManager::clearAllBonds();
+        logSerial.printf("BLE_CLEAR_BONDS: %s, bonds=%d\n", cleared ? "ok" : "failed",
+                         BlePeripheralManager::getBondCount());
 #endif
       } else if (cmd == "RESTART") {
         // Lets a scripted USB test harness reboot the device to exercise boot-path

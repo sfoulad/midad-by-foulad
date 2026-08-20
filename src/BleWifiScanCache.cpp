@@ -5,6 +5,7 @@
 
 #include <algorithm>
 
+#include "BleWifiAutoConnectCache.h"
 #include "Logging.h"
 // ActivityManager.h's inline constructor default-constructs a
 // std::unique_ptr<Activity> member; Activity.h must be visible here too or
@@ -43,9 +44,17 @@ void finishScan(State result) {
 }  // namespace
 
 void requestScan() {
-  if (state == State::Idle) {
-    state = State::PendingStart;
-  }
+  // Mutual exclusion with BleWifiAutoConnectCache: both drive the same WiFi radio
+  // through independent state machines ticked every main-loop iteration, and neither
+  // originally checked the other. Confirmed live: a wifi.scan call landing while that
+  // cache is Connecting reaches this file's own PendingStart handler's
+  // WiFi.disconnect() call below, which aborts the in-flight connection to the saved
+  // network -- two consecutive real hardware timeouts traced directly to this race.
+  // Refusing to start while the other cache is active is a strict startup gate, not
+  // a change to this module's own (already hardware-validated) scan lifecycle.
+  if (state != State::Idle) return;
+  if (BleWifiAutoConnectCache::currentState() != BleWifiAutoConnectCache::State::Idle) return;
+  state = State::PendingStart;
 }
 
 State currentState() { return state; }

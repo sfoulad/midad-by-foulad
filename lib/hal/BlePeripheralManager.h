@@ -90,6 +90,17 @@ class BlePeripheralManager {
   // getHwKey() for the identical reason.
   static void getAdvertisedName(char* outBuf, size_t outBufLen);
 
+  // Number of bonds NimBLE currently has persisted in NVS -- debug/status tooling
+  // only (see BLE_STATUS in src/main.cpp). Safe to call whether or not NimBLE is
+  // currently initialized.
+  static int getBondCount();
+  // Erases every persisted bond, forcing the next pairing attempt on any peer to
+  // start from a clean security state -- debug tooling only (see BLE_CLEAR_BONDS in
+  // src/main.cpp), for exercising the "forget device, re-pair from scratch" path
+  // without needing OS-level UI on the central side. Returns false if NimBLE isn't
+  // initialized.
+  static bool clearAllBonds();
+
   // Starts advertising if the heap gate and cool-down both allow it. Returns false
   // (and logs why) otherwise -- the caller must not retry in a tight loop; back off and
   // let the caller's own poll cadence try again later. Safe to call when already
