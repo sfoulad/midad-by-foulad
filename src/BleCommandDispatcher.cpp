@@ -99,62 +99,21 @@ size_t handleWifiProvision(JsonVariantConst payload, char* outBuf, size_t outBuf
   return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
 }
 
-// account.claim/device.challenge -- the BLE account-claim flow from foulad-ebooks'
-// docs/BLE_ACCOUNT_CLAIM_PROPOSAL.md, ported from the hardware-validated commit
-// 85a23164 (branch docs/ble-phase1-hardware-validated; never merged to develop --
-// confirmed hardware-hung on the real Foulad One app's setup flow without it, see
-// HANDOFF FE-P3-RC-BLE-PAIRING-001). Like wifi.provision, these run entirely on the
-// unclaimed-device path: physical possession of the reader is the security model,
-// not a credential check -- there is nothing to check against yet on a device with
-// no account. Once claimed, everything past this point needs the real
-// Auth-characteristic check (still Phase 2 work, see BleCommandDispatcher::pump()).
-
-size_t handleAccountClaim(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
-  constexpr char kCmd[] = "account.claim";
-  // Same unclaimed-device gate as wifi.provision -- a device that already has a
-  // Foulad eBooks account must not have it silently overwritten by anyone who
-  // picks it up and holds Confirm.
-  if (deviceIsClaimed()) {
-    LOG_DBG(TAG, "account.claim refused: device already claimed");
-    return formatReply(outBuf, outBufLen, kCmd, "failed", "unauthorized");
-  }
-
-  const char* username = payload["username"] | "";
-  const char* token = payload["token"] | "";
-  if (!username || username[0] == '\0' || !token || token[0] == '\0') {
-    return formatReply(outBuf, outBufLen, kCmd, "failed", "invalid_payload");
-  }
-
-  // Same sink the QR flow writes to (FouladQrLoginActivity.cpp's Approved case) --
-  // every existing OPDS call keeps working unchanged, no new credential type.
-  // RenderLock, same as handleWifiProvision(): SD and the e-ink display share one
-  // SPI bus, so a task doing blocking SD I/O (addServer() persists to opds.json) off
-  // the render task holds this for the duration.
-  RenderLock lock;
-  OpdsServer server;
-  server.name = FOULAD_EBOOKS_NAME;
-  server.url = FOULAD_EBOOKS_URL;
-  server.username = username;
-  server.password = token;
-  server.isDeviceToken = true;
-  if (!OPDS_STORE.addServer(server)) {
-    // Username only, never here either -- see the success log below for why.
-    LOG_ERR(TAG, "account.claim: addServer failed");
-    return formatReply(outBuf, outBufLen, kCmd, "failed", "storage_error");
-  }
-
-  // Deliberately no restart here (unlike the QR flow's silentRestartToFouladEbooks()):
-  // that flow restarts because it's mid-screen-transition into browsing the catalog;
-  // this is a BLE command mid-session, and forcing a reboot here would kill the reply
-  // notify and any further commands the phone still means to send (e.g. this is
-  // commonly followed by wifi.provision in the same session). The device picks the
-  // credential up naturally next time it navigates to Foulad eBooks.
-  // Outcome only, not the username: pump()'s own policy (see its comment) is no
-  // identifier/credential data in the serial/debug log for any command past this
-  // dispatcher, and username is an account identifier by that same standard.
-  LOG_INF(TAG, "account.claim: ok");
-  return formatReply(outBuf, outBufLen, kCmd, "ok", nullptr);
-}
+// account.claim is intentionally NOT implemented here. A first port (from the
+// hardware-validated but never-merged commit 85a23164) persisted whatever
+// {username, token} a BLE peer sent, gated only on !deviceIsClaimed() -- no
+// verification that the payload ever came from a real, server-authorized claim.
+// HANDOFF FE-P3-RC-ACCOUNT-CLAIM-TRUST-001 found this exploitable as an
+// unauthenticated denial-of-service: any BLE-proximate attacker, no Midad account
+// needed, can lock an *unclaimed* reader into a permanently non-functional claimed
+// state before its real owner ever sets it up (device.challenge doesn't gate this --
+// it's a stateless echo with no link to account.claim at all). CodeRabbit flagged
+// this on PR #168; the fix isn't a firmware tweak, it's a signed-assertion protocol
+// spanning foulad-ebooks/foulad-one/foulad-eink (design: HANDOFF
+// FE-P3-RC-ACCOUNT-CLAIM-SIGNED-PROOF-DESIGN-002) -- deferred to that follow-up
+// rather than shipping this gap. Until then, `account.claim` falls through to
+// dispatch()'s "unsupported" reply below, same as any command this firmware
+// doesn't implement.
 
 size_t handleDeviceChallenge(JsonVariantConst payload, char* outBuf, size_t outBufLen) {
   constexpr char kCmd[] = "device.challenge";
@@ -404,9 +363,6 @@ size_t dispatch(const char* cmd, JsonVariantConst payload, char* outBuf, size_t 
   }
   if (strcmp(cmd, "device.info") == 0) {
     return handleDeviceInfo(outBuf, outBufLen);
-  }
-  if (strcmp(cmd, "account.claim") == 0) {
-    return handleAccountClaim(payload, outBuf, outBufLen);
   }
   if (strcmp(cmd, "device.challenge") == 0) {
     return handleDeviceChallenge(payload, outBuf, outBufLen);
