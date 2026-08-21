@@ -1,6 +1,5 @@
-#include <gtest/gtest.h>
-
 #include <ArduinoJson.h>
+#include <gtest/gtest.h>
 
 #include <string>
 
@@ -168,7 +167,8 @@ TEST(BuildDeviceInfoPayload, ConnectedDroppedBeforeSavedUnderExtremePressure) {
     JsonDocument doc = parseValid(buf, len);
     const bool hasConnected =
         (doc["wifi"].is<JsonObject>() && doc["wifi"]["connected"].is<bool>()) || doc["wifi_connected"].is<bool>();
-    const bool hasSaved = (doc["wifi"].is<JsonObject>() && doc["wifi"]["saved"].is<bool>()) || doc["wifi_saved"].is<bool>();
+    const bool hasSaved =
+        (doc["wifi"].is<JsonObject>() && doc["wifi"]["saved"].is<bool>()) || doc["wifi_saved"].is<bool>();
     if (hasSaved && !hasConnected) {
       // Found the priority boundary: saved survived, connected didn't. This is the
       // required order -- test passes.
@@ -176,8 +176,8 @@ TEST(BuildDeviceInfoPayload, ConnectedDroppedBeforeSavedUnderExtremePressure) {
       return;
     }
     ASSERT_FALSE(hasConnected && !hasSaved)
-        << "budget=" << budget << " 'connected' survived while 'saved' was dropped -- wrong priority order: "
-        << std::string(buf, len);
+        << "budget=" << budget
+        << " 'connected' survived while 'saved' was dropped -- wrong priority order: " << std::string(buf, len);
   }
 }
 
