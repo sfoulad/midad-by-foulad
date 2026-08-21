@@ -12,6 +12,7 @@
 #include <cstring>
 #include <string>
 
+#include "BleDeviceInfoPayload.h"
 #include "BleWifiAutoConnectCache.h"
 #include "BleWifiScanCache.h"
 #include "FouladEbooksConfig.h"
@@ -145,9 +146,7 @@ size_t handleDeviceChallenge(JsonVariantConst payload, char* outBuf, size_t outB
 // sitting there, in BluetoothActivity, advertising) is the security model for this
 // and every other unclaimed-device BLE command, not a credential check.
 size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
-  JsonDocument doc;
-  doc["cmd"] = "device.info";
-  doc["state"] = "ok";
+  DeviceInfoPayloadInput info;
   // Not FouladDeviceTracking::getSerialNumber() -- it derives from WiFi.macAddress(),
   // which reads the STA netif's MAC and is only valid while that netif exists.
   // esp_efuse_mac_get_default() reads the same base MAC directly from eFuse, with no
@@ -158,96 +157,30 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
     esp_efuse_mac_get_default(mac);
     char serial[18];
     snprintf(serial, sizeof(serial), "XTE-%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    doc["serial"] = serial;
+    info.serial = serial;
   }
-  doc["model"] = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
-  doc["firmware_version"] = CROSSPOINT_VERSION;
-  doc["claimed"] = deviceIsClaimed();
+  info.model = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
+  info.firmwareVersion = CROSSPOINT_VERSION;
+  info.claimed = deviceIsClaimed();
 
-  // HANDOFF FE-P3-RC-BLE-PROTOCOL-COMPAT-001: two representations of the exact same
-  // Wi-Fi state, generated from one source (BleWifiAutoConnectCache's cached outcome,
-  // NOT live WiFi.status() -- by the time any BLE caller can ask, WiFi has already
-  // been torn back down to WIFI_MODE_NULL to let BLE resume advertising, so a live
-  // read would almost always show disconnected regardless of what the last attempt
-  // actually did). Never includes the password.
-  //   - "wifi": {...} -- the preferred nested form for the app version that reads it.
-  //   - top-level "wifi_saved"/"wifi_connected"/"wifi_ssid"/"wifi_rssi" -- flat
-  //     compatibility fields for the currently-shipped app (foulad-one @ main,
-  //     lib/data/ble/midad_ble_client.dart's DeviceInfo.fromReply()), which only
-  //     knows these flat keys. Deprecate the flat fields once that app ships a build
-  //     reading the nested form instead -- not yet.
+  // BleWifiAutoConnectCache's cached outcome, NOT live WiFi.status() -- by the time
+  // any BLE caller can ask, WiFi has already been torn back down to WIFI_MODE_NULL to
+  // let BLE resume advertising, so a live read would almost always show disconnected
+  // regardless of what the last attempt actually did. Never includes the password.
   // device.info's wifi.saved has no room for a third "couldn't check" state (unlike
   // wifi.autoconnect's dedicated reply below, which does) -- StoreLoadFailed reports
   // as false here, the conservative choice: claiming "saved" when the store couldn't
   // actually be read would be worse than under-reporting it.
-  const bool wifiSaved =
+  info.wifiSaved =
       BleWifiAutoConnectCache::checkSavedCredential() == BleWifiAutoConnectCache::CredentialCheckResult::HasCredential;
-  const bool wifiConnected = BleWifiAutoConnectCache::lastKnownConnected();
-  const std::string& wifiSsid = BleWifiAutoConnectCache::lastKnownSsid();
-  const int32_t wifiRssi = BleWifiAutoConnectCache::lastKnownRssi();
+  info.wifiConnected = BleWifiAutoConnectCache::lastKnownConnected();
+  info.wifiSsid = BleWifiAutoConnectCache::lastKnownSsid();
+  info.wifiRssi = BleWifiAutoConnectCache::lastKnownRssi();
 
-  JsonObject wifi = doc["wifi"].to<JsonObject>();
-  wifi["saved"] = wifiSaved;
-  wifi["connected"] = wifiConnected;
-  if (wifiConnected) {
-    wifi["ssid"] = wifiSsid;
-    wifi["rssi"] = wifiRssi;
-  }
-  doc["wifi_saved"] = wifiSaved;
-  doc["wifi_connected"] = wifiConnected;
-  if (wifiConnected) {
-    doc["wifi_ssid"] = wifiSsid;
-    doc["wifi_rssi"] = wifiRssi;
-  }
-
-  // Fit into the BLE payload budget (kMaxPayloadLen, 160 bytes). Measured live: even
-  // with a short release-style firmware_version, cmd/state/serial/model/claimed plus
-  // BOTH full Wi-Fi representations runs to ~250+ bytes -- there is no way to always
-  // send everything, so this trims in priority order. serializeJson() below has no
-  // bounds awareness of its own: given a doc that doesn't fit, it silently writes a
-  // truncated (and therefore unparseable) prefix rather than erroring, which is
-  // exactly what shipped here once wifi{} first pushed a real dev-build
-  // firmware_version over the edge -- confirmed live: a reply cut off mid-object at
-  // "wifi":{"saved":.
-  //
-  // Order below is corrected from an earlier version that dropped "saved" first on
-  // the assumption nothing shipped read it yet -- confirmed live (HANDOFF
-  // MIDAD-E2E-TF168-001) that assumption was wrong: the real shipped app's
-  // BleProvisionScreen decides whether to show the Wi-Fi entry form at all from
-  // wifi.saved, and a trimmed-away "saved" made a reader with saved credentials look
-  // like it had none, sending every setup attempt through the manual Wi-Fi form
-  // regardless of what was actually on the SD card. "saved" and "connected" (both
-  // booleans, a few bytes each) now survive as long as possible; the cosmetic
-  // ssid/rssi strings/ints (nested and flat) and firmware_version are what actually
-  // give the budget back, so those go first.
-  if (wifiConnected && measureJson(doc) > outBufLen) wifi.remove("rssi");
-  if (wifiConnected && measureJson(doc) > outBufLen) wifi.remove("ssid");
-  if (wifiConnected && measureJson(doc) > outBufLen) doc.remove("wifi_rssi");
-  if (wifiConnected && measureJson(doc) > outBufLen) doc.remove("wifi_ssid");
-  while (measureJson(doc) > outBufLen) {
-    std::string fw = doc["firmware_version"].as<std::string>();
-    // Must stop at size()==0, not size()<=1: fw.size() is unsigned, and resize(size()-1)
-    // on an already-empty string underflows to SIZE_MAX rather than a negative number.
-    // A size-1 firmware_version legitimately needs one more shrink to empty -- confirmed
-    // live: a real build's version string ("1") left the whole reply exactly 1 byte over
-    // budget with nothing else left to trim, and stopping here at size<=1 silently
-    // shipped a truncated, unparseable JSON reply instead of fixing the one byte.
-    if (fw.empty()) break;  // give up rather than loop forever
-    fw.resize(fw.size() - 1);
-    doc["firmware_version"] = fw;
-  }
-  // "connected" before "saved": saved is the earlier, more foundational routing
-  // decision (whether to attempt provisioning at all vs. skip straight to the
-  // account-claim step), so it stays if only one of the two can survive. Flat and
-  // nested versions of each are dropped together so the compatibility fallback
-  // (used only once "wifi" is removed entirely below) never ends up half-populated.
-  if (measureJson(doc) > outBufLen) wifi.remove("connected");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_connected");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_saved");
-  if (measureJson(doc) > outBufLen) wifi.remove("saved");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi");
-
-  return serializeJson(doc, outBuf, outBufLen);
+  // JSON building + payload-budget trimming lives in BleDeviceInfoPayload.cpp, with
+  // no ESP-IDF dependency, so it can be exercised by host-side unit tests -- see
+  // test/ble_device_info_payload/.
+  return buildDeviceInfoPayload(info, outBuf, outBufLen);
 }
 
 // Async, cross-reconnect -- same shape as handleWifiScan() below (see its comment
