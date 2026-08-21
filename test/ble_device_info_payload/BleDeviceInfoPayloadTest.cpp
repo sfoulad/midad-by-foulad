@@ -89,6 +89,7 @@ TEST(BuildDeviceInfoPayload, ConnectedPairNeverPartiallyPopulated) {
   for (size_t budget = kMaxPayloadLen; budget >= 40; --budget) {
     const size_t len = buildDeviceInfoPayload(in, buf, budget);
     if (len == 0) continue;  // budget too tight to produce anything -- fine
+    ASSERT_LE(len, budget) << "budget=" << budget << " returned a reply larger than the requested budget";
     JsonDocument doc = parseValid(buf, len);
     const bool nestedHasConnected = doc["wifi"].is<JsonObject>() && doc["wifi"]["connected"].is<bool>();
     const bool flatHasConnected = doc["wifi_connected"].is<bool>();
@@ -103,7 +104,8 @@ TEST(BuildDeviceInfoPayload, SavedPairNeverPartiallyPopulated) {
   char buf[kMaxPayloadLen];
   for (size_t budget = kMaxPayloadLen; budget >= 40; --budget) {
     const size_t len = buildDeviceInfoPayload(in, buf, budget);
-    if (len == 0) continue;
+    if (len == 0) continue;  // budget too tight to produce anything -- fine
+    ASSERT_LE(len, budget) << "budget=" << budget << " returned a reply larger than the requested budget";
     JsonDocument doc = parseValid(buf, len);
     const bool nestedHasSaved = doc["wifi"].is<JsonObject>() && doc["wifi"]["saved"].is<bool>();
     const bool flatHasSaved = doc["wifi_saved"].is<bool>();
@@ -118,7 +120,8 @@ TEST(BuildDeviceInfoPayload, SsidRssiPairsNeverPartiallyPopulated) {
   char buf[kMaxPayloadLen];
   for (size_t budget = kMaxPayloadLen; budget >= 40; --budget) {
     const size_t len = buildDeviceInfoPayload(in, buf, budget);
-    if (len == 0) continue;
+    if (len == 0) continue;  // budget too tight to produce anything -- fine
+    ASSERT_LE(len, budget) << "budget=" << budget << " returned a reply larger than the requested budget";
     JsonDocument doc = parseValid(buf, len);
     const bool nestedHasSsid = doc["wifi"].is<JsonObject>() && doc["wifi"]["ssid"].is<const char*>();
     const bool flatHasSsid = doc["wifi_ssid"].is<const char*>();
@@ -179,7 +182,8 @@ TEST(BuildDeviceInfoPayload, ConnectedDroppedBeforeSavedUnderExtremePressure) {
   // Find a budget tight enough that at most one of connected/saved survives.
   for (size_t budget = kMaxPayloadLen; budget >= 40; --budget) {
     const size_t len = buildDeviceInfoPayload(in, buf, budget);
-    if (len == 0) continue;
+    if (len == 0) continue;  // budget too tight to produce anything -- fine
+    ASSERT_LE(len, budget) << "budget=" << budget << " returned a reply larger than the requested budget";
     JsonDocument doc = parseValid(buf, len);
     const bool hasConnected =
         (doc["wifi"].is<JsonObject>() && doc["wifi"]["connected"].is<bool>()) || doc["wifi_connected"].is<bool>();
