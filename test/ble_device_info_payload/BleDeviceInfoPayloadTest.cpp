@@ -151,6 +151,14 @@ TEST(BuildDeviceInfoPayload, SavedSurvivesAfterCosmeticAndFirmwareVersionTrim) {
   const bool savedPresent =
       (doc["wifi"].is<JsonObject>() && doc["wifi"]["saved"].is<bool>()) || doc["wifi_saved"].is<bool>();
   EXPECT_TRUE(savedPresent);
+  // The test name claims cosmetic fields were trimmed -- prove it, not just infer it
+  // from firmware_version shrinking and saved surviving.
+  const bool ssidPresent =
+      (doc["wifi"].is<JsonObject>() && doc["wifi"]["ssid"].is<const char*>()) || doc["wifi_ssid"].is<const char*>();
+  const bool rssiPresent =
+      (doc["wifi"].is<JsonObject>() && doc["wifi"]["rssi"].is<int>()) || doc["wifi_rssi"].is<int>();
+  EXPECT_FALSE(ssidPresent);
+  EXPECT_FALSE(rssiPresent);
 }
 
 // "connected" is dropped before "saved" when only one can survive. Deliberately
