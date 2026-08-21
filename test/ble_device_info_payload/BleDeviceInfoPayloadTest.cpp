@@ -145,12 +145,15 @@ TEST(BuildDeviceInfoPayload, SavedSurvivesAfterCosmeticAndFirmwareVersionTrim) {
   EXPECT_LE(len, kMaxPayloadLen);
   JsonDocument doc = parseValid(buf, len);
   // firmware_version must actually have been shortened (proves the trim ran) while
-  // "saved" is still present somewhere (nested and/or flat).
+  // "saved" survives in its preferred nested form -- the shipped client reads nested
+  // wifi.saved whenever "wifi" is present at all (see the atomicity comment in
+  // BleDeviceInfoPayload.cpp), so this is the representation that actually matters
+  // for this test's specific budget/pressure, not just "present somewhere."
   const std::string fw = doc["firmware_version"] | std::string();
   EXPECT_LT(fw.size(), in.firmwareVersion.size());
-  const bool savedPresent =
-      (doc["wifi"].is<JsonObject>() && doc["wifi"]["saved"].is<bool>()) || doc["wifi_saved"].is<bool>();
-  EXPECT_TRUE(savedPresent);
+  ASSERT_TRUE(doc["wifi"].is<JsonObject>());
+  EXPECT_TRUE(doc["wifi"]["saved"].is<bool>());
+  EXPECT_TRUE(doc["wifi"]["saved"].as<bool>());
   // The test name claims cosmetic fields were trimmed -- prove it, not just infer it
   // from firmware_version shrinking and saved surviving.
   const bool ssidPresent =
