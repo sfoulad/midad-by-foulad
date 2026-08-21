@@ -22,6 +22,17 @@ set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
+# Pinned to the same version platformio.ini's [env:default]/[env:sticky]/[env:slim]
+# lib_deps use (bblanchon/ArduinoJson @ 7.4.2) so host tests exercise identical
+# trimming/serialization behavior to the firmware build.
+FetchContent_Declare(
+  ArduinoJson
+  GIT_REPOSITORY https://github.com/bblanchon/ArduinoJson.git
+  GIT_TAG v7.4.2
+)
+set(ARDUINOJSON_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(ArduinoJson)
+
 set(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_library(crosspoint_test_common INTERFACE)
@@ -51,3 +62,4 @@ add_subdirectory(opds_filename)
 add_subdirectory(combining_marks)
 add_subdirectory(credential_integrity)
 add_subdirectory(token_boundary)
+add_subdirectory(ble_device_info_payload)

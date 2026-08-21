@@ -12,6 +12,7 @@
 #include <cstring>
 #include <string>
 
+#include "BleDeviceInfoPayload.h"
 #include "BleWifiAutoConnectCache.h"
 #include "BleWifiScanCache.h"
 #include "FouladEbooksConfig.h"
@@ -145,9 +146,7 @@ size_t handleDeviceChallenge(JsonVariantConst payload, char* outBuf, size_t outB
 // sitting there, in BluetoothActivity, advertising) is the security model for this
 // and every other unclaimed-device BLE command, not a credential check.
 size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
-  JsonDocument doc;
-  doc["cmd"] = "device.info";
-  doc["state"] = "ok";
+  DeviceInfoPayloadInput info;
   // Not FouladDeviceTracking::getSerialNumber() -- it derives from WiFi.macAddress(),
   // which reads the STA netif's MAC and is only valid while that netif exists.
   // esp_efuse_mac_get_default() reads the same base MAC directly from eFuse, with no
@@ -158,94 +157,38 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
     esp_efuse_mac_get_default(mac);
     char serial[18];
     snprintf(serial, sizeof(serial), "XTE-%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    doc["serial"] = serial;
+    info.serial = serial;
   }
-  doc["model"] = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
-  doc["firmware_version"] = CROSSPOINT_VERSION;
-  doc["claimed"] = deviceIsClaimed();
+  info.model = gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4";
+  info.firmwareVersion = CROSSPOINT_VERSION;
+  info.claimed = deviceIsClaimed();
 
-  // HANDOFF FE-P3-RC-BLE-PROTOCOL-COMPAT-001: two representations of the exact same
-  // Wi-Fi state, generated from one source (BleWifiAutoConnectCache's cached outcome,
-  // NOT live WiFi.status() -- by the time any BLE caller can ask, WiFi has already
-  // been torn back down to WIFI_MODE_NULL to let BLE resume advertising, so a live
-  // read would almost always show disconnected regardless of what the last attempt
-  // actually did). Never includes the password.
-  //   - "wifi": {...} -- the preferred nested form for the app version that reads it.
-  //   - top-level "wifi_saved"/"wifi_connected"/"wifi_ssid"/"wifi_rssi" -- flat
-  //     compatibility fields for the currently-shipped app (foulad-one @ main,
-  //     lib/data/ble/midad_ble_client.dart's DeviceInfo.fromReply()), which only
-  //     knows these flat keys. Deprecate the flat fields once that app ships a build
-  //     reading the nested form instead -- not yet.
+  // BleWifiAutoConnectCache's cached outcome, NOT live WiFi.status() -- by the time
+  // any BLE caller can ask, WiFi has already been torn back down to WIFI_MODE_NULL to
+  // let BLE resume advertising, so a live read would almost always show disconnected
+  // regardless of what the last attempt actually did. Never includes the password.
   // device.info's wifi.saved has no room for a third "couldn't check" state (unlike
   // wifi.autoconnect's dedicated reply below, which does) -- StoreLoadFailed reports
   // as false here, the conservative choice: claiming "saved" when the store couldn't
   // actually be read would be worse than under-reporting it.
-  const bool wifiSaved =
+  info.wifiSaved =
       BleWifiAutoConnectCache::checkSavedCredential() == BleWifiAutoConnectCache::CredentialCheckResult::HasCredential;
-  const bool wifiConnected = BleWifiAutoConnectCache::lastKnownConnected();
-  const std::string& wifiSsid = BleWifiAutoConnectCache::lastKnownSsid();
-  const int32_t wifiRssi = BleWifiAutoConnectCache::lastKnownRssi();
+  info.wifiConnected = BleWifiAutoConnectCache::lastKnownConnected();
+  info.wifiSsid = BleWifiAutoConnectCache::lastKnownSsid();
+  info.wifiRssi = BleWifiAutoConnectCache::lastKnownRssi();
 
-  JsonObject wifi = doc["wifi"].to<JsonObject>();
-  wifi["saved"] = wifiSaved;
-  wifi["connected"] = wifiConnected;
-  if (wifiConnected) {
-    wifi["ssid"] = wifiSsid;
-    wifi["rssi"] = wifiRssi;
+  // JSON building + payload-budget trimming lives in BleDeviceInfoPayload.cpp, with
+  // no ESP-IDF dependency, so it can be exercised by host-side unit tests -- see
+  // test/ble_device_info_payload/. A 0 return means it couldn't fit even after
+  // trimming everything trimmable -- pump() silently drops a 0-length reply (no
+  // notification at all), which reads to the phone as "device never replied"
+  // (indistinguishable from a hang) rather than an explicit failure. Same guard
+  // pattern as every other handler in this file.
+  const size_t len = buildDeviceInfoPayload(info, outBuf, outBufLen);
+  if (len == 0) {
+    return formatReply(outBuf, outBufLen, "device.info", "failed", "invalid_payload");
   }
-  doc["wifi_saved"] = wifiSaved;
-  doc["wifi_connected"] = wifiConnected;
-  if (wifiConnected) {
-    doc["wifi_ssid"] = wifiSsid;
-    doc["wifi_rssi"] = wifiRssi;
-  }
-
-  // Fit into the BLE payload budget (kMaxPayloadLen, 160 bytes). Measured live: even
-  // with a short release-style firmware_version, cmd/state/serial/model/claimed plus
-  // BOTH full Wi-Fi representations runs to ~250+ bytes -- there is no way to always
-  // send everything, so this trims in priority order, least-consumed-today first.
-  // serializeJson() below has no bounds awareness of its own: given a doc that
-  // doesn't fit, it silently writes a truncated (and therefore unparseable) prefix
-  // rather than erroring, which is exactly what shipped here once wifi{} first
-  // pushed a real dev-build firmware_version over the edge -- confirmed live: a
-  // reply cut off mid-object at "wifi":{"saved":. Order below: drop what nothing
-  // shipped reads yet (nested saved/rssi/ssid, flat saved) before touching what the
-  // currently-shipped app actually depends on (flat connected/ssid/rssi), and drop
-  // nested "connected" -- the one nested field with real near-term value -- only
-  // once firmware_version is already fully shrunk and there's truly nothing else
-  // left to give up.
-  if (measureJson(doc) > outBufLen) wifi.remove("saved");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_saved");
-  if (wifiConnected && measureJson(doc) > outBufLen) wifi.remove("rssi");
-  if (wifiConnected && measureJson(doc) > outBufLen) wifi.remove("ssid");
-  while (measureJson(doc) > outBufLen) {
-    std::string fw = doc["firmware_version"].as<std::string>();
-    // Must stop at size()==0, not size()<=1: fw.size() is unsigned, and resize(size()-1)
-    // on an already-empty string underflows to SIZE_MAX rather than a negative number.
-    // A size-1 firmware_version legitimately needs one more shrink to empty -- confirmed
-    // live: a real build's version string ("1") left the whole reply exactly 1 byte over
-    // budget with nothing else left to trim, and stopping here at size<=1 silently
-    // shipped a truncated, unparseable JSON reply instead of fixing the one byte.
-    if (fw.empty()) break;  // give up rather than loop forever
-    fw.resize(fw.size() - 1);
-    doc["firmware_version"] = fw;
-  }
-  // Below this point, none of the remaining removals are gated on wifiConnected --
-  // confirmed live that the disconnected case (wifi:{"connected":false} plus flat
-  // wifi_saved/wifi_connected, no ssid/rssi to have dropped yet) is the tighter one,
-  // not the connected case: with firmware_version already empty there was still
-  // nothing left to trim and the reply truncated ("wifi_connect...). Order: flat
-  // rssi/ssid first (only reachable with an unusually long SSID even after
-  // firmware_version is empty) -- these are what the shipped app actually depends
-  // on, so kept as long as possible; then nested "connected" and finally the whole
-  // nested "wifi" object, since flat "wifi_connected" (never touched here) is the
-  // one field this whole compat layer exists to guarantee reaches the app.
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_rssi");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi_ssid");
-  if (measureJson(doc) > outBufLen) wifi.remove("connected");
-  if (measureJson(doc) > outBufLen) doc.remove("wifi");
-
-  return serializeJson(doc, outBuf, outBufLen);
+  return len;
 }
 
 // Async, cross-reconnect -- same shape as handleWifiScan() below (see its comment
