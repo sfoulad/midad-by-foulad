@@ -153,12 +153,17 @@ TEST(BuildDeviceInfoPayload, SavedSurvivesAfterCosmeticAndFirmwareVersionTrim) {
   EXPECT_TRUE(savedPresent);
 }
 
-// "connected" is dropped before "saved" when only one can survive.
+// "connected" is dropped before "saved" when only one can survive. Deliberately
+// keeps serial/model at their real fixed-format sizes (neither ever shrinks in
+// production -- an oversized serial/model here would just push the doc's floor high
+// enough that connected+saved always get removed together, never exposing the
+// boundary this test exists to check). firmwareVersion is the field that's actually
+// arbitrary-length in practice, so it's the one padded out to force heavy trimming.
 TEST(BuildDeviceInfoPayload, ConnectedDroppedBeforeSavedUnderExtremePressure) {
   DeviceInfoPayloadInput in = baseInput();
-  in.serial = "XTE-0011223344556677889900";  // deliberately oversized to force heavy trimming
-  in.model = "Xteink X3 Extended Model Name For Testing";
-  in.firmwareVersion = "1.2.3-a-much-longer-development-build-string-than-shipped-versions-use";
+  in.firmwareVersion =
+      "1.2.3-a-much-longer-development-build-string-than-shipped-versions-use-padded-to-be-extremely-long-for-"
+      "testing-purposes-only";
   char buf[kMaxPayloadLen];
   // Find a budget tight enough that at most one of connected/saved survives.
   for (size_t budget = kMaxPayloadLen; budget >= 40; --budget) {
@@ -179,6 +184,8 @@ TEST(BuildDeviceInfoPayload, ConnectedDroppedBeforeSavedUnderExtremePressure) {
         << "budget=" << budget
         << " 'connected' survived while 'saved' was dropped -- wrong priority order: " << std::string(buf, len);
   }
+  FAIL() << "never found a budget where 'saved' survived without 'connected' -- the sweep didn't exercise the "
+            "priority boundary this test exists to check";
 }
 
 TEST(BuildDeviceInfoPayload, TooTightToFitReturnsZeroNotTruncatedJson) {

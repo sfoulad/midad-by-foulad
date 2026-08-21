@@ -179,8 +179,16 @@ size_t handleDeviceInfo(char* outBuf, size_t outBufLen) {
 
   // JSON building + payload-budget trimming lives in BleDeviceInfoPayload.cpp, with
   // no ESP-IDF dependency, so it can be exercised by host-side unit tests -- see
-  // test/ble_device_info_payload/.
-  return buildDeviceInfoPayload(info, outBuf, outBufLen);
+  // test/ble_device_info_payload/. A 0 return means it couldn't fit even after
+  // trimming everything trimmable -- pump() silently drops a 0-length reply (no
+  // notification at all), which reads to the phone as "device never replied"
+  // (indistinguishable from a hang) rather than an explicit failure. Same guard
+  // pattern as every other handler in this file.
+  const size_t len = buildDeviceInfoPayload(info, outBuf, outBufLen);
+  if (len == 0) {
+    return formatReply(outBuf, outBufLen, "device.info", "failed", "invalid_payload");
+  }
+  return len;
 }
 
 // Async, cross-reconnect -- same shape as handleWifiScan() below (see its comment

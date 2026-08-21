@@ -88,7 +88,15 @@ size_t buildDeviceInfoPayload(const DeviceInfoPayloadInput& in, char* outBuf, si
     // live: a real build's version string ("1") left the whole reply exactly 1 byte over
     // budget with nothing else left to trim, and stopping here at size<=1 silently
     // shipped a truncated, unparseable JSON reply instead of fixing the one byte.
-    if (fw.empty()) break;  // give up rather than loop forever
+    if (fw.empty()) {
+      // An empty string still costs ~22 bytes ("firmware_version":"") that the
+      // higher-priority connected/saved fields below need -- and every shrunken
+      // intermediate value (e.g. "1.2.3-a-much-longer-devel") is itself a silently
+      // truncated version string the app has no way to distinguish from a real one.
+      // Drop the key entirely; a missing field reads as unknown, which is honest.
+      doc.remove("firmware_version");
+      break;
+    }
     fw.resize(fw.size() - 1);
     doc["firmware_version"] = fw;
   }
