@@ -98,11 +98,32 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
-### Version 40
+### Version 42
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
+
+Version 42 keeps the version 41 serialized layout unchanged. It was bumped for
+two upstream fixes landing together: ruby groups no longer split across a
+soft text-block flush (#3102), and simple HTML table rows now lay out as
+positioned columns instead of flattened paragraphs with synthetic row/cell
+labels (#2654) -- this fork's earlier basic table support (#980, #372) is
+superseded by the column layout. Also folds in an upstream image-decode-
+overflow/viewport-clipping fix (#2959) that clamps image top margins so a
+full-height image cannot overflow the page bottom.
+
+Every version note in this changelog describes a delta; the ImHex pattern
+below (`EXPECTED_VERSION 42`) is the full cumulative current layout. Fields
+added by earlier versions -- e.g. `ImageBlock.srcPath` (v39) and `TextBlock`
+ruby support (v40) -- are serialized in every `sections/*.bin` file at the
+current version; they are not optional or a separate format.
+
+Version 41 is an upstream merge (#2892). Focus Reading line breaking changed:
+a visible hyphen/dash inside a word is now a break opportunity, and
+hyphenation of a focus-split word considers the whole word instead of only
+its regular-weight suffix. Pages cached by older versions were laid out with
+the previous, more restrictive break set and no longer match.
 
 Version 40 is an upstream merge. TextBlock gained `<ruby>`/`<rt>` support:
 rubies are serialized per-block alongside the existing `kashidaExtraPx` array,
@@ -218,7 +239,7 @@ import std.mem;
 import std.string;
 import std.core;
 
-#define EXPECTED_VERSION 40
+#define EXPECTED_VERSION 42
 #define MAX_STRING_LENGTH 65535
 #define FOOTNOTE_NUMBER_LEN 32
 #define FOOTNOTE_HREF_LEN 256
@@ -300,6 +321,7 @@ struct TextBlock {
 
 struct ImageBlock {
     String imagePath;
+    String srcPath;
     s16 width;
     s16 height;
 };

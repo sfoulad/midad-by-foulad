@@ -4,6 +4,7 @@
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Utf8.h>
@@ -531,7 +532,8 @@ void HomeActivity::render(RenderLock&&) {
     idleWhitenPending = false;
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
   } else {
-    renderer.displayBuffer();
+    renderer.displayBuffer(cleanInitialRefresh && !firstRenderDone ? HalDisplay::HALF_REFRESH
+                                                                   : HalDisplay::FAST_REFRESH);
   }
 
   if (!firstRenderDone) {

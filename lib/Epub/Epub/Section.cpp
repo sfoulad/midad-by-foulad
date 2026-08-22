@@ -53,7 +53,12 @@ namespace {
 // focus-split word considers the whole word instead of only its regular-weight
 // suffix. Pages cached by older versions were laid out with the previous, more
 // restrictive break set and no longer match.
-constexpr uint8_t SECTION_FILE_VERSION = 41;
+// v42: upstream merge (69dd947f) -- ruby groups no longer split across a soft
+// text-block flush (#3102), and simple HTML table rows now lay out as
+// positioned columns (this fork's earlier #980/#372 table support upgraded to
+// upstream's column layout) instead of flattened paragraphs with synthetic
+// row/cell labels (#2654). Both change layout output for affected books.
+constexpr uint8_t SECTION_FILE_VERSION = 42;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
@@ -69,8 +74,8 @@ constexpr uint8_t SECTION_FILE_INCOMPLETE_VERSION = 0;
 // MUST change in lockstep with SECTION_FILE_VERSION: the sentinel IS the partial's
 // format version, so a stale-format partial otherwise passes the header check and
 // only fails (noisily, via the block-decode error path) when a page is loaded.
-// Derived so the pairing can't be forgotten (0xF2 for this fork's v40); the derived
-// value must never collide with a real version this fork has shipped (29-40 so far).
+// Derived so the pairing can't be forgotten (0xF0 for this fork's v42); the derived
+// value must never collide with a real version this fork has shipped (29-42 so far).
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE - (SECTION_FILE_VERSION - 28);
 // Upstream's header plus this fork's arabicFontId int after fontId.
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(int) + sizeof(float) + sizeof(bool) +

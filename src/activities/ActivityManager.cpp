@@ -32,6 +32,7 @@
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/BmpViewerActivity.h"
+#include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
 #include "util/StackDiagLog.h"
 
@@ -102,6 +103,16 @@ void ActivityManager::loop() {
         return;
       }
       goHome();
+      return;
+    }
+
+    if (currentActivity->name != "FrontlightPanel" && mappedInput.wasLightPanelGesture()) {
+      auto panel = makeUniqueNoThrow<FrontlightPanelActivity>(renderer, mappedInput);
+      if (!panel) {
+        LOG_ERR("ACT", "OOM: FrontlightPanelActivity");
+        return;
+      }
+      pushActivity(std::move(panel));
       return;
     }
 
@@ -342,7 +353,7 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
   replaceActivity(std::make_unique<FullScreenMessageActivity>(renderer, mappedInput, std::move(message), style));
 }
 
-void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
+void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefresh) {
   if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
     const auto& activityName = currentActivity->name;
     // CrossPointWebServer has no Home row to pre-select (it lives under Settings ->
@@ -357,7 +368,7 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem) {
       initialMenuItem = HomeMenuItem::FOULAD_EBOOKS;
     }
   }
-  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem));
+  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 

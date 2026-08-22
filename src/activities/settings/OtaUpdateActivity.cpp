@@ -34,6 +34,17 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   requestUpdateAndWait();
 
   const auto res = updater.checkForUpdate();
+  // NO_UPDATE here means the release carries no firmware asset for this board
+  // (expected until per-board assets are published) — not a failure.
+  if (res == OtaUpdater::NO_UPDATE) {
+    LOG_DBG("OTA", "No firmware asset for this board in latest release");
+    {
+      RenderLock lock(*this);
+      state = NO_UPDATE;
+    }
+    requestUpdate();
+    return;
+  }
   if (res != OtaUpdater::OK) {
     const auto httpFailure = HttpDownloader::getLastFailure();
     LOG_DBG("OTA", "Update check failed: %d (free heap %u, largest block %u, http stage %u detail %d)", res,
@@ -52,6 +63,7 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
       failureHttpDetail = httpFailure.detail;
       state = FAILED;
     }
+    requestUpdate();
     return;
   }
 
@@ -61,6 +73,7 @@ void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
       RenderLock lock(*this);
       state = NO_UPDATE;
     }
+    requestUpdate();
     return;
   }
 

@@ -49,7 +49,9 @@ class EpubReaderMenuActivity final : public Activity {
     FONT_NAME,
     TEXT_ALIGN,
     LINE_SPACING,
-    RESET_BOOK_SETTINGS
+    RESET_BOOK_SETTINGS,
+    NIGHT_MODE,
+    FRONTLIGHT
   };
 
   // `epub` is non-owning: the reader keeps the Epub alive for the whole time

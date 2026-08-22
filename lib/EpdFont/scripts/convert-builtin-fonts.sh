@@ -59,7 +59,11 @@ for size in ${NOTOSANS_FONT_SIZES[@]}; do
 done
 
 UI_FONT_SIZES=(10 12)
-UI_FONT_STYLES=("Regular" "Bold")
+# Medium, not Regular, is the UI text weight: 1-bit rasterisation at these sizes
+# snaps stems to whole pixels, and Regular lands on 2px where Medium lands on 3.
+UI_FONT_STYLES=("Medium" "Bold")
+
+python generate-ui-noto-fonts.py
 
 # Inter (OFL, google/fonts ofl/inter): UI font, replacing Ubuntu -- improved
 # readability at small sizes, per the same rationale CrossInk documents.

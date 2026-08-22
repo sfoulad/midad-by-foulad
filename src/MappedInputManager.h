@@ -2,6 +2,8 @@
 
 #include <HalGPIO.h>
 
+#include "X4ProPowerButtonGesture.h"
+
 class GfxRenderer;
 
 class MappedInputManager {
@@ -45,6 +47,17 @@ class MappedInputManager {
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(renderer) {}
 
   void update() const { gpio.update(); }
+  // Drives the X4 Pro power-button double-click gesture for one input frame;
+  // a no-op on other boards. The main loop calls this once per iteration,
+  // right after gpio.update(), every frame regardless of whether a release
+  // happened -- double-click window expiry is itself a frame event. See
+  // X4ProPowerButtonGesture for the state machine this wraps.
+  void updateX4ProPowerGesture() const;
+  // True for exactly one frame when the user's configured SHORT_PWRBTN action
+  // should dispatch: the raw release on other boards, or X4 Pro's deferred
+  // single-click event once the frontlight double-click window has resolved.
+  // Callers gate this on the specific SETTINGS.shortPwrBtn value themselves.
+  bool wasShortPowerClick() const;
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   bool isPressed(Button button) const;
@@ -74,9 +87,16 @@ class MappedInputManager {
   // Back = left-to-right swipe anchored at the left edge. Public so swipe-mode
   // page turns (reader) can exclude it from a plain SwipeDir::Right.
   bool wasBackGesture() const;
-  // Home = bottom-edge up-swipe; reader menu = top-edge down-swipe.
+  // Home-key boards use a short Home-key tap to exit; their bottom-edge swipe
+  // is intentionally unused. Other boards retain the bottom-edge Home gesture.
+  // The reader menu remains on its existing top-edge gesture and middle tap.
   bool wasHomeGesture() const;
+  // A Home-key hold runs the configured long-press action in the reader.
+  bool wasHomeKeyHold() const;
   bool wasMenuGesture() const;
+  // Top-edge down-swipe opens the light panel when the active board actually
+  // has a frontlight. ActivityManager consumes it before activity input.
+  bool wasLightPanelGesture() const;
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
@@ -121,9 +141,17 @@ class MappedInputManager {
   bool wasBottomEdgeUpSwipe() const;
   // Fetch the pending swipe (if any) and map both endpoints to logical screen coords
   bool decodeSwipe(int& sx, int& sy, int& ex, int& ey) const;
+#if FREEINK_CAP_TOUCH
+  bool wasPowerConfirmClick() const;
+#endif
   void rememberTouchHeldTime() const;
 
   mutable bool touchHeldOverrideValid = false;
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
+  // X4 Pro's power-button gesture state; harmless, near-zero-cost on other
+  // boards (never armed there since updateX4ProPowerGesture() no-ops for
+  // !BoardConfig::isX4Pro()).
+  mutable X4ProPowerButtonGesture x4ProPowerGesture;
+  mutable bool x4ProShortClickPending = false;
 };

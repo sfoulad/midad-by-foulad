@@ -19,6 +19,7 @@
 #include "QuranBook.h"
 #include "RecentBooksStore.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "fontIds.h"
@@ -169,6 +170,25 @@ void RecentBooksActivity::loadRecentBooks() {
     quran.coverBmpPath = Epub(QuranBook::PATH, "/.crosspoint").getThumbBmpPath();
     recentBooks.insert(recentBooks.begin(), std::move(quran));
   }
+
+  // One SD pass for every CJK title/author on the screen; repaints then hit
+  // the resident tables instead of re-reading per-string. Titles draw bold
+  // (see buildScreen), authors regular — separate per-style prewarms. Getter
+  // form: no concatenated copy (a bare-new string append aborts under heap
+  // pressure). See GfxRenderer::prewarmFallbackText().
+  const auto count = static_cast<uint32_t>(recentBooks.size());
+  renderer.prewarmFallbackText(
+      uiScaleSpec().smallFontId,
+      [](const void* ctx, uint32_t i) -> const char* {
+        return (*static_cast<const std::vector<RecentBook>*>(ctx))[i].title.c_str();
+      },
+      &recentBooks, count, EpdFontFamily::BOLD);
+  renderer.prewarmFallbackText(
+      uiScaleSpec().smallFontId,
+      [](const void* ctx, uint32_t i) -> const char* {
+        return (*static_cast<const std::vector<RecentBook>*>(ctx))[i].author.c_str();
+      },
+      &recentBooks, count);
 }
 
 void RecentBooksActivity::onEnter() {
