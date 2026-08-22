@@ -2,6 +2,7 @@
 
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
+#include <HalFrontlight.h>
 #include <I18n.h>
 
 #include <algorithm>
@@ -121,7 +122,7 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
   std::vector<MenuItem> items;
   // Every row this can push, including the four conditional ones -- a short reserve here
   // means a reallocate-copy-free on a heap the reader has already loaded a book onto.
-  items.reserve(11);
+  items.reserve(13);
   // First, ahead of even the dictionary: cross-device sync is pressed every time
   // someone picks the book up after reading elsewhere, which is often. Shown only
   // when there is an account AND this book carries a catalog id -- the same
@@ -162,6 +163,10 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
   }
   items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
   items.push_back({MenuAction::TEXT_ALIGN, StrId::STR_TEXT_ALIGNMENT});
+  items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
+  if (Frontlight.present()) {
+    items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
+  }
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
   // Appended last rather than slotted in among the reading settings above: those have a
   // settled order people reach for by position, and pushing them all down one row to make
@@ -281,6 +286,10 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       return I18N.get(orientationLabels[pendingOrientation]);
     case MenuAction::AUTO_PAGE_TURN:
       return pageTurnLabels[selectedPageTurnOption];
+    case MenuAction::NIGHT_MODE:
+      return I18N.get(SETTINGS.screenInverted ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF);
+    case MenuAction::FRONTLIGHT:
+      return I18N.get(Frontlight.isOn() ? StrId::STR_STATE_ON : StrId::STR_STATE_OFF);
     case MenuAction::POMODORO: {
       // The row doubles as the session's readout, so the value column says what pressing
       // it will do AND where the session is: "Start Session" when idle, the live
@@ -530,6 +539,19 @@ void EpubReaderMenuActivity::handleListConfirm() {
       openSettingEditor(selectedAction);
       requestUpdate();
       return;
+    case MenuAction::NIGHT_MODE:
+      SETTINGS.screenInverted = SETTINGS.screenInverted == 0 ? 1 : 0;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return;
+    case MenuAction::FRONTLIGHT: {
+      const bool lightOn = !Frontlight.isOn();
+      Frontlight.setOn(lightOn);
+      SETTINGS.frontlightOn = lightOn ? 1 : 0;
+      SETTINGS.saveToFile();
+      requestUpdate();
+      return;
+    }
     default:
       finishWithAction(static_cast<int>(selectedAction), /*cancelled=*/false);
       return;

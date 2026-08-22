@@ -21,18 +21,15 @@
 # upstream blob (see find_adopted_upstream_blob) when this PR's own history
 # contains a qualifying real merge for it, otherwise BASE_REF's own blob.
 #
-# src/activities/reader/TxtReaderActivity.cpp: PR #149 (phase2/reader-
-# dictionary-convergence) real-merged CrossPoint through commit 080b1d71
-# (adopted baseline blob 55dea5bea040c7f5ee4d734590d82cb09d01860f, verified
-# identical back to 33f07db7 -- upstream never touched this file in
-# between). CrossPoint later added an unrelated x4pro/papermono commit
-# (bbca4886, intentionally deferred out of Phase 2) and then, on top of
-# that, accepted Midad's own independently-authored skipPages() end-of-book
-# clamp fix as CrossPoint PR #3061 (commit 63fcbab0). This record authorizes
-# exactly that isolated fix, applied to the adopted baseline, independent of
-# bbca4886's unrelated changes to the same file -- see
-# scripts/test-thin-fork-guard.sh's regression test for this exact scenario
-# (an unrelated upstream commit touching the same file before the accepted
-# fix must not block the narrow backport, and must not smuggle its own
-# changes in).
-src/activities/reader/TxtReaderActivity.cpp	63fcbab02c99fc61969c65c25c539c021c12ece5	55dea5bea040c7f5ee4d734590d82cb09d01860f	6d7e1d328d37abf79ee10570b8cda555ac6c857b	CrossPoint PR #3061
+# (No active records. The src/activities/reader/TxtReaderActivity.cpp record
+# for CrossPoint PR #3061 / commit 63fcbab0 was removed here: the CrossPoint
+# sync merge that landed 69dd947f (branch sync/crosspoint-develop-69dd947f)
+# real-merges 63fcbab0 as genuine ancestry, and Midad's post-merge blob for
+# that path (91ddeabeb...) is now byte-identical to live upstream's own tip
+# blob for it -- the exact self-invalidation trigger this record's own
+# header described ("the moment a real convergence merge absorbs the same
+# content"). The narrow isolated-backport exception this record authorized
+# is no longer doing any work: ordinary HEAD==UPSTREAM convergence covers
+# the path now. Removed per docs/upstream-sync-architecture.md's "Reviewed
+# upstream backport" section and the maintenance note in that same section
+# of CLAUDE.md's "Midad Thin-Fork Architecture".

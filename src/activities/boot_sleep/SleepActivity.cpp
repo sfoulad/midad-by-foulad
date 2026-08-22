@@ -2,6 +2,7 @@
 
 #include <Epub.h>
 #include <Epub/converters/PngToFramebufferConverter.h>
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalClock.h>
@@ -567,6 +568,14 @@ bool drawSleepPopupPreservingFrame(GfxRenderer& renderer) {
   return true;
 }
 
+void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    LOG_DBG("SLP", "Free heap before SD font cache release: %d bytes", ESP.getFreeHeap());
+    fcm->releaseSdFontCaches();
+    LOG_DBG("SLP", "Free heap before sleep image decode: %d bytes", ESP.getFreeHeap());
+  }
+}
+
 }  // namespace
 
 void SleepActivity::onEnter() {
@@ -600,6 +609,7 @@ void SleepActivity::onEnter() {
     if (APP_STATE.lastSleepFromReader) {
       renderer.setOrientation(GfxRenderer::Orientation::Portrait);
     }
+    releaseSdFontCachesForDecode(renderer);
     return renderTransparentCustomSleepScreen();
   }
 
@@ -750,7 +760,7 @@ bool SleepActivity::renderSleepOverlayFile(HalFile& file, const char* pathForLog
   if (alphaResult == AlphaOverlayResult::Rendered) return true;
   if (alphaResult == AlphaOverlayResult::Error) return false;
 
-  Bitmap bitmap(file, true);
+  Bitmap bitmap(file);
   const auto parseResult = bitmap.parseHeaders();
   if (parseResult != BmpReaderError::Ok) {
     LOG_ERR("SLP", "Invalid sleep overlay BMP %s: %s", pathForLog, Bitmap::errorToString(parseResult));

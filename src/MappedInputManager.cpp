@@ -1,7 +1,10 @@
 #include "MappedInputManager.h"
 
+#include <BoardConfig.h>
 #include <GfxRenderer.h>
+#include <HalFrontlight.h>
 #include <I18n.h>
+#include <Logging.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -10,6 +13,18 @@
 #include "components/UITheme.h"
 
 namespace {
+
+// Releases longer than this are a hold (long-press, sleep, ...), not a click
+// candidate for X4 Pro's frontlight double-click gesture.
+constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
+
+void toggleX4ProFrontlight() {
+  const bool lightOn = !Frontlight.isOn();
+  Frontlight.setOn(lightOn);
+  SETTINGS.frontlightOn = lightOn ? 1 : 0;
+  SETTINGS.saveToFile();
+  LOG_INF("LIGHT", "Frontlight toggled %s by power-button double-click", lightOn ? "on" : "off");
+}
 
 MappedInputManager::SwipeDir classifySwipeDirection(const int sx, const int sy, const int ex, const int ey) {
   const int dx = ex - sx;
@@ -313,15 +328,63 @@ bool MappedInputManager::wasBottomEdgeUpSwipe() const { return wasEdgeSwipe(Scre
 
 bool MappedInputManager::wasMenuGesture() const { return wasTopEdgeDownSwipe(); }
 
-bool MappedInputManager::wasHomeGesture() const { return wasBottomEdgeUpSwipe(); }
+bool MappedInputManager::wasHomeGesture() const {
+  return gpio.hasHomeKey() ? gpio.wasHomeKeyTapped() : wasBottomEdgeUpSwipe();
+}
+
+bool MappedInputManager::wasHomeKeyHold() const { return gpio.hasHomeKey() && gpio.wasHomeKeyLongPressed(); }
+
+bool MappedInputManager::wasLightPanelGesture() const {
+  // On lightless boards the same edge remains available to the reader menu.
+  return Frontlight.present() && wasTopEdgeDownSwipe();
+}
+
+#if FREEINK_CAP_TOUCH
+bool MappedInputManager::wasPowerConfirmClick() const {
+  if (!gpio.hasTouch() || SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::PWR_CONFIRM) return false;
+  // Wait out the X4 Pro's frontlight double-click window before treating its
+  // first release as Confirm. Other touch boards can use the release directly.
+  if (BoardConfig::isX4Pro()) return x4ProShortClickPending;
+  return gpio.wasReleased(HalGPIO::BTN_POWER) && gpio.getPowerButtonHeldTime() <= SETTINGS.getPowerButtonDuration();
+}
+#endif
+
+void MappedInputManager::updateX4ProPowerGesture() const {
+  x4ProShortClickPending = false;
+  if (!BoardConfig::isX4Pro()) return;
+
+  const bool shortRelease =
+      gpio.wasReleased(HalGPIO::BTN_POWER) && gpio.getPowerButtonHeldTime() <= X4PRO_POWER_CLICK_MAX_HOLD_MS;
+  switch (x4ProPowerGesture.update(millis(), shortRelease)) {
+    case X4ProPowerButtonGesture::Event::ShortClick:
+      x4ProShortClickPending = true;
+      break;
+    case X4ProPowerButtonGesture::Event::FrontlightToggle:
+      toggleX4ProFrontlight();
+      break;
+    case X4ProPowerButtonGesture::Event::None:
+      break;
+  }
+}
+
+bool MappedInputManager::wasShortPowerClick() const {
+  if (BoardConfig::isX4Pro()) return x4ProShortClickPending;
+  return gpio.wasReleased(HalGPIO::BTN_POWER);
+}
 
 bool MappedInputManager::wasPressed(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
+#if FREEINK_CAP_TOUCH
+  if (button == Button::Confirm && wasPowerConfirmClick()) return true;
+#endif
   return mapButton(button, &HalGPIO::wasPressed);
 }
 
 bool MappedInputManager::wasReleased(const Button button) const {
   if (button == Button::Back && wasBackGesture()) return true;
+#if FREEINK_CAP_TOUCH
+  if (button == Button::Confirm && wasPowerConfirmClick()) return true;
+#endif
   return mapButton(button, &HalGPIO::wasReleased);
 }
 

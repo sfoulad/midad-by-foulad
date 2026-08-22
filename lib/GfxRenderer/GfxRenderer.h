@@ -221,6 +221,21 @@ class GfxRenderer {
   }
   void setFontCacheManager(FontCacheManager* m) { fontCacheManager_ = m; }
   FontCacheManager* getFontCacheManager() const { return fontCacheManager_; }
+  // Batch-prewarm CJK fallback glyphs for a screenful of static strings in ONE
+  // SD pass. List screens redraw every visible row on each repaint; without an
+  // up-front batch each row's draw prewarms per-string, and under heap
+  // pressure (union merge disabled) each string evicts the previous one — SD
+  // reads on every repaint forever. Call once when the screen's strings are
+  // known (data load); later measures/draws become RAM-only subset hits.
+  // No-op when nothing routes to an SD fallback.
+  // The getter form fetches strings one at a time (allocation-free — callers
+  // must NOT build a concatenated std::string: its bare-new growth aborts on
+  // the heap-tight screens this exists for). A null getter result skips that
+  // index.
+  using TextGetter = const char* (*)(const void* ctx, uint32_t index);
+  void prewarmFallbackText(int fontId, TextGetter getter, const void* ctx, uint32_t textCount,
+                           EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
+  void prewarmFallbackText(int fontId, const char* text, EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;
   bool isFontCacheScanning() const;
   const std::map<int, EpdFontFamily>& getFontMap() const { return fontMap; }
   // Default Arabic font (0 = none loaded), used for any fontId with no specific
@@ -518,6 +533,9 @@ class GfxRenderer {
   // numRows)), bypassing the framebuffer. supportsStripGrayscale() gates use.
   void writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const;
   bool supportsStripGrayscale() const;
+  // Paper Mono: the base activation is deferred so base + gray planes go out
+  // as one waveform. Route the base through displayGrayscaleBase() when true.
+  bool combinesGrayscaleBase() const;
   bool storeBwBuffer();    // Returns true if buffer was stored successfully
   void restoreBwBuffer();  // Restore and free the stored buffer
   void cleanupGrayscaleWithFrameBuffer() const;
