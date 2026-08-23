@@ -116,5 +116,73 @@ class ExtractPlatformJsonFromZipTest(unittest.TestCase):
                 vpp.extract_platform_json_from_zip(zip_path)
 
 
+class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
+    def test_clean_manifest_matching_platform_json_has_no_errors(self):
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-foo": {"url": "https://example.com/foo-1.0.zip"},
+        }
+        platform_json = {"packages": {
+            "tool-foo": {"version": "https://example.com/foo-1.0.zip"},
+        }}
+        self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
+
+    def test_package_declared_by_platform_json_but_missing_from_manifest_is_an_error(self):
+        # Regression test for the coverage gap CodeRabbit found in this PR's
+        # review: platform.json declaring a package the manifest never
+        # covers must fail closed, not be silently skipped.
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+        }
+        platform_json = {"packages": {
+            "tool-never-locked": {"version": "https://example.com/never-locked-1.0.zip"},
+        }}
+        errors = vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tool-never-locked", errors[0])
+        self.assertIn("no entry for it at all", errors[0])
+
+    def test_registry_resolvable_spec_is_not_flagged_as_missing(self):
+        packages_by_name = {"espressif32": {"url": "https://example.com/platform.zip"}}
+        platform_json = {"packages": {
+            "some-lib": {"version": "^1.2.3"},  # not a URI install
+        }}
+        self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
+
+    def test_url_drift_on_a_tracked_package_is_an_error(self):
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-foo": {"url": "https://example.com/foo-1.0.zip"},
+        }
+        platform_json = {"packages": {
+            "tool-foo": {"version": "https://example.com/foo-2.0.zip"},  # bumped, not re-locked
+        }}
+        errors = vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tool-foo", errors[0])
+
+    def test_resolved_indirectly_package_url_mismatch_is_not_flagged(self):
+        # tool-scons: the manifest pins the real resolved artifact, not the
+        # wrapper URL platform.json declares -- a mismatch here is expected,
+        # not drift. See RESOLVED_INDIRECTLY_PACKAGE_NAMES's docstring.
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-scons": {"url": "https://example.com/scons-local-4.8.1.tar.gz"},
+        }
+        platform_json = {"packages": {
+            "tool-scons": {"version": "https://example.com/scons-wrapper.zip"},
+        }}
+        self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
+
+    def test_package_no_longer_declared_by_platform_json_is_not_an_error(self):
+        # Manifest drift to clean up on next --update, not a security failure.
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-removed": {"url": "https://example.com/removed-1.0.zip"},
+        }
+        platform_json = {"packages": {}}
+        self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
+
+
 if __name__ == "__main__":
     unittest.main()

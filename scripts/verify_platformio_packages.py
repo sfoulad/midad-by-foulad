@@ -32,10 +32,8 @@ and can run before SCons/`pio run` ever starts.
 import argparse
 import configparser
 import hashlib
-import io
 import json
 import os
-import re
 import sys
 import tempfile
 import urllib.request
@@ -98,18 +96,39 @@ def cached_download_path(url):
     return platformio_core_dir() / ".cache" / "downloads" / key
 
 
-def fetch_url_to_temp(url):
-    with urllib.request.urlopen(url, timeout=120) as resp:
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        try:
-            while True:
-                block = resp.read(1 << 20)
-                if not block:
-                    break
-                tmp.write(block)
-        finally:
-            tmp.close()
-        return Path(tmp.name)
+def fetch_url_to_cache(url, label, errors):
+    """Downloads url directly into PlatformIO's own cache location (atomic
+    rename), so a verified download is the exact same file PlatformIO's own
+    downloader will later find and reuse -- otherwise a cache-miss run would
+    verify one copy, discard it, and let `pio run` fetch and build from an
+    unverified second copy that isn't guaranteed to be identical."""
+    target = cached_download_path(url)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp:
+            fd, tmp_name = tempfile.mkstemp(dir=str(target.parent))
+            try:
+                with os.fdopen(fd, "wb") as tmp:
+                    while True:
+                        block = resp.read(1 << 20)
+                        if not block:
+                            break
+                        tmp.write(block)
+                os.replace(tmp_name, target)  # atomic within the same filesystem
+            except Exception:
+                Path(tmp_name).unlink(missing_ok=True)
+                raise
+    except Exception as exc:  # noqa: BLE001 -- report and fail closed, don't crash silently
+        errors.append(f"{label}: failed to download {url}: {exc}")
+        return None
+    return target
+
+
+def discard_cached_download(url):
+    """Deletes a cache-miss download that failed verification, so a
+    tampered/corrupt artifact is never left where a later `pio run` could
+    pick it up as if it were the verified copy."""
+    cached_download_path(url).unlink(missing_ok=True)
 
 
 def get_pinned_platform_url():
@@ -140,20 +159,70 @@ def extract_platform_json_from_zip(zip_path):
 
 def resolve_and_hash(url, label, errors):
     """Returns (sha256, size) for url, using the PlatformIO download cache when
-    present (cache-hit runner) and fetching fresh otherwise (empty runner)."""
+    present (cache-hit runner) and fetching fresh otherwise (empty runner).
+    A fresh fetch is stored directly at PlatformIO's own cache path (see
+    fetch_url_to_cache) -- the caller must call discard_cached_download(url)
+    if the returned hash/size doesn't match what was expected, so a bad
+    download never lingers where `pio run` could reuse it unverified."""
     cached = cached_download_path(url)
     if cached.is_file():
         return sha256_and_size(cached)
     print(f"  [{label}] not cache-hit, fetching fresh: {url}")
-    try:
-        tmp_path = fetch_url_to_temp(url)
-    except Exception as exc:  # noqa: BLE001 -- report and fail closed, don't crash silently
-        errors.append(f"{label}: failed to download {url}: {exc}")
+    cached = fetch_url_to_cache(url, label, errors)
+    if cached is None:
         return None, None
-    try:
-        return sha256_and_size(tmp_path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    return sha256_and_size(cached)
+
+
+def cross_check_manifest_against_platform_json(packages_by_name, platform_json):
+    """Returns a list of error strings (empty if clean). Two directions:
+    manifest entries whose pinned URL no longer matches what platform.json
+    currently declares (a version bump nobody re-locked), and -- the actual
+    coverage guarantee -- packages platform.json declares that the manifest
+    has never heard of at all, which would reach `pio run` completely
+    unverified."""
+    errors = []
+    declared_packages = platform_json.get("packages", {})
+
+    for name, entry in packages_by_name.items():
+        if name == "espressif32":
+            continue
+        declared = declared_packages.get(name)
+        if declared is None:
+            # Package no longer declared by the platform at all -- not a
+            # security failure on its own, just manifest drift to clean up.
+            print(f"  NOTE: {name} is in the manifest but no longer declared "
+                  f"by platform.json -- safe to remove on next --update.")
+            continue
+        if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
+            # platform.json's declared URL is a wrapper this package's
+            # real, resolved download doesn't match by design -- see
+            # RESOLVED_INDIRECTLY_PACKAGE_NAMES's comment. The hash
+            # verification already covered the real integrity check;
+            # skip the drift comparison here.
+            continue
+        declared_url = declared.get("version")
+        if declared_url != entry["url"]:
+            kind = "wrapper URL" if name in WRAPPER_PACKAGE_NAMES else "URL"
+            errors.append(
+                f"{name}: platform.json now declares a different {kind} than "
+                f"the manifest.\n    manifest:      {entry['url']}\n"
+                f"    platform.json: {declared_url}\n"
+                "    Likely a legitimate version bump -- run --update and review."
+            )
+
+    for name, declared in declared_packages.items():
+        url = declared.get("version")
+        if not isinstance(url, str) or not url.startswith("http"):
+            continue  # registry-resolvable spec, not a URI install -- out of this manifest's scope
+        if name not in packages_by_name:
+            errors.append(
+                f"{name}: platform.json declares this package (url: {url}) but "
+                "the manifest has no entry for it at all -- its content would "
+                "reach `pio run` completely unverified. Run --update and review."
+            )
+
+    return errors
 
 
 def cmd_verify(args):
@@ -190,53 +259,24 @@ def cmd_verify(args):
                 "otherwise (GitHub release assets are not immutable by "
                 "default; see issue #179)."
             )
+            discard_cached_download(entry["url"])
             continue
         if size != entry["size"]:
             errors.append(
                 f"{name}: size mismatch for {entry['url']} "
                 f"(manifest: {entry['size']}, actual: {size})"
             )
+            discard_cached_download(entry["url"])
             continue
         if name == "espressif32":
-            cached = cached_download_path(entry["url"])
-            zip_path = cached if cached.is_file() else None
-            if zip_path is None:
-                tmp_path = fetch_url_to_temp(entry["url"])
-                try:
-                    platform_json = extract_platform_json_from_zip(tmp_path)
-                finally:
-                    tmp_path.unlink(missing_ok=True)
-            else:
-                platform_json = extract_platform_json_from_zip(cached)
+            # resolve_and_hash has already ensured the verified bytes are
+            # sitting at this exact path (cache-hit or freshly fetched) --
+            # reuse that same file rather than issuing a second, separately
+            # unverified download for platform.json extraction.
+            platform_json = extract_platform_json_from_zip(cached_download_path(entry["url"]))
 
     if platform_json is not None:
-        declared_packages = platform_json.get("packages", {})
-        for name, entry in packages_by_name.items():
-            if name == "espressif32":
-                continue
-            declared = declared_packages.get(name)
-            if declared is None:
-                # Package no longer declared by the platform at all -- not a
-                # security failure on its own, just manifest drift to clean up.
-                print(f"  NOTE: {name} is in the manifest but no longer declared "
-                      f"by platform.json -- safe to remove on next --update.")
-                continue
-            if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
-                # platform.json's declared URL is a wrapper this package's
-                # real, resolved download doesn't match by design -- see
-                # RESOLVED_INDIRECTLY_PACKAGE_NAMES's comment. The hash
-                # verification above already covered the real integrity
-                # check; skip the drift comparison here.
-                continue
-            declared_url = declared.get("version")
-            if declared_url != entry["url"]:
-                kind = "wrapper URL" if name in WRAPPER_PACKAGE_NAMES else "URL"
-                errors.append(
-                    f"{name}: platform.json now declares a different {kind} than "
-                    f"the manifest.\n    manifest:      {entry['url']}\n"
-                    f"    platform.json: {declared_url}\n"
-                    "    Likely a legitimate version bump -- run --update and review."
-                )
+        errors.extend(cross_check_manifest_against_platform_json(packages_by_name, platform_json))
 
     if errors:
         print("\nFAILED: PlatformIO package integrity verification found "
@@ -250,6 +290,47 @@ def cmd_verify(args):
     return 0
 
 
+def resolve_wrapper_real_target(wrapper_url, name, errors):
+    """For RESOLVED_INDIRECTLY_PACKAGE_NAMES: the wrapper zip embeds its own
+    tools.json describing the real, final download (see tool-scons's own
+    package.json/tools.json, inspected directly during issue #179 Round 1 --
+    same shape as the idf_tools.py wrapper manifests, just resolved by
+    PlatformIO's own PackageManager instead of idf_tools.py). Returns
+    (url, sha256, size) for the real artifact, or None if it can't be found --
+    callers must fail closed on None rather than falling back to pinning the
+    wrapper URL itself, which would silently weaken this package's entry."""
+    wrapper_sha256, wrapper_size = resolve_and_hash(wrapper_url, name, errors)
+    if wrapper_sha256 is None:
+        return None
+    wrapper_path = cached_download_path(wrapper_url)
+    try:
+        with zipfile.ZipFile(wrapper_path) as zf:
+            with zf.open("tools.json") as f:
+                wrapper_tools_json = json.loads(f.read())
+    except (KeyError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+        errors.append(f"{name}: could not read tools.json from wrapper {wrapper_url}: {exc}")
+        return None
+
+    tools = wrapper_tools_json.get("tools", [])
+    if len(tools) != 1 or not tools[0].get("versions"):
+        errors.append(f"{name}: wrapper tools.json has unexpected shape (expected exactly "
+                       f"one tool with versions) -- {wrapper_url}")
+        return None
+    versions = tools[0]["versions"]
+    if len(versions) != 1:
+        errors.append(f"{name}: wrapper tools.json declares {len(versions)} versions, "
+                       f"expected exactly 1 -- {wrapper_url}")
+        return None
+    platform_targets = {k: v for k, v in versions[0].items() if isinstance(v, dict) and "url" in v}
+    target = platform_targets.get("any")
+    if target is None:
+        errors.append(f"{name}: wrapper tools.json has no platform-independent ('any') "
+                       f"target -- per-platform resolution isn't implemented, "
+                       f"available keys: {sorted(platform_targets)}")
+        return None
+    return target["url"], target["sha256"], target["size"]
+
+
 def cmd_update(args):
     pinned_url = get_pinned_platform_url()
     errors = []
@@ -259,17 +340,11 @@ def cmd_update(args):
             print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
-    cached = cached_download_path(pinned_url)
-    if cached.is_file():
-        platform_json = extract_platform_json_from_zip(cached)
-    else:
-        tmp_path = fetch_url_to_temp(pinned_url)
-        try:
-            platform_json = extract_platform_json_from_zip(tmp_path)
-        finally:
-            tmp_path.unlink(missing_ok=True)
+    # resolve_and_hash has already ensured the verified bytes are sitting at
+    # this exact cache path -- reuse them rather than a second, separately
+    # unverified download.
+    platform_json = extract_platform_json_from_zip(cached_download_path(pinned_url))
 
-    version_match = re.search(r"/([^/]+\.zip)$", pinned_url)
     platform_version = platform_json.get("version", "unknown")
 
     entries = [{
@@ -284,9 +359,27 @@ def cmd_update(args):
         url = declared.get("version")
         if not isinstance(url, str) or not url.startswith("http"):
             continue  # registry-resolvable / non-URI packages don't need this manifest
-        pkg_sha256, pkg_size = resolve_and_hash(url, name, errors)
-        if pkg_sha256 is None:
-            continue
+
+        note = None
+        if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
+            resolved = resolve_wrapper_real_target(url, name, errors)
+            if resolved is None:
+                continue  # error already recorded; --update fails closed below rather
+                          # than silently pinning the wrapper URL for this package
+            url, pkg_sha256, pkg_size = resolved
+        else:
+            pkg_sha256, pkg_size = resolve_and_hash(url, name, errors)
+            if pkg_sha256 is None:
+                continue
+            if name in WRAPPER_PACKAGE_NAMES:
+                note = (
+                    "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool "
+                    "payload is downloaded and hash-verified separately by idf_tools.py "
+                    "against sha256 fields declared inside this wrapper -- this entry "
+                    "pins the wrapper itself, which is the actual unverified trust "
+                    "boundary (see issue #179 audit)."
+                )
+
         entry = {
             "name": name,
             "version": declared.get("package-version", "unknown"),
@@ -294,14 +387,8 @@ def cmd_update(args):
             "size": pkg_size,
             "sha256": pkg_sha256,
         }
-        if name in WRAPPER_PACKAGE_NAMES:
-            entry["note"] = (
-                "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool "
-                "payload is downloaded and hash-verified separately by idf_tools.py "
-                "against sha256 fields declared inside this wrapper -- this entry "
-                "pins the wrapper itself, which is the actual unverified trust "
-                "boundary (see issue #179 audit)."
-            )
+        if note:
+            entry["note"] = note
         entries.append(entry)
 
     if errors:
