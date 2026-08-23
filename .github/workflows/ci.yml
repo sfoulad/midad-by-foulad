@@ -227,13 +227,21 @@ jobs:
           enable-cache: false
 
       - name: Recompile the lock and diff against the checked-in copy
+        # --python-version 3.13 is required, not decorative: at least one
+        # dependency (typing-extensions, pulled in via anyio/starlette) is
+        # only needed on Python <3.13 per its own marker. Without an explicit
+        # version, uv falls back to whatever ambient interpreter it
+        # discovers -- this job has no actions/setup-python step, so its
+        # ambient Python differs from a contributor's local shell, which
+        # made an earlier version of this guard fail on a lock that was
+        # actually correct. Pinning removes that ambiguity entirely.
         run: |
           set -euo pipefail
           cp scripts/requirements-ci.lock /tmp/recompiled.lock
-          uv pip compile scripts/requirements-ci.in --python-platform linux --generate-hashes --no-header -o /tmp/recompiled.lock
+          uv pip compile scripts/requirements-ci.in --python-platform linux --python-version 3.13 --generate-hashes --no-header -o /tmp/recompiled.lock
           if ! diff -u scripts/requirements-ci.lock /tmp/recompiled.lock; then
             echo "::error::scripts/requirements-ci.lock is out of date relative to scripts/requirements-ci.in. Regenerate it with:"
-            echo "::error::uv pip compile scripts/requirements-ci.in --python-platform linux --generate-hashes --no-header -o scripts/requirements-ci.lock"
+            echo "::error::uv pip compile scripts/requirements-ci.in --python-platform linux --python-version 3.13 --generate-hashes --no-header -o scripts/requirements-ci.lock"
             exit 1
           fi
 

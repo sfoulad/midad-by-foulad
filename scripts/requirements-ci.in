@@ -1,7 +1,19 @@
 # Source spec for scripts/requirements-ci.lock. Every CI job that installs
 # PlatformIO Core or esptool consumes the generated lock, never this file
-# directly -- see scripts/requirements-ci.lock's header for the regeneration
-# command.
+# directly. Regenerate with (pinned uv, matching .github/workflows/ci.yml's
+# lock-regression-guard job):
+#
+#   uv pip compile scripts/requirements-ci.in --python-platform linux \
+#     --python-version 3.13 --generate-hashes --no-header \
+#     -o scripts/requirements-ci.lock
+#
+# --python-version 3.13 is required: typing-extensions (pulled in via
+# anyio/starlette) is only needed on Python <3.13 per its own marker, so
+# omitting the flag makes the resolution depend on whatever ambient
+# interpreter the machine running this command happens to discover.
+#
+# To pull in a genuine version bump deliberately (never routinely, never in
+# CI), add --upgrade-package <name> or --upgrade to the command above.
 #
 # pioarduino-core is PlatformIO Core installed from pioarduino's fork, pinned
 # to the exact commit v6.1.19 resolves to (immutable, unlike the mutable tag
