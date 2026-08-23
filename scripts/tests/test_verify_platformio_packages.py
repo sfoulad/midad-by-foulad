@@ -175,6 +175,8 @@ class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
             "tool-scons": {
                 "url": "https://example.com/scons-local-4.8.1.tar.gz",
                 "wrapper_url": "https://example.com/scons-wrapper.zip",
+                "wrapper_sha256": "a" * 64,
+                "wrapper_size": 1234,
             },
         }
         platform_json = {"packages": {
@@ -192,6 +194,8 @@ class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
             "tool-scons": {
                 "url": "https://example.com/scons-local-4.8.1.tar.gz",
                 "wrapper_url": "https://example.com/scons-wrapper-old.zip",
+                "wrapper_sha256": "a" * 64,
+                "wrapper_size": 1234,
             },
         }
         platform_json = {"packages": {
@@ -214,7 +218,29 @@ class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
         }}
         errors = vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json)
         self.assertEqual(len(errors), 1)
-        self.assertIn("no recorded wrapper_url", errors[0])
+        self.assertIn("wrapper_url", errors[0])
+        self.assertIn("wrapper_sha256", errors[0])
+        self.assertIn("wrapper_size", errors[0])
+
+    def test_resolved_indirectly_package_wrapper_url_present_but_hash_fields_missing_is_flagged(self):
+        # Regression test for CodeRabbit's round-4 finding: an entry with
+        # wrapper_url set but wrapper_sha256/wrapper_size missing (a
+        # partially-migrated or hand-edited manifest) must not silently pass
+        # just because wrapper_url alone is present.
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-scons": {
+                "url": "https://example.com/scons-local-4.8.1.tar.gz",
+                "wrapper_url": "https://example.com/scons-wrapper.zip",
+            },
+        }
+        platform_json = {"packages": {
+            "tool-scons": {"version": "https://example.com/scons-wrapper.zip"},
+        }}
+        errors = vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("wrapper_sha256", errors[0])
+        self.assertIn("wrapper_size", errors[0])
 
     def test_package_no_longer_declared_by_platform_json_is_not_an_error(self):
         # Manifest drift to clean up on next --update, not a security failure.

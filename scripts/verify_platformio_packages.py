@@ -213,10 +213,12 @@ def cross_check_manifest_against_platform_json(packages_by_name, platform_json):
             # since GitHub release assets aren't immutable by default; see
             # issue #179.)
             wrapper_url = entry.get("wrapper_url")
-            if wrapper_url is None:
+            missing = [f for f in ("wrapper_url", "wrapper_sha256", "wrapper_size") if not entry.get(f)]
+            if missing:
                 errors.append(
-                    f"{name}: manifest entry has no recorded wrapper_url, so a "
-                    "wrapper URL bump can't be detected. Run --update."
+                    f"{name}: manifest entry is missing {', '.join(missing)}, so "
+                    "the wrapper's URL and content can't be verified for drift/"
+                    "tampering. Run --update."
                 )
             elif declared.get("version") != wrapper_url:
                 errors.append(
