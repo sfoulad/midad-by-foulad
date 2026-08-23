@@ -86,7 +86,7 @@ jobs:
         run: ./scripts/sign_firmware.sh ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}" ota-signing-public-key.pem
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: CrossPoint-RC-${{ env.BRANCH_SUFFIX }}-${{ matrix.pio_env }}
           path: |
@@ -97,7 +97,7 @@ jobs:
             .pio/build/${{ matrix.pio_env }}/partitions.bin
 
       - name: Publish GitHub Pre-release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           # Settings -> System -> Pre-release opts a device into checking GitHub's
           # full /releases list (includes pre-releases) instead of /releases/latest,

@@ -87,7 +87,7 @@ jobs:
         run: ./scripts/sign_firmware.sh ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}" ota-signing-public-key.pem
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.asset }}
           path: |
@@ -98,7 +98,7 @@ jobs:
             .pio/build/${{ matrix.pio_env }}/partitions.bin
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           # OtaUpdater.cpp looks up releases/latest and matches an asset named
           # exactly "firmware.bin" (ReleaseJsonParser.cpp:47) for the primary C3
