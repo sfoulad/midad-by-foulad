@@ -226,5 +226,69 @@ class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
         self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
 
 
+class VerifyWrapperHashTest(unittest.TestCase):
+    """Regression coverage for CodeRabbit's third-round finding: the
+    wrapper_url comparison alone doesn't prove the wrapper's *content* is
+    unchanged -- a same-URL, different-bytes swap must still be caught."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        import os
+        self.old_core_dir = os.environ.get("PLATFORMIO_CORE_DIR")
+        os.environ["PLATFORMIO_CORE_DIR"] = self.tmp.name
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self):
+        import os
+        if self.old_core_dir is None:
+            os.environ.pop("PLATFORMIO_CORE_DIR", None)
+        else:
+            os.environ["PLATFORMIO_CORE_DIR"] = self.old_core_dir
+
+    def _seed_cache(self, url, content):
+        path = vpp.cached_download_path(url)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return path
+
+    def test_matching_wrapper_bytes_pass_cleanly(self):
+        wrapper_url = "https://example.com/scons-wrapper.zip"
+        content = b"real wrapper content" * 50
+        self._seed_cache(wrapper_url, content)
+        entry = {
+            "wrapper_url": wrapper_url,
+            "wrapper_sha256": hashlib.sha256(content).hexdigest(),
+            "wrapper_size": len(content),
+        }
+        self.assertEqual(vpp.verify_wrapper_hash("tool-scons", entry), [])
+
+    def test_tampered_wrapper_bytes_at_unchanged_url_are_caught(self):
+        wrapper_url = "https://example.com/scons-wrapper.zip"
+        original = b"real wrapper content" * 50
+        tampered = bytearray(original)
+        tampered[10] ^= 0xFF
+        self._seed_cache(wrapper_url, bytes(tampered))
+        entry = {
+            "wrapper_url": wrapper_url,
+            "wrapper_sha256": hashlib.sha256(original).hexdigest(),
+            "wrapper_size": len(original),
+        }
+        errors = vpp.verify_wrapper_hash("tool-scons", entry)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tool-scons", errors[0])
+        self.assertIn("SHA-256 MISMATCH", errors[0])
+        # The tampered blob must not be left behind for `pio run` to reuse.
+        self.assertFalse(vpp.cached_download_path(wrapper_url).exists())
+
+    def test_entries_without_wrapper_tracking_are_silently_skipped(self):
+        # Older manifest entries predating wrapper_sha256/wrapper_size --
+        # the missing-field case is reported separately by
+        # cross_check_manifest_against_platform_json, not duplicated here.
+        entry = {"url": "https://example.com/scons-local-4.8.1.tar.gz"}
+        self.assertEqual(vpp.verify_wrapper_hash("tool-scons", entry), [])
+
+
 if __name__ == "__main__":
     unittest.main()

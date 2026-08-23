@@ -207,7 +207,11 @@ def cross_check_manifest_against_platform_json(packages_by_name, platform_json):
             # wrapper bump (which idf_tools.py-style resolution would follow
             # on the next real `pio run`) would go completely undetected
             # here. Compare against the recorded wrapper_url instead of the
-            # resolved artifact's own url.
+            # resolved artifact's own url. (The wrapper's own bytes are
+            # separately hash-verified in cmd_verify's main loop -- a URL
+            # match alone doesn't prove the content behind it is unchanged,
+            # since GitHub release assets aren't immutable by default; see
+            # issue #179.)
             wrapper_url = entry.get("wrapper_url")
             if wrapper_url is None:
                 errors.append(
@@ -243,6 +247,43 @@ def cross_check_manifest_against_platform_json(packages_by_name, platform_json):
                 "reach `pio run` completely unverified. Run --update and review."
             )
 
+    return errors
+
+
+def verify_wrapper_hash(name, entry):
+    """For RESOLVED_INDIRECTLY_PACKAGE_NAMES entries: the resolved artifact's
+    hash is verified by cmd_verify's main loop, but that alone doesn't prove
+    the wrapper it came from is unchanged -- the URL cross-check only
+    compares the wrapper *URL*, and GitHub release assets aren't immutable
+    by default (issue #179), so the same URL can serve different bytes over
+    time. Independently hash-verifies the wrapper itself. Returns a list of
+    error strings (empty if clean or if the manifest predates wrapper_sha256/
+    wrapper_size tracking -- that gap is reported separately by
+    cross_check_manifest_against_platform_json's missing-wrapper_url check)."""
+    errors = []
+    wrapper_url = entry.get("wrapper_url")
+    wrapper_sha256_expected = entry.get("wrapper_sha256")
+    wrapper_size_expected = entry.get("wrapper_size")
+    if not (wrapper_url and wrapper_sha256_expected and wrapper_size_expected):
+        return errors
+    w_sha256, w_size = resolve_and_hash(wrapper_url, f"{name} (wrapper)", errors)
+    if w_sha256 is None:
+        return errors
+    if w_sha256 != wrapper_sha256_expected:
+        errors.append(
+            f"{name}: SHA-256 MISMATCH for wrapper {wrapper_url}\n"
+            f"    manifest: {wrapper_sha256_expected}\n"
+            f"    actual:   {w_sha256}\n"
+            "    The wrapper's content changed at an unchanged URL -- "
+            "treat as tampering until proven otherwise."
+        )
+        discard_cached_download(wrapper_url)
+    elif w_size != wrapper_size_expected:
+        errors.append(
+            f"{name}: size mismatch for wrapper {wrapper_url} "
+            f"(manifest: {wrapper_size_expected}, actual: {w_size})"
+        )
+        discard_cached_download(wrapper_url)
     return errors
 
 
@@ -296,6 +337,9 @@ def cmd_verify(args):
             # unverified download for platform.json extraction.
             platform_json = extract_platform_json_from_zip(cached_download_path(entry["url"]))
 
+        if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
+            errors.extend(verify_wrapper_hash(name, entry))
+
     if platform_json is not None:
         errors.extend(cross_check_manifest_against_platform_json(packages_by_name, platform_json))
 
@@ -317,9 +361,13 @@ def resolve_wrapper_real_target(wrapper_url, name, errors):
     package.json/tools.json, inspected directly during issue #179 Round 1 --
     same shape as the idf_tools.py wrapper manifests, just resolved by
     PlatformIO's own PackageManager instead of idf_tools.py). Returns
-    (url, sha256, size) for the real artifact, or None if it can't be found --
-    callers must fail closed on None rather than falling back to pinning the
-    wrapper URL itself, which would silently weaken this package's entry."""
+    (url, sha256, size, wrapper_sha256, wrapper_size) -- the last two so the
+    wrapper's own bytes can be pinned and re-verified later, since a wrapper
+    URL match alone doesn't prove its content hasn't changed (GitHub release
+    assets aren't immutable by default; see issue #179). Returns None if the
+    real target can't be found -- callers must fail closed on None rather
+    than falling back to pinning the wrapper URL itself, which would
+    silently weaken this package's entry."""
     wrapper_sha256, wrapper_size = resolve_and_hash(wrapper_url, name, errors)
     if wrapper_sha256 is None:
         return None
@@ -349,7 +397,7 @@ def resolve_wrapper_real_target(wrapper_url, name, errors):
                        f"target -- per-platform resolution isn't implemented, "
                        f"available keys: {sorted(platform_targets)}")
         return None
-    return target["url"], target["sha256"], target["size"]
+    return target["url"], target["sha256"], target["size"], wrapper_sha256, wrapper_size
 
 
 def cmd_update(args):
@@ -383,13 +431,15 @@ def cmd_update(args):
 
         note = None
         wrapper_url = None
+        wrapper_sha256 = None
+        wrapper_size = None
         if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
             wrapper_url = url
             resolved = resolve_wrapper_real_target(url, name, errors)
             if resolved is None:
                 continue  # error already recorded; --update fails closed below rather
                           # than silently pinning the wrapper URL for this package
-            url, pkg_sha256, pkg_size = resolved
+            url, pkg_sha256, pkg_size, wrapper_sha256, wrapper_size = resolved
         else:
             pkg_sha256, pkg_size = resolve_and_hash(url, name, errors)
             if pkg_sha256 is None:
@@ -412,6 +462,8 @@ def cmd_update(args):
         }
         if wrapper_url:
             entry["wrapper_url"] = wrapper_url
+            entry["wrapper_sha256"] = wrapper_sha256
+            entry["wrapper_size"] = wrapper_size
         if note:
             entry["note"] = note
         entries.append(entry)
