@@ -297,7 +297,7 @@ jobs:
         # key itself is throwaway, discarded immediately after.
         run: |
           set -euo pipefail
-          tmp_key="$(mktemp)"
+          tmp_key="$(mktemp -u)"  # -u: name only, no file -- generate_signing_key refuses to overwrite an existing one
           actual="$(espsecure.py generate_signing_key --version 2 --scheme rsa3072 "$tmp_key" 2>&1 | head -1)"
           rm -f "$tmp_key"
           echo "$actual"
