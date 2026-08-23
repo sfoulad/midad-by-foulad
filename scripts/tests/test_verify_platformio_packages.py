@@ -69,7 +69,10 @@ class CachedDownloadPathTest(unittest.TestCase):
 class WrapperPackageClassificationTest(unittest.TestCase):
     def test_known_wrapper_packages(self):
         for name in ("tool-cmake", "tool-ninja", "tool-cppcheck", "tool-esptoolpy",
-                     "tool-esp-rom-elfs", "toolchain-riscv32-esp", "toolchain-xtensa-esp-elf"):
+                     "tool-esp-rom-elfs", "toolchain-riscv32-esp", "toolchain-xtensa-esp-elf",
+                     "tool-clangtidy", "tool-dfuutil-arduino", "tool-openocd-esp32",
+                     "tool-pvs-studio", "tool-riscv32-esp-elf-gdb", "tool-xtensa-esp-elf-gdb",
+                     "toolchain-esp32ulp"):
             self.assertIn(name, vpp.WRAPPER_PACKAGE_NAMES)
 
     def test_tool_scons_is_resolved_indirectly_not_a_plain_wrapper(self):
@@ -161,10 +164,47 @@ class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("tool-foo", errors[0])
 
-    def test_resolved_indirectly_package_url_mismatch_is_not_flagged(self):
+    def test_resolved_indirectly_package_resolved_url_mismatch_is_not_flagged(self):
         # tool-scons: the manifest pins the real resolved artifact, not the
-        # wrapper URL platform.json declares -- a mismatch here is expected,
-        # not drift. See RESOLVED_INDIRECTLY_PACKAGE_NAMES's docstring.
+        # wrapper URL platform.json declares -- comparing entry["url"]
+        # directly against platform.json's wrapper URL would always mismatch
+        # by design and must not be flagged. See wrapper_url handling below
+        # for the check that actually matters for this package.
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-scons": {
+                "url": "https://example.com/scons-local-4.8.1.tar.gz",
+                "wrapper_url": "https://example.com/scons-wrapper.zip",
+            },
+        }
+        platform_json = {"packages": {
+            "tool-scons": {"version": "https://example.com/scons-wrapper.zip"},
+        }}
+        self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
+
+    def test_resolved_indirectly_package_wrapper_url_drift_is_flagged(self):
+        # Regression test for the gap CodeRabbit's review caught: a wrapper
+        # URL bump for tool-scons (which idf_tools.py-style resolution would
+        # follow on the next real `pio run`) must be detected even though
+        # the manifest pins the resolved artifact, not the wrapper.
+        packages_by_name = {
+            "espressif32": {"url": "https://example.com/platform.zip"},
+            "tool-scons": {
+                "url": "https://example.com/scons-local-4.8.1.tar.gz",
+                "wrapper_url": "https://example.com/scons-wrapper-old.zip",
+            },
+        }
+        platform_json = {"packages": {
+            "tool-scons": {"version": "https://example.com/scons-wrapper-NEW.zip"},
+        }}
+        errors = vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tool-scons", errors[0])
+        self.assertIn("wrapper URL", errors[0])
+
+    def test_resolved_indirectly_package_missing_wrapper_url_is_flagged(self):
+        # A manifest entry generated before wrapper_url tracking existed
+        # must be flagged as unable to detect drift, not silently trusted.
         packages_by_name = {
             "espressif32": {"url": "https://example.com/platform.zip"},
             "tool-scons": {"url": "https://example.com/scons-local-4.8.1.tar.gz"},
@@ -172,7 +212,9 @@ class CrossCheckManifestAgainstPlatformJsonTest(unittest.TestCase):
         platform_json = {"packages": {
             "tool-scons": {"version": "https://example.com/scons-wrapper.zip"},
         }}
-        self.assertEqual(vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json), [])
+        errors = vpp.cross_check_manifest_against_platform_json(packages_by_name, platform_json)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("no recorded wrapper_url", errors[0])
 
     def test_package_no_longer_declared_by_platform_json_is_not_an_error(self):
         # Manifest drift to clean up on next --update, not a security failure.

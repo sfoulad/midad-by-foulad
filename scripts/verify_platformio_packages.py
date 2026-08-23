@@ -53,16 +53,23 @@ PLATFORMIO_INI_PATH = REPO_ROOT / "platformio.ini"
 WRAPPER_PACKAGE_NAMES = {
     "tool-cmake", "tool-ninja", "tool-cppcheck", "tool-esptoolpy",
     "tool-esp-rom-elfs", "toolchain-riscv32-esp", "toolchain-xtensa-esp-elf",
+    # Confirmed the same wrapper shape (package.json + tools.json, real
+    # payload resolved by idf_tools.py) by downloading and inspecting each
+    # of these directly during PR review -- see issue #179 Round 1.
+    "tool-clangtidy", "tool-dfuutil-arduino", "tool-openocd-esp32",
+    "tool-pvs-studio", "tool-riscv32-esp-elf-gdb", "tool-xtensa-esp-elf-gdb",
+    "toolchain-esp32ulp",
 }
 
 # tool-scons is a distinct third case: platform.json also declares a wrapper
 # URL for it, but PlatformIO's own PackageManager (not idf_tools.py) resolves
 # and re-downloads it a second time via a real, direct https URL, which is
 # what .piopm records and what this manifest pins (the more specific, more
-# meaningful thing to verify). platform.json's wrapper URL is therefore NOT
-# comparable to this manifest's entry for tool-scons -- a mismatch there is
-# expected, not a drift signal, so it's excluded from the equality cross-check
-# below (its hash is still fully verified like every other entry).
+# meaningful thing to verify). platform.json's wrapper URL is therefore never
+# directly comparable to entry["url"] for these -- but the wrapper URL still
+# needs its own drift check (a wrapper bump is exactly what --update would
+# follow next), so cmd_update additionally records it as entry["wrapper_url"],
+# and the cross-check compares platform.json against that field instead.
 RESOLVED_INDIRECTLY_PACKAGE_NAMES = {"tool-scons"}
 
 
@@ -195,11 +202,25 @@ def cross_check_manifest_against_platform_json(packages_by_name, platform_json):
                   f"by platform.json -- safe to remove on next --update.")
             continue
         if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
-            # platform.json's declared URL is a wrapper this package's
-            # real, resolved download doesn't match by design -- see
-            # RESOLVED_INDIRECTLY_PACKAGE_NAMES's comment. The hash
-            # verification already covered the real integrity check;
-            # skip the drift comparison here.
+            # The manifest pins the resolved artifact, not the wrapper --
+            # but the wrapper URL still needs its OWN drift check, or a
+            # wrapper bump (which idf_tools.py-style resolution would follow
+            # on the next real `pio run`) would go completely undetected
+            # here. Compare against the recorded wrapper_url instead of the
+            # resolved artifact's own url.
+            wrapper_url = entry.get("wrapper_url")
+            if wrapper_url is None:
+                errors.append(
+                    f"{name}: manifest entry has no recorded wrapper_url, so a "
+                    "wrapper URL bump can't be detected. Run --update."
+                )
+            elif declared.get("version") != wrapper_url:
+                errors.append(
+                    f"{name}: platform.json now declares a different wrapper URL "
+                    f"than the manifest.\n    manifest:      {wrapper_url}\n"
+                    f"    platform.json: {declared.get('version')}\n"
+                    "    Likely a legitimate version bump -- run --update and review."
+                )
             continue
         declared_url = declared.get("version")
         if declared_url != entry["url"]:
@@ -361,7 +382,9 @@ def cmd_update(args):
             continue  # registry-resolvable / non-URI packages don't need this manifest
 
         note = None
+        wrapper_url = None
         if name in RESOLVED_INDIRECTLY_PACKAGE_NAMES:
+            wrapper_url = url
             resolved = resolve_wrapper_real_target(url, name, errors)
             if resolved is None:
                 continue  # error already recorded; --update fails closed below rather
@@ -387,6 +410,8 @@ def cmd_update(args):
             "size": pkg_size,
             "sha256": pkg_sha256,
         }
+        if wrapper_url:
+            entry["wrapper_url"] = wrapper_url
         if note:
             entry["note"] = note
         entries.append(entry)
