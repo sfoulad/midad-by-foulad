@@ -259,15 +259,21 @@ def verify_wrapper_hash(name, entry):
     compares the wrapper *URL*, and GitHub release assets aren't immutable
     by default (issue #179), so the same URL can serve different bytes over
     time. Independently hash-verifies the wrapper itself. Returns a list of
-    error strings (empty if clean or if the manifest predates wrapper_sha256/
-    wrapper_size tracking -- that gap is reported separately by
-    cross_check_manifest_against_platform_json's missing-wrapper_url check)."""
+    error strings (empty if clean). Fails closed -- not silently skips -- if
+    any of wrapper_url/wrapper_sha256/wrapper_size is missing (an older or
+    hand-edited manifest entry): this function runs independently of
+    cross_check_manifest_against_platform_json's own missing-field check, so
+    it must not rely on that other call site to catch the same gap."""
     errors = []
     wrapper_url = entry.get("wrapper_url")
     wrapper_sha256_expected = entry.get("wrapper_sha256")
     wrapper_size_expected = entry.get("wrapper_size")
-    if not (wrapper_url and wrapper_sha256_expected and wrapper_size_expected):
-        return errors
+    missing = [f for f in ("wrapper_url", "wrapper_sha256", "wrapper_size") if not entry.get(f)]
+    if missing:
+        return [
+            f"{name}: manifest entry is missing {', '.join(missing)}, so the "
+            "wrapper's content can't be verified. Run --update."
+        ]
     w_sha256, w_size = resolve_and_hash(wrapper_url, f"{name} (wrapper)", errors)
     if w_sha256 is None:
         return errors

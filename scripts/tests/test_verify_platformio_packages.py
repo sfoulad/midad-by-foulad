@@ -308,12 +308,17 @@ class VerifyWrapperHashTest(unittest.TestCase):
         # The tampered blob must not be left behind for `pio run` to reuse.
         self.assertFalse(vpp.cached_download_path(wrapper_url).exists())
 
-    def test_entries_without_wrapper_tracking_are_silently_skipped(self):
-        # Older manifest entries predating wrapper_sha256/wrapper_size --
-        # the missing-field case is reported separately by
-        # cross_check_manifest_against_platform_json, not duplicated here.
+    def test_entries_missing_wrapper_tracking_fail_closed(self):
+        # Older manifest entries predating wrapper_sha256/wrapper_size must
+        # not be silently treated as verified -- this call site has its own
+        # independent missing-field guard and must not rely on
+        # cross_check_manifest_against_platform_json to catch the gap.
         entry = {"url": "https://example.com/scons-local-4.8.1.tar.gz"}
-        self.assertEqual(vpp.verify_wrapper_hash("tool-scons", entry), [])
+        errors = vpp.verify_wrapper_hash("tool-scons", entry)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("wrapper_url", errors[0])
+        self.assertIn("wrapper_sha256", errors[0])
+        self.assertIn("wrapper_size", errors[0])
 
 
 if __name__ == "__main__":
