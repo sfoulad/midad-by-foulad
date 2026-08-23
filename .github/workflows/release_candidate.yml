@@ -22,16 +22,17 @@ jobs:
           - pio_env: papermono-gh_release_rc
             asset: firmware-papermono.bin
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           submodules: recursive
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.13'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "latest"
           enable-cache: false
@@ -48,11 +49,16 @@ jobs:
             "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
 
       - name: Cache PlatformIO packages
-        uses: actions/cache@v6
+        # Namespaced separately from ci.yml's `pio-*` cache: this job signs firmware
+        # with OTA_SIGNING_KEY, so it must never restore a cache entry that untrusted
+        # PR-triggered CI could have populated (cache poisoning). The prefixes never
+        # overlap, so a restore-keys prefix match can't cross between them in either
+        # direction.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          key: signed-release-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: signed-release-pio-${{ runner.os }}-
 
       - name: Extract env
         run: |
@@ -86,7 +92,7 @@ jobs:
         run: ./scripts/sign_firmware.sh ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}" ota-signing-public-key.pem
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: CrossPoint-RC-${{ env.BRANCH_SUFFIX }}-${{ matrix.pio_env }}
           path: |
@@ -97,7 +103,7 @@ jobs:
             .pio/build/${{ matrix.pio_env }}/partitions.bin
 
       - name: Publish GitHub Pre-release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           # Settings -> System -> Pre-release opts a device into checking GitHub's
           # full /releases list (includes pre-releases) instead of /releases/latest,
