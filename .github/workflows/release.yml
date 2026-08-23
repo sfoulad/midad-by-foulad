@@ -62,6 +62,16 @@ jobs:
           key: signed-release-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: signed-release-pio-${{ runner.os }}-
 
+      - name: Verify PlatformIO package integrity
+        # Issue #179: PlatformIO's own PackageManager does not checksum-verify
+        # external/URI package downloads (the platform archive, frameworks,
+        # toolchains, build tools) -- only its Library Registry path is
+        # checksummed. This closes that gap before any of that content is
+        # installed/compiled: fails closed on any hash mismatch, and works
+        # identically whether the cache above was restored or not (falls back
+        # to a fresh download+verify per package on an empty runner).
+        run: python3 scripts/verify_platformio_packages.py
+
       - name: Build CrossPoint
         run: pio run -e ${{ matrix.pio_env }} -j1
 

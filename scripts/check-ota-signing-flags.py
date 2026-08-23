@@ -25,16 +25,16 @@ def is_release_env(section_name):
     return env_name.endswith('gh_release') or env_name.endswith('gh_release_rc')
 
 
-def main():
-    ini_path = Path(__file__).resolve().parent.parent / 'platformio.ini'
+def check(ini_path):
+    """Returns (exit_code, message). Split out from main() so tests can pass a
+    synthetic ini path without touching the real platformio.ini or process exit."""
     config = configparser.ConfigParser()
     config.read(ini_path, encoding='utf-8')
 
     release_sections = [s for s in config.sections() if is_release_env(s)]
     if not release_sections:
-        print('ERROR: no *gh_release/*gh_release_rc sections found in platformio.ini '
-              '-- the section-matching pattern itself may be broken', file=sys.stderr)
-        return 1
+        return 1, ('ERROR: no *gh_release/*gh_release_rc sections found in platformio.ini '
+                    '-- the section-matching pattern itself may be broken')
 
     missing = []
     for section in release_sections:
@@ -43,17 +43,22 @@ def main():
             missing.append(section)
 
     if missing:
-        print(f'ERROR: {FLAG} is missing from these release/RC environments:', file=sys.stderr)
-        for section in missing:
-            print(f'  [{section}]', file=sys.stderr)
-        print('Add it to build_flags, matching every other *gh_release*/env\'s '
-              'existing OTA_SIGNING_BOOT_CHECK_ENABLED comment. See '
-              'src/OtaSigningBootGuard.cpp for why this matters.', file=sys.stderr)
-        return 1
+        lines = [f'ERROR: {FLAG} is missing from these release/RC environments:']
+        lines += [f'  [{section}]' for section in missing]
+        lines.append('Add it to build_flags, matching every other *gh_release*/env\'s '
+                      'existing OTA_SIGNING_BOOT_CHECK_ENABLED comment. See '
+                      'src/OtaSigningBootGuard.cpp for why this matters.')
+        return 1, '\n'.join(lines)
 
-    print(f'OK: {FLAG} present in all {len(release_sections)} release/RC environments: '
-          f'{", ".join(s[len("env:"):] for s in release_sections)}')
-    return 0
+    return 0, (f'OK: {FLAG} present in all {len(release_sections)} release/RC environments: '
+                f'{", ".join(s[len("env:"):] for s in release_sections)}')
+
+
+def main():
+    ini_path = Path(__file__).resolve().parent.parent / 'platformio.ini'
+    code, message = check(ini_path)
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
 
 
 if __name__ == '__main__':

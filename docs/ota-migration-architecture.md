@@ -197,17 +197,47 @@ exit code alone).
   OTA slot and reboots -- it does not invoke `esp_ota_ops`'s install-time
   verification (that only runs when *installing* a new image, not when booting an
   already-installed one). Rolling back to an old, unsigned-checking slot is
-  uneventful: the device just runs that old firmware again, with no OTA
-  verification until it once again installs and boots into a signed release.
-  **This is a known, currently-open gap, not a resolved one**: the running app after
-  such a rollback has signature verification compiled out, so its *next* OTA install
-  can accept an unsigned or wrong-key image -- the exact pre-migration trust model,
-  reopened. No policy decision has been made yet on how to handle it (options include:
-  block rollback to a signature-unaware slot entirely, flag the device for mandatory
-  physical recovery instead of an automatic rollback, or explicitly accept this as a
-  bounded exception and test it). Treat this as unresolved until one of those is
-  chosen and documented here, not as already covered by the "uneventful" framing
-  above.
+  uneventful at the boot level: the device just runs that old firmware again. But
+  the running app after such a rollback has signature verification compiled out, so
+  its *next* OTA install could accept an unsigned or wrong-key image -- the exact
+  pre-migration trust model, reopened, unless something intervenes.
+
+  **Policy decided and implemented** (PR #160, commit `7435a89e`): rather than
+  blocking rollback outright (which would turn a crash-loop recovery mechanism into
+  a bricking mechanism) or silently reopening the unsigned-OTA hole, the device
+  detects that it has landed on a signature-unaware image via ESP-IDF's own
+  bootloader-persisted rollback record and traps the *next* silent OTA-install
+  attempt behind a recovery screen -- closer to "flag for recovery" than to "accept
+  as a bounded exception," but with a user-acknowledgment escape hatch instead of
+  mandating a physical reflash in every case:
+
+  1. `src/OtaRollbackDetection.{h,cpp}` wraps `esp_ota_get_last_invalid_partition()` /
+     `esp_ota_get_partition_description()`. `captureLastInvalidOtaPartitionDigest()`
+     returns the invalid image's own `app_elf_sha256` digest (flash-persisted by the
+     bootloader, not a one-boot flag) whenever a rollback has ever fired. Keyed to
+     the image's digest rather than the `ota_0`/`ota_1` partition label, since that
+     label gets reused by every future OTA.
+  2. `src/OtaRollbackRecoveryPlan.{h,cpp}` is a pure, host-tested decision function:
+     given "has a last-invalid-partition record" and "does its digest match a
+     previously acknowledged one," it returns `Normal` or `EnterRestrictedRecovery`.
+  3. `src/main.cpp` gates only the silent-reboot-into-OTA-install branch on this
+     plan (`SILENT_REBOOT_TARGET_OTA_INSTALL`/`OTA_CHECK`) -- reading, Home,
+     Settings, networking, and BLE all keep working normally after a rollback.
+  4. When the plan says `EnterRestrictedRecovery`,
+     `src/activities/settings/OtaRollbackRecoveryActivity.{h,cpp}` traps the user in
+     a full-screen, no-"Back" prompt with two choices: **recover via SD card**
+     (hands off to `SdFirmwareUpdateActivity`, which clears the invalid-partition
+     state), or **continue anyway** (persists the invalid image's digest as
+     acknowledged and returns Home). Once acknowledged, normal -- still fully
+     unauthenticated on that signature-unaware image -- OTA resumes for that
+     specific digest, until the device upgrades to a new signed release again.
+
+  **What this guarantees**: a device can never silently re-enter the unsigned-OTA
+  trust model after a rollback without the user explicitly being told and choosing
+  to accept it. **What it does not guarantee**: it does not prevent the reopened
+  unsigned-install window itself once acknowledged -- that's the accepted trade-off
+  of choosing "recoverable" over "permanently bricked on rollback." Re-verify this
+  end-to-end on real hardware as part of the OTA rollback test matrix below.
 - **Interrupted transition (power/connectivity loss mid-download)**: already
   handled by existing code, independent of signing -- see point 4 above.
 - **SD-card / USB / web-flasher / factory recovery**: deliberately unauthenticated,

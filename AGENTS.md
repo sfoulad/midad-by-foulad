@@ -840,6 +840,36 @@ renderer.drawText(FONT_UI, x, y, tr(STR_LOADING), true);
 3. Update global font objects in `src/main.cpp:40-115`
 4. Add font ID constant to `src/fontIds.h`
 
+### PlatformIO Package Integrity Manifest
+
+**Source**: `scripts/platformio-packages-lock.json`, verified by `scripts/verify_platformio_packages.py`
+
+PlatformIO's own PackageManager does not checksum-verify external/URI package
+downloads — only its Library Registry path (`lib_deps` entries like
+`bblanchon/ArduinoJson @ 7.4.2`) is checksummed. The platform archive
+(`platform = https://github.com/pioarduino/platform-espressif32/...`),
+Arduino/ESP-IDF frameworks, SCons, `contrib-piohome`, and the idf_tools.py
+wrapper manifests for cmake/ninja/cppcheck/esptoolpy/esp-rom-elfs/the two GCC
+toolchains all fall outside that path. `scripts/verify_platformio_packages.py`
+closes this gap by independently verifying every one of those URLs against a
+checked-in `sha256`, run as an early CI step before `pio run` in `ci.yml`,
+`release.yml`, `release_candidate.yml`, and `auto-release.yml` — fails closed
+on any mismatch, and works on both empty and cache-hit runners (it reuses
+PlatformIO's own `.cache/downloads` when present, fetches fresh otherwise).
+
+**To bump the pinned platform/toolchain version**:
+
+1. Update `platformio.ini`'s `platform = ` URL to the new release tag.
+2. Regenerate the manifest: `python3 scripts/verify_platformio_packages.py --update`
+3. **Review the diff** in `scripts/platformio-packages-lock.json` before
+   committing — this is the actual security review step; a hash changing for
+   a package whose version didn't change is a red flag, not routine noise.
+4. Commit both files together. The CI guard fails the PR otherwise.
+
+**Do NOT** hand-edit `sha256`/`size` fields in the manifest — always regenerate
+with `--update` so the values come from an actual verified download, not a
+transcription.
+
 ---
 
 ## Local Development Configuration
