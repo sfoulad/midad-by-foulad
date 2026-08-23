@@ -111,6 +111,12 @@ bool HalClock::quickSyncSystemTime() {
   return false;
 }
 
+void HalClock::stopSntp() {
+  if (esp_sntp_enabled()) {
+    esp_sntp_stop();
+  }
+}
+
 bool HalClock::writeTimeToRTC(uint8_t hour, uint8_t minute, uint8_t second) {
   // DS3231 on this board only ever surfaces hour/minute back out (see getTime()) --
   // the date fields keep DateTime's harmless in-struct defaults (Rtc.h) rather than
