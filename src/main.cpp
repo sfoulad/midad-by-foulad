@@ -27,9 +27,6 @@
 #include <WiFi.h>
 #include <XteinkDetect.h>
 #include <builtinFonts/all.h>
-#if FREEINK_CAP_TOUCH
-#include <esp_sntp.h>
-#endif
 
 #include <cstring>
 
@@ -266,9 +263,7 @@ static bool finishWifiSessionWithoutRestart() {
 
   // A software reset does not cycle externally powered touch/frontlight rails.
   // Shut down the network stack in place so those peripherals retain state.
-  if (esp_sntp_enabled()) {
-    esp_sntp_stop();
-  }
+  HalClock::stopSntp();
   WiFi.mode(WIFI_OFF);
   delay(100);
   LOG_DBG("MAIN", "WiFi stopped without restart on touch device");

@@ -56,6 +56,12 @@ class HalClock {
   // whenever isSystemTimeValid() is false; a no-op if WiFi isn't connected yet.
   static bool quickSyncSystemTime();
 
+  // Stops the SNTP client in place, if running. A no-op otherwise. Used when tearing
+  // down the network stack without a full chip reset (touch devices skip the reset
+  // to keep externally powered peripherals from cycling) -- see
+  // finishWifiSessionWithoutRestart() in main.cpp.
+  static void stopSntp();
+
  private:
   bool writeTimeToRTC(uint8_t hour, uint8_t minute, uint8_t second);
 };
