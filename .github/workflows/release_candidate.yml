@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           submodules: recursive
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -48,11 +49,16 @@ jobs:
             "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
 
       - name: Cache PlatformIO packages
+        # Namespaced separately from ci.yml's `pio-*` cache: this job signs firmware
+        # with OTA_SIGNING_KEY, so it must never restore a cache entry that untrusted
+        # PR-triggered CI could have populated (cache poisoning). The prefixes never
+        # overlap, so a restore-keys prefix match can't cross between them in either
+        # direction.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          key: signed-release-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: signed-release-pio-${{ runner.os }}-
 
       - name: Extract env
         run: |
