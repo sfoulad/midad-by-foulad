@@ -143,11 +143,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "latest"
+          version: "0.12.5"
+          checksum: "68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2"
           enable-cache: false
 
-      - name: Install PlatformIO Core
-        run: uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
+      - name: Install PlatformIO Core and Python dependencies
+        run: uv pip install --system --require-hashes -r scripts/requirements-ci.lock
 
       - name: Cache PlatformIO packages
         # Namespaced separately from ci.yml's `pio-*` cache: this job signs firmware
@@ -166,13 +167,19 @@ jobs:
           CROSSPOINT_RC_HASH: ${{ steps.version.outputs.short_sha }}
         run: pio run -e gh_release_rc
 
-      - name: Install espsecure
-        # Pinned to the exact version validated in Phase 1 Milestone 2 (real sign+
-        # verify round-trip run against it, not just --help). Do not bump casually:
-        # espsecure's CLI has changed command syntax across major versions before
-        # (underscored subcommands -> hyphenated, .py suffix -> bare command) --
-        # confirm scripts/sign_firmware.sh's exact invocation still matches first.
-        run: uv pip install --system esptool==4.12.0
+      - name: Verify espsecure version
+        # esptool==4.12.0 comes from scripts/requirements-ci.lock now -- no
+        # second install here. Pinned to the exact version validated in
+        # Phase 1 Milestone 2 (real sign+verify round-trip, not just --help).
+        # Do not bump casually: espsecure's CLI has changed command syntax
+        # across major versions before (underscored subcommands ->
+        # hyphenated, .py suffix -> bare command) -- confirm
+        # scripts/sign_firmware.sh's exact invocation still matches first.
+        run: |
+          set -euo pipefail
+          actual="$(python3 -c "import esptool; print(esptool.__version__)")"
+          echo "esptool $actual"
+          [ "$actual" = "4.12.0" ] || { echo "::error::Expected esptool 4.12.0, got: $actual"; exit 1; }
 
       - name: Sign firmware
         env:

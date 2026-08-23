@@ -85,19 +85,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "latest"
+          version: "0.12.5"
+          checksum: "68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2"
           enable-cache: false
 
-      - name: Install PlatformIO Core
-        run: |
-          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
-          # platform-espressif32's builder/main.py imports these unconditionally; its own
-          # penv bootstrap (builder/penv_setup.py) is supposed to install them automatically
-          # but isn't picking them up reliably in this runner image, so pin them explicitly.
-          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
-            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
-            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
-            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
+      - name: Install PlatformIO Core and Python dependencies
+        run: uv pip install --system --require-hashes -r scripts/requirements-ci.lock
 
       - name: Cache PlatformIO packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -141,19 +134,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "latest"
+          version: "0.12.5"
+          checksum: "68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2"
           enable-cache: false
 
-      - name: Install PlatformIO Core
-        run: |
-          uv pip install --system -U https://github.com/pioarduino/platformio-core/archive/refs/tags/v6.1.19.zip
-          # platform-espressif32's builder/main.py imports these unconditionally; its own
-          # penv bootstrap (builder/penv_setup.py) is supposed to install them automatically
-          # but isn't picking them up reliably in this runner image, so pin them explicitly.
-          uv pip install --system -U "littlefs-python>=0.16.0" "fatfs-ng>=0.1.14" "pyyaml>=6.0.2" \
-            "rich-click>=1.8.6" "zopfli>=0.2.2" "intelhex>=2.3.0" "rich>=14.0.0" "urllib3<2" \
-            "cryptography>=45.0.3" "certifi>=2025.8.3" "ecdsa>=0.19.1" "bitstring>=4.3.1" \
-            "reedsolo>=1.5.3,<1.8" "esp-idf-size>=2.0.0" "esp-coredump>=1.14.0"
+      - name: Install PlatformIO Core and Python dependencies
+        run: uv pip install --system --require-hashes -r scripts/requirements-ci.lock
 
       - name: Cache PlatformIO packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -216,6 +202,108 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build/test --output-on-failure -j
 
+  # Fails a PR if scripts/requirements-ci.lock doesn't match what
+  # scripts/requirements-ci.in currently resolves to -- catches an `.in` edit
+  # that wasn't followed by regenerating the `.lock`. Recompiles into a copy
+  # seeded with the checked-in lock (uv then prefers keeping already-resolved
+  # versions rather than re-resolving from the loose ranges from scratch --
+  # confirmed locally: two consecutive seeded runs produce byte-identical
+  # output), so this only fails on a genuine drift, not routine re-runs.
+  # Never passes --upgrade: a version bump must be its own reviewed commit.
+  lock-regression-guard:
+    name: Lock regression guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.5"
+          checksum: "68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2"
+          enable-cache: false
+
+      - name: Recompile the lock and diff against the checked-in copy
+        run: |
+          set -euo pipefail
+          cp scripts/requirements-ci.lock /tmp/recompiled.lock
+          uv pip compile scripts/requirements-ci.in --python-platform linux --generate-hashes --no-header -o /tmp/recompiled.lock
+          if ! diff -u scripts/requirements-ci.lock /tmp/recompiled.lock; then
+            echo "::error::scripts/requirements-ci.lock is out of date relative to scripts/requirements-ci.in. Regenerate it with:"
+            echo "::error::uv pip compile scripts/requirements-ci.in --python-platform linux --generate-hashes --no-header -o scripts/requirements-ci.lock"
+            exit 1
+          fi
+
+  # Validates scripts/requirements-ci.lock actually installs and functions on
+  # both Python versions the release-family workflows use (see release.yml /
+  # auto-release.yml: 3.14, release_candidate.yml: 3.13), independent of
+  # `build`/`cppcheck` above which only exercise one of the two.
+  python-lock-validation:
+    name: Validate lock (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.5"
+          checksum: "68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2"
+          enable-cache: false
+
+      - name: Install PlatformIO Core and Python dependencies
+        run: uv pip install --system --require-hashes -r scripts/requirements-ci.lock
+
+      - name: Confirm PlatformIO Core version
+        run: |
+          set -euo pipefail
+          actual="$(pio --version)"
+          echo "$actual"
+          [ "$actual" = "PlatformIO Core, version 6.1.19" ] || { echo "::error::Expected PlatformIO Core 6.1.19, got: $actual"; exit 1; }
+
+      - name: Confirm espsecure/esptool version
+        # generate_signing_key's own version banner is the only way to see
+        # espsecure's version without a real sign/verify round-trip; reuse
+        # this throwaway key for the ephemeral sign test below rather than
+        # generating a second one.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ephemeral-signing"
+          actual="$(espsecure.py generate_signing_key --version 2 --scheme rsa3072 "$RUNNER_TEMP/ephemeral-signing/key.pem" 2>&1 | head -1)"
+          echo "$actual"
+          [ "$actual" = "espsecure.py v4.12.0" ] || { echo "::error::Expected espsecure.py v4.12.0, got: $actual"; exit 1; }
+
+      - name: Ephemeral sign-and-verify test (throwaway key, no production secret)
+        # Proves the real, unmodified scripts/sign_firmware.sh still works
+        # after switching to the locked install. OTA_SIGNING_KEY is set to
+        # the throwaway key generated above -- never secrets.OTA_SIGNING_KEY.
+        # No artifact, tag, or release is produced by this step.
+        run: |
+          set -euo pipefail
+          espsecure.py extract_public_key --version 2 \
+            --keyfile "$RUNNER_TEMP/ephemeral-signing/key.pem" \
+            "$RUNNER_TEMP/ephemeral-signing/pubkey.bin"
+          head -c 65536 /dev/urandom > "$RUNNER_TEMP/ephemeral-signing/dummy-firmware.bin"
+          OTA_SIGNING_KEY="$(cat "$RUNNER_TEMP/ephemeral-signing/key.pem")" \
+            ./scripts/sign_firmware.sh \
+              "$RUNNER_TEMP/ephemeral-signing/dummy-firmware.bin" \
+              "$RUNNER_TEMP/ephemeral-signing/pubkey.bin"
+          rm -rf "$RUNNER_TEMP/ephemeral-signing"
+
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
   # PR requirements.
   test-status:
@@ -226,6 +314,8 @@ jobs:
       - cppcheck
       - ota-signing-flags
       - unit-tests
+      - lock-regression-guard
+      - python-lock-validation
     if: always()
     runs-on: ubuntu-latest
     steps:
