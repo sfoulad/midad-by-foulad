@@ -1,0 +1,51 @@
+# Source spec for scripts/requirements-ci.lock. Every CI job that installs
+# PlatformIO Core or esptool consumes the generated lock, never this file
+# directly. Regenerate with (pinned uv, matching .github/workflows/ci.yml's
+# lock-regression-guard job):
+#
+#   uv pip compile scripts/requirements-ci.in --python-platform linux \
+#     --python-version 3.13 --generate-hashes --no-header \
+#     -o scripts/requirements-ci.lock
+#
+# --python-version 3.13 is required: typing-extensions (pulled in via
+# anyio/starlette) is only needed on Python <3.13 per its own marker, so
+# omitting the flag makes the resolution depend on whatever ambient
+# interpreter the machine running this command happens to discover.
+#
+# To pull in a genuine version bump deliberately (never routinely, never in
+# CI), add --upgrade-package <name> or --upgrade to the command above.
+#
+# pioarduino-core is PlatformIO Core installed from pioarduino's fork, pinned
+# to the exact commit v6.1.19 resolves to (immutable, unlike the mutable tag
+# archive URL this replaces). The declared package name is `pioarduino-core`,
+# NOT `platformio` -- pioarduino's own pyproject.toml declares that name, and
+# `platformio` on PyPI is the unrelated official upstream package (confirmed
+# by diffing the two: 25+ files differ, including a telemetry.py the fork
+# deliberately removed). Do not "fix" this back to `platformio`.
+pioarduino-core @ https://github.com/pioarduino/platformio-core/archive/d3321155afaadd4e1d53373910c047132d48374b.zip
+
+# platform-espressif32's builder/main.py imports these unconditionally; its own
+# penv bootstrap (builder/penv_setup.py) is supposed to install them automatically
+# but isn't picking them up reliably in this runner image, so pin them explicitly.
+littlefs-python>=0.16.0
+fatfs-ng>=0.1.14
+pyyaml>=6.0.2
+rich-click>=1.8.6
+zopfli>=0.2.2
+intelhex>=2.3.0
+rich>=14.0.0
+urllib3<2
+cryptography>=45.0.3
+certifi>=2025.8.3
+ecdsa>=0.19.1
+bitstring>=4.3.1
+reedsolo>=1.5.3,<1.8
+esp-idf-size>=2.0.0
+esp-coredump>=1.14.0
+
+# Pinned to the exact version validated in Phase 1 Milestone 2 (real sign+
+# verify round-trip run against it, not just --help). Do not bump casually:
+# espsecure's CLI has changed command syntax across major versions before
+# (underscored subcommands -> hyphenated, .py suffix -> bare command) --
+# confirm scripts/sign_firmware.sh's exact invocation still matches first.
+esptool==4.12.0
