@@ -155,28 +155,36 @@ check_prereqs() {
 # ---------------------------------------------------------------------------
 
 # Populates the global arrays VOL_IDS / VOL_NAMES / VOL_MOUNTS / VOL_WHOLE
-# with every currently-mounted non-internal volume (real USB drives, external
-# SSDs, and -- for --rehearsal testing -- mounted disk images all look the
-# same to diskutil here). VOL_WHOLE is the underlying physical disk
-# identifier (e.g. "disk4" for partition "disk4s1"), used to catch two
-# selections that are really the same physical drive under different
-# partitions/volumes.
+# with every currently-mounted non-internal volume. VOL_WHOLE is the
+# underlying physical disk identifier (e.g. "disk4" for partition "disk4s1"),
+# used to catch two selections that are really the same physical drive under
+# different partitions/volumes.
+#
+# Outside --rehearsal, mounted disk images ("BusProtocol": "Disk Image" --
+# e.g. a leftover .dmg someone forgot to eject) are excluded: picking one as
+# a "backup drive" in a real ceremony would silently produce a backup that
+# evaporates the moment it's unmounted, with no physical medium backing it
+# at all. --rehearsal deliberately keeps them, since that's how this script
+# tests itself without needing spare physical USB hardware.
 list_external_volumes() {
   VOL_IDS=(); VOL_NAMES=(); VOL_MOUNTS=(); VOL_WHOLE=()
-  local mp plist dev_id internal whole
+  local mp plist dev_id internal whole bus
   for mp in /Volumes/*; do
     [[ -d "$mp" ]] || continue
     plist="$(diskutil info -plist "$mp" 2>/dev/null)" || continue
     dev_id="$(printf '%s' "$plist" | plutil -extract DeviceIdentifier raw -o - - 2>/dev/null || true)"
     [[ -n "$dev_id" ]] || continue
     internal="$(printf '%s' "$plist" | plutil -extract Internal raw -o - - 2>/dev/null || echo true)"
-    if [[ "$internal" == "false" ]]; then
-      whole="$(printf '%s' "$plist" | plutil -extract ParentWholeDisk raw -o - - 2>/dev/null || echo "$dev_id")"
-      VOL_IDS+=("$dev_id")
-      VOL_NAMES+=("$(basename "$mp")")
-      VOL_MOUNTS+=("$mp")
-      VOL_WHOLE+=("$whole")
+    [[ "$internal" == "false" ]] || continue
+    bus="$(printf '%s' "$plist" | plutil -extract BusProtocol raw -o - - 2>/dev/null || echo "")"
+    if [[ "$REHEARSAL" -ne 1 && "$bus" == "Disk Image" ]]; then
+      continue
     fi
+    whole="$(printf '%s' "$plist" | plutil -extract ParentWholeDisk raw -o - - 2>/dev/null || echo "$dev_id")"
+    VOL_IDS+=("$dev_id")
+    VOL_NAMES+=("$(basename "$mp")")
+    VOL_MOUNTS+=("$mp")
+    VOL_WHOLE+=("$whole")
   done
 }
 
@@ -248,6 +256,10 @@ read_passphrase() {
 # through a file on disk.
 gpg_encrypt() {
   local src="$1" dst="$2"
+  # Refuse to overwrite an existing backup at this path -- a re-run (e.g. a
+  # future key rotation using this same script) must never silently destroy
+  # a prior backup that might still be someone's only remaining copy.
+  [[ ! -e "$dst" ]] || fail "$dst already exists -- refusing to overwrite a possibly-still-needed backup. Move it aside first, or pick a different drive."
   exec 3< <(printf '%s' "$PASSPHRASE")
   gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 \
     --symmetric --cipher-algo AES256 -o "$dst" "$src"
@@ -293,20 +305,31 @@ espsecure.py generate_signing_key --version 2 --scheme rsa3072 "$PRIVATE_KEY" >/
 chmod 600 "$PRIVATE_KEY"
 ok "Key generated (held only in a private temp directory, deleted at the end)"
 
+if [[ "$REHEARSAL" -eq 1 ]]; then
+  BACKUP_FILENAME="midad-ota-signing-key.rehearsal.gpg"
+else
+  BACKUP_FILENAME="midad-ota-signing-key.gpg"
+fi
+BACKUP_PATH_1="$BACKUP_DIR_1/$BACKUP_FILENAME"
+BACKUP_PATH_2="$BACKUP_DIR_2/$BACKUP_FILENAME"
+
 step "Creating encrypted backups"
-gpg_encrypt "$PRIVATE_KEY" "$BACKUP_DIR_1/midad-ota-signing-key.gpg"
+gpg_encrypt "$PRIVATE_KEY" "$BACKUP_PATH_1"
 ok "Backup written to drive #1"
-gpg_encrypt "$PRIVATE_KEY" "$BACKUP_DIR_2/midad-ota-signing-key.gpg"
+gpg_encrypt "$PRIVATE_KEY" "$BACKUP_PATH_2"
 ok "Backup written to drive #2"
 
-step "Restore-testing backup #1"
-RESTORE_TEST="$CEREMONY_DIR/restore-test.pem"
-gpg_decrypt "$BACKUP_DIR_1/midad-ota-signing-key.gpg" "$RESTORE_TEST"
+step "Restore-testing both backups"
 ORIGINAL_HASH="$(shasum -a 256 "$PRIVATE_KEY" | awk '{print $1}')"
-RESTORED_HASH="$(shasum -a 256 "$RESTORE_TEST" | awk '{print $1}')"
-rm -f "$RESTORE_TEST"
-[[ "$ORIGINAL_HASH" == "$RESTORED_HASH" ]] || fail "Restore test FAILED -- decrypted backup does not match the original key. Do not proceed. Re-run the ceremony from the start."
-ok "Restore-test passed -- backup #1 decrypts to the exact original key"
+BACKUP_PATHS=("$BACKUP_PATH_1" "$BACKUP_PATH_2")
+for n in 1 2; do
+  RESTORE_TEST="$CEREMONY_DIR/restore-test-$n.pem"
+  gpg_decrypt "${BACKUP_PATHS[$((n-1))]}" "$RESTORE_TEST"
+  RESTORED_HASH="$(shasum -a 256 "$RESTORE_TEST" | awk '{print $1}')"
+  rm -f "$RESTORE_TEST"
+  [[ "$ORIGINAL_HASH" == "$RESTORED_HASH" ]] || fail "Restore test FAILED for backup #$n -- decrypted backup does not match the original key. Do not proceed. Re-run the ceremony from the start."
+  ok "Backup #$n restore-tested -- decrypts to the exact original key"
+done
 
 step "Extracting the public key"
 espsecure.py extract_public_key --version 2 --keyfile "$PRIVATE_KEY" "$PUBLIC_KEY" >/dev/null
