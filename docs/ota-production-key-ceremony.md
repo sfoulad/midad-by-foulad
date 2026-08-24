@@ -67,6 +67,117 @@ without this flag fails CI rather than shipping silently unprotected). No
 - Hardware -- nothing gets flashed by provisioning the key. Task #197
   (hardware tamper-test matrix) is a fully separate phase.
 
+## Custody & recovery plan
+
+This section is deliberately self-contained -- everything needed to
+understand *why* the backup step matters, not just what command to run.
+
+**Custody model:** two independent encrypted copies of the private key,
+each behind a different access boundary, plus the live copy inside
+GitHub's encrypted-secrets store (which itself is the only place the key
+material is ever transmitted to). No copy of the unencrypted key persists
+anywhere after Step 7.
+
+| Component | Where it lives | Who/what can access it | Read-back possible? |
+|---|---|---|---|
+| Live signing copy | GitHub Actions encrypted secret `OTA_SIGNING_KEY` | Only workflow runs on this repo, injected into the `Sign firmware` step's environment for that step alone | No -- GitHub secrets are write-only; `gh secret set` can overwrite but nothing can read the value back out |
+| Backup copy #1 | `age`\/`gpg`-encrypted file (`midad-ota-signing-key-production.pem.age`) | Whoever the release maintainer grants access to, via a password manager's secure-note file attachment (matches existing custody practice for other release credentials) | Only with the separately-stored passphrase |
+| Backup copy #2 | Same encrypted file, second independent location | An offline, encrypted USB drive kept in physical custody, not networked | Only with the separately-stored passphrase and physical access |
+| Passphrase | Stored separately from both encrypted copies (e.g. the password manager's own vault, not attached to the file) | Release maintainer | N/A |
+| Unencrypted working copy | Ceremony machine, briefly (Steps 1-6) | Whoever is running the ceremony | Deleted in Step 7; never leaves that machine |
+
+**Why two independent backups, not one:** a single backup location is a
+single point of loss (drive failure, account lockout, etc.) for a key that
+-- per `docs/ota-signing-key-management.md`'s "Key rotation design" -- has
+**no remote recovery path** if lost. Two independent locations means one
+failing doesn't mean losing the key.
+
+**Recovery plan if the key is compromised:** stop signing with it
+immediately, then follow `docs/ota-signing-key-management.md`'s
+"Compromised-key emergency process" section verbatim (Rotation option 1 --
+the bridge-release procedure -- executed as an emergency operation, not a
+routine one). That section is authoritative; this document doesn't
+duplicate its steps.
+
+**Recovery plan if the key is lost (nobody has it, including backups):**
+per the same design doc's "Lost key" section, **there is no remote
+recovery** -- devices that already trust this key can only be recovered by
+physical re-flash (Option 2). This is precisely why the two-independent-
+backup custody model above exists: it is designed to make this scenario
+very unlikely, not to provide a way out of it after the fact.
+
+**How we verify no private-key material leaks:**
+- **Shell history / process list**: Step 5's `gh secret set ... < file`
+  form passes the key via stdin redirection, never as a CLI argument --
+  nothing sensitive appears in `ps` output or, ordinarily, in shell
+  history. Step 7 includes an explicit `history | grep` check as a
+  best-effort backstop.
+- **Git**: the `.gitignore` patterns added in this same PR
+  (`*.signing-key.pem`, `devkey-*.pem`, the exact production-key working
+  filename) mean `git status`/`git add -A` cannot silently pick up the key
+  file if the ceremony happens to run inside the repo directory (it
+  shouldn't -- Step 1 uses `~/ota-signing-ceremony`, outside the repo
+  entirely -- but the gitignore is a second, independent backstop).
+- **CI logs**: `scripts/sign_firmware.sh` writes the key to a `mktemp` file
+  that its own `trap ... EXIT` deletes, and never echoes the key value at
+  any point (confirmed by reading the script -- no `set -x`, no `echo
+  "$OTA_SIGNING_KEY"` anywhere). GitHub Actions also automatically redacts
+  any secret value that happens to appear verbatim in log output, as a
+  second, independent layer.
+- **GitHub secret itself**: cannot be read back via the API or UI by
+  anyone, including the repo owner -- only overwritten. This is a GitHub
+  platform guarantee, not something this project's code enforces.
+- **Post-ceremony confirmation**: after Step 7, run
+  `git status` (should show nothing untracked matching key-file patterns)
+  and `history | grep -i signing-key` (should show only file*path*
+  references, never key bytes) as a final manual check before considering
+  the ceremony complete.
+
+## Public-key integration plan
+
+What committing `ota-signing-public-key.pem` (Step 6) does and does not do,
+stated explicitly since this is the step most likely to be misunderstood:
+
+- **Does**: gives CI a value to check its own signing output against
+  before publishing (`espsecure.py verify_signature` inside
+  `sign_firmware.sh`) -- catches a wrong/corrupt key or tooling regression
+  at signing time, before a device ever sees the artifact.
+- **Does NOT**: change what any device trusts. Per
+  `docs/ota-signing-key-management.md`'s "Where the runtime trust anchor
+  lives" section, that trust anchor is read live from the *currently
+  running app's own appended signature block* on each device -- this file
+  plays no role in that check. A device only starts trusting this key once
+  it actually installs a release signed with it.
+- **No firmware/source change required**: `src/OtaSigningBootGuard.cpp` and
+  every release/RC `platformio.ini` environment are already wired to expect
+  a signed image; committing this one file is the only integration step.
+- **Safe to be public**: this is the *public* half; committing it is
+  permanent (visible in git history forever) and intentional -- unlike the
+  private half, which must never be committed anywhere, ever.
+
+## Pre-key automated validation (already running, confirmed live)
+
+This is not a future action item -- it already exists and is exercised on
+every push to `develop`, verified in this session against the actual CI run
+for the PR #181 merge commit (`6b440390`, job "Validate lock (Python
+3.13/3.14)"): all 5 `SignFirmwareRoundTripTest` cases in
+`scripts/tests/test_sign_firmware.py` ran for real against real
+`espsecure.py 4.12.0` (not skipped -- that job installs it from
+`scripts/requirements-ci.lock`) and passed:
+- `test_valid_signature_is_accepted`
+- `test_wrong_key_is_rejected`
+- `test_unsigned_firmware_is_rejected`
+- `test_tampered_firmware_is_rejected`
+- `test_signing_fails_closed_if_key_file_write_fails`
+
+Each generates its own throwaway keypair via the *exact* same
+`generate_signing_key --version 2 --scheme rsa3072` command this ceremony's
+Step 1 uses, and exercises `sign_firmware.sh` -- the real, shipped script,
+not a reimplementation. This is the mechanical proof that the ceremony's
+commands work end-to-end, obtained without ever touching the real key. No
+additional pre-key validation is needed beyond this existing, CI-enforced
+suite.
+
 ## Pre-ceremony checklist
 
 - [ ] A machine you trust with the key for the few minutes it exists
