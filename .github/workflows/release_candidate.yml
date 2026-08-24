@@ -53,6 +53,10 @@ jobs:
           key: signed-release-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: signed-release-pio-${{ runner.os }}-
 
+      - name: Verify PlatformIO package integrity
+        # See release.yml's identical step -- issue #179.
+        run: python3 scripts/verify_platformio_packages.py
+
       - name: Extract env
         run: |
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV

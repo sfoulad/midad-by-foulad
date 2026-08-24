@@ -99,6 +99,10 @@ jobs:
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
+      - name: Verify PlatformIO package integrity
+        # See release.yml's identical step -- issue #179.
+        run: python3 scripts/verify_platformio_packages.py
+
       - name: Run cppcheck
         run: pio check --fail-on-defect low --fail-on-defect medium --fail-on-defect high
 
@@ -147,6 +151,10 @@ jobs:
           path: ~/.platformio
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-${{ runner.os }}-
+
+      - name: Verify PlatformIO package integrity
+        # See release.yml's identical step -- issue #179.
+        run: python3 scripts/verify_platformio_packages.py
 
       - name: Build ${{ matrix.env }} firmware
         run: |
@@ -285,32 +293,26 @@ jobs:
 
       - name: Confirm espsecure/esptool version
         # generate_signing_key's own version banner is the only way to see
-        # espsecure's version without a real sign/verify round-trip; reuse
-        # this throwaway key for the ephemeral sign test below rather than
-        # generating a second one.
+        # espsecure's version without a real sign/verify round-trip -- the
+        # key itself is throwaway, discarded immediately after.
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/ephemeral-signing"
-          actual="$(espsecure.py generate_signing_key --version 2 --scheme rsa3072 "$RUNNER_TEMP/ephemeral-signing/key.pem" 2>&1 | head -1)"
+          tmp_key="$(mktemp -u)"  # -u: name only, no file -- generate_signing_key refuses to overwrite an existing one
+          actual="$(espsecure.py generate_signing_key --version 2 --scheme rsa3072 "$tmp_key" 2>&1 | head -1)"
+          rm -f "$tmp_key"
           echo "$actual"
           [ "$actual" = "espsecure.py v4.12.0" ] || { echo "::error::Expected espsecure.py v4.12.0, got: $actual"; exit 1; }
 
-      - name: Ephemeral sign-and-verify test (throwaway key, no production secret)
-        # Proves the real, unmodified scripts/sign_firmware.sh still works
-        # after switching to the locked install. OTA_SIGNING_KEY is set to
-        # the throwaway key generated above -- never secrets.OTA_SIGNING_KEY.
-        # No artifact, tag, or release is produced by this step.
-        run: |
-          set -euo pipefail
-          espsecure.py extract_public_key --version 2 \
-            --keyfile "$RUNNER_TEMP/ephemeral-signing/key.pem" \
-            "$RUNNER_TEMP/ephemeral-signing/pubkey.bin"
-          head -c 65536 /dev/urandom > "$RUNNER_TEMP/ephemeral-signing/dummy-firmware.bin"
-          OTA_SIGNING_KEY="$(cat "$RUNNER_TEMP/ephemeral-signing/key.pem")" \
-            ./scripts/sign_firmware.sh \
-              "$RUNNER_TEMP/ephemeral-signing/dummy-firmware.bin" \
-              "$RUNNER_TEMP/ephemeral-signing/pubkey.bin"
-          rm -rf "$RUNNER_TEMP/ephemeral-signing"
+      - name: Run Python script tests
+        # Supersedes the old inline "ephemeral sign-and-verify" step: this
+        # suite covers that same real sign+verify round trip (with its own
+        # freshly generated throwaway keys, never secrets.OTA_SIGNING_KEY)
+        # plus tampered/wrong-key/unsigned rejection and sign_firmware.sh's
+        # fail-closed guard clauses (scripts/tests/test_sign_firmware.py),
+        # and scripts/check-ota-signing-flags.py /
+        # scripts/verify_platformio_packages.py's own logic. No artifact,
+        # tag, or release is produced by this step.
+        run: python3 -m unittest discover -s scripts/tests -v
 
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
   # PR requirements.

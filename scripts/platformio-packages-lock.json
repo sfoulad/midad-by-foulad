@@ -1,0 +1,185 @@
+{
+  "_comment": "Independently-verified PlatformIO package downloads for platform-espressif32, covering every package a clean `pio run` fetches outside of PlatformIO's checksummed Library Registry (issue #179). Regenerate with `python3 scripts/verify_platformio_packages.py --update` after any platformio.ini platform/toolchain version bump, then have a human review the diff before merging.",
+  "platform_url": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip",
+  "generated_from_commit": "cf8d7ef840e8121a373813d878f9e81e6051b50d",
+  "packages": [
+    {
+      "name": "contrib-piohome",
+      "version": "3.4.4",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/contrib-piohome-3.4.4.tar.gz",
+      "size": 922895,
+      "sha256": "94a46ef4f317d81d08496f45532b873989b231163cfbdb5ac06e2ba86518e9e9"
+    },
+    {
+      "name": "espressif32",
+      "version": "55.03.37",
+      "url": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip",
+      "size": 1678517,
+      "sha256": "ffce4a512581abd417c42edf2695a3b49e8b1447849847d3f62d0db695da9efc"
+    },
+    {
+      "name": "framework-arduino-c2-skeleton-lib",
+      "version": "unknown",
+      "url": "https://github.com/pioarduino/platform-espressif32/releases/download/c2-skeleton/c2_87912cd291_compile_skeleton.zip",
+      "size": 28323335,
+      "sha256": "c0d2107e648d6200510ecc6f8839448b40dad189b0aa80a2d15a4b5fe2411817"
+    },
+    {
+      "name": "framework-arduino-c61-skeleton-lib",
+      "version": "unknown",
+      "url": "https://github.com/pioarduino/platform-espressif32/releases/download/c61-skeleton/c61_87912cd291_compile_skeleton.zip",
+      "size": 38886955,
+      "sha256": "2130522afc2bf54e4bff521a304c665f65e9f83ea344b01b2b4725e52930156d"
+    },
+    {
+      "name": "framework-arduinoespressif32",
+      "version": "unknown",
+      "url": "https://github.com/espressif/arduino-esp32/releases/download/3.3.7/esp32-core-3.3.7.tar.xz",
+      "size": 20697240,
+      "sha256": "9dd09b11ae75ba25b0610e76ff1265a4e59441cc5fdf3cb20dcd323904814186"
+    },
+    {
+      "name": "framework-arduinoespressif32-libs",
+      "version": "unknown",
+      "url": "https://github.com/espressif/arduino-esp32/releases/download/3.3.7/esp32-core-3.3.7-libs.tar.xz",
+      "size": 272921836,
+      "sha256": "a67e82c5af501db31261b37cae4cf0270b9c08a8d73b68d867f825669e85a2f6"
+    },
+    {
+      "name": "framework-espidf",
+      "version": "unknown",
+      "url": "https://github.com/pioarduino/esp-idf/releases/download/v5.5.2.260206/esp-idf-v5.5.2.tar.xz",
+      "size": 43197072,
+      "sha256": "00b1e7b52f0932d13b2736fee4667c6c36d27f8b4e03ee58e3eebd850060b922"
+    },
+    {
+      "name": "tool-clangtidy",
+      "version": "18.1.1",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/clangtidy-v18.1.1.zip",
+      "size": 1255,
+      "sha256": "af6ccaa508a1bbfa9c5b37f61c4c21cb316bb08ac3bfd4c911e09774fde8647d",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-cmake",
+      "version": "4.0.3",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/cmake-4.0.3.zip",
+      "size": 1282,
+      "sha256": "10fbfcfb1ed89a8e95b6a55a01da33149836a50b6d40d7f2544bbada44b519d1",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-cppcheck",
+      "version": "2.11.0+230717",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/cppcheck-v2.11.0-230717.zip",
+      "size": 1210,
+      "sha256": "03c06a9da28cea95d5f9e12c2760c021c7701e97af8f774672e99861588d7162",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-dfuutil-arduino",
+      "version": "1.11.0",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/dfuutil-arduino-v1.11.0.zip",
+      "size": 1249,
+      "sha256": "e424e01a8315872482c283c153265d54189a5a50443184c1fac831a04f1f54f1",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-esp-rom-elfs",
+      "version": "2024.10.11",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/esp-rom-elfs-20241011.zip",
+      "size": 3535051,
+      "sha256": "8f1f9041a44390650994499c95dd20851222a4bdaa162dd68f6cef5af3e39501",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-esp_install",
+      "version": "5.3.4",
+      "url": "https://github.com/pioarduino/esp_install/releases/download/v5.3.4/esp_install-v5.3.4.zip",
+      "size": 54015,
+      "sha256": "c85a91287a95c08f6605461db1c41dcbf35f19e2f362ca8e9c2c104c70d4f360"
+    },
+    {
+      "name": "tool-esptoolpy",
+      "version": "5.1.2",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/esptoolpy-v5.1.2.zip",
+      "size": 989,
+      "sha256": "9ac8af54d61414e378a1efcd605de79c2e318efa8d791c0d24df48019cbd3074",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-ninja",
+      "version": "1.13.1",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/ninja-1.13.1.zip",
+      "size": 1184,
+      "sha256": "3067f4f1ba6dc022ecc548e43ad6cd08669d78e34f1ee439aeebd0a7672100f7",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-openocd-esp32",
+      "version": "2.1200.20251215",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/openocd-v0.12.0-esp32-20251215.zip",
+      "size": 1513,
+      "sha256": "81502bc7c4d7d2485b59c119f309705e2531766f3ceb8d488bf4d6a62bd53ab8",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-pvs-studio",
+      "version": "7.36.91321",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/pvs-studio-v7.36.91321.zip",
+      "size": 1252,
+      "sha256": "5ed6b029307b250721ed6925150ef754a20a97b850a509ef47a576eed83f42eb",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-riscv32-esp-elf-gdb",
+      "version": "16.3.0+20250913",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/riscv32-esp-gdb-16.3_20250913.zip",
+      "size": 1604,
+      "sha256": "7948acd586cd5c32d484c0f2011b31aa3ff294e88882610e724b19e8a7debee1",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "tool-scons",
+      "version": "4.40801.0",
+      "url": "https://github.com/pioarduino/scons/releases/download/4.8.1/scons-local-4.8.1.tar.gz",
+      "size": 483365,
+      "sha256": "289b1abf389b730ab5a1018ed9fc84e22d301e0d16c64548eb9db5bf8ba59d06",
+      "wrapper_url": "https://github.com/pioarduino/registry/releases/download/0.0.1/scons-4.8.1.zip",
+      "wrapper_sha256": "abba035909409e9a77f761898c512f370683e8a8f55c58f527fe85b2c8443e64",
+      "wrapper_size": 1054
+    },
+    {
+      "name": "tool-xtensa-esp-elf-gdb",
+      "version": "16.3.0+20250913",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/xtensa-esp-gdb-16.3_20250913.zip",
+      "size": 1549,
+      "sha256": "2655546c6aeeb98bf58c55ff0152e4bbd805646ae7bb214bba7317453aca7143",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "toolchain-esp32ulp",
+      "version": "2.38.0+20240113",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/esp32ulp-elf-2.38_20240113.zip",
+      "size": 1527,
+      "sha256": "4b37f26878e85092073876b83bac8c876a0877a00bc77545c0debf6c77302915",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "toolchain-riscv32-esp",
+      "version": "14.2.0+20251107",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/riscv32-esp-elf-14.2.0_20251107.zip",
+      "size": 1642,
+      "sha256": "33abc2866247754ccca35f75329a12d99cbb55baaec533d99ee5d373473daeaa",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    },
+    {
+      "name": "toolchain-xtensa-esp-elf",
+      "version": "14.2.0+20251107",
+      "url": "https://github.com/pioarduino/registry/releases/download/0.0.1/xtensa-esp-elf-14.2.0_20251107.zip",
+      "size": 1603,
+      "sha256": "b3d07ae81aa0617c2d43dc66c56cdf3550f3c30842a7abc309da7e5b0c05c623",
+      "note": "idf_tools.py wrapper manifest (tools.json); the real toolchain/tool payload is downloaded and hash-verified separately by idf_tools.py against sha256 fields declared inside this wrapper -- this entry pins the wrapper itself, which is the actual unverified trust boundary (see issue #179 audit)."
+    }
+  ]
+}

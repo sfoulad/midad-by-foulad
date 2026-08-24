@@ -1,9 +1,9 @@
 #include "OtaRollbackDetection.h"
 
+#include "OtaRollbackDigestFormat.h"
+
 #ifndef SIMULATOR
 #include <esp_ota_ops.h>
-
-#include <cstdio>
 
 bool captureLastInvalidOtaPartitionDigest(std::string& outDigestHex) {
   const esp_partition_t* invalidPartition = esp_ota_get_last_invalid_partition();
@@ -16,11 +16,7 @@ bool captureLastInvalidOtaPartitionDigest(std::string& outDigestHex) {
     return false;
   }
 
-  char hex[sizeof(appDesc.app_elf_sha256) * 2 + 1];
-  for (size_t i = 0; i < sizeof(appDesc.app_elf_sha256); i++) {
-    snprintf(hex + i * 2, 3, "%02x", appDesc.app_elf_sha256[i]);
-  }
-  outDigestHex.assign(hex, sizeof(hex) - 1);
+  outDigestHex = formatOtaRollbackDigestHex(appDesc.app_elf_sha256, sizeof(appDesc.app_elf_sha256));
   return true;
 }
 
