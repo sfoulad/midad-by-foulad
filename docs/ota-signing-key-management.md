@@ -9,7 +9,9 @@ is not committed, so every real release run fails closed at the signing step (se
 Provisioning the actual production keypair is a separate, deliberate action --
 generating it, registering the private half as a GitHub Actions secret, and
 committing the public half -- not something to do casually while wiring the
-pipeline.
+pipeline. See `docs/ota-production-key-ceremony.md` for the exact runbook
+(generation, backup, secret provisioning, and first-signed-RC validation
+commands) when that action is actually taken.
 
 ## Scheme
 
