@@ -17,21 +17,31 @@ by a human. Nothing in this document generates, transmits, or stores the
 actual key material -- it only describes how to.
 
 **Recommended: use the wizard.** `scripts/ota-key-ceremony.sh` (macOS only)
-automates every step below -- prerequisite checks, dual-USB backup drive
-detection (physical drives only in production mode; refuses to overwrite an
-existing backup file, and refuses two selections that resolve to the same
-physical drive), passphrase entry/confirmation (never displayed, never
-written to disk), encrypted backups via `gpg --passphrase-fd` (never a CLI
-argument), a restore-test of *both* backups before continuing, public-key
-extraction, and secret provisioning via `gh secret set ... < file` (stdin,
-never argv) -- ending with a leak check and a safe completion summary that
-shows only the public key's fingerprint. Run
+automates Steps 1-5 and 7 below -- prerequisite checks, dual-USB backup
+drive detection (physical drives only in production mode; refuses to
+overwrite an existing backup file, and refuses two selections that resolve
+to the same physical drive), passphrase entry/confirmation (never
+displayed, never written to disk), encrypted backups via
+`gpg --passphrase-fd` (never a CLI argument), a restore-test of *both*
+backups, a sign/verify self-test with `espsecure.py` before the key is
+trusted with anything real, public-key extraction, secret provisioning via
+`gh secret set ... < file` (stdin, never argv) -- refusing to run at all in
+production mode if `OTA_SIGNING_KEY` is already provisioned, since silently
+replacing an already-live production key would break every device that's
+installed a release signed with the old one -- and a leak check, ending
+with a safe completion summary that shows only the public key's
+fingerprint. **Steps 6, 8, and 9 remain manual, on purpose**: the wizard
+prints the exact commands for committing the public key and opening its
+PR (Step 6) but does not run them itself, and does not dispatch the RC
+workflow or perform the cryptographic RC inspection (Steps 8-9) -- those
+stay deliberate, human-initiated actions. Run
 `./scripts/ota-key-ceremony.sh --rehearsal` first (throwaway key, two real
-encrypted backups, real restore-tests of both, and a
-real-but-immediately-deleted GitHub secret round-trip -- touches nothing
-production) to confirm the mechanism works on your machine before ever
-running it for real. The manual steps below remain as the authoritative
-reference for what the wizard does and as a fallback if it ever can't run.
+encrypted backups, real restore-tests of both, a real sign/verify
+self-test, and a real-but-immediately-deleted GitHub secret round-trip --
+touches nothing production) to confirm the mechanism works on your machine
+before ever running it for real. The manual steps below remain as the
+authoritative reference for what the wizard does and as a fallback if it
+ever can't run.
 
 ## What this ceremony touches
 

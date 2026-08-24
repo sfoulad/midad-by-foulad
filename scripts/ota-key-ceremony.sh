@@ -335,9 +335,34 @@ step "Extracting the public key"
 espsecure.py extract_public_key --version 2 --keyfile "$PRIVATE_KEY" "$PUBLIC_KEY" >/dev/null
 ok "Public key extracted"
 
+step "Self-verifying the key works for signing"
+# The restore-test above only proves gpg's own encrypt/decrypt round-trips
+# correctly -- it says nothing about whether the RSA key itself is actually
+# usable for ESP-IDF Secure Boot V2 signing. This is that separate check,
+# matching the manual runbook's own Step 3, before this key is trusted with
+# anything real.
+SELFTEST_DATA="$CEREMONY_DIR/selftest.bin"
+SELFTEST_SIGNED="$CEREMONY_DIR/selftest-signed.bin"
+head -c 65536 /dev/urandom > "$SELFTEST_DATA"
+espsecure.py sign_data --version 2 --keyfile "$PRIVATE_KEY" \
+  --output "$SELFTEST_SIGNED" "$SELFTEST_DATA" >/dev/null
+espsecure.py verify_signature --version 2 --keyfile "$PUBLIC_KEY" "$SELFTEST_SIGNED" >/dev/null \
+  || fail "Sign/verify self-test FAILED -- this key is not usable for signing. Do not proceed. Re-run the ceremony from the start."
+rm -f "$SELFTEST_DATA" "$SELFTEST_SIGNED"
+ok "Sign/verify self-test passed"
+
 step "Provisioning the GitHub secret"
 if [[ "$REHEARSAL" -eq 1 ]]; then
   info "Rehearsal: setting throwaway secret '$SECRET_NAME', then deleting it."
+else
+  # Never silently replace an already-live production key: every device
+  # that has installed a release signed with the current key can only ever
+  # accept the *same* key's signature (see docs/ota-signing-key-management.md's
+  # "Key rotation design") -- overwriting it here without a deliberate
+  # rotation decision would strand every one of those devices.
+  if gh secret list --repo "$REPO" --json name --jq ".[] | select(.name == \"$SECRET_NAME\") | .name" | grep -q .; then
+    fail "$SECRET_NAME is already provisioned on $REPO. This ceremony is for first-time provisioning only -- overwriting an already-live production key silently would strand every device that trusts it. If this is a deliberate key rotation, follow docs/ota-signing-key-management.md's rotation procedure instead of re-running this wizard."
+  fi
 fi
 gh secret set "$SECRET_NAME" --repo "$REPO" < "$PRIVATE_KEY"
 ok "Secret '$SECRET_NAME' provisioned (value cannot be read back -- this is a GitHub platform guarantee)"
@@ -408,6 +433,9 @@ else
   fi
 fi
 mkdir -p "$FINAL_PUBKEY_DIR"
+if [[ "$REHEARSAL" -ne 1 && -e "$FINAL_PUBKEY_DIR/$PUBKEY_FILENAME" ]]; then
+  fail "$FINAL_PUBKEY_DIR/$PUBKEY_FILENAME already exists. This ceremony is for first-time provisioning only -- if this is a deliberate key rotation, handle the existing file deliberately rather than letting this script overwrite it."
+fi
 cp "$PUBLIC_KEY" "$FINAL_PUBKEY_DIR/$PUBKEY_FILENAME"
 FINGERPRINT="$(openssl pkey -pubin -in "$PUBLIC_KEY" -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $NF}')"
 
