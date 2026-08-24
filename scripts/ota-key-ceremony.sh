@@ -360,7 +360,9 @@ else
   # accept the *same* key's signature (see docs/ota-signing-key-management.md's
   # "Key rotation design") -- overwriting it here without a deliberate
   # rotation decision would strand every one of those devices.
-  if gh secret list --repo "$REPO" --json name --jq ".[] | select(.name == \"$SECRET_NAME\") | .name" | grep -q .; then
+  EXISTING_SECRET_NAMES="$(gh secret list --repo "$REPO" --json name --jq '.[].name')" \
+    || fail "Could not check whether $SECRET_NAME is already provisioned (gh secret list failed) -- refusing to proceed without that confirmation."
+  if printf '%s\n' "$EXISTING_SECRET_NAMES" | grep -qxF "$SECRET_NAME"; then
     fail "$SECRET_NAME is already provisioned on $REPO. This ceremony is for first-time provisioning only -- overwriting an already-live production key silently would strand every device that trusts it. If this is a deliberate key rotation, follow docs/ota-signing-key-management.md's rotation procedure instead of re-running this wizard."
   fi
 fi
