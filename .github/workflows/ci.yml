@@ -69,6 +69,14 @@ jobs:
       - name: Verify every release/RC env enables the OTA boot-signature check
         run: python3 scripts/check-ota-signing-flags.py
 
+      - name: Lint the production key ceremony wizard
+        # The wizard itself is macOS-only (uses diskutil for backup-drive
+        # detection) and touches real GitHub secrets/backups, so it isn't
+        # exercised end-to-end here -- see docs/ota-production-key-ceremony.md
+        # for how it was validated in rehearsal mode. This just keeps static
+        # analysis enforced on every change to it.
+        run: shellcheck scripts/ota-key-ceremony.sh
+
   cppcheck:
     runs-on: ubuntu-latest
     steps:

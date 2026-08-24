@@ -16,6 +16,20 @@ automated agent. Every command below is written to be copy-pasted and run
 by a human. Nothing in this document generates, transmits, or stores the
 actual key material -- it only describes how to.
 
+**Recommended: use the wizard.** `scripts/ota-key-ceremony.sh` (macOS only)
+automates every step below -- prerequisite checks, dual-USB backup drive
+detection, passphrase entry/confirmation (never displayed, never written to
+disk), encrypted backups via `gpg --passphrase-fd` (never a CLI argument),
+a restore-test before continuing, public-key extraction, and secret
+provisioning via `gh secret set ... < file` (stdin, never argv) -- ending
+with a leak check and a safe completion summary that shows only the public
+key's fingerprint. Run `./scripts/ota-key-ceremony.sh --rehearsal` first
+(throwaway key, two real encrypted backups, a real restore-test, and a
+real-but-immediately-deleted GitHub secret round-trip -- touches nothing
+production) to confirm the mechanism works on your machine before ever
+running it for real. The manual steps below remain as the authoritative
+reference for what the wizard does and as a fallback if it ever can't run.
+
 ## What this ceremony touches
 
 Every file, environment, workflow, and board this affects -- confirmed
@@ -225,7 +239,7 @@ mkdir -m 700 -p ~/ota-signing-ceremony
 cd ~/ota-signing-ceremony
 
 espsecure.py generate_signing_key --version 2 --scheme rsa3072 \
-  --keyfile midad-ota-signing-key-production.pem
+  midad-ota-signing-key-production.pem
 chmod 600 midad-ota-signing-key-production.pem
 ```
 
@@ -238,7 +252,7 @@ syntax variant.
 ```bash
 espsecure.py extract_public_key --version 2 \
   --keyfile midad-ota-signing-key-production.pem \
-  --output ota-signing-public-key.pem
+  ota-signing-public-key.pem
 ```
 
 This is the file `scripts/sign_firmware.sh` and all three release workflows
