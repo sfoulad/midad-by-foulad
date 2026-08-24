@@ -81,10 +81,17 @@ anywhere after Step 7.
 | Component | Where it lives | Who/what can access it | Read-back possible? |
 |---|---|---|---|
 | Live signing copy | GitHub Actions encrypted secret `OTA_SIGNING_KEY` | Only workflow runs on this repo, injected into the `Sign firmware` step's environment for that step alone | No -- GitHub secrets are write-only; `gh secret set` can overwrite but nothing can read the value back out |
-| Backup copy #1 | `age`\/`gpg`-encrypted file (`midad-ota-signing-key-production.pem.age`) | Whoever the release maintainer grants access to, via a password manager's secure-note file attachment (matches existing custody practice for other release credentials) | Only with the separately-stored passphrase |
-| Backup copy #2 | Same encrypted file, second independent location | An offline, encrypted USB drive kept in physical custody, not networked | Only with the separately-stored passphrase and physical access |
-| Passphrase | Stored separately from both encrypted copies (e.g. the password manager's own vault, not attached to the file) | Release maintainer | N/A |
+| Backup copy #1 | `age`\/`gpg`-encrypted file (`midad-ota-signing-key-production.pem.age`) | Whoever the release maintainer grants access to, via a password manager's secure-note file attachment (matches existing custody practice for other release credentials) | Only with the passphrase (see below -- **not** stored in that same password manager) |
+| Backup copy #2 | Same encrypted file, second independent location | An offline, encrypted USB drive kept in physical custody, not networked | Only with the passphrase and physical access |
+| Passphrase | **Not stored digitally anywhere.** Memorized by the release maintainer, or -- if a written record is genuinely needed -- kept on paper in a physical safe, independent of both backup locations above | Release maintainer only | N/A |
 | Unencrypted working copy | Ceremony machine, briefly (Steps 1-6) | Whoever is running the ceremony | Deleted in Step 7; never leaves that machine |
+
+**Why the passphrase can't live in the same password manager as Backup #1:**
+storing the encrypted file and its own unlock passphrase in the same vault
+collapses the "independent access boundary" this table claims -- a single
+compromised password-manager account would then yield both. The passphrase
+must be independent of *every* backup file location, not merely "not
+attached to the same note."
 
 **Why two independent backups, not one:** a single backup location is a
 single point of loss (drive failure, account lockout, etc.) for a key that
@@ -173,10 +180,18 @@ for the PR #181 merge commit (`6b440390`, job "Validate lock (Python
 Each generates its own throwaway keypair via the *exact* same
 `generate_signing_key --version 2 --scheme rsa3072` command this ceremony's
 Step 1 uses, and exercises `sign_firmware.sh` -- the real, shipped script,
-not a reimplementation. This is the mechanical proof that the ceremony's
-commands work end-to-end, obtained without ever touching the real key. No
-additional pre-key validation is needed beyond this existing, CI-enforced
-suite.
+not a reimplementation. This proves the cryptographic signing and rejection
+behavior itself (valid/tampered/wrong-key/unsigned) is mechanically sound,
+obtained without ever touching the real key.
+
+**What this suite does not cover** -- these steps have no automated
+equivalent and must be verified manually, per this document's own
+instructions, when the ceremony actually runs: encrypted-backup creation
+and recoverability (Step 4), `OTA_SIGNING_KEY` GitHub secret scoping (Step
+5), the public-key PR review/merge (Step 6), and the real four-board
+`release_candidate.yml` release flow (Step 9). Those are operational/custody
+steps, not cryptographic-mechanism steps -- the two are verified by
+different means for a reason, not an oversight.
 
 ## Pre-ceremony checklist
 
@@ -265,9 +280,11 @@ that's what you already use):
 ```bash
 age -p -o midad-ota-signing-key-production.pem.age \
   midad-ota-signing-key-production.pem
-# Choose a strong passphrase; store the passphrase itself in a *different*
-# location than the encrypted file (e.g. your password manager for the
-# passphrase, a separate physical location for the encrypted file).
+# Choose a strong passphrase. Do NOT store it in the same password manager
+# that will hold the encrypted file below -- that collapses the "two
+# independent copies" custody model into one. Memorize it, or keep a
+# written copy in a physically separate location (e.g. a safe), never
+# alongside either encrypted-file location.
 ```
 
 Store `midad-ota-signing-key-production.pem.age` in **at least two**
