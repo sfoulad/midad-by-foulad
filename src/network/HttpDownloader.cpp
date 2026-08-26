@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <UrlOrigin.h>
 #include <base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -138,13 +140,6 @@ bool isRedirect(int status) {
 // redirect as cross-origin). Used to decide whether a redirect crosses trust
 // boundaries -- see the Authorization/X-Device-Serial-stripping logic in
 // runGet() and runGetWolf() below.
-std::string urlOrigin(const std::string& url) {
-  const size_t schemeEnd = url.find("://");
-  if (schemeEnd == std::string::npos) return url;
-  const size_t pathStart = url.find_first_of("/?#", schemeEnd + 3);
-  return pathStart == std::string::npos ? url : url.substr(0, pathStart);
-}
-
 // Disables WiFi modem-sleep power-save for the duration of an HTTP operation,
 // restoring the default on scope exit regardless of which return path is taken.
 // OtaUpdater.cpp already does this for firmware downloads ("For better timing and
@@ -169,7 +164,7 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
   WifiPowerSaveGuard psGuard;
 
   std::string url = startUrl;
-  const std::string startOrigin = urlOrigin(startUrl);
+  const std::string_view startOrigin = urlOrigin(startUrl);
   // Unlike runGet(), each hop here builds a fresh SecureHttpClient, so
   // Authorization isn't "carried over" by a reused handle -- but nothing
   // stopped it from being unconditionally re-added on every hop regardless of
@@ -389,10 +384,17 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     // header comes back even if a later hop redirects back to the original
     // origin.
     {
-      constexpr size_t kUrlBufLen = 512;
-      auto urlBuf = makeUniqueNoThrow<char[]>(kUrlBufLen);
-      const bool sameOrigin = urlBuf && esp_http_client_get_url(client, urlBuf.get(), kUrlBufLen) == ESP_OK &&
-                              urlOrigin(urlBuf.get()) == urlOrigin(url);
+      // Reuses `buf` (already allocated above, READ_CHUNK bytes, idle until the
+      // body-read loop after this one) instead of a fresh heap allocation here.
+      // This runs right before esp_http_client_open() below re-establishes the
+      // TLS connection to the redirect target -- on the CDN hop, that connection
+      // needs a large contiguous block for RSA signature verification
+      // (crt_bundle_attach), so an extra alloc/free cycle in this exact window
+      // is itself a fragmentation risk, not just a cost. A real device hit
+      // exactly this: PK verify failed with an MPI/RSA allocation error on the
+      // CDN hop, with the largest contiguous block down to ~21KB by then.
+      const bool sameOrigin =
+          esp_http_client_get_url(client, buf.get(), READ_CHUNK) == ESP_OK && urlOrigin(buf.get()) == urlOrigin(url);
       if (!sameOrigin) {
         LOG_DBG("HTTP", "redirect changed origin -- dropping Authorization/X-Device-Serial headers");
         esp_http_client_delete_header(client, "Authorization");
