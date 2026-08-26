@@ -57,10 +57,13 @@ is ever lost.
 **What's different from the full ceremony:**
 - **One backup, not two.** A single `gpg`-encrypted backup is written to a
   user-selected folder inside iCloud Drive, instead of two independent
-  physical USB drives. The private key itself is never written to iCloud,
-  or anywhere else, unencrypted -- `gpg_encrypt` writes the encrypted file
-  directly to its destination path, so no unencrypted intermediate ever
-  exists there.
+  physical USB drives. The private key is never written to iCloud Drive
+  unencrypted -- `gpg_encrypt` writes the encrypted file directly to its
+  destination path there, with no unencrypted intermediate. (The key does
+  briefly exist unencrypted in the ceremony's private, 0700 temp working
+  directory on the local machine, outside iCloud entirely, before that
+  directory is overwritten and deleted at the end -- same as the full
+  production ceremony.)
 - **A distinct confirmation phrase** (`I understand this provisions a
   pre-production key, not for stable release`) naming the reduced custody
   and the scope restriction explicitly, so it can't be triggered by the same
@@ -85,6 +88,17 @@ strengthened custody (running the full dual-USB ceremony against the same
 already-provisioned secret is not meaningful -- retaining means keeping this
 key and adding a second independent backup out of band) or rotate to a
 newly-generated production key with full dual-drive custody from the start.
+
+**This restriction is mechanically enforced, not just documented.**
+`.github/workflows/release.yml` (the stable-release path, triggered by a
+version tag push) fails closed if `ota-signing-key-status.md` is present in
+the repository at that tag -- it refuses to sign or publish. This file's
+absence is what lets a stable release proceed, so retiring it is itself the
+custody-upgrade decision: do so only as part of a deliberate rotation or
+custody-strengthening PR, reviewed like any other change to this repo's OTA
+signing posture, never just to silence the check. `auto-release.yml` and
+`release_candidate.yml` (the RC paths) do **not** carry this check --
+pre-production keys are exactly what they're authorized to sign.
 
 **Validate first:** `./scripts/ota-key-ceremony.sh --preproduction --rehearsal`
 exercises this exact mechanism -- iCloud folder selection, encryption,

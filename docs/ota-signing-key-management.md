@@ -108,7 +108,11 @@ that key with strengthened custody or rotate to a newly-generated key with
 full dual-drive custody from the start -- shipping a stable release signed
 with a pre-production-custody key without making that decision deliberately
 would silently reintroduce the single-point-of-loss risk this section exists
-to avoid.
+to avoid. This is not merely a documentation convention:
+`.github/workflows/release.yml` (the stable-release path) fails closed while
+`ota-signing-key-status.md` is present in the repository, so a stable tag
+push cannot silently sign with a pre-production-custody key -- only the RC
+paths (`auto-release.yml`, `release_candidate.yml`) can.
 
 ## Key rotation design (revised -- corrects a wrong Milestone 1 assumption)
 
