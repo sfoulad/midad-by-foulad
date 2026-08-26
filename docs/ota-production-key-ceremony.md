@@ -16,6 +16,33 @@ automated agent. Every command below is written to be copy-pasted and run
 by a human. Nothing in this document generates, transmits, or stores the
 actual key material -- it only describes how to.
 
+**Recommended: use the wizard.** `scripts/ota-key-ceremony.sh` (macOS only)
+automates Steps 1-5 and 7 below -- prerequisite checks, dual-USB backup
+drive detection (physical drives only in production mode; refuses to
+overwrite an existing backup file, and refuses two selections that resolve
+to the same physical drive), passphrase entry/confirmation (never
+displayed, never written to disk), encrypted backups via
+`gpg --passphrase-fd` (never a CLI argument), a restore-test of *both*
+backups, a sign/verify self-test with `espsecure.py` before the key is
+trusted with anything real, public-key extraction, secret provisioning via
+`gh secret set ... < file` (stdin, never argv) -- refusing to run at all in
+production mode if `OTA_SIGNING_KEY` is already provisioned, since silently
+replacing an already-live production key would break every device that's
+installed a release signed with the old one -- and a leak check, ending
+with a safe completion summary that shows only the public key's
+fingerprint. **Steps 6, 8, and 9 remain manual, on purpose**: the wizard
+prints the exact commands for committing the public key and opening its
+PR (Step 6) but does not run them itself, and does not dispatch the RC
+workflow or perform the cryptographic RC inspection (Steps 8-9) -- those
+stay deliberate, human-initiated actions. Run
+`./scripts/ota-key-ceremony.sh --rehearsal` first (throwaway key, two real
+encrypted backups, real restore-tests of both, a real sign/verify
+self-test, and a real-but-immediately-deleted GitHub secret round-trip --
+touches nothing production) to confirm the mechanism works on your machine
+before ever running it for real. The manual steps below remain as the
+authoritative reference for what the wizard does and as a fallback if it
+ever can't run.
+
 ## What this ceremony touches
 
 Every file, environment, workflow, and board this affects -- confirmed
@@ -81,17 +108,27 @@ anywhere after Step 7.
 | Component | Where it lives | Who/what can access it | Read-back possible? |
 |---|---|---|---|
 | Live signing copy | GitHub Actions encrypted secret `OTA_SIGNING_KEY` | Only workflow runs on this repo, injected into the `Sign firmware` step's environment for that step alone | No -- GitHub secrets are write-only; `gh secret set` can overwrite but nothing can read the value back out |
-| Backup copy #1 | `age`\/`gpg`-encrypted file (`midad-ota-signing-key-production.pem.age`) | Whoever the release maintainer grants access to, via a password manager's secure-note file attachment (matches existing custody practice for other release credentials) | Only with the passphrase (see below -- **not** stored in that same password manager) |
-| Backup copy #2 | Same encrypted file, second independent location | An offline, encrypted USB drive kept in physical custody, not networked | Only with the passphrase and physical access |
-| Passphrase | **Not stored digitally anywhere.** Memorized by the release maintainer, or -- if a written record is genuinely needed -- kept on paper in a physical safe, independent of both backup locations above | Release maintainer only | N/A |
-| Unencrypted working copy | Ceremony machine, briefly (Steps 1-6) | Whoever is running the ceremony | Deleted in Step 7; never leaves that machine |
+| Backup copy #1 | `gpg`-encrypted file, on **its own separate physical drive** -- via the wizard, an offline USB drive selected as "drive #1" (never a mounted disk image in production mode; `diskutil`-verified physical/external media only) | Whoever has physical access to that drive | Only with the passphrase (see below -- **not** stored digitally anywhere, so never alongside either backup) |
+| Backup copy #2 | Same encrypted content, on a **genuinely different physical drive** -- the wizard rejects picking the same drive twice, even across two partitions/volumes of one physical disk | Whoever has physical access to that drive | Only with the passphrase and physical access |
+| Passphrase | **Not stored digitally anywhere.** Memorized by the release maintainer, or -- if a written record is genuinely needed -- kept on paper in a physical safe, independent of both backup drives above | Release maintainer only | N/A |
+| Unencrypted working copy | Ceremony machine, briefly (Steps 1-6, or for the wizard's internal working directory) | Whoever is running the ceremony | Deleted before the ceremony ends; never leaves that machine |
 
-**Why the passphrase can't live in the same password manager as Backup #1:**
-storing the encrypted file and its own unlock passphrase in the same vault
+The wizard requires two physical USB drives specifically (not a password
+manager attachment for one of the two) so that the mechanical "two
+independent copies" property is enforced by the tool itself, not left to
+the operator's judgment about what counts as independent. If you're
+following the manual steps instead of the wizard, a password manager's
+secure-note attachment for one copy is an equally valid second location --
+the property that matters is genuine independence (different systems,
+different failure domains), not the specific medium.
+
+**Why the passphrase can't live alongside either backup:** storing an
+encrypted backup and its own unlock passphrase in the same place (the same
+password manager vault, taped to the same USB drive, whatever the medium)
 collapses the "independent access boundary" this table claims -- a single
-compromised password-manager account would then yield both. The passphrase
-must be independent of *every* backup file location, not merely "not
-attached to the same note."
+compromise of that one location would then yield both. The passphrase must
+be independent of *every* backup location, not merely "not attached to the
+same file."
 
 **Why two independent backups, not one:** a single backup location is a
 single point of loss (drive failure, account lockout, etc.) for a key that
@@ -225,7 +262,7 @@ mkdir -m 700 -p ~/ota-signing-ceremony
 cd ~/ota-signing-ceremony
 
 espsecure.py generate_signing_key --version 2 --scheme rsa3072 \
-  --keyfile midad-ota-signing-key-production.pem
+  midad-ota-signing-key-production.pem
 chmod 600 midad-ota-signing-key-production.pem
 ```
 
@@ -238,7 +275,7 @@ syntax variant.
 ```bash
 espsecure.py extract_public_key --version 2 \
   --keyfile midad-ota-signing-key-production.pem \
-  --output ota-signing-public-key.pem
+  ota-signing-public-key.pem
 ```
 
 This is the file `scripts/sign_firmware.sh` and all three release workflows
