@@ -95,6 +95,25 @@ CI-side delivery method. A hardware security module or signing service is a reas
 future upgrade but not a Phase 1 requirement -- the immediate goal is "not committed to
 git and not sitting in plaintext on a laptop," not HSM-grade custody.
 
+**Accepted exception for the current pre-production stage:** while no
+production customer devices depend on the OTA signing key yet, a key may be
+provisioned with a single iCloud-Drive-backed encrypted copy instead of the
+two-independent-physical-drive custody model, via
+`scripts/ota-key-ceremony.sh --preproduction` (see
+`docs/ota-production-key-ceremony.md`'s "Pre-production mode" section). Such
+a key is authorized for CI, signed RC generation, and hardware qualification
+only, and is tracked as such in a committed `ota-signing-key-status.md`.
+Before public production launch, the project must decide whether to retain
+that key with strengthened custody or rotate to a newly-generated key with
+full dual-drive custody from the start -- shipping a stable release signed
+with a pre-production-custody key without making that decision deliberately
+would silently reintroduce the single-point-of-loss risk this section exists
+to avoid. This is not merely a documentation convention:
+`.github/workflows/release.yml` (the stable-release path) fails closed while
+`ota-signing-key-status.md` is present in the repository, so a stable tag
+push cannot silently sign with a pre-production-custody key -- only the RC
+paths (`auto-release.yml`, `release_candidate.yml`) can.
+
 ## Key rotation design (revised -- corrects a wrong Milestone 1 assumption)
 
 **Milestone 1's version of this section was wrong** and is superseded by this one.

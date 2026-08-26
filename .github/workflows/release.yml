@@ -82,6 +82,26 @@ jobs:
               ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}"
           fi
 
+      - name: Refuse a stable release signed with a pre-production-custody key
+        # Enforced counterpart to ota-signing-key-status.md (see
+        # docs/ota-production-key-ceremony.md's "Pre-production mode"): that
+        # file is committed alongside a public key provisioned with reduced
+        # (single-iCloud-backup) custody via `ota-key-ceremony.sh
+        # --preproduction`, authorized for CI / signed RC generation /
+        # hardware qualification only -- never a stable release. This is the
+        # *stable* release path (triggered by a version tag push), unlike
+        # auto-release.yml/release_candidate.yml (RC paths, where a
+        # pre-production key is exactly what's authorized); it must never
+        # silently sign with a key this file marks as not-yet-production-
+        # custody. Fails closed: the file's absence means no pre-production
+        # key is currently marked live, so the stable release proceeds.
+        run: |
+          set -euo pipefail
+          if [ -f ota-signing-key-status.md ]; then
+            echo "::error::ota-signing-key-status.md is present at this tag, marking the committed ota-signing-public-key.pem (and the OTA_SIGNING_KEY secret it corresponds to) as PRE-PRODUCTION custody -- authorized for CI, signed RC generation, and hardware qualification only, not a stable release (see docs/ota-production-key-ceremony.md). Refusing to publish. Retire this file only after a deliberate custody upgrade or key rotation (docs/ota-signing-key-management.md's key rotation procedure), never just to silence this check."
+            exit 1
+          fi
+
       - name: Verify espsecure version
         # esptool==4.12.0 comes from scripts/requirements-ci.lock now -- no
         # second install here. Pinned to the exact version validated in
