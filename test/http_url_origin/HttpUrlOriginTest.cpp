@@ -36,7 +36,7 @@ TEST(UrlOrigin, ExtractsSchemeHostFromCdnRedirectTarget) {
   // The actual redirect target class that failed on real hardware: GitHub's
   // release asset CDN, a different host than github.com.
   EXPECT_EQ(urlOrigin("https://objects.githubusercontent.com/github-production-release-asset/1/firmware.bin?X-Amz="
-                       "abc"),
+                      "abc"),
             "https://objects.githubusercontent.com");
 }
 
@@ -52,17 +52,11 @@ TEST(UrlOrigin, NoPathStopsAtQueryString) {
   EXPECT_EQ(urlOrigin("https://host?key=value"), "https://host");
 }
 
-TEST(UrlOrigin, NoPathStopsAtFragment) {
-  EXPECT_EQ(urlOrigin("https://host#section"), "https://host");
-}
+TEST(UrlOrigin, NoPathStopsAtFragment) { EXPECT_EQ(urlOrigin("https://host#section"), "https://host"); }
 
-TEST(UrlOrigin, BareOriginUnchanged) {
-  EXPECT_EQ(urlOrigin("https://midad.one"), "https://midad.one");
-}
+TEST(UrlOrigin, BareOriginUnchanged) { EXPECT_EQ(urlOrigin("https://midad.one"), "https://midad.one"); }
 
-TEST(UrlOrigin, MissingSchemeReturnsWholeInput) {
-  EXPECT_EQ(urlOrigin("not-a-url"), "not-a-url");
-}
+TEST(UrlOrigin, MissingSchemeReturnsWholeInput) { EXPECT_EQ(urlOrigin("not-a-url"), "not-a-url"); }
 
 TEST(UrlOrigin, SameOriginDifferentPathsCompareEqual) {
   EXPECT_EQ(urlOrigin("https://midad.one/opds/a.xml"), urlOrigin("https://midad.one/opds/b.xml"));
