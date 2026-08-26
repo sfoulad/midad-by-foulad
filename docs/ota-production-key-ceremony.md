@@ -43,6 +43,55 @@ before ever running it for real. The manual steps below remain as the
 authoritative reference for what the wizard does and as a fallback if it
 ever can't run.
 
+## Pre-production mode (current stage)
+
+`./scripts/ota-key-ceremony.sh --preproduction` is a **reduced-custody**
+variant of the same wizard, for the current stage where **no production
+customer devices depend on the OTA signing key yet**. It exists because the
+full custody model below (two independent physical USB drives, hand-carried)
+is disproportionate risk-management for a key whose only current consumers
+are CI, signed RC generation, and hardware qualification testing on
+disposable test units -- units that can be physically re-flashed if the key
+is ever lost.
+
+**What's different from the full ceremony:**
+- **One backup, not two.** A single `gpg`-encrypted backup is written to a
+  user-selected folder inside iCloud Drive, instead of two independent
+  physical USB drives. The private key itself is never written to iCloud,
+  or anywhere else, unencrypted -- `gpg_encrypt` writes the encrypted file
+  directly to its destination path, so no unencrypted intermediate ever
+  exists there.
+- **A distinct confirmation phrase** (`I understand this provisions a
+  pre-production key, not for stable release`) naming the reduced custody
+  and the scope restriction explicitly, so it can't be triggered by the same
+  muscle memory as the production phrase.
+- **A tracked status file**, `ota-signing-key-status.md`, written alongside
+  the public key and committed in the same PR. It declares the key
+  pre-production-only, lists its authorized uses, and states explicitly that
+  provisioning it is not authorization to ship a stable release.
+
+**What's the same:** prerequisite checks, real `OTA_SIGNING_KEY` secret
+provisioning (via stdin, with the same already-provisioned fail-closed
+guard -- this mode still refuses to silently replace an already-live key),
+the real `ota-signing-public-key.pem` filename, the restore-test, the
+sign/verify self-test, and the leak check. This is a reduced-custody
+ceremony for the *same* real secret and *same* real public-key file the
+full production ceremony would provision -- not a separate throwaway key.
+
+**Explicit scope of use for a key provisioned this way:** CI, signed RC
+generation, and hardware qualification only. Before public production
+launch, the project will decide whether to retain this key with
+strengthened custody (running the full dual-USB ceremony against the same
+already-provisioned secret is not meaningful -- retaining means keeping this
+key and adding a second independent backup out of band) or rotate to a
+newly-generated production key with full dual-drive custody from the start.
+
+**Validate first:** `./scripts/ota-key-ceremony.sh --preproduction --rehearsal`
+exercises this exact mechanism -- iCloud folder selection, encryption,
+restore-test, sign/verify self-test, and a real-but-immediately-deleted
+GitHub secret round-trip -- with a throwaway key, touching no production
+state, before ever running `--preproduction` for real.
+
 ## What this ceremony touches
 
 Every file, environment, workflow, and board this affects -- confirmed
@@ -52,6 +101,9 @@ alone), so this list can be used as a completeness check.
 **Files that change:**
 - `ota-signing-public-key.pem` (repo root) -- created, committed. Does not
   exist yet as of this writing.
+- `ota-signing-key-status.md` (repo root) -- created, committed, **only if
+  provisioned via `--preproduction`**. Declares the key pre-production-only;
+  see "Pre-production mode" above. Not created by the full ceremony.
 - No other repository file changes as part of the ceremony itself --
   `scripts/sign_firmware.sh` and all three release workflows already
   reference this exact filename and the `OTA_SIGNING_KEY` secret name; they

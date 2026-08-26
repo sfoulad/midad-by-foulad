@@ -6,8 +6,12 @@
 # passphrase anywhere they could leak.
 #
 # Usage:
-#   ./scripts/ota-key-ceremony.sh              # the real production ceremony
-#   ./scripts/ota-key-ceremony.sh --rehearsal  # throwaway-key rehearsal run
+#   ./scripts/ota-key-ceremony.sh                  # the real production ceremony
+#   ./scripts/ota-key-ceremony.sh --rehearsal      # throwaway-key rehearsal run
+#   ./scripts/ota-key-ceremony.sh --preproduction  # pre-production ceremony
+#                                                   # (single iCloud backup instead
+#                                                   # of dual USB drives -- see
+#                                                   # "--preproduction mode" below)
 #
 # Safety properties this script maintains throughout:
 #   - The private key and passphrase are only ever held in memory (a bash
@@ -31,15 +35,31 @@
 # touches the real OTA_SIGNING_KEY secret, the real ota-signing-public-key.pem
 # path, or git/PR state. Recommended to run once before ever running the real
 # ceremony, and worth re-running any time this script changes.
+#
+# --preproduction mode: for the current pre-production stage, where no
+# production customer devices depend on the OTA signing key yet and affected
+# test/RC hardware can be physically re-flashed if the key is lost. It skips
+# the dual-USB requirement in favor of a single encrypted backup written to a
+# user-selected folder in iCloud Drive (the private key itself is never
+# written there or anywhere else unencrypted), but otherwise provisions the
+# REAL OTA_SIGNING_KEY secret and the REAL ota-signing-public-key.pem, and
+# additionally writes a tracked ota-signing-key-status.md declaring the key
+# pre-production-only (CI / RC generation / hardware qualification), not
+# authorization for a stable production release. Compose with --rehearsal
+# (--preproduction --rehearsal) to validate this mechanism with a throwaway
+# key before real use.
 
 set -euo pipefail
 
 REPO="sfoulad/midad-by-foulad"
 REAL_SECRET_NAME="OTA_SIGNING_KEY"
 REAL_PUBKEY_FILENAME="ota-signing-public-key.pem"
+REAL_STATUS_FILENAME="ota-signing-key-status.md"
 MIN_PASSPHRASE_LEN=12
+ICLOUD_ROOT="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
 
 REHEARSAL=0
+PREPRODUCTION=0
 OUTPUT_DIR=""
 
 # ---------------------------------------------------------------------------
@@ -53,11 +73,21 @@ OTA signing key ceremony wizard.
   --rehearsal          Run the full mechanism with a throwaway key. Never
                         touches the real OTA_SIGNING_KEY secret or the real
                         ota-signing-public-key.pem. Recommended before the
-                        first real run.
+                        first real run. Composes with --preproduction to
+                        rehearse that mode specifically.
+  --preproduction      Pre-production ceremony: single encrypted backup in
+                        a user-selected iCloud Drive folder instead of two
+                        USB drives. Still provisions the REAL OTA_SIGNING_KEY
+                        secret and REAL ota-signing-public-key.pem, plus a
+                        tracked ota-signing-key-status.md marking the key
+                        CI/RC/hardware-qualification-only -- not
+                        authorization for a stable production release. Use
+                        only when no production customer devices depend on
+                        this key yet.
   --output-dir <path>  Where to place the finished public-key file
-                        (production mode only). Defaults to the current
-                        git repository's root, or the current directory if
-                        not inside one.
+                        (production/pre-production mode only). Defaults to
+                        the current git repository's root, or the current
+                        directory if not inside one.
   -h, --help            Show this help.
 EOF
 }
@@ -65,6 +95,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rehearsal) REHEARSAL=1; shift ;;
+    --preproduction) PREPRODUCTION=1; shift ;;
     --output-dir) OUTPUT_DIR="${2:-}"; shift 2 ;;
     -h|--help) print_help; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; print_help; exit 1 ;;
@@ -74,9 +105,11 @@ done
 if [[ "$REHEARSAL" -eq 1 ]]; then
   SECRET_NAME="OTA_SIGNING_KEY_CEREMONY_REHEARSAL"
   PUBKEY_FILENAME="ota-signing-public-key.rehearsal.pem"
+  STATUS_FILENAME="ota-signing-key-status.rehearsal.md"
 else
   SECRET_NAME="$REAL_SECRET_NAME"
   PUBKEY_FILENAME="$REAL_PUBKEY_FILENAME"
+  STATUS_FILENAME="$REAL_STATUS_FILENAME"
 fi
 
 # ---------------------------------------------------------------------------
@@ -220,6 +253,45 @@ select_backup_targets() {
   ok "Backup #2: ${VOL_NAMES[$((pick2-1))]}"
 }
 
+# --preproduction only: a single backup folder inside the user's iCloud
+# Drive, in place of two independent physical USB drives. Only the
+# ENCRYPTED backup file is ever written under this path (gpg_encrypt writes
+# directly to its destination argument, never via an intermediate plaintext
+# file) -- the private key itself never touches iCloud unencrypted.
+select_backup_folder() {
+  step "Selecting the pre-production backup folder"
+  info "Pre-production mode uses a single encrypted backup in iCloud Drive"
+  info "instead of two independent physical USB drives. Only the ENCRYPTED"
+  info "backup file is ever written here -- the private key itself is never"
+  info "written to this folder, or anywhere else in iCloud, unencrypted."
+  echo
+
+  [[ -d "$ICLOUD_ROOT" ]] || fail "iCloud Drive isn't set up on this Mac (expected: $ICLOUD_ROOT). Enable iCloud Drive in System Settings, or run the full ceremony (two USB drives, no --preproduction) instead."
+
+  local input resolved real_resolved real_root
+  read -r -p "    Folder inside iCloud Drive for the backup (e.g. 'OTA-Signing-Backup'): " input
+  [[ -n "$input" ]] || fail "A folder name is required."
+  case "$input" in
+    /*) fail "Enter a folder name relative to iCloud Drive, not an absolute path." ;;
+  esac
+
+  resolved="$ICLOUD_ROOT/$input"
+  mkdir -p "$resolved" || fail "Could not create $resolved"
+
+  # Resolve symlinks/".." to a real path and confirm it's genuinely still
+  # inside iCloud Drive -- a folder name containing ".." must not escape it.
+  real_resolved="$(cd "$resolved" && pwd -P)"
+  real_root="$(cd "$ICLOUD_ROOT" && pwd -P)"
+  case "$real_resolved" in
+    "$real_root"|"$real_root"/*) ;;
+    *) fail "That resolves outside iCloud Drive ($real_resolved) -- pick a folder name without '..' or symlinks that escape it." ;;
+  esac
+
+  BACKUP_FOLDER="$real_resolved"
+  ok "Backup folder: $BACKUP_FOLDER"
+  warn "iCloud sync happens in the background, not instantly -- confirm this folder shows a synced (not just local) status in Finder before relying on it as your backup."
+}
+
 # ---------------------------------------------------------------------------
 # Step: passphrase
 # ---------------------------------------------------------------------------
@@ -280,7 +352,24 @@ gpg_decrypt() {
 
 step "OTA signing key ceremony"
 if [[ "$REHEARSAL" -eq 1 ]]; then
-  printf '    \033[33m*** REHEARSAL MODE: throwaway key, no production changes ***\033[0m\n'
+  if [[ "$PREPRODUCTION" -eq 1 ]]; then
+    printf '    \033[33m*** REHEARSAL MODE (pre-production mechanism): throwaway key, no production changes ***\033[0m\n'
+  else
+    printf '    \033[33m*** REHEARSAL MODE: throwaway key, no production changes ***\033[0m\n'
+  fi
+elif [[ "$PREPRODUCTION" -eq 1 ]]; then
+  printf '    This generates a \033[1mPRE-PRODUCTION\033[0m OTA signing key and\n'
+  printf '    provisions it as the real %s secret.\n' "$REAL_SECRET_NAME"
+  printf '    Authorized for CI, signed RC generation, and hardware\n'
+  printf '    qualification ONLY -- NOT authorization to ship a stable\n'
+  printf '    production release.\n'
+  printf '    Custody: a single iCloud Drive folder backup, not the dual-\n'
+  printf '    USB production custody model. Accepted because no production\n'
+  printf '    customer devices depend on this key yet.\n'
+  echo
+  read -r -p "    Type the phrase to continue: I understand this provisions a pre-production key, not for stable release
+    > " confirm_phrase
+  [[ "$confirm_phrase" == "I understand this provisions a pre-production key, not for stable release" ]] || fail "Confirmation phrase did not match. Aborting -- nothing was created."
 else
   printf '    This generates the REAL production OTA signing key,\n'
   printf '    provisions it as the real %s secret, and\n' "$REAL_SECRET_NAME"
@@ -292,7 +381,11 @@ else
 fi
 
 check_prereqs
-select_backup_targets
+if [[ "$PREPRODUCTION" -eq 1 ]]; then
+  select_backup_folder
+else
+  select_backup_targets
+fi
 read_passphrase
 
 CEREMONY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ota-ceremony.XXXXXX")"
@@ -307,28 +400,35 @@ ok "Key generated (held only in a private temp directory, deleted at the end)"
 
 if [[ "$REHEARSAL" -eq 1 ]]; then
   BACKUP_FILENAME="midad-ota-signing-key.rehearsal.gpg"
+elif [[ "$PREPRODUCTION" -eq 1 ]]; then
+  BACKUP_FILENAME="midad-ota-signing-key.preproduction.gpg"
 else
   BACKUP_FILENAME="midad-ota-signing-key.gpg"
 fi
-BACKUP_PATH_1="$BACKUP_DIR_1/$BACKUP_FILENAME"
-BACKUP_PATH_2="$BACKUP_DIR_2/$BACKUP_FILENAME"
 
-step "Creating encrypted backups"
-gpg_encrypt "$PRIVATE_KEY" "$BACKUP_PATH_1"
-ok "Backup written to drive #1"
-gpg_encrypt "$PRIVATE_KEY" "$BACKUP_PATH_2"
-ok "Backup written to drive #2"
+step "Creating encrypted backup(s)"
+if [[ "$PREPRODUCTION" -eq 1 ]]; then
+  BACKUP_PATHS=("$BACKUP_FOLDER/$BACKUP_FILENAME")
+  gpg_encrypt "$PRIVATE_KEY" "${BACKUP_PATHS[0]}"
+  ok "Backup written to iCloud Drive folder"
+else
+  BACKUP_PATHS=("$BACKUP_DIR_1/$BACKUP_FILENAME" "$BACKUP_DIR_2/$BACKUP_FILENAME")
+  gpg_encrypt "$PRIVATE_KEY" "${BACKUP_PATHS[0]}"
+  ok "Backup written to drive #1"
+  gpg_encrypt "$PRIVATE_KEY" "${BACKUP_PATHS[1]}"
+  ok "Backup written to drive #2"
+fi
 
-step "Restore-testing both backups"
+step "Restore-testing the backup(s)"
 ORIGINAL_HASH="$(shasum -a 256 "$PRIVATE_KEY" | awk '{print $1}')"
-BACKUP_PATHS=("$BACKUP_PATH_1" "$BACKUP_PATH_2")
-for n in 1 2; do
-  RESTORE_TEST="$CEREMONY_DIR/restore-test-$n.pem"
-  gpg_decrypt "${BACKUP_PATHS[$((n-1))]}" "$RESTORE_TEST"
+for n in "${!BACKUP_PATHS[@]}"; do
+  idx=$((n+1))
+  RESTORE_TEST="$CEREMONY_DIR/restore-test-$idx.pem"
+  gpg_decrypt "${BACKUP_PATHS[$n]}" "$RESTORE_TEST"
   RESTORED_HASH="$(shasum -a 256 "$RESTORE_TEST" | awk '{print $1}')"
   rm -f "$RESTORE_TEST"
-  [[ "$ORIGINAL_HASH" == "$RESTORED_HASH" ]] || fail "Restore test FAILED for backup #$n -- decrypted backup does not match the original key. Do not proceed. Re-run the ceremony from the start."
-  ok "Backup #$n restore-tested -- decrypts to the exact original key"
+  [[ "$ORIGINAL_HASH" == "$RESTORED_HASH" ]] || fail "Restore test FAILED for backup #$idx -- decrypted backup does not match the original key. Do not proceed. Re-run the ceremony from the start."
+  ok "Backup #$idx restore-tested -- decrypts to the exact original key"
 done
 
 step "Extracting the public key"
@@ -441,6 +541,44 @@ fi
 cp "$PUBLIC_KEY" "$FINAL_PUBKEY_DIR/$PUBKEY_FILENAME"
 FINGERPRINT="$(openssl pkey -pubin -in "$PUBLIC_KEY" -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $NF}')"
 
+if [[ "$PREPRODUCTION" -eq 1 ]]; then
+  if [[ "$REHEARSAL" -ne 1 && -e "$FINAL_PUBKEY_DIR/$STATUS_FILENAME" ]]; then
+    fail "$FINAL_PUBKEY_DIR/$STATUS_FILENAME already exists. Handle the existing status file deliberately rather than letting this script overwrite it."
+  fi
+  PROVISIONED_DATE="$(date -u +%Y-%m-%d)"
+  cat > "$FINAL_PUBKEY_DIR/$STATUS_FILENAME" <<STATUSEOF
+# OTA Signing Key Status: PRE-PRODUCTION
+
+**Status:** pre-production / release-candidate key -- NOT the stable
+production signing key.
+
+**Authorized uses:** CI, signed release-candidate (RC) generation, and
+hardware qualification testing only.
+
+**NOT authorized for:** signing a stable production release shipped to
+customer devices. Provisioning this key is not, by itself, a decision to
+ship a stable release signed with it.
+
+**Custody model:** a single locally-encrypted backup stored in a
+user-selected iCloud Drive folder -- not the dual-independent-physical-drive
+custody model used for the production key (see
+docs/ota-production-key-ceremony.md). This reduced custody was accepted
+because no production customer devices depend on this key yet; affected
+test/RC hardware can be physically re-flashed if the key is lost.
+
+**Before public production launch:** the project will decide whether to
+retain this key with strengthened custody (the full dual-USB production
+ceremony) or rotate to a newly-generated production key with proper custody
+from the start. See docs/ota-signing-key-management.md's key rotation
+procedure.
+
+**Public key fingerprint (SHA-256 of DER-encoded key):** $FINGERPRINT
+
+**Provisioned:** $PROVISIONED_DATE via \`scripts/ota-key-ceremony.sh --preproduction\`
+STATUSEOF
+  ok "Status file written: $STATUS_FILENAME"
+fi
+
 echo
 printf '\033[1m\033[32m================================================================\033[0m\n'
 if [[ "$REHEARSAL" -eq 1 ]]; then
@@ -449,23 +587,47 @@ else
   printf '\033[1m\033[32m  CEREMONY COMPLETE\033[0m\n'
 fi
 printf '\033[1m\033[32m================================================================\033[0m\n'
+if [[ "$PREPRODUCTION" -eq 1 && "$REHEARSAL" -ne 1 ]]; then
+  echo
+  printf '\033[1m\033[33m  *** PRE-PRODUCTION KEY -- CI / RC / hardware qualification only ***\033[0m\n'
+  printf '\033[1m\033[33m  *** NOT authorization to ship a stable production release ***\033[0m\n'
+fi
 echo
 printf '  Public key fingerprint (SHA-256 of the DER-encoded key):\n'
 printf '    %s\n' "$FINGERPRINT"
 echo
-printf '  Backups: 2 of 2 written and restore-verified.\n'
+if [[ "$PREPRODUCTION" -eq 1 ]]; then
+  printf '  Backups: %d of %d written and restore-verified (single iCloud-folder\n' "${#BACKUP_PATHS[@]}" "${#BACKUP_PATHS[@]}"
+  printf '  backup -- pre-production custody, see %s).\n' "$STATUS_FILENAME"
+else
+  printf '  Backups: %d of %d written and restore-verified.\n' "${#BACKUP_PATHS[@]}" "${#BACKUP_PATHS[@]}"
+fi
 if [[ "$REHEARSAL" -eq 1 ]]; then
   printf '  Rehearsal public key: %s/%s (throwaway, not for commit)\n' "$FINAL_PUBKEY_DIR" "$PUBKEY_FILENAME"
+  if [[ "$PREPRODUCTION" -eq 1 ]]; then
+    printf '  Rehearsal status file: %s/%s (throwaway, not for commit)\n' "$FINAL_PUBKEY_DIR" "$STATUS_FILENAME"
+  fi
   printf '  Rehearsal secret: provisioned and deleted, no trace left.\n'
 else
   printf '  Public key ready at: %s/%s\n' "$FINAL_PUBKEY_DIR" "$PUBKEY_FILENAME"
+  if [[ "$PREPRODUCTION" -eq 1 ]]; then
+    printf '  Status file ready at: %s/%s\n' "$FINAL_PUBKEY_DIR" "$STATUS_FILENAME"
+  fi
   echo
   printf '  Next step -- commit and open the PR yourself:\n'
   printf '    cd %s\n' "$FINAL_PUBKEY_DIR"
-  printf '    git checkout -b chore/provision-ota-signing-key\n'
-  printf '    git add %s\n' "$PUBKEY_FILENAME"
-  printf '    git commit -m "chore: provision production OTA signing public key"\n'
-  printf '    git push -u origin chore/provision-ota-signing-key\n'
-  printf '    gh pr create --title "chore: provision production OTA signing public key" --body "Task #198."\n'
+  if [[ "$PREPRODUCTION" -eq 1 ]]; then
+    printf '    git checkout -b chore/provision-preproduction-ota-signing-key\n'
+    printf '    git add %s %s\n' "$PUBKEY_FILENAME" "$STATUS_FILENAME"
+    printf '    git commit -m "chore: provision pre-production OTA signing key (CI/RC/hardware-qualification only)"\n'
+    printf '    git push -u origin chore/provision-preproduction-ota-signing-key\n'
+    printf '    gh pr create --title "chore: provision pre-production OTA signing key" --body "Pre-production key: authorized for CI, RC generation, and hardware qualification only. NOT authorization for a stable production release. See ota-signing-key-status.md. Task #198."\n'
+  else
+    printf '    git checkout -b chore/provision-ota-signing-key\n'
+    printf '    git add %s\n' "$PUBKEY_FILENAME"
+    printf '    git commit -m "chore: provision production OTA signing public key"\n'
+    printf '    git push -u origin chore/provision-ota-signing-key\n'
+    printf '    gh pr create --title "chore: provision production OTA signing public key" --body "Task #198."\n'
+  fi
 fi
 echo
