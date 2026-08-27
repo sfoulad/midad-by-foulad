@@ -588,7 +588,18 @@ void EpubReaderMenuActivity::handleListConfirm() {
   if (view == View::DICTIONARY_LIST) {
     // Picking a dictionary is the whole point of the tab: set it active and go
     // straight back, without leaving the drawer or the book.
-    DICTIONARIES.setActiveIndex(dictionarySelectedIndex);
+    //
+    // setActiveIndex() refuses a folder with missing files or a 64-bit-offset .ifo,
+    // and ignoring that refusal would look exactly like a successful switch -- back
+    // to the tab, with the row still naming the old dictionary. Say so instead, in
+    // the same words Apps -> Dictionary uses for the same two cases.
+    if (!DICTIONARIES.setActiveIndex(dictionarySelectedIndex)) {
+      GUI.drawPopup(renderer, tr(STR_DICTIONARY_MISSING_FILES));
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      delay(1100);
+      requestUpdate();
+      return;
+    }
     view = dictionaryListReturnTo;
     requestUpdate();
     return;
