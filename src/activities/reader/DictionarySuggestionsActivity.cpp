@@ -48,14 +48,17 @@ void DictionarySuggestionsActivity::lookupSelected() {
 }
 
 void DictionarySuggestionsActivity::loop() {
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  // Release edges, for the same reason as DictionaryDefinitionActivity::loop():
+  // the whole dictionary stack has to agree on which edge it consumes, or the
+  // unconsumed half lands on the activity underneath on the very next frame.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
     finish();
     return;
   }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     lookupSelected();
     return;
   }

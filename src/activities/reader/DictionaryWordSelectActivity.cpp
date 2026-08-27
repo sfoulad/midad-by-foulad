@@ -410,14 +410,11 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
     startActivityForResult(std::make_unique<DictionaryDefinitionActivity>(
                                renderer, mappedInput, page, lookup.headword, lookup.definition, lookup.truncated,
                                readerFontId, DICTIONARIES.getDefinitionFontId(readerFontId), marginLeft, marginTop),
-                           [this](const ActivityResult& result) {
-                             if (!result.isCancelled) {
-                               setResult(ActivityResult{});
-                               finish();
-                               return;
-                             }
-                             requestUpdate();
-                           });
+                           // Both Done and Back land back here rather than closing: opening the
+                           // dictionary is a mode, and a mode ends when the user says so. Looking
+                           // up two words in a row used to mean re-entering word select and
+                           // re-finding your place on the page after the first one.
+                           [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
 
@@ -425,14 +422,11 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
     startActivityForResult(
         std::make_unique<DictionarySuggestionsActivity>(renderer, mappedInput, page, query, lookup.suggestions,
                                                         readerFontId, marginLeft, marginTop),
-        [this](const ActivityResult& result) {
-          if (!result.isCancelled) {
-            setResult(ActivityResult{});
-            finish();
-            return;
-          }
-          requestUpdate();
-        });
+        // Same rule as the definition branch above. The suggestions screen still
+        // distinguishes the two itself: Done on a definition reached through it
+        // finishes the list (you settled on a word, so the candidates are spent
+        // and you come back here), while Back returns to the candidates.
+        [this](const ActivityResult&) { requestUpdate(); });
     return;
   }
 
