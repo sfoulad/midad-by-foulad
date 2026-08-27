@@ -110,6 +110,11 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {
+  definitionTextSizeLabels.reserve(DictionaryStore::DEF_TEXT_SIZE_COUNT);
+  for (uint8_t i = 0; i < DictionaryStore::DEF_TEXT_SIZE_COUNT; ++i) {
+    definitionTextSizeLabels.push_back(DictionaryStore::definitionTextSizeLabel(i));
+  }
+
   dictionaryItems = buildDictionaryItems();
   textItems = buildTextItems();
   navigateItems = buildNavigateItems(hasBookmarks, hasFootnotes);
@@ -258,6 +263,14 @@ EpubReaderMenuActivity::View EpubReaderMenuActivity::nextTab() const {
   return tabOrder[next];
 }
 
+namespace {
+// Drawer chrome the render pass always draws, shared with the height calculation so
+// the two cannot drift apart.
+constexpr int kHandleToHeaderGap = 14;
+int headerHeightFor(const GfxRenderer& renderer) { return renderer.getLineHeight(UI_10_FONT_ID) + 12; }
+int progressBandHeightFor(const GfxRenderer& renderer) { return renderer.getLineHeight(SMALL_FONT_ID) + 10; }
+}  // namespace
+
 void EpubReaderMenuActivity::onEnter() {
   Activity::onEnter();
   requestUpdate();
@@ -366,8 +379,7 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       return entries[active].name;
     }
     case MenuAction::DEFINITION_TEXT_SIZE:
-      return definitionTextSizeLabels[std::min<size_t>(DICTIONARIES.getDefinitionTextSize(),
-                                                       definitionTextSizeLabels.size() - 1)];
+      return DictionaryStore::definitionTextSizeLabel(DICTIONARIES.getDefinitionTextSize());
     default:
       return "";
   }
@@ -731,7 +743,20 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // list paginates inside the drawer when the items don't fit (drawList).
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int drawerTop = pageHeight * 3 / 20;  // drawer covers the bottom 85%
+  // The drawer is only as tall as its tallest tab needs, rather than a fixed 85% of
+  // the screen. At four tabs the largest list is 8 rows, and the old fixed height
+  // left room for 11 -- three rows of empty drawer over a page the reader would
+  // rather see. Derived instead of tuned so it holds on both panels and however the
+  // conditional rows land: everything below is the chrome this view always draws,
+  // plus the rows, plus the hint strip the safe area excludes.
+  const int maxRows = std::max({dictionaryItems.size(), textItems.size(), navigateItems.size(), settingsItems.size()});
+  const int neededHeight = kHandleToHeaderGap + headerHeightFor(renderer) + progressBandHeightFor(renderer) +
+                           metrics.tabBarHeight + maxRows * metrics.listRowHeight + metrics.verticalSpacing +
+                           metrics.buttonHintsHeight;
+  // Never taller than the old fixed height: a long drill-down list paginates, which
+  // it already did, and growing the drawer past 85% would start hiding the page the
+  // menu is meant to sit over.
+  const int drawerTop = std::max(pageHeight * 3 / 20, pageHeight - neededHeight);
   renderer.fillRect(0, drawerTop, pageWidth, pageHeight - drawerTop, false);
   constexpr int handleWidth = 48;
   renderer.fillRoundedRect((pageWidth - handleWidth) / 2, drawerTop + 5, handleWidth, 6, 3, Color::Black);
@@ -739,9 +764,8 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // Material-style header: compact one-line black bar, title in white,
   // no battery. Sized off the font line height (not theme headerHeight) so
   // it stays a slim single line on every theme.
-  const int headerTop = drawerTop + 14;
-  const int titleLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const int headerHeight = titleLineHeight + 12;
+  const int headerTop = drawerTop + kHandleToHeaderGap;
+  const int headerHeight = headerHeightFor(renderer);
   renderer.fillRect(0, headerTop, pageWidth, headerHeight, true);
   {
     const int titleMargin = 16;
@@ -760,8 +784,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   }
   progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
   const int subTop = headerTop + headerHeight;
-  const int subLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-  const int subHeight = subLineHeight + 10;
+  const int subHeight = progressBandHeightFor(renderer);
   renderer.fillRectDither(0, subTop, pageWidth, subHeight, Color::LightGray);
   {
     const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progressLine.c_str(), EpdFontFamily::BOLD);
@@ -776,7 +799,9 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // drill-down, which uses the full content area below.
   const bool showTabs = view != View::CHAPTERS && view != View::DICTIONARY_LIST;
   const bool onTabRow = showTabs && activeIndex() == -1;
-  const int tabBarTop = subTop + subHeight + metrics.verticalSpacing;
+  // No gap between the progress band and the tab strip: the band's own fill already
+  // separates them, and the spacer only read as a dead stripe.
+  const int tabBarTop = subTop + subHeight;
   const int tabBarHeight = showTabs ? metrics.tabBarHeight : 0;
   if (showTabs) {
     std::vector<TabInfo> tabs;

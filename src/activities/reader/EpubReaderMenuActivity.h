@@ -179,9 +179,11 @@ class EpubReaderMenuActivity final : public Activity {
   const std::vector<StrId> orientationLabels = {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_INVERTED,
                                                 StrId::STR_LANDSCAPE_CCW};
   const std::vector<const char*> pageTurnLabels = {I18N.get(StrId::STR_STATE_OFF), "1", "3", "6", "12"};
-  // Must stay in step with DictionaryStore::DefinitionTextSize -- the popup reports
-  // the picked index straight through to setDefinitionTextSize().
-  const std::vector<const char*> definitionTextSizeLabels = {I18N.get(StrId::STR_SMALL), I18N.get(StrId::STR_LARGE)};
+  // Built from DictionaryStore's own enum rather than spelled out here: the popup
+  // reports the picked index straight through to setDefinitionTextSize(), so a list
+  // shorter than the enum makes the missing option unreachable and mislabels it in
+  // the value column. Filled in the constructor, once the strings are loaded.
+  std::vector<const char*> definitionTextSizeLabels;
   int currentPage = 0;
   int totalPages = 0;
   int bookProgressPercent = 0;
