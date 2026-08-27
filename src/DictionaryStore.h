@@ -137,6 +137,9 @@ class DictionaryStore {
                              DictionaryLookupResult::Status* outFailureStatus = nullptr) const;
   std::vector<std::string> findSuggestions(const DictionaryEntry& entry, const std::string& word, int maxResults) const;
   std::vector<std::string> getFallbackForms(const DictionaryEntry& entry, const std::string& word) const;
+  // The form findSuggestions() anchors its neighbourhood scan on. Deliberately
+  // NOT the most-stripped entry of getFallbackForms(): see the definition.
+  static std::string getSuggestionAnchor(const std::string& word);
 };
 
 #define DICTIONARIES DictionaryStore::getInstance()
