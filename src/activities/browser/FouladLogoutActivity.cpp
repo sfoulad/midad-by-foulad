@@ -74,8 +74,13 @@ void FouladLogoutActivity::loop() {
   // for the duration of the calls and has nothing to offer.
   if (state == State::Working) return;
 
+  // Whole-screen tap: both failure screens show a single message with only
+  // Back/Confirm as an exit, and drawButtonHints() draws nothing on touch
+  // boards (BaseTheme::drawButtonHints no-ops when gpio.hasTouch()), so a
+  // touch board otherwise has no visible way off this screen at all.
+  int touchX = 0, touchY = 0;
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) ||
-      mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+      mappedInput.wasReleased(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(touchX, touchY)) {
     ActivityResult res;
     res.isCancelled = true;  // credential stays put
     setResult(std::move(res));

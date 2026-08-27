@@ -119,6 +119,12 @@ class FontDownloadActivity : public Activity {
   void downloadFamily(ManifestFamily& family);
   void downloadAll();
   void updateAll();
+  // Acts on whatever selectedIndex_ currently is (download/update-all row,
+  // deletable/downloadable family, or delete-prompt) -- shared by the
+  // physical-Confirm path and the touch row-tap path so they can't drift.
+  // Returns false when activation should not requestUpdateAndWait() (a
+  // delete-prompt sub-activity was launched, or the row resolved to nothing).
+  bool activateSelectedRow();
   static bool computeFileCrc32(const char* path, uint32_t& outCrc);
   bool showDownloadAllRow() const;
   bool showUpdateAllRow() const;
