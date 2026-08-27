@@ -188,6 +188,8 @@ STR_CALIBRE_INSTRUCTION_3: "۳) در کالیبر: «ارسال به دستگا�
 STR_CALIBRE_INSTRUCTION_4: "«این صفحه را حین ارسال باز نگه دارید»"
 STR_CAT_DISPLAY: "نمایشگر"
 STR_CAT_READER: "کتاب‌خوان"
+STR_TAB_TEXT: "متن"
+STR_TAB_NAVIGATE: "ناوبری"
 STR_CAT_CONTROLS: "کنترل‌ها"
 STR_CAT_APPS: "برنامه‌ها"
 STR_CAT_SYSTEM: "سیستم"
