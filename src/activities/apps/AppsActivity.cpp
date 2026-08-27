@@ -353,7 +353,7 @@ void AppsActivity::drawPagination(const int centerX, const int y, const int curr
   const auto drawChevron = [&](const int tipX, const bool pointsRight) {
     for (int i = 0; i <= CHEVRON_HALF; i++) {
       const int halfLen = CHEVRON_HALF - i;
-      const int x = pointsRight ? tipX - i : tipX + i;
+      const int x = pointsRight ? tipX + i : tipX - i;
       if (halfLen > 0) {
         renderer.drawLine(x, chevronY - halfLen, x, chevronY + halfLen, true);
       } else {
