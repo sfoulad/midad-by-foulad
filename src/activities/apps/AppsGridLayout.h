@@ -44,15 +44,14 @@ inline int clampSelection(const int previousIndex, const int totalItems) {
 // out first) instead of leaving the gutter a dead zone -- the "larger hit
 // target" case for touch boards; button-only boards pass 0 and get the exact
 // tile bounds. Returns -1 for a miss (dead zone, or past the last lane).
-inline int resolveGridLane(const int rel, const int step, const int tileExtent, const int slop,
-                           const int laneCount) {
+inline int resolveGridLane(const int rel, const int step, const int tileExtent, const int slop, const int laneCount) {
   if (rel < 0 || step <= 0) return -1;
   const int lane = rel / step;
   if (lane >= laneCount) return -1;
   const int posInLane = rel % step;
   if (posInLane < tileExtent) return lane;
   if (slop <= 0) return -1;
-  if (posInLane - tileExtent < slop) return lane;                     // slop past this lane's own edge
+  if (posInLane - tileExtent < slop) return lane;                         // slop past this lane's own edge
   if (step - posInLane <= slop && lane + 1 < laneCount) return lane + 1;  // slop before the next lane
   return -1;
 }
@@ -66,9 +65,9 @@ inline int resolveGridLane(const int rel, const int step, const int tileExtent, 
 // tapped item's index-in-page (0..ITEMS_PER_PAGE-1), or -1 for a miss or a
 // slot with no real item (the last page can hold fewer than ITEMS_PER_PAGE
 // apps).
-inline int hitTestTile(const int tapX, const int tapY, const int gridStartX, const int contentTop,
-                       const int tileWidth, const int tileHeight, const int gutter, const bool rtl,
-                       const int itemsOnPage, const int touchSlop = 0) {
+inline int hitTestTile(const int tapX, const int tapY, const int gridStartX, const int contentTop, const int tileWidth,
+                       const int tileHeight, const int gutter, const bool rtl, const int itemsOnPage,
+                       const int touchSlop = 0) {
   if (tileWidth <= 0 || tileHeight <= 0) return -1;
   const int relX = tapX - gridStartX;
   const int relY = tapY - contentTop;

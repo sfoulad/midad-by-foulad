@@ -72,9 +72,7 @@ TEST(AppsGridLayoutRtl, MirroringIsSelfInverse) {
 
 TEST(AppsGridLayoutSelection, ClampsNegativeToZero) { EXPECT_EQ(AppsGridLayout::clampSelection(-1, 8), 0); }
 
-TEST(AppsGridLayoutSelection, ClampsOutOfRangeToLastValidIndex) {
-  EXPECT_EQ(AppsGridLayout::clampSelection(99, 8), 7);
-}
+TEST(AppsGridLayoutSelection, ClampsOutOfRangeToLastValidIndex) { EXPECT_EQ(AppsGridLayout::clampSelection(99, 8), 7); }
 
 TEST(AppsGridLayoutSelection, PreservesInRangeIndex) {
   // The persistence contract itself: a remembered index that's still valid
@@ -106,7 +104,7 @@ TEST(AppsGridLayoutTouch, HitsCorrectTileAtTileCenter) {
   for (int row = 0; row < ROWS; row++) {
     for (int col = 0; col < COLUMNS; col++) {
       const int hit = AppsGridLayout::hitTestTile(tileCenterX(col), tileCenterY(row), GRID_START_X, CONTENT_TOP,
-                                                   TILE_WIDTH, TILE_HEIGHT, GUTTER, /*rtl=*/false, ITEMS_PER_PAGE);
+                                                  TILE_WIDTH, TILE_HEIGHT, GUTTER, /*rtl=*/false, ITEMS_PER_PAGE);
       EXPECT_EQ(hit, row * COLUMNS + col) << "row=" << row << " col=" << col;
     }
   }
@@ -124,32 +122,32 @@ TEST(AppsGridLayoutTouch, TouchSlopClaimsTheNearerNeighborAcrossTheGutter) {
   // Half the gutter is claimed by whichever tile is closer -- the "larger hit
   // target" the X4 Pro touch layout gets (AppsActivity passes gutter/2).
   const int slop = GUTTER / 2;
-  const int justPastCol0 = GRID_START_X + TILE_WIDTH + 1;  // 1px into the gutter, column 0's side
+  const int justPastCol0 = GRID_START_X + TILE_WIDTH + 1;             // 1px into the gutter, column 0's side
   const int justBeforeCol1 = GRID_START_X + TILE_WIDTH + GUTTER - 1;  // 1px into the gutter, column 1's side
 
   EXPECT_EQ(AppsGridLayout::hitTestTile(justPastCol0, tileCenterY(0), GRID_START_X, CONTENT_TOP, TILE_WIDTH,
                                         TILE_HEIGHT, GUTTER, false, ITEMS_PER_PAGE, slop),
-           0);
+            0);
   EXPECT_EQ(AppsGridLayout::hitTestTile(justBeforeCol1, tileCenterY(0), GRID_START_X, CONTENT_TOP, TILE_WIDTH,
                                         TILE_HEIGHT, GUTTER, false, ITEMS_PER_PAGE, slop),
-           1);
+            1);
 }
 
 TEST(AppsGridLayoutTouch, RtlMirrorsWhichTileATapHits) {
   // Same tap position (visually column 0, the leftmost slot), opposite logical
   // hit under RTL -- column 0 visually is logical column 1 when mirrored.
-  const int hitLtr = AppsGridLayout::hitTestTile(tileCenterX(0), tileCenterY(0), GRID_START_X, CONTENT_TOP,
-                                                 TILE_WIDTH, TILE_HEIGHT, GUTTER, /*rtl=*/false, ITEMS_PER_PAGE);
-  const int hitRtl = AppsGridLayout::hitTestTile(tileCenterX(0), tileCenterY(0), GRID_START_X, CONTENT_TOP,
-                                                 TILE_WIDTH, TILE_HEIGHT, GUTTER, /*rtl=*/true, ITEMS_PER_PAGE);
+  const int hitLtr = AppsGridLayout::hitTestTile(tileCenterX(0), tileCenterY(0), GRID_START_X, CONTENT_TOP, TILE_WIDTH,
+                                                 TILE_HEIGHT, GUTTER, /*rtl=*/false, ITEMS_PER_PAGE);
+  const int hitRtl = AppsGridLayout::hitTestTile(tileCenterX(0), tileCenterY(0), GRID_START_X, CONTENT_TOP, TILE_WIDTH,
+                                                 TILE_HEIGHT, GUTTER, /*rtl=*/true, ITEMS_PER_PAGE);
   EXPECT_EQ(hitLtr, 0);
   EXPECT_EQ(hitRtl, 1);
 }
 
 TEST(AppsGridLayoutTouch, MissesPastGridBounds) {
   const int farX = GRID_START_X + COLUMNS * (TILE_WIDTH + GUTTER) + 500;
-  const int hit = AppsGridLayout::hitTestTile(farX, tileCenterY(0), GRID_START_X, CONTENT_TOP, TILE_WIDTH,
-                                              TILE_HEIGHT, GUTTER, false, ITEMS_PER_PAGE);
+  const int hit = AppsGridLayout::hitTestTile(farX, tileCenterY(0), GRID_START_X, CONTENT_TOP, TILE_WIDTH, TILE_HEIGHT,
+                                              GUTTER, false, ITEMS_PER_PAGE);
   EXPECT_EQ(hit, -1);
 }
 
