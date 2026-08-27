@@ -38,6 +38,34 @@ void KOReaderSettingsActivity::loop() {
     return;
   }
 
+  if (mappedInput.hasTouch()) {
+    // Mirrors render()'s contentTop/contentHeight -- must stay in sync with
+    // that layout for the tap to land on the row it looks like.
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int contentHeight =
+        renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
+    const Rect listRect{0, contentTop, renderer.getScreenWidth(), contentHeight};
+
+    int touchX = 0, touchY = 0, touchedIndex = -1;
+    if (mappedInput.wasScreenTouchDown(touchX, touchY) &&
+        GUI.listIndexFromPoint(renderer, listRect, MENU_ITEMS, static_cast<int>(selectedIndex), false, touchX, touchY,
+                               touchedIndex)) {
+      if (selectedIndex != static_cast<size_t>(touchedIndex)) {
+        selectedIndex = touchedIndex;
+        requestUpdate();
+      }
+      return;
+    }
+    if (mappedInput.wasScreenTapped(touchX, touchY) &&
+        GUI.listIndexFromPoint(renderer, listRect, MENU_ITEMS, static_cast<int>(selectedIndex), false, touchX, touchY,
+                               touchedIndex)) {
+      selectedIndex = touchedIndex;
+      handleSelection();
+      return;
+    }
+  }
+
   // Handle navigation
   buttonNavigator.onScrollNext([this] {
     selectedIndex = (selectedIndex + 1) % MENU_ITEMS;
