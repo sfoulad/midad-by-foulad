@@ -18,9 +18,7 @@ TEST(ListHitTest, MissesOutsideHorizontalBounds) {
   EXPECT_FALSE(listHitTest(0, 0, 100, 300, 5, 0, 30, 100, 5).hit);
 }
 
-TEST(ListHitTest, MissesAboveRect) {
-  EXPECT_FALSE(listHitTest(0, 10, 100, 300, 5, 0, 30, 50, 5).hit);
-}
+TEST(ListHitTest, MissesAboveRect) { EXPECT_FALSE(listHitTest(0, 10, 100, 300, 5, 0, 30, 50, 5).hit); }
 
 TEST(ListHitTest, MissesBelowLastRealRowWhenFewerItemsThanPage) {
   // 3 items, page holds 10 rows: only rows 0-2 are real; a tap below row 2
@@ -49,9 +47,7 @@ TEST(ListHitTest, LastPageShowsOnlyRemainingItems) {
   EXPECT_EQ(hit.index, 24);
 }
 
-TEST(ListHitTest, ZeroItemCountNeverHits) {
-  EXPECT_FALSE(listHitTest(0, 0, 100, 300, 0, 0, 30, 50, 5).hit);
-}
+TEST(ListHitTest, ZeroItemCountNeverHits) { EXPECT_FALSE(listHitTest(0, 0, 100, 300, 0, 0, 30, 50, 5).hit); }
 
 TEST(ListHitTest, ZeroOrNegativeRowHeightNeverHits) {
   EXPECT_FALSE(listHitTest(0, 0, 100, 300, 5, 0, 0, 50, 5).hit);

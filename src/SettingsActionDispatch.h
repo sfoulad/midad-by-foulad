@@ -18,5 +18,5 @@ class MappedInputManager;
 // Fouled eBooks Login/Logout); every other action just saves via its own
 // result handler and relies on the normal startActivityForResult() ->
 // requestUpdate() flow.
-void dispatchSettingAction(Activity& host, GfxRenderer& renderer, MappedInputManager& mappedInput,
-                           SettingAction action, const std::function<void()>& onRebuildNeeded);
+void dispatchSettingAction(Activity& host, GfxRenderer& renderer, MappedInputManager& mappedInput, SettingAction action,
+                           const std::function<void()>& onRebuildNeeded);

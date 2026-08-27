@@ -65,9 +65,8 @@ CategorizedSettings buildCategorizedSettings() {
   // Browse Files / File Transfer pinned to the very top of System regardless of
   // everything else appended above -- inserted last so this stays correct even
   // if more entries are added before this point later.
-  out.system.insert(out.system.begin(),
-                    {SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles),
-                     SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer)});
+  out.system.insert(out.system.begin(), {SettingInfo::Action(StrId::STR_BROWSE_FILES, SettingAction::BrowseFiles),
+                                         SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer)});
   // Reader list order: Manage Fonts first, then English Font, English Font
   // Size, Arabic Font, Arabic Font Size, then the rest. The base table
   // supplies [English Font, English Font Size, Arabic Font Size, ...]; insert

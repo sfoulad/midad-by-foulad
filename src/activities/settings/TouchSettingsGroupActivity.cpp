@@ -71,7 +71,7 @@ void TouchSettingsGroupActivity::rebuildRowItems() {
 
     if (setting.type == SettingType::TOGGLE) {
       const bool checked = setting.valuePtr != nullptr ? (SETTINGS.*(setting.valuePtr) != 0)
-                                                        : (setting.valueGetter && setting.valueGetter() != 0);
+                                                       : (setting.valueGetter && setting.valueGetter() != 0);
       item.toggle = true;
       item.toggleChecked = checked;
       rowValueStrings.emplace_back();
@@ -120,36 +120,35 @@ void TouchSettingsGroupActivity::editEnum(const int index) {
     }
   }
 
-  startActivityForResult(
-      std::make_unique<TouchOptionPickerActivity>(renderer, mappedInput, I18N.get(setting.nameId), std::move(options),
-                                                   current),
-      [this, index](const ActivityResult& result) {
-        if (!result.isCancelled) {
-          if (const auto* picked = std::get_if<TouchOptionPickerResult>(&result.data)) {
-            auto& picked_setting = settings[static_cast<size_t>(index)];
-            const auto value = static_cast<uint8_t>(picked->selectedIndex);
-            if (picked_setting.valuePtr != nullptr) {
-              SETTINGS.*(picked_setting.valuePtr) = value;
-            } else if (picked_setting.valueSetter) {
-              picked_setting.valueSetter(value);
-            }
-            SETTINGS.saveToFile();
-          }
-        }
-        rebuildRowItems();
-        requestUpdate();
-      });
+  startActivityForResult(std::make_unique<TouchOptionPickerActivity>(renderer, mappedInput, I18N.get(setting.nameId),
+                                                                     std::move(options), current),
+                         [this, index](const ActivityResult& result) {
+                           if (!result.isCancelled) {
+                             if (const auto* picked = std::get_if<TouchOptionPickerResult>(&result.data)) {
+                               auto& picked_setting = settings[static_cast<size_t>(index)];
+                               const auto value = static_cast<uint8_t>(picked->selectedIndex);
+                               if (picked_setting.valuePtr != nullptr) {
+                                 SETTINGS.*(picked_setting.valuePtr) = value;
+                               } else if (picked_setting.valueSetter) {
+                                 picked_setting.valueSetter(value);
+                               }
+                               SETTINGS.saveToFile();
+                             }
+                           }
+                           rebuildRowItems();
+                           requestUpdate();
+                         });
 }
 
 void TouchSettingsGroupActivity::editValue(const int index) {
   const auto& setting = settings[static_cast<size_t>(index)];
-  const int current = setting.valuePtr != nullptr ? SETTINGS.*(setting.valuePtr)
-                                                   : (setting.valueGetter ? setting.valueGetter() : 0);
+  const int current =
+      setting.valuePtr != nullptr ? SETTINGS.*(setting.valuePtr) : (setting.valueGetter ? setting.valueGetter() : 0);
 
   startActivityForResult(
-      std::make_unique<IntervalSelectionActivity>(renderer, mappedInput, "TouchSettingsValue", setting.nameId,
-                                                   current, setting.valueRange.min, setting.valueRange.max,
-                                                   setting.valueRange.step, setting.valueRange.step),
+      std::make_unique<IntervalSelectionActivity>(renderer, mappedInput, "TouchSettingsValue", setting.nameId, current,
+                                                  setting.valueRange.min, setting.valueRange.max,
+                                                  setting.valueRange.step, setting.valueRange.step),
       [this, index](const ActivityResult& result) {
         if (!result.isCancelled) {
           if (const auto* picked = std::get_if<IntervalResult>(&result.data)) {

@@ -31,7 +31,8 @@ void TouchSettingsActivity::rebuildRowItems() {
   rowItems.clear();
   rowItems.reserve(static_cast<size_t>(TouchSettingsGroup::Count));
 
-  auto addRow = [this](const StrId title, const StrId summary, const fui::BitmapRef icon, const TouchSettingsGroup group) {
+  auto addRow = [this](const StrId title, const StrId summary, const fui::BitmapRef icon,
+                       const TouchSettingsGroup group) {
     fui::ListItem item;
     item.label = I18N.get(title);
     item.subtitle = I18N.get(summary);
@@ -41,15 +42,15 @@ void TouchSettingsActivity::rebuildRowItems() {
   };
 
   addRow(StrId::STR_TOUCH_GROUP_GENERAL, StrId::STR_TOUCH_GROUP_GENERAL_SUMMARY, listIconFor(UIIcon::Settings, 32),
-        TouchSettingsGroup::General);
+         TouchSettingsGroup::General);
   addRow(StrId::STR_TOUCH_GROUP_DISPLAY, StrId::STR_TOUCH_GROUP_DISPLAY_SUMMARY, fui::bitmapFromIcon(icon_sun_32),
-        TouchSettingsGroup::DisplayLighting);
+         TouchSettingsGroup::DisplayLighting);
   addRow(StrId::STR_TOUCH_GROUP_NETWORK, StrId::STR_TOUCH_GROUP_NETWORK_SUMMARY, listIconFor(UIIcon::Wifi, 32),
-        TouchSettingsGroup::NetworkBluetooth);
+         TouchSettingsGroup::NetworkBluetooth);
   addRow(StrId::STR_TOUCH_GROUP_READING, StrId::STR_TOUCH_GROUP_READING_SUMMARY, listIconFor(UIIcon::Book, 32),
-        TouchSettingsGroup::Reading);
+         TouchSettingsGroup::Reading);
   addRow(StrId::STR_TOUCH_GROUP_DEVICE, StrId::STR_TOUCH_GROUP_DEVICE_SUMMARY, listIconFor(UIIcon::Info, 32),
-        TouchSettingsGroup::DeviceSystem);
+         TouchSettingsGroup::DeviceSystem);
 }
 
 void TouchSettingsActivity::activateIndex(const int index) {
