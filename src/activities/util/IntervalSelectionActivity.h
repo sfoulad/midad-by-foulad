@@ -48,6 +48,13 @@ class IntervalSelectionActivity final : public Activity, private UiAppHost {
   // the back gesture and cancel the dialog.
   bool draggingSlider = false;
 
+  // Confirm/Back only act once their own press has been seen inside this dialog,
+  // so the release of the press-triggered click that OPENED it (SettingsActivity
+  // fires on wasPressed) can't confirm and close it immediately. Same arming
+  // scheme as OptionPopup -- see the comment in loop().
+  bool confirmArmed = false;
+  bool backArmed = false;
+
   void adjustValue(int delta);
   // Absolute value (clamped), from slider drag/tap positions.
   void setValue(int candidate);

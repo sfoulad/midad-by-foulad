@@ -121,12 +121,21 @@ void IntervalSelectionActivity::loop() {
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  // Confirm/Back act on the RELEASE of a press made while this dialog was already
+  // open ("armed"), the same scheme OptionPopup uses. SettingsActivity opens this
+  // dialog on wasPressed(Confirm), so without arming, the release of that very click
+  // lands here and immediately confirms: the picker appears to open and then bounce
+  // straight back to Settings with the value unchanged (reported on X3, where the
+  // e-ink redraw sits between the opening press and its release).
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) backArmed = true;
+  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) confirmArmed = true;
+
+  if (backArmed && mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     cancel();
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (confirmArmed && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     confirm();
     return;
   }
