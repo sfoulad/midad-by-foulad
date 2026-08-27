@@ -38,7 +38,7 @@ void OtaRollbackRecoveryActivity::onOptionSelected(const int idx) {
 }
 
 void OtaRollbackRecoveryActivity::loop() {
-  if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+  if (optionPopup.handleInput(renderer, mappedInput, [this] { requestUpdate(); })) return;
   // Dismissed without a selection (Back button or tap outside). There is no
   // "Back" destination -- re-trap the user in the same choice.
   showOptions();

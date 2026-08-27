@@ -1,6 +1,7 @@
 #pragma once
 #include <I18n.h>
 
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <vector>
@@ -8,6 +9,7 @@
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
+#include "fontIds.h"
 
 class OptionPopup {
  public:
@@ -47,8 +49,29 @@ class OptionPopup {
     active = true;
   }
 
-  bool handleInput(MappedInputManager& input, const std::function<void()>& requestUpdate) {
+  bool handleInput(const GfxRenderer& renderer, MappedInputManager& input, const std::function<void()>& requestUpdate) {
     if (!active) return false;
+
+    if (input.hasTouch()) {
+      int row = -1;
+      const Geometry geo = computeGeometry(renderer);
+      const auto touch = input.rowTouch(row, geo.firstRowY, geo.rowStep, static_cast<int>(ownedStrings.size()),
+                                        geo.itemRectX, geo.itemRectX + geo.itemRectW, geo.rowHeight);
+      if (touch == MappedInputManager::RowTouch::Down) {
+        if (selectedIndex != row) {
+          selectedIndex = row;
+          requestUpdate();
+        }
+        return true;
+      }
+      if (touch == MappedInputManager::RowTouch::Tap) {
+        selectedIndex = row;
+        active = false;
+        if (onSelectCallback) onSelectCallback(selectedIndex);
+        requestUpdate();
+        return true;
+      }
+    }
 
     // ScrollNext/ScrollPrevious, not raw Up/Down/Left/Right: this list is vertical, and the
     // raw buttons don't follow SETTINGS.frontButtonFollowOrientation, so in a rotated
@@ -109,6 +132,58 @@ class OptionPopup {
   bool isActive() const { return active; }
 
  private:
+  // Touch hit-test geometry -- must mirror BaseTheme::drawOptionPopup()'s row
+  // layout exactly, since that's the only renderer for this popup (no theme
+  // currently overrides it). Recomputed per input pass rather than cached:
+  // handleInput() has no render-time hook to invalidate a cache from.
+  struct Geometry {
+    int firstRowY;
+    int rowStep;
+    int rowHeight;
+    int itemRectX;
+    int itemRectW;
+  };
+
+  Geometry computeGeometry(const GfxRenderer& renderer) const {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const auto pageWidth = renderer.getScreenWidth();
+    const auto pageHeight = renderer.getScreenHeight();
+
+    const int optionFontId = metrics.optionPopupUseSmallFont ? UI_10_FONT_ID : UI_12_FONT_ID;
+    const EpdFontFamily::Style optionStyle =
+        metrics.optionPopupOptionFontBold ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+
+    const int itemSpacing = metrics.optionPopupItemSpacing;
+    const int innerPadding = metrics.optionPopupInnerPadding;
+    const int selectionHPadding = metrics.optionPopupSelectionHPadding;
+    const int selectionVPadding = metrics.optionPopupSelectionVPadding;
+
+    const int optionLineHeight = renderer.getLineHeight(optionFontId);
+    const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+    const int rowHeight = optionLineHeight + selectionVPadding * 2;
+
+    int maxTextWidth = renderer.getTextWidth(UI_12_FONT_ID, title.c_str(), EpdFontFamily::BOLD);
+    for (const auto& opt : ownedStrings) {
+      const int w = renderer.getTextWidth(optionFontId, opt.c_str(), optionStyle);
+      if (w > maxTextWidth) maxTextWidth = w;
+    }
+
+    const int optionCount = static_cast<int>(ownedStrings.size());
+    const int listHeight = rowHeight * optionCount + itemSpacing * (optionCount - 1);
+    const int dialogW = std::min((maxTextWidth + innerPadding * 2 + selectionHPadding * 2) * 12 / 10,
+                                 pageWidth - metrics.optionPopupDialogSideMargin * 2);
+    const int contentHeight = titleLineHeight + metrics.optionPopupTitleGap + listHeight;
+    const int dialogH = contentHeight + innerPadding * 2;
+    const int dialogX = (pageWidth - dialogW) / 2;
+    const int dialogY = (pageHeight - dialogH) / 2;
+
+    int y = dialogY + innerPadding;
+    y += titleLineHeight;
+    y += metrics.optionPopupTitleGap;
+
+    return Geometry{y, rowHeight + itemSpacing, rowHeight, dialogX + innerPadding, dialogW - innerPadding * 2};
+  }
+
   bool active = false;
   // Release-side edge filters -- see handleInput().
   bool confirmArmed = false;

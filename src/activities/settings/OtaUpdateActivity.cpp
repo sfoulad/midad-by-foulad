@@ -336,7 +336,7 @@ void OtaUpdateActivity::loop() {
   }
 
   if (state == WAITING_CONFIRMATION) {
-    if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+    if (confirmPopup.handleInput(renderer, mappedInput, [this] { requestUpdate(); })) return;
     // Popup dismissed without a selection (Back button or tap outside): cancel.
     finish();
     return;
