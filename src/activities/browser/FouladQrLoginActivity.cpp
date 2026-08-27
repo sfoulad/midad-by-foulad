@@ -215,9 +215,9 @@ void FouladQrLoginActivity::render(RenderLock&&) {
     const Rect backRect = touchBackButtonRect(renderer);
     renderer.fillRect(backRect.x, backRect.y, backRect.width, backRect.height, false);
     renderer.drawRect(backRect.x, backRect.y, backRect.width, backRect.height, true);
-    const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tr(STR_BACK));
+    const int backTextWidth = renderer.getTextWidth(UI_10_FONT_ID, tr(STR_BACK));
     const int textHeight = renderer.getLineHeight(UI_10_FONT_ID);
-    renderer.drawText(UI_10_FONT_ID, backRect.x + (backRect.width - textWidth) / 2,
+    renderer.drawText(UI_10_FONT_ID, backRect.x + (backRect.width - backTextWidth) / 2,
                       backRect.y + (backRect.height - textHeight) / 2, tr(STR_BACK));
   } else {
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
