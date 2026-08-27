@@ -54,15 +54,17 @@ void SettingsActivity::rebuildSettingsLists() {
 
   for (auto& setting : getSettingsList(&sdFontSystem.registry())) {
     if (setting.category == StrId::STR_NONE_OPT) continue;
+    // Drop a row whose parent setting makes it meaningless, rather than showing it
+    // inert -- see SettingInfo::shownWhen. Declared beside each setting now instead
+    // of tested here, which is where the one pre-existing case of this lived
+    // (pwrBtnFootnoteBack against shortPwrBtn). This function runs after every
+    // change, so flipping a parent updates the list on the next repaint.
+    if (setting.visibleWhen && !setting.visibleWhen()) continue;
     if (setting.category == StrId::STR_CAT_DISPLAY) {
       displaySettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_READER) {
       readerSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_CONTROLS) {
-      if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
-          SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
-        continue;
-      }
       controlsSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_APPS) {
       appsSettings.push_back(setting);
@@ -80,7 +82,18 @@ void SettingsActivity::rebuildSettingsLists() {
   // Logging) -- see src/MidadSettingsList.h. Appended here, after KOReader
   // Sync, so Debug Logging (the last row that function adds) keeps landing
   // right after KOReader Sync, matching prior behavior.
-  appendMidadAppSettings(appsSettings);
+  // Filtered the same way as the loop above, which it deliberately runs after:
+  // appending straight into appsSettings let every Midad row bypass visibleWhen,
+  // so the Pomodoro durations and the Gym weight unit stayed on screen with their
+  // app switched off (reported). Build them in a scratch list and copy across only
+  // what should show. The upstream rows keep their filter in the loop; this is the
+  // one other place rows enter a category vector carrying a predicate.
+  std::vector<SettingInfo> midadAppRows;
+  appendMidadAppSettings(midadAppRows);
+  for (auto& setting : midadAppRows) {
+    if (setting.visibleWhen && !setting.visibleWhen()) continue;
+    appsSettings.push_back(std::move(setting));
+  }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   // OPDS Servers is deliberately not listed. Adding a catalog by hand means typing a
   // URL and credentials on an on-screen keyboard, and every catalog these devices

@@ -302,14 +302,31 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     sleepScreenValues[CrossPointSettings::TRANSPARENT_CUSTOM] = StrId::STR_TRANSPARENT;
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                                   std::move(sleepScreenValues), "sleepScreen", StrId::STR_CAT_DISPLAY));
+    // How a cover is fitted and filtered only means anything while a cover is what
+    // the sleep screen actually draws: COVER, or COVER_CUSTOM which falls back to the
+    // custom image when a book has none. Every other mode -- Dark, Light, Custom,
+    // Blank, Quick Resume, Dashboard, Transparent -- ignores both fields.
+    const auto sleepScreenShowsCover = [] {
+      return SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER ||
+             SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM;
+    };
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
-                                  {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY));
+                                  {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY)
+                    .shownWhen(sleepScreenShowsCover));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                                   {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
-                                  "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY));
-    v.push_back(SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
-                                  {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
-                                  StrId::STR_CAT_DISPLAY));
+                                  "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY)
+                    .shownWhen(sleepScreenShowsCover));
+    // "Resume the last screen when sleeping on a timeout" only adds anything while
+    // some OTHER sleep screen is selected: with Sleep Screen already set to Quick
+    // Resume, every sleep resumes the last screen anyway, and
+    // SettingsActivity::syncQuickResumeTimeoutForSleepScreen() force-holds this at
+    // On for as long as that mode is picked. Showing it there offered a toggle that
+    // silently sprang back.
+    v.push_back(
+        SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
+                          {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen", StrId::STR_CAT_DISPLAY)
+            .shownWhen([] { return SETTINGS.sleepScreen != CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME; }));
     v.push_back(SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                                   {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideBatteryPercentage",
                                   StrId::STR_CAT_DISPLAY));
@@ -359,10 +376,14 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     "hyphenationEnabled", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_TRACK_READING_STATS, &CrossPointSettings::trackReadingStats,
                                     "trackReadingStats", StrId::STR_CAT_READER));
+    // A daily goal is a target for a number nothing records while Track Reading
+    // Stats is off -- EpubReaderActivity gates all three of its accumulation
+    // points on that flag, so the goal has nothing to measure against.
     v.push_back(SettingInfo::Enum(StrId::STR_DAILY_READING_GOAL, &CrossPointSettings::dailyReadingGoal,
                                   {StrId::STR_GOAL_15M, StrId::STR_GOAL_30M, StrId::STR_GOAL_45M, StrId::STR_GOAL_1H,
                                    StrId::STR_GOAL_90M, StrId::STR_GOAL_2H},
-                                  "dailyReadingGoal", StrId::STR_CAT_READER));
+                                  "dailyReadingGoal", StrId::STR_CAT_READER)
+                    .shownWhen([] { return SETTINGS.trackReadingStats != 0; }));
     v.push_back(SettingInfo::Enum(
         StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
         {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},
@@ -402,8 +423,11 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
         {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},
         "shortPwrBtn", StrId::STR_CAT_CONTROLS));
+    // Only reachable when the short power press is bound to footnotes; this rule
+    // used to be an explicit valuePtr test inside SettingsActivity's category loop.
     v.push_back(SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
-                                    "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
+                                    "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS)
+                    .shownWhen([] { return SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::FOOTNOTES; }));
     v.push_back(SettingInfo::Toggle(StrId::STR_BACK_SHORT_TO_FILE_BROWSER, &CrossPointSettings::backShortToFileBrowser,
                                     "backShortToFileBrowser", StrId::STR_CAT_CONTROLS));
 

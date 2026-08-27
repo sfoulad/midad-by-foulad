@@ -60,8 +60,23 @@ struct SettingInfo {
   std::function<std::string()> stringGetter;
   std::function<void(const std::string&)> stringSetter;
 
+  // Hides this row on the device until whatever it depends on is in the state that
+  // makes it mean anything -- Pomodoro's durations while the Pomodoro app is off,
+  // the sleep-cover options while the sleep screen shows no cover. Empty = always
+  // shown, which is almost every setting.
+  //
+  // Device UI only: rebuildSettingsLists() applies it, while the web settings API
+  // reads getCombinedSettingsList(), so every key stays reachable over HTTP no
+  // matter what the device is currently displaying.
+  std::function<bool()> visibleWhen;
+
   SettingInfo& withObfuscated() {
     obfuscated = true;
+    return *this;
+  }
+
+  SettingInfo& shownWhen(std::function<bool()> predicate) {
+    visibleWhen = std::move(predicate);
     return *this;
   }
 
