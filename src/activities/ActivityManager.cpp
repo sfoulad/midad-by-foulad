@@ -16,6 +16,7 @@
 #include "FouladEbooksConfig.h"
 #include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
+#include "SettingsList.h"
 #include "apps/AppsActivity.h"
 #include "apps/DictionaryActivity.h"
 #include "apps/GymActivity.h"
@@ -31,6 +32,7 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "settings/TouchSettingsActivity.h"
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -251,7 +253,15 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+void ActivityManager::goToSettings() {
+#if FREEINK_CAP_TOUCH
+  if (boardHasTouch()) {
+    replaceActivity(std::make_unique<TouchSettingsActivity>(renderer, mappedInput));
+    return;
+  }
+#endif
+  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToGym() { replaceActivity(std::make_unique<GymActivity>(renderer, mappedInput)); }
 

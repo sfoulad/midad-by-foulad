@@ -75,9 +75,15 @@ struct FilePathResult {
   std::string path;
 };
 
-using ResultVariant =
-    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult>;
+// Chosen index from TouchOptionPickerActivity (the touch Settings
+// presentation's tap-to-select replacement for the button-only OptionPopup).
+struct TouchOptionPickerResult {
+  int selectedIndex = 0;
+};
+
+using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
+                                   IntervalResult, PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult,
+                                   FilePathResult, TouchOptionPickerResult>;
 
 struct ActivityResult {
   bool isCancelled = false;
