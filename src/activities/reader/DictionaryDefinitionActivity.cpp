@@ -301,10 +301,15 @@ void DictionaryDefinitionActivity::render(RenderLock&&) {
   renderer.drawLine(rect.x + padding, separatorY, rect.x + rect.width - padding - 1, separatorY, true);
 
   const int bodyY = separatorY + 10;
+  const int bodyWidth = rect.width - padding * 2;
   const int startLine = currentPage * linesPerPage;
   prewarmVisibleDefinitionText();
   for (int i = 0; i < linesPerPage && startLine + i < static_cast<int>(wrappedLines.size()); ++i) {
-    renderer.drawText(definitionFontId, rect.x + padding, bodyY + i * lineHeight, wrappedLines[startLine + i].c_str());
+    // drawTextInWidth right-aligns a line only when it contains Arabic (ar-ar
+    // dictionaries, and Lane's Lexicon's isolated Arabic quote lines); pure-Latin
+    // lines fall straight through to the normal left-aligned drawText.
+    renderer.drawTextInWidth(definitionFontId, rect.x + padding, bodyY + i * lineHeight, bodyWidth,
+                             wrappedLines[startLine + i].c_str());
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_DONE), tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT));
