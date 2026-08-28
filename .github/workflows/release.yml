@@ -3,9 +3,8 @@ name: Compile Release
 # Builds every board's release firmware on tag push, with the .bin named
 # exactly as OtaUpdater requests it from the GitHub release: plain
 # firmware.bin for the C3 X4/X3 binary, firmware-<board>.bin for every other
-# board. Every board's binary is signed the same way (see scripts/sign_firmware.sh)
-# before it's attached to the release -- OTA_SIGNING_KEY missing is a hard
-# failure per-board, never a silent skip.
+# board. Attaches the built .bin files to the release as-is -- CrossPoint's
+# standard unsigned firmware format, no cryptographic firmware authentication.
 
 on:
   push:
@@ -51,16 +50,11 @@ jobs:
         run: uv pip install --system --require-hashes -r scripts/requirements-ci.lock
 
       - name: Cache PlatformIO packages
-        # Namespaced separately from ci.yml's `pio-*` cache: this job signs firmware
-        # with OTA_SIGNING_KEY, so it must never restore a cache entry that untrusted
-        # PR-triggered CI could have populated (cache poisoning). The prefixes never
-        # overlap, so a restore-keys prefix match can't cross between them in either
-        # direction.
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.platformio
-          key: signed-release-pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: signed-release-pio-${{ runner.os }}-
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
 
       - name: Verify PlatformIO package integrity
         # Issue #179: PlatformIO's own PackageManager does not checksum-verify
@@ -81,45 +75,6 @@ jobs:
             cp ".pio/build/${{ matrix.pio_env }}/firmware.bin" \
               ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}"
           fi
-
-      - name: Refuse a stable release signed with a pre-production-custody key
-        # Enforced counterpart to ota-signing-key-status.md (see
-        # docs/ota-production-key-ceremony.md's "Pre-production mode"): that
-        # file is committed alongside a public key provisioned with reduced
-        # (single-iCloud-backup) custody via `ota-key-ceremony.sh
-        # --preproduction`, authorized for CI / signed RC generation /
-        # hardware qualification only -- never a stable release. This is the
-        # *stable* release path (triggered by a version tag push), unlike
-        # auto-release.yml/release_candidate.yml (RC paths, where a
-        # pre-production key is exactly what's authorized); it must never
-        # silently sign with a key this file marks as not-yet-production-
-        # custody. Fails closed: the file's absence means no pre-production
-        # key is currently marked live, so the stable release proceeds.
-        run: |
-          set -euo pipefail
-          if [ -f ota-signing-key-status.md ]; then
-            echo "::error::ota-signing-key-status.md is present at this tag, marking the committed ota-signing-public-key.pem (and the OTA_SIGNING_KEY secret it corresponds to) as PRE-PRODUCTION custody -- authorized for CI, signed RC generation, and hardware qualification only, not a stable release (see docs/ota-production-key-ceremony.md). Refusing to publish. Retire this file only after a deliberate custody upgrade or key rotation (docs/ota-signing-key-management.md's key rotation procedure), never just to silence this check."
-            exit 1
-          fi
-
-      - name: Verify espsecure version
-        # esptool==4.12.0 comes from scripts/requirements-ci.lock now -- no
-        # second install here. Pinned to the exact version validated in
-        # Phase 1 Milestone 2 (real sign+verify round-trip, not just --help).
-        # Do not bump casually: espsecure's CLI has changed command syntax
-        # across major versions before (underscored subcommands ->
-        # hyphenated, .py suffix -> bare command) -- confirm
-        # scripts/sign_firmware.sh's exact invocation still matches first.
-        run: |
-          set -euo pipefail
-          actual="$(python3 -c "import esptool; print(esptool.__version__)")"
-          echo "esptool $actual"
-          [ "$actual" = "4.12.0" ] || { echo "::error::Expected esptool 4.12.0, got: $actual"; exit 1; }
-
-      - name: Sign firmware
-        env:
-          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
-        run: ./scripts/sign_firmware.sh ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}" ota-signing-public-key.pem
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
