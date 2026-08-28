@@ -218,7 +218,6 @@ void TouchSettingsGroupActivity::buildScreen(UiScreen& screen) {
   props.count = static_cast<uint16_t>(rowItems.size());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;
-  props.rtl = I18N.isRtl();
   syncListViewport(screen, props, /*hasSubtitle=*/false);
   screen.list(props);
 }

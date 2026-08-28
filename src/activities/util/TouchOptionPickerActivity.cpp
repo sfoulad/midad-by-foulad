@@ -3,7 +3,6 @@
 #if FREEINK_CAP_TOUCH
 
 #include <GfxRenderer.h>
-#include <I18n.h>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -57,7 +56,6 @@ void TouchOptionPickerActivity::buildScreen(UiScreen& screen) {
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;
   props.selectionMarker = fui::SelectionMarker::Underline;
-  props.rtl = I18N.isRtl();
   syncListViewport(screen, props, /*hasSubtitle=*/false);
   screen.list(props);
 }
