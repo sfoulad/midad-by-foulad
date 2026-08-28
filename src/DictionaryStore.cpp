@@ -267,11 +267,37 @@ bool matchTokenAt(const std::string& text, const size_t pos, const char* token) 
   return pos + len <= text.size() && text.compare(pos, len, token) == 0;
 }
 
+// Punctuation that cleanWord() peels off the ends of a selected word. ASCII is
+// handled by isAsciiTrimChar() -- every non-alphanumeric byte under 0x80, so a
+// trailing "," or "?" on an English word never reaches here. This list is the
+// multi-byte half, and it has to carry the Arabic marks separately: a word tapped
+// out of an Arabic page ends in U+060C or U+061F, not in the ASCII comma and
+// question mark that look the same, and an untrimmed one turns every lookup at
+// the end of a clause into a miss.
+constexpr const char* TRIM_TOKENS[] = {
+    "\xC2\xA1",      // inverted !
+    "\xC2\xAB",      // <<
+    "\xC2\xBB",      // >>
+    "\xC2\xBF",      // inverted ?
+    "\xD8\x8C",      // Arabic comma
+    "\xD8\x9B",      // Arabic semicolon
+    "\xD8\x9F",      // Arabic question mark
+    "\xDB\x94",      // Arabic full stop
+    "\xE2\x80\x90",  // hyphen
+    "\xE2\x80\x91",  // non-breaking hyphen
+    "\xE2\x80\x92",  // figure dash
+    "\xE2\x80\x93",  // en dash
+    "\xE2\x80\x94",  // em dash
+    "\xE2\x80\x95",  // horizontal bar
+    "\xE2\x80\x98",  // left single quote
+    "\xE2\x80\x99",  // right single quote
+    "\xE2\x80\x9C",  // left double quote
+    "\xE2\x80\x9D",  // right double quote
+    "\xE2\x80\xA6",  // ellipsis
+};
+
 bool isUtf8TrimPrefix(const std::string& text, const size_t pos, size_t& tokenLen) {
-  static constexpr const char* TOKENS[] = {"\xC2\xA1",     "\xC2\xAB",     "\xC2\xBB",     "\xC2\xBF",
-                                           "\xE2\x80\x93", "\xE2\x80\x94", "\xE2\x80\x98", "\xE2\x80\x99",
-                                           "\xE2\x80\x9C", "\xE2\x80\x9D", "\xE2\x80\xA6"};
-  for (const char* token : TOKENS) {
+  for (const char* token : TRIM_TOKENS) {
     if (matchTokenAt(text, pos, token)) {
       tokenLen = strlen(token);
       return true;
@@ -281,10 +307,7 @@ bool isUtf8TrimPrefix(const std::string& text, const size_t pos, size_t& tokenLe
 }
 
 bool isUtf8TrimSuffix(const std::string& text, const size_t end, size_t& tokenLen) {
-  static constexpr const char* TOKENS[] = {"\xC2\xA1",     "\xC2\xAB",     "\xC2\xBB",     "\xC2\xBF",
-                                           "\xE2\x80\x93", "\xE2\x80\x94", "\xE2\x80\x98", "\xE2\x80\x99",
-                                           "\xE2\x80\x9C", "\xE2\x80\x9D", "\xE2\x80\xA6"};
-  for (const char* token : TOKENS) {
+  for (const char* token : TRIM_TOKENS) {
     const size_t len = strlen(token);
     if (end >= len && text.compare(end - len, len, token) == 0) {
       tokenLen = len;
