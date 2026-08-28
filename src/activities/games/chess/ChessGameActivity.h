@@ -30,17 +30,20 @@ class ChessGameActivity final : public Activity {
   const char* activityDebugName() const override { return "ChessGameActivity"; }
 
  private:
-  enum class State : uint8_t { Playing, Thinking, GameOver, QuitMenu };
+  enum class State : uint8_t { Playing, Thinking, GameOver, QuitMenu, ResignConfirm };
 
-  // Where the four buttons are pointing. The board and the move list share one
+  // Where the four buttons are pointing. The board and the record share one
   // vertical axis: pressing Down on the bottom rank steps off the board and onto
-  // the move list, the same way the reader's drawer steps from its tab strip into
-  // its rows. Review is the move list actually being scrolled, with the board
-  // showing the position that record produced.
-  enum class Focus : uint8_t { Board, MoveList, Review };
+  // the record, the same way the reader's drawer steps from its tab strip into its
+  // rows. On the record the four buttons become Board / Resign / Prev / Next, and
+  // Prev/Next walk the board back through the game -- one focus, not a highlighted
+  // state and a scrolling state, because there was nothing to do in the first but
+  // enter the second.
+  enum class Focus : uint8_t { Board, Record };
 
-  static constexpr int QUIT_OPTION_COUNT = 3;  // resume, save & exit, resign
-  static constexpr int OVER_OPTION_COUNT = 3;  // play again, review, menu
+  static constexpr int QUIT_OPTION_COUNT = 3;    // resume, save & exit, resign
+  static constexpr int OVER_OPTION_COUNT = 3;    // play again, review, menu
+  static constexpr int RESIGN_OPTION_COUNT = 2;  // keep playing, resign
   static constexpr uint32_t LONG_PRESS_MS = 500;
   // The engine recurses through negamax + quiescence; 8 KB is the same order
   // as the network tasks and leaves headroom over the measured high-water mark.
@@ -60,9 +63,12 @@ class ChessGameActivity final : public Activity {
   // move list, so the board always resumes on a piece rather than wherever the
   // cursor happened to be parked.
   void cursorToOwnKing();
-  void leaveReview();
+  // Steps onto the record, entering it at the live position so the first Prev is a
+  // step backwards through the game rather than a jump somewhere else.
+  void enterRecord();
+  void leaveRecord();
   // The board actually drawn: the live position, or the replayed one while the
-  // move list is being reviewed.
+  // record is being walked back through.
   const chess::Board& visibleBoard() const;
   void finishGameIfOver();
   void persist();
@@ -76,7 +82,7 @@ class ChessGameActivity final : public Activity {
   std::unique_ptr<chess::Game> game_;
   std::unique_ptr<chess::Search> search_;
   chess::Board searchBoard_;  // the engine task's private copy
-  chess::Board reviewBoard_;  // replayed position while Focus::Review is active
+  chess::Board reviewBoard_;  // replayed position while Focus::Record is active
   chess::Move engineMove_{};
 
   TaskHandle_t engineTask_ = nullptr;
@@ -96,8 +102,8 @@ class ChessGameActivity final : public Activity {
   bool flipped_ = false;
   State state_ = State::Playing;
   Focus focus_ = Focus::Board;
-  // Ply the review cursor sits on, i.e. the number of plies played in the
-  // position on screen. Only meaningful in Focus::Review.
+  // Ply the record cursor sits on, i.e. the number of plies played in the position
+  // on screen. Only meaningful in Focus::Record.
   int reviewPly_ = 0;
   int cursor_ = -1;
   int selected_ = -1;

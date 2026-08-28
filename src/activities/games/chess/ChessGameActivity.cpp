@@ -170,9 +170,7 @@ void ChessGameActivity::moveCursor(int fileDelta, int rankDelta) {
   if (rankDelta != 0 && (rank < 0 || rank > 7)) {
     const bool leavingBottom = flipped_ ? (rank > 7) : (rank < 0);
     if (leavingBottom && rankDelta < 0 && game_->plyCount() > 0) {
-      focus_ = Focus::MoveList;
-      selected_ = -1;
-      refreshLegalTargets();
+      enterRecord();
     }
     requestUpdate();
     return;
@@ -193,14 +191,23 @@ void ChessGameActivity::cursorToOwnKing() {
   }
 }
 
-void ChessGameActivity::leaveReview() {
+void ChessGameActivity::enterRecord() {
+  reviewPly_ = game_->plyCount();
+  if (!game_->positionAt(reviewPly_, reviewBoard_)) return;
+  focus_ = Focus::Record;
+  selected_ = -1;
+  refreshLegalTargets();
+  requestUpdate();
+}
+
+void ChessGameActivity::leaveRecord() {
   focus_ = Focus::Board;
   cursorToOwnKing();
   requestUpdate();
 }
 
 const chess::Board& ChessGameActivity::visibleBoard() const {
-  return focus_ == Focus::Review ? reviewBoard_ : game_->board();
+  return focus_ == Focus::Record ? reviewBoard_ : game_->board();
 }
 
 void ChessGameActivity::applyPlayerMove(uint8_t from, uint8_t to) {
@@ -298,8 +305,10 @@ void ChessGameActivity::loop() {
     return;
   }
 
-  if (state_ == State::GameOver || state_ == State::QuitMenu) {
-    const int optionCount = (state_ == State::GameOver) ? OVER_OPTION_COUNT : QUIT_OPTION_COUNT;
+  if (state_ == State::GameOver || state_ == State::QuitMenu || state_ == State::ResignConfirm) {
+    const int optionCount = (state_ == State::GameOver)   ? OVER_OPTION_COUNT
+                            : (state_ == State::QuitMenu) ? QUIT_OPTION_COUNT
+                                                          : RESIGN_OPTION_COUNT;
     buttonNavigator_.onScrollNextRelease([this, optionCount] {
       overlayIndex_ = ButtonNavigator::nextIndex(overlayIndex_, optionCount);
       requestUpdate();
@@ -327,7 +336,7 @@ void ChessGameActivity::loop() {
             finish();
             return;
         }
-      } else {
+      } else if (state_ == State::QuitMenu) {
         switch (overlayIndex_) {
           case 0:  // resume
             state_ = State::Playing;
@@ -336,10 +345,20 @@ void ChessGameActivity::loop() {
             persist();
             finish();
             return;
-          default:  // resign
-            game_->resign();
-            finishGameIfOver();
+          default:  // resign -- asks first, see State::ResignConfirm
+            state_ = State::ResignConfirm;
+            overlayIndex_ = 0;
             break;
+        }
+      } else {
+        // Resigning is the one move in the game that cannot be taken back, and it
+        // sits one button away from the record, so it asks.
+        if (overlayIndex_ == 0) {
+          state_ = State::Playing;
+        } else {
+          state_ = State::Playing;
+          game_->resign();
+          finishGameIfOver();
         }
       }
       requestUpdate();
@@ -347,7 +366,7 @@ void ChessGameActivity::loop() {
     }
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      if (state_ == State::QuitMenu) {
+      if (state_ == State::QuitMenu || state_ == State::ResignConfirm) {
         state_ = State::Playing;
         requestUpdate();
       } else {
@@ -358,30 +377,21 @@ void ChessGameActivity::loop() {
     return;
   }
 
-  // --- move list focused / being reviewed ---
+  // --- the record ---
   //
-  // Up and Down are the SIDE buttons (Button::Up/Down are hardwired to BTN_UP /
-  // BTN_DOWN). They used to be double-bound: the cursor read Up/Down while the
-  // same physical presses ALSO reached PageBack/PageForward, so every attempt to
-  // walk the cursor up the board took back a move and every attempt to walk it
-  // down flipped the board. Both of those bindings are gone; the side buttons do
-  // nothing now but move up and down, on the board and in the move list alike.
-  if (focus_ != Focus::Board) {
-    buttonNavigator_.onPress({MappedInputManager::Button::Up}, [this] {
-      if (focus_ == Focus::MoveList) {
-        // Up out of the move list goes back to the board it was entered from.
-        focus_ = Focus::Board;
-        requestUpdate();
-        return;
-      }
+  // Four buttons, all of them: Board, Resign, Prev, Next. The side buttons are
+  // deliberately dead here -- everything the record does has a labelled button, and
+  // Up/Down were only ever the way in and out of a second, scrolling sub-mode that
+  // no longer exists.
+  if (focus_ == Focus::Record) {
+    buttonNavigator_.onPress({MappedInputManager::Button::Left}, [this] {
       if (reviewPly_ > 0) {
         reviewPly_--;
         game_->positionAt(reviewPly_, reviewBoard_);
         requestUpdate();
       }
     });
-    buttonNavigator_.onPress({MappedInputManager::Button::Down}, [this] {
-      if (focus_ != Focus::Review) return;
+    buttonNavigator_.onPress({MappedInputManager::Button::Right}, [this] {
       if (reviewPly_ < game_->plyCount()) {
         reviewPly_++;
         game_->positionAt(reviewPly_, reviewBoard_);
@@ -390,17 +400,9 @@ void ChessGameActivity::loop() {
     });
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      if (focus_ == Focus::MoveList) {
-        // Enter the list at the position on the board, so the first Up is a step
-        // backwards through the game rather than a jump to somewhere else.
-        reviewPly_ = game_->plyCount();
-        if (game_->positionAt(reviewPly_, reviewBoard_)) {
-          focus_ = Focus::Review;
-        }
-        requestUpdate();
-      } else {
-        leaveReview();
-      }
+      state_ = State::ResignConfirm;
+      overlayIndex_ = 0;
+      leaveRecord();
       return;
     }
 
@@ -412,7 +414,7 @@ void ChessGameActivity::loop() {
         backHandled_ = false;
         return;
       }
-      leaveReview();
+      leaveRecord();
     }
     return;
   }
@@ -512,20 +514,28 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
   y += 8;
 
   const int plies = game_->plyCount();
-  // Whose turn it is belongs in the record, as the next unplayed half-move: "3. your
-  // move" says both that it is your turn and where in the game you are, which a
-  // separate status line said half of. Counted as a pair so the window sizing and
-  // scrolling below reserve a row for it.
-  const int pendingPly = (focus_ == Focus::Board && state_ == State::Playing && playerToMove()) ? plies : -1;
+  // The whole status line lives in the record now, as the next unplayed half-move:
+  // "15. Nxh8  Thinking.." is one thing to read instead of a scoresheet and a
+  // caption underneath repeating half of it, and the panel gets that line back.
+  // Counted as a pair so the window sizing and scrolling below reserve a row for it.
+  const char* pendingText = nullptr;
+  if (state_ != State::GameOver) {
+    if (state_ == State::Thinking || !playerToMove()) {
+      pendingText = tr(STR_CHESS_THINKING);
+    } else if (game_->board().inCheck(game_->board().whiteToMove())) {
+      pendingText = tr(STR_CHESS_CHECK);
+    } else {
+      pendingText = tr(STR_CHESS_YOUR_MOVE);
+    }
+  }
+  const int pendingPly = (pendingText != nullptr) ? plies : -1;
   const int pairs = (plies + (pendingPly >= 0 ? 2 : 1)) / 2;
-  // Three pairs is enough to see the current sequence while playing; reviewing is
-  // reading the scoresheet, so it uses whatever rows the panel actually has.
-  const int visiblePairs = std::max(1, std::min(focus_ == Focus::Review ? (height - 12) / lineHeight : 3, pairs));
+  const int visiblePairs = std::max(1, std::min((height - 12) / lineHeight, pairs));
 
-  // Keep the pair the review cursor sits on inside the window, scrolling it to the
+  // Keep the pair the record cursor sits on inside the window, scrolling it to the
   // bottom as the cursor walks forward and to the top as it walks back.
   int firstPair = std::max(0, pairs - visiblePairs);
-  if (focus_ == Focus::Review) {
+  if (focus_ == Focus::Record) {
     const int cursorPair = std::max(0, (reviewPly_ - 1) / 2);
     firstPair = std::clamp(firstPair, std::max(0, cursorPair - visiblePairs + 1), cursorPair);
   }
@@ -538,8 +548,8 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
     // The record being previewed is inverted, so "which move produced this board"
     // is answerable from the list rather than from the ply counter alone.
     const int whitePly = pair * 2;
-    const bool whiteCurrent = (focus_ == Focus::Review && reviewPly_ == whitePly + 1);
-    const bool blackCurrent = (focus_ == Focus::Review && reviewPly_ == whitePly + 2);
+    const bool whiteCurrent = (focus_ == Focus::Record && reviewPly_ == whitePly + 1);
+    const bool blackCurrent = (focus_ == Focus::Record && reviewPly_ == whitePly + 2);
     if (whiteCurrent) renderer.fillRect(left + 38, y - 2, 88, lineHeight, true);
     if (blackCurrent) renderer.fillRect(left + 128, y - 2, 88, lineHeight, true);
 
@@ -547,12 +557,12 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
     if (whitePly < plies) {
       renderer.drawText(UI_12_FONT_ID, left + 42, y, game_->sanAt(whitePly), !whiteCurrent);
     } else if (whitePly == pendingPly) {
-      renderer.drawText(UI_12_FONT_ID, left + 42, y, tr(STR_CHESS_YOUR_MOVE), true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_12_FONT_ID, left + 42, y, pendingText, true, EpdFontFamily::BOLD);
     }
     if (whitePly + 1 < plies) {
       renderer.drawText(UI_12_FONT_ID, left + 132, y, game_->sanAt(whitePly + 1), !blackCurrent);
     } else if (whitePly + 1 == pendingPly) {
-      renderer.drawText(UI_12_FONT_ID, left + 132, y, tr(STR_CHESS_YOUR_MOVE), true, EpdFontFamily::BOLD);
+      renderer.drawText(UI_12_FONT_ID, left + 132, y, pendingText, true, EpdFontFamily::BOLD);
     }
     y += lineHeight;
   }
@@ -562,31 +572,10 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
   if (focus_ != Focus::Board) {
     renderer.drawRect(left - 4, blockTop + 4, right - left + 8, std::max(y - blockTop, lineHeight + 8), 2, true);
   }
-
-  y = std::max(y, layout_.y + layout_.size + 4);
-  // Empty on a normal player turn: the record already says "your move". What is left
-  // are the states the record cannot show -- thinking, check, game over.
-  const char* status = nullptr;
-  if (focus_ == Focus::MoveList) {
-    status = tr(STR_CHESS_MOVES);
-  } else if (focus_ == Focus::Review) {
-    status = tr(STR_CHESS_REVIEWING);
-  } else if (state_ == State::Thinking) {
-    status = tr(STR_CHESS_THINKING);
-  } else if (state_ == State::GameOver) {
-    status = tr(STR_CHESS_GAME_OVER);
-  } else if (game_->board().inCheck(game_->board().whiteToMove())) {
-    status = tr(STR_CHESS_CHECK);
-  } else if (!playerToMove()) {
-    status = tr(STR_CHESS_THINKING);
-  }
-  if (status != nullptr) {
-    renderer.drawText(UI_12_FONT_ID, left, y + 6, status, true, EpdFontFamily::BOLD);
-  }
 }
 
 void ChessGameActivity::drawOverlay() const {
-  if (state_ != State::GameOver && state_ != State::QuitMenu) return;
+  if (state_ != State::GameOver && state_ != State::QuitMenu && state_ != State::ResignConfirm) return;
 
   const int pageWidth = renderer.getScreenWidth();
   const int boxWidth = std::min(360, layout_.size);
@@ -616,13 +605,19 @@ void ChessGameActivity::drawOverlay() const {
     options[0] = tr(STR_CHESS_PLAY_AGAIN);
     options[1] = tr(STR_CHESS_REVIEW);
     options[2] = tr(STR_CHESS_BACK_TO_MENU);
-  } else {
+  } else if (state_ == State::QuitMenu) {
     snprintf(title, sizeof(title), "%s", tr(STR_CHESS_PAUSED));
     detail[0] = '\0';
     optionCount = QUIT_OPTION_COUNT;
     options[0] = tr(STR_CHESS_RESUME);
     options[1] = tr(STR_CHESS_SAVE_EXIT);
     options[2] = tr(STR_CHESS_RESIGN);
+  } else {
+    snprintf(title, sizeof(title), "%s", tr(STR_CHESS_RESIGN));
+    snprintf(detail, sizeof(detail), "%s", tr(STR_CHESS_RESIGN_CONFIRM));
+    optionCount = RESIGN_OPTION_COUNT;
+    options[0] = tr(STR_CHESS_KEEP_PLAYING);
+    options[1] = tr(STR_CHESS_RESIGN);
   }
 
   const int detailLines = (detail[0] != '\0' ? 1 : 0);
@@ -678,7 +673,7 @@ void ChessGameActivity::render(RenderLock&&) {
   chess_view::Highlights highlights;
   highlights.cursor = (focus_ == Focus::Board && state_ == State::Playing && playerToMove()) ? cursor_ : -1;
   highlights.selected = (focus_ == Focus::Board) ? selected_ : -1;
-  if (focus_ == Focus::Review) {
+  if (focus_ == Focus::Record) {
     // The move that produced the position on screen, not the game's last move.
     if (reviewPly_ > 0) {
       const chess::Move& shown = game_->moveAt(reviewPly_ - 1);
@@ -695,7 +690,9 @@ void ChessGameActivity::render(RenderLock&&) {
   const int bottomBarY = layout_.y + layout_.size + 6;
   drawPlayerBar(bottomBarY, /*opponentRow=*/false);
   const int moveListTop = bottomBarY + barHeight + 2;
-  drawMoveList(moveListTop, hintsTop - moveListTop - renderer.getLineHeight(UI_12_FONT_ID) - 12);
+  // The status caption used to sit under this block; folding it into the record
+  // hands its line back to the record itself.
+  drawMoveList(moveListTop, hintsTop - moveListTop - 8);
 
   drawOverlay();
 
@@ -705,15 +702,12 @@ void ChessGameActivity::render(RenderLock&&) {
   // advertise two buttons that do nothing in the move list.
   const char* leftLabel = tr(STR_DIR_LEFT);
   const char* rightLabel = tr(STR_DIR_RIGHT);
-  if (focus_ == Focus::MoveList) {
-    backLabel = tr(STR_BACK);
-    confirmLabel = tr(STR_CHESS_REVIEW_MOVES);
-    leftLabel = rightLabel = "";
-  } else if (focus_ == Focus::Review) {
-    backLabel = tr(STR_CHESS_BACK_TO_BOARD);
-    confirmLabel = tr(STR_CHESS_BACK_TO_BOARD);
-    leftLabel = rightLabel = "";
-  } else if (state_ == State::GameOver || state_ == State::QuitMenu) {
+  if (focus_ == Focus::Record) {
+    backLabel = tr(STR_CHESS_BOARD);
+    confirmLabel = tr(STR_CHESS_RESIGN);
+    leftLabel = tr(STR_CHESS_PREV);
+    rightLabel = tr(STR_CHESS_NEXT);
+  } else if (state_ == State::GameOver || state_ == State::QuitMenu || state_ == State::ResignConfirm) {
     backLabel = tr(STR_BACK);
     confirmLabel = tr(STR_SELECT);
   }
@@ -724,8 +718,11 @@ void ChessGameActivity::render(RenderLock&&) {
   // at the buttons themselves, as dictionary word select does, rather than spelled out
   // in a line of text the user has to map back onto the hardware. The board never
   // reaches these edges -- MAX_CELL caps it at 448 px, well inside the 30 px hint
-  // columns -- so nothing is painted over.
-  GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  // columns -- so nothing is painted over. Nothing on the record: its four buttons do
+  // all of it, and hints for two dead buttons are worse than none.
+  if (focus_ == Focus::Board) {
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  }
 
   // Periodic HALF refresh: FAST leaves residue, and a dithered board shows it.
   if (++rendersSinceFullRefresh_ >= 20) {
