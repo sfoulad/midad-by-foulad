@@ -11,6 +11,7 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "ReadingHeatmapActivity.h"
+#include "StatsListLayout.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -23,9 +24,9 @@ constexpr int SUMMARY_GAP = 10;
 constexpr int HEATMAP_BUTTON_HEIGHT = 54;
 constexpr int LIST_HEADER_HEIGHT = 34;
 constexpr int LIST_HEADER_BOTTOM_GAP = 8;
-constexpr int BOOK_ROW_HEIGHT = 78;
-constexpr int BOOK_ROW_GAP = 8;
-constexpr int BOOKS_PER_PAGE = 3;
+using StatsListLayout::BOOK_ROW_GAP;
+using StatsListLayout::BOOK_ROW_HEIGHT;
+using StatsListLayout::BOOKS_PER_PAGE;
 
 const char* bookTitle(const ReadingBookStats& book) {
   return book.title.empty() ? book.path.c_str() : book.title.c_str();
@@ -138,6 +139,71 @@ void StatsActivity::loop() {
     return;
   }
 
+  // Book rows on the currently visible page occupy the same x/width as the
+  // heatmap button (see render()); only y/height differ per row. Hit-testing
+  // goes through StatsListLayout::hitTest(), the same pure function
+  // driving render()'s page-slicing, so a tap always lands on what's drawn.
+  const auto layout = computeLayout();
+
+  // Long-press a book row to remove it -- checked before the tap block below
+  // since a long-press-then-lift must not also open the book. Fires while
+  // still held (see wasScreenLongPressed's doc comment), so the lift is
+  // suppressed rather than relying on ordering against wasScreenTapped.
+  int longPressX = 0;
+  int longPressY = 0;
+  if (mappedInput.wasScreenLongPressed(longPressX, longPressY)) {
+    const auto hit = StatsListLayout::hitTest(longPressX, longPressY, layout.heatmapRect.x, layout.heatmapRect.y,
+                                              layout.heatmapRect.width, layout.heatmapRect.height, layout.contentTop,
+                                              layout.heatmapRect.x, layout.heatmapRect.width, bookCount, selectedIndex);
+    if (hit.kind == StatsListLayout::HitKind::BookRow) {
+      selectedIndex = hit.bookIndex + 1;
+      mappedInput.suppressTouchContact();
+      confirmRemoveSelectedBook();
+      return;
+    }
+  }
+
+  // Tap the heatmap button or a book row to open it directly (no separate
+  // select-then-confirm step for touch, same idiom AppsActivity/
+  // ReadingHeatmapActivity use).
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY)) {
+    const auto hit = StatsListLayout::hitTest(tapX, tapY, layout.heatmapRect.x, layout.heatmapRect.y,
+                                              layout.heatmapRect.width, layout.heatmapRect.height, layout.contentTop,
+                                              layout.heatmapRect.x, layout.heatmapRect.width, bookCount, selectedIndex);
+    if (hit.kind == StatsListLayout::HitKind::Heatmap) {
+      selectedIndex = 0;
+      openSelectedEntry();
+      return;
+    }
+    if (hit.kind == StatsListLayout::HitKind::BookRow) {
+      selectedIndex = hit.bookIndex + 1;
+      openSelectedEntry();
+      return;
+    }
+  }
+
+  // Swipe up/down pages the book list one page at a time, matching the
+  // standard mobile-list convention (swipe up -> advance through content
+  // below). Vertical, so not RTL-mirrored -- same as ScrollNext/ScrollPrevious's
+  // own button mapping (see MappedInputManager::mapButton).
+  switch (mappedInput.wasSwipe()) {
+    case MappedInputManager::SwipeDir::Up:
+    case MappedInputManager::SwipeDir::Down: {
+      if (bookCount == 0) break;
+      const bool forward = mappedInput.wasSwipe() == MappedInputManager::SwipeDir::Up;
+      const int bookIndex = std::max(0, selectedIndex - 1);
+      selectedIndex = (forward ? ButtonNavigator::nextPageIndex(bookIndex, bookCount, BOOKS_PER_PAGE)
+                               : ButtonNavigator::previousPageIndex(bookIndex, bookCount, BOOKS_PER_PAGE)) +
+                      1;
+      requestUpdate();
+      return;
+    }
+    default:
+      break;
+  }
+
   buttonNavigator.onScrollNextRelease([this, selectableCount] {
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, selectableCount);
     requestUpdate();
@@ -198,6 +264,17 @@ void StatsActivity::confirmRemoveSelectedBook() {
       });
 }
 
+StatsActivity::Layout StatsActivity::computeLayout() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+  const int sidePadding = metrics.contentSidePadding;
+  const int summaryTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int buttonTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
+  const int listHeaderTop = buttonTop + HEATMAP_BUTTON_HEIGHT + metrics.verticalSpacing;
+  const int contentTop = listHeaderTop + LIST_HEADER_HEIGHT + LIST_HEADER_BOTTOM_GAP;
+  return Layout{Rect{sidePadding, buttonTop, pageWidth - sidePadding * 2, HEATMAP_BUTTON_HEIGHT}, contentTop};
+}
+
 void StatsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
@@ -242,12 +319,14 @@ void StatsActivity::render(RenderLock&&) {
   snprintf(value, sizeof(value), "%lu", static_cast<unsigned long>(READING_STATS.getBooksStartedCount()));
   cardAt(2, 1, tr(STR_BOOKS_STARTED), value, false);
 
-  const int buttonTop = summaryTop + SUMMARY_CARD_HEIGHT * 3 + SUMMARY_GAP * 2 + metrics.verticalSpacing;
-  drawHeatmapButton(renderer, Rect{sidePadding, buttonTop, pageWidth - sidePadding * 2, HEATMAP_BUTTON_HEIGHT},
-                    selectedIndex == 0);
+  // Heatmap-button rect and book-list contentTop come from computeLayout(),
+  // shared with loop()'s touch hit-testing, so a tap always lands on what's
+  // actually drawn there.
+  const auto layout = computeLayout();
+  drawHeatmapButton(renderer, layout.heatmapRect, selectedIndex == 0);
 
   const auto& books = READING_STATS.getBooks();
-  const int listHeaderTop = buttonTop + HEATMAP_BUTTON_HEIGHT + metrics.verticalSpacing;
+  const int listHeaderTop = layout.heatmapRect.y + HEATMAP_BUTTON_HEIGHT + metrics.verticalSpacing;
   const int totalPages = std::max(1, static_cast<int>((books.size() + BOOKS_PER_PAGE - 1) / BOOKS_PER_PAGE));
   const int currentPage = (books.empty() || selectedIndex == 0) ? 1 : ((selectedIndex - 1) / BOOKS_PER_PAGE) + 1;
   char headerLabel[64];
@@ -257,17 +336,17 @@ void StatsActivity::render(RenderLock&&) {
   snprintf(pageLabel, sizeof(pageLabel), "%d/%d", currentPage, totalPages);
   GUI.drawSubHeader(renderer, Rect{0, listHeaderTop, pageWidth, LIST_HEADER_HEIGHT}, headerLabel, pageLabel);
 
-  const int contentTop = listHeaderTop + LIST_HEADER_HEIGHT + LIST_HEADER_BOTTOM_GAP;
   if (books.empty()) {
-    renderer.drawCenteredText(UI_10_FONT_ID, contentTop + 24, tr(STR_STATS_NO_DATA));
+    renderer.drawCenteredText(UI_10_FONT_ID, layout.contentTop + 24, tr(STR_STATS_NO_DATA));
   } else {
-    const int selectedBookIndex = std::max(0, selectedIndex - 1);
-    const int pageStartIndex = (selectedBookIndex / BOOKS_PER_PAGE) * BOOKS_PER_PAGE;
-    const int pageEndIndex = std::min(static_cast<int>(books.size()), pageStartIndex + BOOKS_PER_PAGE);
+    const int bookCount = static_cast<int>(books.size());
+    const int pageStartIndex = StatsListLayout::pageStartForSelection(selectedIndex, bookCount);
+    const int pageEndIndex = std::min(bookCount, pageStartIndex + BOOKS_PER_PAGE);
     for (int index = pageStartIndex; index < pageEndIndex; ++index) {
-      const int rowY = contentTop + (index - pageStartIndex) * (BOOK_ROW_HEIGHT + BOOK_ROW_GAP);
-      drawBookRow(renderer, Rect{sidePadding, rowY, pageWidth - sidePadding * 2, BOOK_ROW_HEIGHT}, books[index],
-                  selectedIndex == index + 1, rtl);
+      const auto rect = StatsListLayout::bookRowRect(layout.heatmapRect.x, layout.heatmapRect.width, layout.contentTop,
+                                                     index - pageStartIndex);
+      drawBookRow(renderer, Rect{rect.x, rect.y, rect.width, rect.height}, books[index], selectedIndex == index + 1,
+                  rtl);
     }
   }
 
