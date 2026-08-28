@@ -93,8 +93,11 @@ void ChessOpeningViewActivity::loop() {
       return;
     }
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      focus_ = (focus_ == Focus::Tip) ? Focus::TipReading : Focus::Board;
-      requestUpdate();
+      // Nothing to confirm once the page is open -- one labelled way out, Back.
+      if (focus_ == Focus::Tip) {
+        focus_ = Focus::TipReading;
+        requestUpdate();
+      }
       return;
     }
     // Up steps back onto the board from the highlighted block, matching the game
@@ -165,6 +168,25 @@ void ChessOpeningViewActivity::drawMoveChips(int y, int width) const {
   }
 }
 
+// Coaching notes are prose, so they set left-aligned: centring a wrapped paragraph
+// gives every line a different left edge and the eye loses the start of the next one.
+// UITheme only offers the centred wrapper, so this walks the wrapped lines itself.
+namespace {
+void drawTipBody(const GfxRenderer& renderer, Rect bounds, const char* text, int maxLines) {
+  if (text == nullptr || *text == '\0' || bounds.width <= 0) return;
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  if (lineHeight <= 0) return;
+  const int lineLimit = std::min(maxLines, bounds.height / lineHeight);
+  if (lineLimit <= 0) return;
+
+  int y = bounds.y;
+  for (const auto& line : renderer.wrappedText(UI_12_FONT_ID, text, bounds.width, lineLimit)) {
+    renderer.drawText(UI_12_FONT_ID, bounds.x, y, line.c_str(), true);
+    y += lineHeight;
+  }
+}
+}  // namespace
+
 // The tip on its own page: no board above it, so the body gets the whole screen
 // and the longer notes stop being cut off after four lines.
 void ChessOpeningViewActivity::renderTipPage() const {
@@ -190,11 +212,10 @@ void ChessOpeningViewActivity::renderTipPage() const {
   y += 10;
 
   const int bodyHeight = hintsTop - y - metrics.verticalSpacing;
-  UITheme::drawCenteredWrappedText(renderer, Rect{side, y, pageWidth - side * 2, bodyHeight}, UI_12_FONT_ID,
-                                   I18N.get(tip->body), /*maxLines=*/bodyHeight / renderer.getLineHeight(UI_12_FONT_ID),
-                                   true, EpdFontFamily::REGULAR, UITheme::TextVerticalAlignment::TOP);
+  drawTipBody(renderer, Rect{side, y, pageWidth - side * 2, bodyHeight}, I18N.get(tip->body),
+              bodyHeight / renderer.getLineHeight(UI_12_FONT_ID));
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CHESS_BACK_TO_BOARD), "", "", /*rtlSwap=*/false);
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "", /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
@@ -262,9 +283,7 @@ void ChessOpeningViewActivity::render(RenderLock&&) {
     const int blockTop = y;
     renderer.drawText(UI_10_FONT_ID, layout_.x, y, I18N.get(tip->title), true, EpdFontFamily::BOLD);
     y += renderer.getLineHeight(UI_10_FONT_ID) + 2;
-    UITheme::drawCenteredWrappedText(renderer, Rect{layout_.x, y, layout_.size, hintsTop - y - 4}, UI_12_FONT_ID,
-                                     I18N.get(tip->body), /*maxLines=*/4, true, EpdFontFamily::REGULAR,
-                                     UITheme::TextVerticalAlignment::TOP);
+    drawTipBody(renderer, Rect{layout_.x, y, layout_.size, hintsTop - y - 4}, I18N.get(tip->body), /*maxLines=*/4);
     if (focus_ == Focus::Tip) {
       renderer.drawRect(layout_.x - 4, blockTop - 4, layout_.size + 8, hintsTop - blockTop, 2, true);
     } else {
