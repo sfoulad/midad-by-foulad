@@ -25,19 +25,19 @@ Glyph glyphFor(PieceType t, int size) {
   const bool small = (size <= SMALL_GLYPH_SIZE);
   switch (t) {
     case chess::PAWN:
-      return small ? Glyph{ChessPawnSilhouette20, ChessPawnInk20} : Glyph{ChessPawnSilhouette42, ChessPawnInk42};
+      return small ? Glyph{ChessPawnSilhouette24, ChessPawnInk24} : Glyph{ChessPawnSilhouette42, ChessPawnInk42};
     case chess::KNIGHT:
-      return small ? Glyph{ChessKnightSilhouette20, ChessKnightInk20}
+      return small ? Glyph{ChessKnightSilhouette24, ChessKnightInk24}
                    : Glyph{ChessKnightSilhouette42, ChessKnightInk42};
     case chess::BISHOP:
-      return small ? Glyph{ChessBishopSilhouette20, ChessBishopInk20}
+      return small ? Glyph{ChessBishopSilhouette24, ChessBishopInk24}
                    : Glyph{ChessBishopSilhouette42, ChessBishopInk42};
     case chess::ROOK:
-      return small ? Glyph{ChessRookSilhouette20, ChessRookInk20} : Glyph{ChessRookSilhouette42, ChessRookInk42};
+      return small ? Glyph{ChessRookSilhouette24, ChessRookInk24} : Glyph{ChessRookSilhouette42, ChessRookInk42};
     case chess::QUEEN:
-      return small ? Glyph{ChessQueenSilhouette20, ChessQueenInk20} : Glyph{ChessQueenSilhouette42, ChessQueenInk42};
+      return small ? Glyph{ChessQueenSilhouette24, ChessQueenInk24} : Glyph{ChessQueenSilhouette42, ChessQueenInk42};
     default:
-      return small ? Glyph{ChessKingSilhouette20, ChessKingInk20} : Glyph{ChessKingSilhouette42, ChessKingInk42};
+      return small ? Glyph{ChessKingSilhouette24, ChessKingInk24} : Glyph{ChessKingSilhouette42, ChessKingInk42};
   }
 }
 

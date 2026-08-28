@@ -23,6 +23,10 @@ Output matches GfxRenderer::drawIcon: square, 1bpp, MSB-first, bit == 0 is ink,
 pre-rotated as bitmap[row][col] = screen(size - 1 - row, col).
 
     python scripts/gen_chess_pieces.py [--preview sheet.png]
+
+Run bin/clang-format-fix.ps1 afterwards: clang-format repacks the byte rows to
+fill 120 columns for whichever size is being emitted, so the raw output here is
+not what ends up committed.
 """
 
 import sys
@@ -30,10 +34,12 @@ import sys
 from PIL import Image, ImageDraw, ImageFilter
 
 # Two sizes: the board glyph, and a small one for the captured-piece strips in
-# the player bars, where a 42px glyph would not fit the row. Outline weight in
-# final pixels -- 2 is the floor at 42px (1px breaks up under the dark squares'
-# dither), and the small glyph can only afford 1.
-SIZES = [(42, 2), (20, 1)]
+# the player bars, where a 42px glyph would not fit the row. The small size is
+# set so the piece stands as tall as the "+N" material lead printed beside it
+# (see ChessBoardView.h). Outline weight in final pixels -- 2 is the floor at
+# 42px (1px breaks up under the dark squares' dither), and the small glyph can
+# only afford 1.
+SIZES = [(42, 2), (24, 1)]
 SS = 8
 OUT_PATH = "src/components/icons/chessPieces.h"
 

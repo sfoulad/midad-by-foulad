@@ -10,14 +10,6 @@ void ChessStore::toJson(JsonDocument& doc) const {
   doc["savedGame"] = savedGame;
   doc["savedLevel"] = savedLevel;
   doc["savedPlayerIsWhite"] = savedPlayerIsWhite;
-  const JsonArray winsArray = doc["wins"].to<JsonArray>();
-  const JsonArray lossesArray = doc["losses"].to<JsonArray>();
-  const JsonArray drawsArray = doc["draws"].to<JsonArray>();
-  for (int i = 0; i < chess::LEVEL_COUNT; i++) {
-    winsArray.add(wins[i]);
-    lossesArray.add(losses[i]);
-    drawsArray.add(draws[i]);
-  }
 }
 
 bool ChessStore::fromJson(JsonVariantConst doc) {
@@ -27,15 +19,8 @@ bool ChessStore::fromJson(JsonVariantConst doc) {
   if (savedGame.size() > MAX_SAVE_LENGTH) savedGame.clear();
   savedLevel = clampLevel(doc["savedLevel"] | 2);
   savedPlayerIsWhite = doc["savedPlayerIsWhite"] | true;
-
-  JsonArrayConst winsArray = doc["wins"];
-  JsonArrayConst lossesArray = doc["losses"];
-  JsonArrayConst drawsArray = doc["draws"];
-  for (int i = 0; i < chess::LEVEL_COUNT; i++) {
-    wins[i] = (i < static_cast<int>(winsArray.size())) ? (winsArray[i] | 0) : 0;
-    losses[i] = (i < static_cast<int>(lossesArray.size())) ? (lossesArray[i] | 0) : 0;
-    draws[i] = (i < static_cast<int>(drawsArray.size())) ? (drawsArray[i] | 0) : 0;
-  }
+  // "wins"/"losses"/"draws" from an older file are dropped: the record is gone from
+  // every screen, so keeping the counters up to date bought nothing.
   return true;
 }
 
@@ -54,20 +39,3 @@ void ChessStore::clearSavedGame() {
   savedGame.clear();
   saveToFile();
 }
-
-void ChessStore::reportResult(uint8_t level, int outcome) {
-  const uint8_t index = clampLevel(level);
-  if (outcome > 0) {
-    wins[index]++;
-  } else if (outcome < 0) {
-    losses[index]++;
-  } else {
-    draws[index]++;
-  }
-  savedGame.clear();  // a finished game is not resumable
-  saveToFile();
-}
-
-uint16_t ChessStore::getWins(uint8_t level) const { return wins[clampLevel(level)]; }
-uint16_t ChessStore::getLosses(uint8_t level) const { return losses[clampLevel(level)]; }
-uint16_t ChessStore::getDraws(uint8_t level) const { return draws[clampLevel(level)]; }

@@ -5,7 +5,7 @@
 
 #include "ChessSearch.h"
 
-// Saved chess game and per-opponent record. Its own file rather than a field in
+// Saved chess game. Its own file rather than a field in
 // CrossPointSettings for the same reason GameHighScoresStore is: this is game
 // state, not a user-configurable setting, and the settings serializer only
 // round-trips uint8_t fields.
@@ -18,9 +18,6 @@ class ChessStore : public PersistableStore<ChessStore> {
   std::string savedGame;
   uint8_t savedLevel = 2;
   bool savedPlayerIsWhite = true;
-  uint16_t wins[chess::LEVEL_COUNT] = {};
-  uint16_t losses[chess::LEVEL_COUNT] = {};
-  uint16_t draws[chess::LEVEL_COUNT] = {};
 
   ChessStore() = default;
   ~ChessStore() = default;
@@ -40,12 +37,9 @@ class ChessStore : public PersistableStore<ChessStore> {
   // Stores the in-progress game. Writes only when something actually changed,
   // so a move that ends in the same state does not cost an SD write.
   void saveGame(const char* serialized, uint8_t level, bool playerIsWhite);
+  // Called when a game ends as well as when one is abandoned: a finished game is
+  // not resumable, and no result is kept beyond that.
   void clearSavedGame();
-
-  void reportResult(uint8_t level, int outcome);  // +1 win, 0 draw, -1 loss
-  uint16_t getWins(uint8_t level) const;
-  uint16_t getLosses(uint8_t level) const;
-  uint16_t getDraws(uint8_t level) const;
 };
 
 #define CHESS_STORE ChessStore::getInstance()

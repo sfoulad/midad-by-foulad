@@ -271,8 +271,9 @@ void ChessGameActivity::finishGameIfOver() {
 void ChessGameActivity::reportOutcome() {
   if (outcomeReported_) return;
   outcomeReported_ = true;
-  // Clears the saved game too: a finished game is not resumable.
-  CHESS_STORE.reportResult(static_cast<uint8_t>(level_), outcome_);
+  // Nothing to record -- no win/loss ledger, the game is meant to be fun rather
+  // than scored. All a finished game leaves behind is that it is not resumable.
+  CHESS_STORE.clearSavedGame();
 }
 
 void ChessGameActivity::persist() {
@@ -479,11 +480,14 @@ void ChessGameActivity::drawPlayerBar(int y, bool opponentRow) const {
   const int leadWidth = leadText[0] == '\0' ? 0 : renderer.getTextWidth(UI_10_FONT_ID, leadText, EpdFontFamily::BOLD);
 
   const int glyph = chess_view::SMALL_GLYPH_SIZE;
-  int x = right - leadWidth - (leadWidth > 0 ? 6 : 0) - count * (glyph - 4);
+  // Step, not the glyph box: the pieces are narrower than their box and overlap, so
+  // a full 15-piece set still fits the row at this size.
+  constexpr int step = chess_view::SMALL_GLYPH_SIZE - 8;
+  int x = right - leadWidth - (leadWidth > 0 ? 6 : 0) - count * step;
   x = std::max(x, left + pageWidth / 3);
   for (int i = 0; i < count; i++) {
     chess_view::drawPiece(renderer, captured[i], x, y, glyph);
-    x += glyph - 4;  // slight overlap keeps a full set inside the row
+    x += step;
   }
   if (leadText[0] != '\0') {
     renderer.drawText(UI_10_FONT_ID, right - leadWidth, y + (nameHeight - renderer.getLineHeight(UI_10_FONT_ID)),
@@ -586,7 +590,6 @@ void ChessGameActivity::drawOverlay() const {
 
   char title[64];
   char detail[80];
-  char record[64];
   int optionCount;
   const char* options[3];
 
@@ -603,9 +606,6 @@ void ChessGameActivity::drawOverlay() const {
       snprintf(title, sizeof(title), "%s", tr(STR_CHESS_DRAW));
       snprintf(detail, sizeof(detail), tr(STR_CHESS_LOST_TO_FMT), I18N.get(persona.name), persona.rating);
     }
-    snprintf(record, sizeof(record), tr(STR_CHESS_RECORD_VS_FMT), I18N.get(persona.name),
-             CHESS_STORE.getWins(static_cast<uint8_t>(level_)), CHESS_STORE.getLosses(static_cast<uint8_t>(level_)),
-             CHESS_STORE.getDraws(static_cast<uint8_t>(level_)));
     optionCount = OVER_OPTION_COUNT;
     options[0] = tr(STR_CHESS_PLAY_AGAIN);
     options[1] = tr(STR_CHESS_REVIEW);
@@ -613,14 +613,13 @@ void ChessGameActivity::drawOverlay() const {
   } else {
     snprintf(title, sizeof(title), "%s", tr(STR_CHESS_PAUSED));
     detail[0] = '\0';
-    record[0] = '\0';
     optionCount = QUIT_OPTION_COUNT;
     options[0] = tr(STR_CHESS_RESUME);
     options[1] = tr(STR_CHESS_SAVE_EXIT);
     options[2] = tr(STR_CHESS_RESIGN);
   }
 
-  const int detailLines = (detail[0] != '\0' ? 1 : 0) + (record[0] != '\0' ? 1 : 0);
+  const int detailLines = (detail[0] != '\0' ? 1 : 0);
   const int boxHeight = 20 + lineHeight * 2 + detailLines * (lineHeight + 2) + 12 + rowHeight * optionCount + 20;
   const int boxY = layout_.y + (layout_.size - boxHeight) / 2;
 
@@ -635,11 +634,6 @@ void ChessGameActivity::drawOverlay() const {
     UITheme::drawCenteredText(renderer, Rect{boxX, boxY, boxWidth, boxHeight}, UI_10_FONT_ID, y, detail);
     y += lineHeight;
   }
-  if (record[0] != '\0') {
-    UITheme::drawCenteredText(renderer, Rect{boxX, boxY, boxWidth, boxHeight}, UI_10_FONT_ID, y, record);
-    y += lineHeight;
-  }
-
   y += 6;
   renderer.fillRect(boxX + 16, y, boxWidth - 32, 1, true);
   y += 6;

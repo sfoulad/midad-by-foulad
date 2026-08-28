@@ -12,7 +12,9 @@ namespace chess_view {
 // The two sizes the glyph set is generated at: the board piece, and the small
 // one used by the captured-piece strips.
 constexpr int GLYPH_SIZE = 42;
-constexpr int SMALL_GLYPH_SIZE = 20;
+// 24, not 20: the captured strip sits beside the "+N" material lead, and a 20 px
+// box drew a piece ~14 px tall against 17 px digits, so it read as an afterthought.
+constexpr int SMALL_GLYPH_SIZE = 24;
 
 struct Layout {
   int x = 0;
