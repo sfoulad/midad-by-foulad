@@ -502,7 +502,12 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
   y += 8;
 
   const int plies = game_->plyCount();
-  const int pairs = (plies + 1) / 2;
+  // Whose turn it is belongs in the record, as the next unplayed half-move: "3. your
+  // move" says both that it is your turn and where in the game you are, which a
+  // separate status line said half of. Counted as a pair so the window sizing and
+  // scrolling below reserve a row for it.
+  const int pendingPly = (focus_ == Focus::Board && state_ == State::Playing && playerToMove()) ? plies : -1;
+  const int pairs = (plies + (pendingPly >= 0 ? 2 : 1)) / 2;
   // Three pairs is enough to see the current sequence while playing; reviewing is
   // reading the scoresheet, so it uses whatever rows the panel actually has.
   const int visiblePairs = std::max(1, std::min(focus_ == Focus::Review ? (height - 12) / lineHeight : 3, pairs));
@@ -529,9 +534,15 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
     if (blackCurrent) renderer.fillRect(left + 128, y - 2, 88, lineHeight, true);
 
     renderer.drawText(UI_12_FONT_ID, left + 32 - numberWidth, y, number, true);
-    renderer.drawText(UI_12_FONT_ID, left + 42, y, game_->sanAt(whitePly), !whiteCurrent);
+    if (whitePly < plies) {
+      renderer.drawText(UI_12_FONT_ID, left + 42, y, game_->sanAt(whitePly), !whiteCurrent);
+    } else if (whitePly == pendingPly) {
+      renderer.drawText(UI_12_FONT_ID, left + 42, y, tr(STR_CHESS_YOUR_MOVE), true, EpdFontFamily::BOLD);
+    }
     if (whitePly + 1 < plies) {
       renderer.drawText(UI_12_FONT_ID, left + 132, y, game_->sanAt(whitePly + 1), !blackCurrent);
+    } else if (whitePly + 1 == pendingPly) {
+      renderer.drawText(UI_12_FONT_ID, left + 132, y, tr(STR_CHESS_YOUR_MOVE), true, EpdFontFamily::BOLD);
     }
     y += lineHeight;
   }
@@ -543,7 +554,9 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
   }
 
   y = std::max(y, layout_.y + layout_.size + 4);
-  const char* status = tr(STR_CHESS_YOUR_MOVE);
+  // Empty on a normal player turn: the record already says "your move". What is left
+  // are the states the record cannot show -- thinking, check, game over.
+  const char* status = nullptr;
   if (focus_ == Focus::MoveList) {
     status = tr(STR_CHESS_MOVES);
   } else if (focus_ == Focus::Review) {
@@ -557,13 +570,9 @@ void ChessGameActivity::drawMoveList(int y, int height) const {
   } else if (!playerToMove()) {
     status = tr(STR_CHESS_THINKING);
   }
-  renderer.drawText(UI_12_FONT_ID, left, y + 6, status, true, EpdFontFamily::BOLD);
-
-  // The side buttons carry up/down here, and they have no slot in the four-button
-  // hint bar, so they get their own line -- the same reason the dictionary spells
-  // out "Up"/"Down" instead of leaving the user to guess which button scrolls.
-  const char* sideHint = (focus_ == Focus::Review) ? tr(STR_CHESS_HINT_STEP) : tr(STR_CHESS_HINT_UP_DOWN);
-  renderer.drawText(SMALL_FONT_ID, right - renderer.getTextWidth(SMALL_FONT_ID, sideHint), y + 8, sideHint, true);
+  if (status != nullptr) {
+    renderer.drawText(UI_12_FONT_ID, left, y + 6, status, true, EpdFontFamily::BOLD);
+  }
 }
 
 void ChessGameActivity::drawOverlay() const {
@@ -711,6 +720,12 @@ void ChessGameActivity::render(RenderLock&&) {
   const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, leftLabel, rightLabel,
                                             /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  // Up/down are on the side buttons, which have no slot in the four-button bar. Drawn
+  // at the buttons themselves, as dictionary word select does, rather than spelled out
+  // in a line of text the user has to map back onto the hardware. The board never
+  // reaches these edges -- MAX_CELL caps it at 448 px, well inside the 30 px hint
+  // columns -- so nothing is painted over.
+  GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
 
   // Periodic HALF refresh: FAST leaves residue, and a dithered board shows it.
   if (++rendersSinceFullRefresh_ >= 20) {
