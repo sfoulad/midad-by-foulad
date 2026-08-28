@@ -75,9 +75,15 @@ struct FilePathResult {
   std::string path;
 };
 
+// Opponent and side chosen on the chess "New Game" screen.
+struct ChessSetupResult {
+  int level = 2;
+  bool playerIsWhite = true;
+};
+
 using ResultVariant =
     std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult>;
+                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult, ChessSetupResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

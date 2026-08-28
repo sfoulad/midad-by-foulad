@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: Inter, "Helvetica Neue", Arial, sans-serif; background: #e8e6e1; }
+    a { color: #000; } a:hover { color: #333; }
+    .screen { width: 480px; height: 800px; background: #fff; color: #000; position: relative; overflow: hidden; }
+    .hdr { position: absolute; top: 5px; left: 0; width: 480px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; }
+    .batt { position: absolute; right: 12px; top: 10px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 400; }
+    .row { height: 30px; display: flex; align-items: center; padding: 0 20px; font-size: 16px; }
+    .row.sel { background: #000; color: #fff; }
+    .hint { position: absolute; bottom: 0; height: 40px; width: 106px; border: 1px solid #000; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 13px; background: #fff; }
+  </style>
+</helmet>
+<div style="padding: 24px; width: 512px; box-sizing: border-box">
+  <div class="screen" style="border: 2px solid #111">
+    <div class="hdr"><span>Chess</span>
+      <div class="batt"><span>82%</span><svg width="15" height="12" viewBox="0 0 15 12"><rect x="0.5" y="0.5" width="12" height="11" fill="none" stroke="#000"/><rect x="13" y="3.5" width="2" height="5" fill="#000"/><rect x="2" y="2" width="8" height="8" fill="#000"/></svg></div>
+    </div>
+    <div style="position: absolute; top: 60px; left: 0; width: 475px; display: flex; flex-direction: column">
+      <div class="row sel">New Game</div>
+      <div class="row">Continue vs Omar (move 14)</div>
+      <div class="row">Learn Openings</div>
+      <div class="row">Statistics</div>
+    </div>
+    <div style="position: absolute; left: 20px; top: 220px; width: 440px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #000">
+      <div style="height: 1px; background: #000"></div>
+      <div style="display: flex; justify-content: space-between"><span>Record</span><span>12 W · 9 L · 4 D</span></div>
+      <div style="display: flex; justify-content: space-between"><span>Strongest beaten</span><span>Omar (~1200)</span></div>
+    </div>
+    <div class="hint" style="left: 25px">Back</div>
+    <div class="hint" style="left: 130px">Select</div>
+    <div class="hint" style="left: 245px">Up</div>
+    <div class="hint" style="left: 350px">Down</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

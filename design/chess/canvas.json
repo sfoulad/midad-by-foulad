@@ -1,0 +1,16 @@
+{
+  "artboards": [
+    { "file": "Menu.dc.html", "title": "1 · Chess menu", "x": 0, "y": 0, "w": 512, "h": 860 },
+    { "file": "Level.dc.html", "title": "2 · New game", "x": 600, "y": 0, "w": 512, "h": 860 },
+    { "file": "Main.dc.html", "title": "3 · Play (clickable)", "x": 1200, "y": 0, "w": 512, "h": 980, "is_interactive": true },
+    { "file": "GameOver.dc.html", "title": "4 · Game over", "x": 1800, "y": 0, "w": 512, "h": 860 },
+    { "file": "Openings.dc.html", "title": "5 · Openings list", "x": 0, "y": 1100, "w": 512, "h": 860 },
+    { "file": "OpeningView.dc.html", "title": "6 · Opening walkthrough (clickable)", "x": 600, "y": 1100, "w": 512, "h": 930, "is_interactive": true },
+    { "file": "Pieces.dc.html", "title": "Piece style exploration", "x": 0, "y": 2180, "w": 1580, "h": 600 }
+  ],
+  "annotations": [
+    { "id": "flow", "x": 1200, "y": 1100, "w": 360, "text": "Flow: Games → Chess menu → New game (level + side) → Play → Game over.\nLearn Openings → list → walkthrough.\n\nPlay board: side buttons Up/Down, front ◀ ▶ move cursor; Confirm selects a piece (dots = legal squares, ring = capture) then confirms the move. Engine reply here is a random capture-first stand-in, real firmware uses alpha-beta." },
+    { "id": "eink", "x": 1200, "y": 1380, "w": 360, "text": "480×800 1-bit e-ink. Dark squares = 25% dither like Sudoku fixed cells. Cursor = 3 px border (Sudoku idiom). Header, list rows, button hint boxes copied from Foulad theme metrics." }
+  ],
+  "launch": { "view": "canvas" }
+}

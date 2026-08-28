@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: Inter, "Helvetica Neue", Arial, sans-serif; background: #e8e6e1; }
+    a { color: #000; } a:hover { color: #333; }
+    .screen { width: 480px; height: 800px; background: #fff; color: #000; position: relative; overflow: hidden; image-rendering: pixelated; }
+    .hdr { position: absolute; top: 5px; left: 0; width: 480px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; }
+    .batt { position: absolute; right: 12px; top: 10px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 400; }
+    .cell { width: 56px; height: 56px; position: relative; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+    .dark { background: repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 0 0 / 4px 4px; }
+    .hint { position: absolute; bottom: 0; height: 40px; width: 106px; border: 1px solid #000; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 13px; background: #fff; }
+    .key { min-width: 44px; height: 44px; border: 1.5px solid #333; border-radius: 8px; background: #f4f2ee; display: flex; align-items: center; justify-content: center; font-size: 13px; padding: 0 12px; cursor: pointer; user-select: none; }
+    .key:active { background: #d9d6cf; }
+  </style>
+</helmet>
+<div style="display: flex; flex-direction: column; gap: 16px; padding: 24px; width: 512px; box-sizing: border-box">
+  <div class="screen" style="border: 2px solid #111">
+    <div class="hdr"><span>Chess</span>
+      <div class="batt"><span>82%</span><svg width="15" height="12" viewBox="0 0 15 12"><rect x="0.5" y="0.5" width="12" height="11" fill="none" stroke="#000"/><rect x="13" y="3.5" width="2" height="5" fill="#000"/><rect x="2" y="2" width="8" height="8" fill="#000"/></svg></div>
+    </div>
+
+    <div style="position: absolute; left: 16px; top: 54px; width: 450px">
+    <div style="display: flex; align-items: center; justify-content: space-between; height: 28px">
+      <div style="display: flex; align-items: baseline; gap: 8px"><span style="font-size: 16px; font-weight: 700">Omar</span><span style="font-size: 13px">~1200</span></div>
+      <div style="display: flex; align-items: center; gap: 4px">
+        <div style="display: flex">
+          <sc-for list="{{capByEngine}}" as="x" hint-placeholder-count="2">
+            <svg width="22" height="22" viewBox="0 0 40 40" style="display: block"><path d="{{x.d}}" fill="#fff" stroke="#000" stroke-width="2.5" stroke-linejoin="round"></path><path d="{{x.dt}}" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round"></path></svg>
+          </sc-for>
+        </div>
+        <span style="font-size: 13px; font-weight: 700; min-width: 20px">{{matEngine}}</span>
+      </div>
+    </div>
+    </div>
+    <div style="position: absolute; left: 16px; top: 538px; width: 450px">
+    <div style="display: flex; align-items: center; justify-content: space-between; height: 28px">
+      <div style="display: flex; align-items: baseline; gap: 8px"><span style="font-size: 16px; font-weight: 700">You</span><span style="font-size: 13px">White</span></div>
+      <div style="display: flex; align-items: center; gap: 4px">
+        <div style="display: flex">
+          <sc-for list="{{capByYou}}" as="x" hint-placeholder-count="2">
+            <svg width="22" height="22" viewBox="0 0 40 40" style="display: block"><path d="{{x.d}}" fill="#000" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"></path><path d="{{x.dt}}" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"></path></svg>
+          </sc-for>
+        </div>
+        <span style="font-size: 13px; font-weight: 700; min-width: 20px">{{matYou}}</span>
+      </div>
+    </div>
+    </div>
+    <div style="position: absolute; left: 16px; top: 86px; width: 448px; height: 448px; border: 1px solid #000; box-sizing: content-box; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr))">
+      <sc-for list="{{cells}}" as="c" hint-placeholder-count="64">
+        <div class="cell {{c.cls}}" onClick="{{c.pick}}" style="border: {{c.border}}">
+          <sc-if value="{{c.hasPiece}}" hint-placeholder-val="{{true}}">
+            <svg width="42" height="42" viewBox="0 0 40 40" style="display: block">
+              <path d="{{c.d}}" fill="{{c.fill}}" stroke="{{c.ds}}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"></path>
+              <path d="{{c.dt}}" fill="none" stroke="{{c.ds}}" stroke-width="1.5" stroke-linecap="round"></path>
+            </svg>
+          </sc-if>
+          <sc-if value="{{c.dot}}" hint-placeholder-val="{{false}}">
+            <div style="position: absolute; left: 22px; top: 22px; width: 12px; height: 12px; border-radius: 50%; background: #000"></div>
+          </sc-if>
+          <sc-if value="{{c.ring}}" hint-placeholder-val="{{false}}">
+            <div style="position: absolute; left: 3px; top: 3px; width: 50px; height: 50px; border-radius: 50%; border: 3px solid #000; box-sizing: border-box"></div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="position: absolute; left: 16px; top: 578px; width: 450px; display: flex; flex-direction: column; gap: 6px; font-size: 16px">
+      <div style="height: 1px; background: #000"></div>
+      <div style="display: flex; flex-direction: column; gap: 2px; font-family: 'Courier New', monospace; font-size: 15px; min-height: 72px">
+        <sc-for list="{{moveRows}}" as="m" hint-placeholder-count="3">
+          <div style="display: flex; gap: 12px"><span style="width: 32px; text-align: right">{{m.n}}.</span><span style="width: 90px">{{m.w}}</span><span style="width: 90px">{{m.b}}</span></div>
+        </sc-for>
+      </div>
+      <div style="font-size: 16px; font-weight: 700; min-height: 22px; padding-top: 4px">{{status}}</div>
+    </div>
+
+    <div class="hint" style="left: 25px">{{hintBack}}</div>
+    <div class="hint" style="left: 130px">{{hintOk}}</div>
+    <div class="hint" style="left: 245px">◀</div>
+    <div class="hint" style="left: 350px">▶</div>
+  </div>
+
+  <div style="display: flex; gap: 8px; align-items: center">
+    <span style="font-size: 12px; color: #555; width: 40px">side</span>
+    <div class="key" onClick="{{up}}">Up</div>
+    <div class="key" onClick="{{down}}">Down</div>
+  </div>
+  <div style="display: flex; gap: 8px; align-items: center">
+    <span style="font-size: 12px; color: #555; width: 40px">front</span>
+    <div class="key" onClick="{{back}}">Back</div>
+    <div class="key" onClick="{{ok}}">Confirm</div>
+    <div class="key" onClick="{{left}}">◀</div>
+    <div class="key" onClick="{{right}}">▶</div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":512,"height":920}}'>
+const PATH = {
+  p: 'M20 9.5a4 4 0 1 1 0 8a4 4 0 1 1 0-8ZM18 17.5h4l.5 2h2l-1.5 2c2 2 3 4.5 3 7.5h2a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2h2c0-3 1-5.5 3-7.5l-1.5-2h2Z',
+  r: 'M12 5h4v3h2V5h4v3h2V5h4v7l-1.5 2v11l1.5 2v2a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2v-2l1.5-2V14L12 12Z',
+  n: 'M13 29c-1-4 0-8 3-11c-2 0-4 1-5.5 2.5l-2.5-1.5l-1-2.5l4-5c2.5-2.5 5-4 8-4.5l1.5-3l2 3.5c4.5 1.5 7 5.5 7 10.5V29a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2h1Z',
+  b: 'M20 3a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5ZM20 8c5.5 4 8 9.5 8 14.5c0 2.5-.5 4.5-1.5 6.5h1.5a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2h1.5c-1-2-1.5-4-1.5-6.5C12 17.5 14.5 12 20 8Z',
+  q: 'M12 29L9 13.5q.5-2.5 2-1L13.5 18L14 9.5q.5-2.5 2-1L18 16.5L19 6.5q1-2.5 2 0L22 16.5L24 8.5q1.5-1.5 2 1L26.5 18L29 12.5q1.5-1.5 2 1L28 29a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2Z',
+  k: 'M18 2h4v3.5h3.5v4H22V13h-4V9.5h-3.5v-4H18ZM13 14c-4 0-5 6-2 9l1.5 6h-.5a2 2 0 0 0-2 2v5h20v-5a2 2 0 0 0-2-2h-.5l1.5-6c3-3 2-9-2-9c-2.5 0-4.5 1-6 2.5h-3C17.5 15 15.5 14 13 14Z'
+};
+const DETAIL = {
+  p: 'M12 29h16',
+  r: 'M13.5 14h13M12 29h16',
+  n: 'M15.5 12.5a1 1 0 1 0 .01 0M12 29h16',
+  b: 'M22.5 12l-3.5 11M12 29h16',
+  q: 'M12 29h16',
+  k: 'M15 19.5l2.5 3.5M25 19.5l-2.5 3.5M12 29h16'
+};
+const START = [
+  'rnbqkbnr','pppppppp','........','........','........','........','PPPPPPPP','RNBQKBNR'
+].map(r => r.split(''));
+
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    this.state = { board: START.map(r => r.slice()), cur: [6, 4], sel: null, legal: [], turn: 'w', moves: [], status: 'Your move', thinking: false, capW: [], capB: [] };
+  }
+  value(ch) { return { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 }[ch.toLowerCase()]; }
+  isW(ch) { return ch !== '.' && ch === ch.toUpperCase(); }
+  moveList(b, r, c) {
+    const p = b[r][c]; if (p === '.') return [];
+    const w = this.isW(p), t = p.toLowerCase(), out = [];
+    const on = (r2, c2) => r2 >= 0 && r2 < 8 && c2 >= 0 && c2 < 8;
+    const add = (r2, c2) => { if (!on(r2, c2)) return false; const q = b[r2][c2]; if (q === '.') { out.push([r2, c2]); return true; } if (this.isW(q) !== w) out.push([r2, c2]); return false; };
+    const slide = (dirs) => dirs.forEach(([dr, dc]) => { let r2 = r + dr, c2 = c + dc; while (add(r2, c2)) { r2 += dr; c2 += dc; } });
+    if (t === 'p') {
+      const d = w ? -1 : 1, home = w ? 6 : 1;
+      if (on(r + d, c) && b[r + d][c] === '.') { out.push([r + d, c]); if (r === home && b[r + 2 * d][c] === '.') out.push([r + 2 * d, c]); }
+      [[d, -1], [d, 1]].forEach(([dr, dc]) => { if (on(r + dr, c + dc) && b[r + dr][c + dc] !== '.' && this.isW(b[r + dr][c + dc]) !== w) out.push([r + dr, c + dc]); });
+    } else if (t === 'n') [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]].forEach(([dr, dc]) => add(r + dr, c + dc));
+    else if (t === 'k') [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([dr, dc]) => add(r + dr, c + dc));
+    else if (t === 'r') slide([[1,0],[-1,0],[0,1],[0,-1]]);
+    else if (t === 'b') slide([[1,1],[1,-1],[-1,1],[-1,-1]]);
+    else if (t === 'q') slide([[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]);
+    return out;
+  }
+  san(b, from, to) {
+    const p = b[from[0]][from[1]].toUpperCase(), cap = b[to[0]][to[1]] !== '.';
+    const sq = 'abcdefgh'[to[1]] + (8 - to[0]);
+    if (p === 'P') return (cap ? 'abcdefgh'[from[1]] + 'x' : '') + sq;
+    return p + (cap ? 'x' : '') + sq;
+  }
+  apply(from, to) {
+    const b = this.state.board.map(r => r.slice());
+    const s = this.san(b, from, to), taken = b[to[0]][to[1]];
+    b[to[0]][to[1]] = b[from[0]][from[1]]; b[from[0]][from[1]] = '.';
+    return { b, s, taken };
+  }
+  playerMove(from, to) {
+    const { b, s, taken } = this.apply(from, to);
+    const capW = taken !== '.' ? [...this.state.capW, taken] : this.state.capW;
+    this.setState({ board: b, sel: null, legal: [], moves: [...this.state.moves, s], turn: 'b', status: 'Thinking...', thinking: true, cur: to, capW });
+    setTimeout(() => this.engineMove(), 900);
+  }
+  engineMove() {
+    const b = this.state.board, all = [];
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if (b[r][c] !== '.' && !this.isW(b[r][c])) this.moveList(b, r, c).forEach(t => all.push([[r, c], t, b[t[0]][t[1]] !== '.']));
+    if (!all.length) { this.setState({ status: 'Stalemate', thinking: false }); return; }
+    const caps = all.filter(m => m[2]); const pool = caps.length ? caps : all;
+    const [from, to] = pool[Math.floor(Math.random() * pool.length)];
+    const { b: nb, s, taken } = this.apply(from, to);
+    const capB = taken !== '.' ? [...this.state.capB, taken] : this.state.capB;
+    this.setState({ board: nb, moves: [...this.state.moves, s], turn: 'w', status: 'Your move', thinking: false, capB });
+  }
+  move(dr, dc) { if (this.state.thinking) return; const [r, c] = this.state.cur; this.setState({ cur: [Math.max(0, Math.min(7, r + dr)), Math.max(0, Math.min(7, c + dc))] }); }
+  confirm(at) {
+    if (this.state.thinking) return;
+    const { board, sel, legal } = this.state;
+    const cur = at || this.state.cur;
+    if (sel) {
+      if (legal.some(([r, c]) => r === cur[0] && c === cur[1])) { this.playerMove(sel, cur); return; }
+      if (sel[0] === cur[0] && sel[1] === cur[1]) { this.setState({ sel: null, legal: [] }); return; }
+    }
+    const p = board[cur[0]][cur[1]];
+    if (p !== '.' && this.isW(p)) this.setState({ cur, sel: cur, legal: this.moveList(board, cur[0], cur[1]) });
+    else this.setState({ cur });
+  }
+  renderVals() {
+    const { board, cur, sel, legal, moves, status, capW, capB } = this.state;
+    const order = (a, b) => this.value(b) - this.value(a);
+    const sum = (xs) => xs.reduce((t, x) => t + this.value(x), 0);
+    const diff = sum(capW) - sum(capB);
+    const cells = [];
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const p = board[r][c], isCur = cur[0] === r && cur[1] === c, isSel = sel && sel[0] === r && sel[1] === c;
+      const lm = legal.some(([lr, lc]) => lr === r && lc === c);
+      cells.push({
+        cls: (r + c) % 2 ? 'dark' : '',
+        border: isCur ? '3px solid #000' : (isSel ? '3px double #000' : '0 solid transparent'),
+        hasPiece: p !== '.', d: p !== '.' ? PATH[p.toLowerCase()] : '', dt: p !== '.' ? DETAIL[p.toLowerCase()] : '', fill: this.isW(p) ? '#fff' : '#000', ds: this.isW(p) ? '#000' : '#fff',
+        dot: lm && p === '.', ring: lm && p !== '.',
+        pick: () => this.confirm([r, c])
+      });
+    }
+    const moveRows = [];
+    for (let i = 0; i < moves.length; i += 2) moveRows.push({ n: i / 2 + 1, w: moves[i], b: moves[i + 1] || '' });
+    return {
+      cells, moveRows: moveRows.slice(-3), status,
+      capByYou: capW.slice().sort(order).map(x => ({ d: PATH[x.toLowerCase()], dt: DETAIL[x.toLowerCase()] })),
+      capByEngine: capB.slice().sort(order).map(x => ({ d: PATH[x.toLowerCase()], dt: DETAIL[x.toLowerCase()] })),
+      matYou: diff > 0 ? '+' + diff : '', matEngine: diff < 0 ? '+' + (-diff) : '',
+      hintBack: sel ? 'Cancel' : 'Menu', hintOk: sel ? 'Move' : 'Select',
+      up: () => this.move(-1, 0), down: () => this.move(1, 0), left: () => this.move(0, -1), right: () => this.move(0, 1),
+      ok: () => this.confirm(),
+      back: () => { if (sel) this.setState({ sel: null, legal: [] }); }
+    };
+  }
+}
+</script>
+</body>
+</html>
