@@ -302,21 +302,36 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     sleepScreenValues[CrossPointSettings::TRANSPARENT_CUSTOM] = StrId::STR_TRANSPARENT;
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                                   std::move(sleepScreenValues), "sleepScreen", StrId::STR_CAT_DISPLAY));
-    // How a cover is fitted and filtered only means anything while a cover is what
-    // the sleep screen actually draws: COVER, or COVER_CUSTOM which falls back to the
-    // custom image when a book has none. Every other mode -- Dark, Light, Custom,
-    // Blank, Quick Resume, Dashboard, Transparent -- ignores both fields.
-    const auto sleepScreenShowsCover = [] {
-      return SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER ||
-             SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM;
+    // Fit and filter act on whatever image the sleep screen draws, and a book cover is
+    // only one of them: CUSTOM draws the picture from /sleep through the very same
+    // renderBitmapSleepScreen (SleepActivity.cpp), and TRANSPARENT_CUSTOM places its
+    // overlay through the same calculateBitmapPlacement. Hiding the two rows outside
+    // COVER left both silently in force on those modes, at whatever a previous Cover
+    // session happened to leave them. Dark, Light, Blank, Quick Resume and Dashboard
+    // draw no image at all and ignore both.
+    const auto sleepScreenDrawsImage = [] {
+      const auto mode = SETTINGS.sleepScreen;
+      return mode == CrossPointSettings::SLEEP_SCREEN_MODE::COVER ||
+             mode == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM ||
+             mode == CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM ||
+             mode == CrossPointSettings::SLEEP_SCREEN_MODE::TRANSPARENT_CUSTOM;
+    };
+    // The filter is the one exception: the overlay renders with preserveBackground,
+    // which skips both the inversion and the greyscale gate, so the setting really
+    // would do nothing on TRANSPARENT_CUSTOM.
+    const auto sleepScreenFiltersImage = [] {
+      const auto mode = SETTINGS.sleepScreen;
+      return mode == CrossPointSettings::SLEEP_SCREEN_MODE::COVER ||
+             mode == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM ||
+             mode == CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
     };
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
                                   {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY)
-                    .shownWhen(sleepScreenShowsCover));
+                    .shownWhen(sleepScreenDrawsImage));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
                                   {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
                                   "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY)
-                    .shownWhen(sleepScreenShowsCover));
+                    .shownWhen(sleepScreenFiltersImage));
     // "Resume the last screen when sleeping on a timeout" only adds anything while
     // some OTHER sleep screen is selected: with Sleep Screen already set to Quick
     // Resume, every sleep resumes the last screen anyway, and
