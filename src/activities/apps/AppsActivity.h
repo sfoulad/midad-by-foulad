@@ -17,11 +17,13 @@
 // then looking for it in a book library. Reported as "where are the apps?" more
 // than once; this gives them one place that is theirs.
 //
-// Every app is listed whether or not it is enabled, which is the part that
-// actually fixes discovery: opening a disabled one enables it and goes straight
-// in, so the Settings toggles become "hide this" rather than the only route to
-// finding anything. Files leads, since browsing the SD card is the most-used
-// entry here and it lost its own Home slot to this screen.
+// The Settings -> Apps toggles are "hide this": switching an app off removes its
+// tile from here, which is what those toggles have always claimed to do. The one
+// exception is the Quran, which is off by default because enabling it extracts a
+// real EPUB to the SD card -- hiding it while off would make it undiscoverable,
+// exactly the problem this screen exists to solve, so its tile stays and pressing
+// it is the opt-in. Files leads, since browsing the SD card is the most-used entry
+// here and it lost its own Home slot to this screen.
 class AppsActivity final : public Activity {
  public:
   AppsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput) : Activity("Apps", renderer, mappedInput) {}
@@ -63,6 +65,13 @@ class AppsActivity final : public Activity {
   };
 
   static const std::vector<AppEntry>& entries();
+
+  // entries() minus the apps switched off in Settings -- what this screen shows.
+  // Rebuilt per call (eight pointers, no allocation worth caching) so a toggle
+  // changed in Settings takes effect the next time this screen draws. Clamps
+  // selectorIndex to the result, which is why it is not const: every caller needs
+  // that done before it indexes, and doing it here keeps them in step.
+  std::vector<const AppEntry*> visibleEntries();
 
   // Opens the selected app, enabling it first if its toggle is off. Returns
   // false when the app could not be made available (only the Quran, whose

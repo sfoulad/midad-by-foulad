@@ -100,9 +100,34 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
   return kEntries;
 }
 
+std::vector<const AppsActivity::AppEntry*> AppsActivity::visibleEntries() {
+  const auto& all = entries();
+  std::vector<const AppEntry*> visible;
+  visible.reserve(all.size());
+  for (const auto& entry : all) {
+    // No toggle (Files, Midad BLE) means nothing to hide it by. The Quran keeps its
+    // tile while off because it is the only app that ships off by default: enabling
+    // it extracts a real EPUB to the SD card, so hiding it would leave no route to it
+    // from this screen at all -- precisely the discoverability problem this screen was
+    // added to solve. Its tile stays and pressing it is the opt-in. Every other app
+    // defaults to on, so "off" there is a deliberate choice and hiding is what was
+    // asked for.
+    if (entry.id == AppId::Quran) {
+      visible.push_back(&entry);
+      continue;
+    }
+    if (entry.getEnabled && entry.getEnabled() == 0) continue;
+    visible.push_back(&entry);
+  }
+  // An app switched off in Settings shrinks the grid under a selection made before it
+  // was, so clamp here rather than leaving each caller to remember.
+  selectorIndex = AppsGridLayout::clampSelection(selectorIndex, static_cast<int>(visible.size()));
+  return visible;
+}
+
 void AppsActivity::onEnter() {
   Activity::onEnter();
-  selectorIndex = AppsGridLayout::clampSelection(rememberedSelectorIndex, static_cast<int>(entries().size()));
+  selectorIndex = AppsGridLayout::clampSelection(rememberedSelectorIndex, static_cast<int>(visibleEntries().size()));
   requestUpdate();
 }
 
@@ -178,11 +203,12 @@ bool AppsActivity::launch(const AppEntry& entry) {
 }
 
 void AppsActivity::loop() {
-  const int count = static_cast<int>(entries().size());
+  const auto visible = visibleEntries();
+  const int count = static_cast<int>(visible.size());
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (selectorIndex >= 0 && selectorIndex < count) {
-      if (!launch(entries()[selectorIndex])) requestUpdate();  // stayed here; repaint over the popup
+      if (!launch(*visible[selectorIndex])) requestUpdate();  // stayed here; repaint over the popup
     }
     return;
   }
@@ -214,7 +240,7 @@ void AppsActivity::loop() {
                                     geometry.tileHeight, geometry.gutter, rtl, itemsOnPage, touchSlop);
     if (hitIndexInPage >= 0) {
       selectorIndex = pageStart + hitIndexInPage;
-      if (!launch(entries()[selectorIndex])) requestUpdate();  // stayed here; repaint over the popup
+      if (!launch(*visible[selectorIndex])) requestUpdate();  // stayed here; repaint over the popup
       return;
     }
   }
@@ -378,13 +404,14 @@ void AppsActivity::render(RenderLock&&) {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_CAT_APPS));
 
   const Geometry geometry = computeGeometry();
-  const int count = static_cast<int>(entries().size());
+  const auto visible = visibleEntries();
+  const int count = static_cast<int>(visible.size());
   const int pageStart = AppsGridLayout::pageStartOf(selectorIndex);
   const int itemsOnPage = std::min(AppsGridLayout::ITEMS_PER_PAGE, count - pageStart);
 
   for (int i = 0; i < itemsOnPage; i++) {
     const int idx = pageStart + i;
-    const auto& entry = entries()[idx];
+    const auto& entry = *visible[idx];
     const int logicalCol = AppsGridLayout::colInPage(i);
     const int row = AppsGridLayout::rowInPage(i);
     const int visualCol = AppsGridLayout::mirroredColumn(logicalCol, rtl);
