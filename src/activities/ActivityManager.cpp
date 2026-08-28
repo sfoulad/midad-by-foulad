@@ -253,6 +253,13 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
+// The sole dispatch point every Settings entry funnels through. On
+// touch-capable boards this opens TouchSettingsActivity instead of
+// SettingsActivity -- the minimal integration required for the X4 Pro touch
+// UI to be reachable at all, not a new dispatch mechanism: it mirrors the
+// single-branch pattern UITheme::setTheme() already uses for its own
+// board-conditional choice, and SettingsActivity's own storage/business logic
+// is untouched (X3/X4 keep getting the byte-identical activity).
 void ActivityManager::goToSettings() {
 #if FREEINK_CAP_TOUCH
   if (boardHasTouch()) {

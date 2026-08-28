@@ -41,7 +41,7 @@ void TouchSettingsActivity::rebuildRowItems() {
     rowItems.push_back(item);
   };
 
-  addRow(StrId::STR_TOUCH_GROUP_GENERAL, StrId::STR_TOUCH_GROUP_GENERAL_SUMMARY, listIconFor(UIIcon::Settings, 32),
+  addRow(StrId::STR_TOUCH_GROUP_GENERAL, StrId::STR_TOUCH_GROUP_GENERAL_SUMMARY, fui::bitmapFromIcon(icon_settings_32),
          TouchSettingsGroup::General);
   addRow(StrId::STR_TOUCH_GROUP_DISPLAY, StrId::STR_TOUCH_GROUP_DISPLAY_SUMMARY, fui::bitmapFromIcon(icon_sun_32),
          TouchSettingsGroup::DisplayLighting);
@@ -49,7 +49,7 @@ void TouchSettingsActivity::rebuildRowItems() {
          TouchSettingsGroup::NetworkBluetooth);
   addRow(StrId::STR_TOUCH_GROUP_READING, StrId::STR_TOUCH_GROUP_READING_SUMMARY, listIconFor(UIIcon::Book, 32),
          TouchSettingsGroup::Reading);
-  addRow(StrId::STR_TOUCH_GROUP_DEVICE, StrId::STR_TOUCH_GROUP_DEVICE_SUMMARY, listIconFor(UIIcon::Info, 32),
+  addRow(StrId::STR_TOUCH_GROUP_DEVICE, StrId::STR_TOUCH_GROUP_DEVICE_SUMMARY, fui::bitmapFromIcon(icon_info_32),
          TouchSettingsGroup::DeviceSystem);
 }
 

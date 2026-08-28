@@ -35,8 +35,12 @@ void TouchOptionPickerActivity::onEnter() {
 void TouchOptionPickerActivity::activateIndex(const int index) {
   if (index < 0 || index >= listCount()) return;
   app.clearTapFlash();
-  TouchOptionPickerResult result;
-  result.selectedIndex = index;
+  // Reuses the existing generic IntervalResult (value = chosen index) rather
+  // than adding a picker-specific variant member to the shared
+  // ActivityResult.h -- this activity and its only caller are both
+  // Midad-owned, so there is no CrossPoint-side reason to extend that file.
+  IntervalResult result;
+  result.value = static_cast<uint32_t>(index);
   setResult(std::move(result));
   finish();
 }

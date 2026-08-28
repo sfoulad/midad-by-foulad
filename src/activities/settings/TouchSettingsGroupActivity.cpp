@@ -124,9 +124,9 @@ void TouchSettingsGroupActivity::editEnum(const int index) {
                                                                      std::move(options), current),
                          [this, index](const ActivityResult& result) {
                            if (!result.isCancelled) {
-                             if (const auto* picked = std::get_if<TouchOptionPickerResult>(&result.data)) {
+                             if (const auto* picked = std::get_if<IntervalResult>(&result.data)) {
                                auto& picked_setting = settings[static_cast<size_t>(index)];
-                               const auto value = static_cast<uint8_t>(picked->selectedIndex);
+                               const auto value = static_cast<uint8_t>(picked->value);
                                if (picked_setting.valuePtr != nullptr) {
                                  SETTINGS.*(picked_setting.valuePtr) = value;
                                } else if (picked_setting.valueSetter) {

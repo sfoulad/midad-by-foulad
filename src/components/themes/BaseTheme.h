@@ -151,8 +151,7 @@ enum UIIcon {
   Hotspot,
   Bookmark,
   Stats,
-  Apps,
-  Info
+  Apps
 };
 
 enum class KeyboardKeyType { Normal, Shift, Mode, Space, Del, Ok, Disabled };
@@ -282,13 +281,6 @@ class BaseTheme {
                         const std::function<UIIcon(int index)>& rowIcon = nullptr,
                         const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
                         const std::function<bool(int index)>& rowDimmed = nullptr) const;
-  // Hit-test counterpart to drawList(), same shape as buttonMenuIndexFromPoint():
-  // mirrors drawList()'s page-relative row geometry (rowHeight, pageItems,
-  // pageStartIndex) so a screen tap resolves to the row it was actually drawn
-  // over. selectedIndex must be the same value passed to the drawList() call
-  // being hit-tested -- it determines which page is on screen.
-  virtual bool listIndexFromPoint(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
-                                  bool hasSubtitle, int x, int y, int& index) const;
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title,
                           const char* subtitle = nullptr) const;
   virtual void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,

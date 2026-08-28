@@ -124,7 +124,7 @@ void EpubReaderBookmarksActivity::onRowLongPress(const int index) {
 
 bool EpubReaderBookmarksActivity::handleCustomInput() {
   // Delete confirmation popup
-  if (confirmPopup.handleInput(renderer, mappedInput, [this] { requestUpdate(); })) return true;
+  if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return true;
   if (confirmingDelete) {
     // Popup dismissed without a selection (Back button or tap outside): cancel delete
     confirmingDelete = false;

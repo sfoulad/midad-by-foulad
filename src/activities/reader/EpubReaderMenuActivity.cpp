@@ -559,7 +559,7 @@ void EpubReaderMenuActivity::handleListConfirm() {
 }
 
 void EpubReaderMenuActivity::loop() {
-  if (optionPopup.handleInput(renderer, mappedInput, [this] { requestUpdate(); })) return;
+  if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
   // The tab row is a stop in the same up/down flow as the list below it (index
   // -1), mirroring Settings' "category tabs are index 0" pattern -- scrolling

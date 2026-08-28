@@ -673,35 +673,6 @@ void WifiSelectionActivity::loop() {
       return;
     }
 
-    if (!networks.empty() && mappedInput.hasTouch()) {
-      // Mirrors renderNetworkList()'s contentTop/contentHeight -- must stay in
-      // sync with that layout for the tap to land on the row it looks like.
-      const auto& metrics = UITheme::getInstance().getMetrics();
-      const Rect screen = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-      const int contentTop =
-          screen.y + metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
-      const int contentHeight = screen.height - contentTop - metrics.verticalSpacing * 2;
-      const Rect listRect{screen.x, contentTop, screen.width, contentHeight};
-
-      int touchX = 0, touchY = 0, touchedIndex = -1;
-      if (mappedInput.wasScreenTouchDown(touchX, touchY) &&
-          GUI.listIndexFromPoint(renderer, listRect, static_cast<int>(networks.size()), selectedNetworkIndex, false,
-                                 touchX, touchY, touchedIndex)) {
-        if (selectedNetworkIndex != static_cast<size_t>(touchedIndex)) {
-          selectedNetworkIndex = touchedIndex;
-          requestUpdate();
-        }
-        return;
-      }
-      if (mappedInput.wasScreenTapped(touchX, touchY) &&
-          GUI.listIndexFromPoint(renderer, listRect, static_cast<int>(networks.size()), selectedNetworkIndex, false,
-                                 touchX, touchY, touchedIndex)) {
-        selectedNetworkIndex = touchedIndex;
-        selectNetwork(touchedIndex);
-        return;
-      }
-    }
-
     // Check for Confirm button to select network or rescan
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!networks.empty()) {

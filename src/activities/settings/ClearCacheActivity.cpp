@@ -142,7 +142,7 @@ void ClearCacheActivity::clearCache() {
 
 void ClearCacheActivity::loop() {
   if (state == WARNING) {
-    if (confirmPopup.handleInput(renderer, mappedInput, [this] { requestUpdate(); })) return;
+    if (confirmPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
     if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       beginClear();

@@ -180,37 +180,6 @@ void DictionaryActivity::loop() {
     return;
   }
 
-  if (mappedInput.hasTouch() && totalItems > 0) {
-    // Mirrors render()'s two layouts -- the empty-dictionaries branch uses a
-    // short, subtitle-less list capped at DICTIONARY_ACTION_COUNT rows; the
-    // populated branch fills contentHeight with subtitled rows.
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-    const bool hasEntries = !entries.empty();
-    const int contentHeight =
-        hasEntries ? renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2
-                   : metrics.listRowHeight * DICTIONARY_ACTION_COUNT;
-    const Rect listRect{0, contentTop, renderer.getScreenWidth(), contentHeight};
-
-    int touchX = 0, touchY = 0, touchedIndex = -1;
-    if (mappedInput.wasScreenTouchDown(touchX, touchY) &&
-        GUI.listIndexFromPoint(renderer, listRect, totalItems, selectedIndex, hasEntries, touchX, touchY,
-                               touchedIndex)) {
-      if (selectedIndex != touchedIndex) {
-        selectedIndex = touchedIndex;
-        requestUpdate();
-      }
-      return;
-    }
-    if (mappedInput.wasScreenTapped(touchX, touchY) &&
-        GUI.listIndexFromPoint(renderer, listRect, totalItems, selectedIndex, hasEntries, touchX, touchY,
-                               touchedIndex)) {
-      selectedIndex = touchedIndex;
-      selectCurrent();
-      return;
-    }
-  }
-
   buttonNavigator.onNext([this, totalItems] {
     if (totalItems > 0) {
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, totalItems);

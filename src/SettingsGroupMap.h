@@ -6,9 +6,10 @@
 #include "SettingsList.h"
 
 // The touch Settings presentation's 5 groups (General / Display & lighting /
-// Network & Bluetooth / Reading / Device & System), built by folding the same
-// CategorizedSettings vectors SettingsActivity uses -- no separate placement
-// rules, so nothing here can drift from what X3/X4's button UI shows.
+// Network & Bluetooth / Reading / Device & System), built by folding the
+// CategorizedSettings vectors from SettingsCategoryBuilder.h (this file's own
+// Midad-owned mirror of SettingsActivity's placement rules, not something
+// SettingsActivity.cpp itself calls).
 //
 // Fold, with rationale (see the approved plan for the full table):
 //   General            <- controls        (button/remap settings; the closest

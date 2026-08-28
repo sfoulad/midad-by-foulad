@@ -210,38 +210,6 @@ int FontDownloadActivity::familyIndexFromList(int listIndex) const {
   return visible_[idx];
 }
 
-bool FontDownloadActivity::activateSelectedRow() {
-  if (isDownloadAllRow(selectedIndex_)) {
-    currentFileIndex_ = 0;
-    currentFileTotal_ = 0;
-    for (const int i : visible_) {
-      if (!families_[i].installed) currentFileTotal_ += families_[i].files.size();
-    }
-    downloadAll();
-    return true;
-  }
-  if (isUpdateAllRow(selectedIndex_)) {
-    currentFileIndex_ = 0;
-    currentFileTotal_ = 0;
-    for (const int i : visible_) {
-      if (families_[i].hasUpdate) currentFileTotal_ += families_[i].files.size();
-    }
-    updateAll();
-    return true;
-  }
-  const int familyIdx = familyIndexFromList(selectedIndex_);
-  if (familyIdx < 0) return false;
-  auto& family = families_[familyIdx];
-  if (!family.installed || family.hasUpdate) {
-    currentFileIndex_ = 0;
-    currentFileTotal_ = family.files.size();
-    downloadFamily(family);
-    return true;
-  }
-  promptDeleteSelectedFamily();
-  return false;
-}
-
 // --- Download ---
 
 void FontDownloadActivity::downloadAll() {
@@ -524,43 +492,6 @@ void FontDownloadActivity::loop() {
     const int listSize = listItemCount();
     const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
 
-    if (mappedInput.hasTouch() && !families_.empty()) {
-      // Mirrors render()'s tabBarTop/listContentTop layout -- must stay in sync
-      // for a tap to land on the tab/row it looks like.
-      const auto& metrics = UITheme::getInstance().getMetrics();
-      const int pageWidth = renderer.getScreenWidth();
-      const int pageHeight = renderer.getScreenHeight();
-      const int tabBarTop = metrics.topPadding + metrics.headerHeight;
-
-      int touchX = 0, touchY = 0;
-      if (mappedInput.wasScreenTapped(touchX, touchY)) {
-        int tabIndex = -1;
-        if (GUI.tabIndexFromPoint(renderer, Rect{0, tabBarTop, pageWidth, metrics.tabBarHeight},
-                                  {{tr(STR_ARABIC_FONTS), showArabic_}, {tr(STR_ENGLISH_FONTS), !showArabic_}}, touchX,
-                                  touchY, tabIndex)) {
-          const bool wantArabic = tabIndex == 0;
-          if (wantArabic != showArabic_) {
-            RenderLock lock(*this);
-            showArabic_ = wantArabic;
-            rebuildVisibleList();
-            selectedIndex_ = -1;
-          }
-          requestUpdate();
-          return;
-        }
-
-        const int listContentTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing * 2;
-        const Rect listRect{0, listContentTop, pageWidth,
-                            pageHeight - listContentTop - metrics.buttonHintsHeight - metrics.verticalSpacing};
-        int touchedIndex = -1;
-        if (GUI.listIndexFromPoint(renderer, listRect, listSize, selectedIndex_, true, touchX, touchY, touchedIndex)) {
-          selectedIndex_ = touchedIndex;
-          if (activateSelectedRow()) requestUpdateAndWait();
-          return;
-        }
-      }
-    }
-
     // Same model as the book drawer: the tab row is index -1 in the same scroll
     // range, so Up/Down walks [-1, listSize) and Confirm does the contextual thing.
     // That is what makes the two screens feel identical rather than merely similar.
@@ -604,7 +535,35 @@ void FontDownloadActivity::loop() {
         return;
       }
       if (!families_.empty()) {
-        if (activateSelectedRow()) requestUpdateAndWait();
+        if (isDownloadAllRow(selectedIndex_)) {
+          currentFileIndex_ = 0;
+          currentFileTotal_ = 0;
+          for (const int i : visible_) {
+            if (!families_[i].installed) currentFileTotal_ += families_[i].files.size();
+          }
+
+          downloadAll();
+        } else if (isUpdateAllRow(selectedIndex_)) {
+          currentFileIndex_ = 0;
+          currentFileTotal_ = 0;
+          for (const int i : visible_) {
+            if (families_[i].hasUpdate) currentFileTotal_ += families_[i].files.size();
+          }
+          updateAll();
+        } else {
+          const int familyIdx = familyIndexFromList(selectedIndex_);
+          if (familyIdx < 0) return;
+          auto& family = families_[familyIdx];
+          if (!family.installed || family.hasUpdate) {
+            currentFileIndex_ = 0;
+            currentFileTotal_ = family.files.size();
+            downloadFamily(family);
+          } else {
+            promptDeleteSelectedFamily();
+            return;
+          }
+        }
+        requestUpdateAndWait();
         return;
       }
     }

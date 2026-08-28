@@ -125,7 +125,7 @@ void StatusBarSettingsActivity::onEnter() {
 void StatusBarSettingsActivity::onExit() { Activity::onExit(); }
 
 void StatusBarSettingsActivity::loop() {
-  if (optionPopup.handleInput(renderer, mappedInput, [this] { requestUpdate(); })) return;
+  if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
@@ -136,35 +136,6 @@ void StatusBarSettingsActivity::loop() {
     handleSelection();
     requestUpdate();
     return;
-  }
-
-  if (mappedInput.hasTouch()) {
-    // Mirrors render()'s contentTop/contentHeight -- must stay in sync with
-    // that layout for the tap to land on the row it looks like.
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-    const int contentHeight =
-        renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing * 2;
-    const Rect listRect{0, contentTop, renderer.getScreenWidth(), contentHeight};
-
-    int touchX = 0, touchY = 0, touchedIndex = -1;
-    if (mappedInput.wasScreenTouchDown(touchX, touchY) &&
-        GUI.listIndexFromPoint(renderer, listRect, visibleItemCount, static_cast<int>(selectedIndex), false, touchX,
-                               touchY, touchedIndex)) {
-      if (selectedIndex != touchedIndex) {
-        selectedIndex = touchedIndex;
-        requestUpdate();
-      }
-      return;
-    }
-    if (mappedInput.wasScreenTapped(touchX, touchY) &&
-        GUI.listIndexFromPoint(renderer, listRect, visibleItemCount, static_cast<int>(selectedIndex), false, touchX,
-                               touchY, touchedIndex)) {
-      selectedIndex = touchedIndex;
-      handleSelection();
-      requestUpdate();
-      return;
-    }
   }
 
   // Handle navigation

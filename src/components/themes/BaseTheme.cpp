@@ -15,7 +15,6 @@
 
 #include "I18n.h"
 #include "RecentBooksStore.h"
-#include "components/ListHitTest.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
 #include "components/UIThemeTokens.h"
@@ -877,15 +876,6 @@ bool BaseTheme::buttonMenuIndexFromPoint(const GfxRenderer&, const Rect rect, co
   const int row = (y - top) / rowStep;
   if (row >= buttonCount || (y - top) % rowStep >= BaseMetrics::values.menuRowHeight) return false;
   index = row;
-  return true;
-}
-
-bool BaseTheme::listIndexFromPoint(const GfxRenderer&, const Rect rect, const int itemCount, const int selectedIndex,
-                                   const bool hasSubtitle, const int x, const int y, int& index) const {
-  const int rowHeight = hasSubtitle ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
-  const auto result = listHitTest(rect.x, rect.y, rect.width, rect.height, itemCount, selectedIndex, rowHeight, x, y);
-  if (!result.hit) return false;
-  index = result.index;
   return true;
 }
 
