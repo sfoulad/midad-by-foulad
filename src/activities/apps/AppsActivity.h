@@ -27,6 +27,7 @@ class AppsActivity final : public Activity {
   AppsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput) : Activity("Apps", renderer, mappedInput) {}
 
   void onEnter() override;
+  void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
 
@@ -39,6 +40,8 @@ class AppsActivity final : public Activity {
   struct AppEntry {
     AppId id;
     StrId label;
+    // 32x32, GfxRenderer::drawIcon() format -- see components/icons/appLauncherIcons.h.
+    const uint8_t* icon;
     // The Settings -> Apps toggle behind this app, or empty for the ones that
     // have none (Files, and MidadBle -- see below). Opening an app whose flag
     // is off turns it on first -- see launch(). Getter/setter rather than a
@@ -49,6 +52,16 @@ class AppsActivity final : public Activity {
     std::function<void(uint8_t)> setEnabled;
   };
 
+  // One page's worth of tile geometry, shared between render() (drawing) and
+  // loop() (touch hit-testing) so the two can never drift apart.
+  struct Geometry {
+    int gridStartX;
+    int contentTop;
+    int tileWidth;
+    int tileHeight;
+    int gutter;
+  };
+
   static const std::vector<AppEntry>& entries();
 
   // Opens the selected app, enabling it first if its toggle is off. Returns
@@ -56,8 +69,21 @@ class AppsActivity final : public Activity {
   // extraction needs a writable SD card).
   bool launch(const AppEntry& entry);
 
+  Geometry computeGeometry() const;
+  void drawAppTile(int cellX, int cellY, int tileWidth, int tileHeight, const uint8_t* icon, const std::string& label,
+                   bool selected, bool rtl) const;
+  void drawPagination(int centerX, int y, int currentPage, int pageCount) const;
+
   int selectorIndex = 0;
-  int columns = 1;
-  int rowsPerPage = 1;
   ButtonNavigator buttonNavigator;
+
+  // Remembers the selection across the destroy/reconstruct cycle Files and
+  // Quran go through (activityManager.goToFileBrowser/goToReader both call
+  // replaceActivity(), which deletes this object -- see the Activity Lifecycle
+  // section of CLAUDE.md). The 6 other apps push via startActivityForResult()
+  // instead, which never destroys this object, so their return path already
+  // preserves selectorIndex for free; this static is what makes Files/Quran
+  // behave the same way. Written in onExit() (every exit path reaches it) and
+  // read in onEnter(), so it also just works when this object IS reused.
+  static int rememberedSelectorIndex;
 };
