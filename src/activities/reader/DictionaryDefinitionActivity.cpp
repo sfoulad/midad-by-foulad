@@ -251,12 +251,17 @@ void DictionaryDefinitionActivity::loop() {
     requestUpdate();
     return;
   }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+  // Release edges, not press edges. Button edges live for exactly one
+  // InputManager::update(), and finishing on the press leaves the matching
+  // release for whoever is current on the next frame -- which, now that the
+  // dictionary stays open, is DictionaryWordSelectActivity acting on releases:
+  // Done re-looked-up the same word forever, Back closed the whole mode.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     setResult(ActivityResult{});
     finish();
     return;
   }
-  if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
