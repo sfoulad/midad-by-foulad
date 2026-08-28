@@ -59,27 +59,35 @@ void appendMidadAppSettings(std::vector<SettingInfo>& appsSettings) {
         MIDAD_APP_SETTINGS.saveToFile();
       },
       "pomodoroEnabled", StrId::STR_CAT_APPS));
+  // The three durations describe a Pomodoro cycle that cannot run while the app
+  // itself is off, so they stay hidden until it is switched on. Same for the Gym
+  // weight unit below.
+  const auto pomodoroOn = [] { return MIDAD_APP_SETTINGS.pomodoroEnabled != 0; };
   appsSettings.push_back(SettingInfo::DynamicValue(
-      StrId::STR_POMODORO_FOCUS_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroFocusMin; },
-      [](uint8_t val) {
-        MIDAD_APP_SETTINGS.pomodoroFocusMin = val;
-        MIDAD_APP_SETTINGS.saveToFile();
-      },
-      {5, 90, 5}, "pomodoroFocusMin", StrId::STR_CAT_APPS));
+                             StrId::STR_POMODORO_FOCUS_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroFocusMin; },
+                             [](uint8_t val) {
+                               MIDAD_APP_SETTINGS.pomodoroFocusMin = val;
+                               MIDAD_APP_SETTINGS.saveToFile();
+                             },
+                             {5, 90, 5}, "pomodoroFocusMin", StrId::STR_CAT_APPS)
+                             .shownWhen(pomodoroOn));
   appsSettings.push_back(SettingInfo::DynamicValue(
-      StrId::STR_POMODORO_SHORT_BREAK_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroShortBreakMin; },
-      [](uint8_t val) {
-        MIDAD_APP_SETTINGS.pomodoroShortBreakMin = val;
-        MIDAD_APP_SETTINGS.saveToFile();
-      },
-      {1, 30, 1}, "pomodoroShortBreakMin", StrId::STR_CAT_APPS));
+                             StrId::STR_POMODORO_SHORT_BREAK_MIN,
+                             [] { return MIDAD_APP_SETTINGS.pomodoroShortBreakMin; },
+                             [](uint8_t val) {
+                               MIDAD_APP_SETTINGS.pomodoroShortBreakMin = val;
+                               MIDAD_APP_SETTINGS.saveToFile();
+                             },
+                             {1, 30, 1}, "pomodoroShortBreakMin", StrId::STR_CAT_APPS)
+                             .shownWhen(pomodoroOn));
   appsSettings.push_back(SettingInfo::DynamicValue(
-      StrId::STR_POMODORO_LONG_BREAK_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroLongBreakMin; },
-      [](uint8_t val) {
-        MIDAD_APP_SETTINGS.pomodoroLongBreakMin = val;
-        MIDAD_APP_SETTINGS.saveToFile();
-      },
-      {5, 60, 5}, "pomodoroLongBreakMin", StrId::STR_CAT_APPS));
+                             StrId::STR_POMODORO_LONG_BREAK_MIN, [] { return MIDAD_APP_SETTINGS.pomodoroLongBreakMin; },
+                             [](uint8_t val) {
+                               MIDAD_APP_SETTINGS.pomodoroLongBreakMin = val;
+                               MIDAD_APP_SETTINGS.saveToFile();
+                             },
+                             {5, 60, 5}, "pomodoroLongBreakMin", StrId::STR_CAT_APPS)
+                             .shownWhen(pomodoroOn));
   // Gym toggle: pins a "Gym" tile in My Books that opens the built-in
   // workout planner.
   appsSettings.push_back(SettingInfo::DynamicToggle(
@@ -90,13 +98,14 @@ void appendMidadAppSettings(std::vector<SettingInfo>& appsSettings) {
       },
       "gymEnabled", StrId::STR_CAT_APPS));
   appsSettings.push_back(SettingInfo::DynamicEnum(
-      StrId::STR_GYM_WEIGHT_UNIT, {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB},
-      [] { return MIDAD_APP_SETTINGS.gymWeightUnit; },
-      [](uint8_t val) {
-        MIDAD_APP_SETTINGS.gymWeightUnit = val;
-        MIDAD_APP_SETTINGS.saveToFile();
-      },
-      "gymWeightUnit", StrId::STR_CAT_APPS));
+                             StrId::STR_GYM_WEIGHT_UNIT, {StrId::STR_GYM_UNIT_KG, StrId::STR_GYM_UNIT_LB},
+                             [] { return MIDAD_APP_SETTINGS.gymWeightUnit; },
+                             [](uint8_t val) {
+                               MIDAD_APP_SETTINGS.gymWeightUnit = val;
+                               MIDAD_APP_SETTINGS.saveToFile();
+                             },
+                             "gymWeightUnit", StrId::STR_CAT_APPS)
+                             .shownWhen([] { return MIDAD_APP_SETTINGS.gymEnabled != 0; }));
   // Midad BLE used to also be registered here as a persisted Settings->Apps toggle
   // (see MidadAppSettings.h's own removal comment) -- removed along with the field
   // itself under BLE-R2 correction 2. Opening BluetoothActivity (Apps tile or
