@@ -379,19 +379,19 @@ void ChessGameActivity::loop() {
 
   // --- the record ---
   //
-  // Four buttons, all of them: Board, Resign, Prev, Next. The side buttons are
-  // deliberately dead here -- everything the record does has a labelled button, and
-  // Up/Down were only ever the way in and out of a second, scrolling sub-mode that
-  // no longer exists.
+  // Board, Resign, Prev, Next on the four front buttons, and the side buttons step
+  // the record too: on the X3 they sit on the left and right edges of the panel, so
+  // the left one is Prev and the right one is Next, matching the front pair rather
+  // than inventing a second meaning for them.
   if (focus_ == Focus::Record) {
-    buttonNavigator_.onPress({MappedInputManager::Button::Left}, [this] {
+    buttonNavigator_.onPress({MappedInputManager::Button::Left, MappedInputManager::Button::Up}, [this] {
       if (reviewPly_ > 0) {
         reviewPly_--;
         game_->positionAt(reviewPly_, reviewBoard_);
         requestUpdate();
       }
     });
-    buttonNavigator_.onPress({MappedInputManager::Button::Right}, [this] {
+    buttonNavigator_.onPress({MappedInputManager::Button::Right, MappedInputManager::Button::Down}, [this] {
       if (reviewPly_ < game_->plyCount()) {
         reviewPly_++;
         game_->positionAt(reviewPly_, reviewBoard_);
@@ -718,9 +718,11 @@ void ChessGameActivity::render(RenderLock&&) {
   // at the buttons themselves, as dictionary word select does, rather than spelled out
   // in a line of text the user has to map back onto the hardware. The board never
   // reaches these edges -- MAX_CELL caps it at 448 px, well inside the 30 px hint
-  // columns -- so nothing is painted over. Nothing on the record: its four buttons do
-  // all of it, and hints for two dead buttons are worse than none.
-  if (focus_ == Focus::Board) {
+  // columns -- so nothing is painted over. On the record the same two buttons step
+  // through the game, so they are labelled for what they do there.
+  if (focus_ == Focus::Record) {
+    GUI.drawSideButtonHints(renderer, tr(STR_CHESS_PREV), tr(STR_CHESS_NEXT));
+  } else {
     GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   }
 
