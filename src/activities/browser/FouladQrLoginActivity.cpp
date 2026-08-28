@@ -120,6 +120,16 @@ void FouladQrLoginActivity::loop() {
     return;
   }
 
+  if (mappedInput.hasTouch()) {
+    const Rect backRect = touchBackButtonRect(renderer);
+    if (mappedInput.wasTapInRect(backRect.x, backRect.y, backRect.width, backRect.height)) {
+      setResult(ActivityResult{});
+      result.isCancelled = true;
+      finish();
+      return;
+    }
+  }
+
   // No Confirm binding: the typed-password route is no longer offered from this
   // screen, and a live button with no footer label is worse than either choice --
   // Confirm is the natural "I've scanned it" press, and it would have silently
@@ -201,8 +211,27 @@ void FouladQrLoginActivity::render(RenderLock&&) {
       break;
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  if (mappedInput.hasTouch()) {
+    const Rect backRect = touchBackButtonRect(renderer);
+    renderer.fillRect(backRect.x, backRect.y, backRect.width, backRect.height, false);
+    renderer.drawRect(backRect.x, backRect.y, backRect.width, backRect.height, true);
+    const int backTextWidth = renderer.getTextWidth(UI_10_FONT_ID, tr(STR_BACK));
+    const int textHeight = renderer.getLineHeight(UI_10_FONT_ID);
+    renderer.drawText(UI_10_FONT_ID, backRect.x + (backRect.width - backTextWidth) / 2,
+                      backRect.y + (backRect.height - textHeight) / 2, tr(STR_BACK));
+  } else {
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  }
 
   renderer.displayBuffer();
+}
+
+Rect FouladQrLoginActivity::touchBackButtonRect(const GfxRenderer& renderer) const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  constexpr int buttonWidth = 100;
+  constexpr int buttonHeight = 36;
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  return Rect{(pageWidth - buttonWidth) / 2, pageHeight - metrics.buttonHintsHeight, buttonWidth, buttonHeight};
 }

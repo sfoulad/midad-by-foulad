@@ -5,6 +5,8 @@
 #include "FouladDeviceLogin.h"
 #include "activities/Activity.h"
 
+struct Rect;
+
 /**
  * Sign in to Foulad eBooks by scanning a QR code with the Foulad One phone app.
  *
@@ -59,4 +61,9 @@ class FouladQrLoginActivity final : public Activity {
   void onWifiSelectionComplete(bool success);
   void beginSession();
   void pollOnce();
+  // Touch boards suppress drawButtonHints() entirely (BaseTheme::drawButtonHints
+  // no-ops when gpio.hasTouch()), so ShowingQr needs its own visible, tappable
+  // Back control rather than a whole-screen tap -- the QR fills most of the
+  // screen and a stray tap there must not cancel an in-progress scan.
+  Rect touchBackButtonRect(const GfxRenderer& renderer) const;
 };

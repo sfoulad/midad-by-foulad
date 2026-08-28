@@ -16,6 +16,7 @@
 #include "FouladEbooksConfig.h"
 #include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
+#include "SettingsList.h"
 #include "apps/AppsActivity.h"
 #include "apps/DictionaryActivity.h"
 #include "apps/GymActivity.h"
@@ -31,6 +32,7 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "settings/TouchSettingsActivity.h"
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -251,7 +253,22 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+// The sole dispatch point every Settings entry funnels through. On
+// touch-capable boards this opens TouchSettingsActivity instead of
+// SettingsActivity -- the minimal integration required for the X4 Pro touch
+// UI to be reachable at all, not a new dispatch mechanism: it mirrors the
+// single-branch pattern UITheme::setTheme() already uses for its own
+// board-conditional choice, and SettingsActivity's own storage/business logic
+// is untouched (X3/X4 keep getting the byte-identical activity).
+void ActivityManager::goToSettings() {
+#if FREEINK_CAP_TOUCH
+  if (boardHasTouch()) {
+    replaceActivity(std::make_unique<TouchSettingsActivity>(renderer, mappedInput));
+    return;
+  }
+#endif
+  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goToGym() { replaceActivity(std::make_unique<GymActivity>(renderer, mappedInput)); }
 
