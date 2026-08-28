@@ -70,6 +70,14 @@ class MappedInputManager {
   // off-target so FreeInkUI routing clears its pressed-element state.
   bool wasScreenTouchReleased() const;
   bool wasTapInRect(int x, int y, int width, int height) const;
+  // One-shot long-press, fired while the finger is still down once a
+  // stationary contact has been held InputManager::TOUCH_LONG_PRESS_MS (see
+  // InputManager::wasTouchLongPress) -- boards with no physical Confirm
+  // button (X4 Pro) have no other way to reach a button-long-press action.
+  // Callers that act on it should also call suppressTouchContact() so the
+  // eventual lift doesn't also register as wasScreenTapped()'s tap.
+  bool wasScreenLongPressed(int& x, int& y) const;
+  void suppressTouchContact();
 
   // Combined touch interaction for a band of equal rows with caller-supplied
   // geometry — the shared hit-test for lists the theme helpers above do not
