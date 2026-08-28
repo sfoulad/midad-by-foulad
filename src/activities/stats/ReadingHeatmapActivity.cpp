@@ -11,23 +11,24 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "ReadingDayDetailActivity.h"
+#include "ReadingHeatmapLayout.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "reading/ReadingStatsStore.h"
 #include "util/TimeUtils.h"
 
 namespace {
-constexpr int SECTION_GAP = 10;
-constexpr int MONTH_HEADER_HEIGHT = 34;
-constexpr int SUMMARY_CARD_HEIGHT = 64;
-constexpr int SUMMARY_CARD_GAP = 8;
-constexpr int GRID_GAP = 6;
-constexpr int WEEKDAY_ROW_HEIGHT = 24;
-constexpr int LEGEND_HEIGHT = 30;
+using ReadingHeatmapLayout::GRID_CELLS;
+using ReadingHeatmapLayout::GRID_COLS;
+using ReadingHeatmapLayout::GRID_GAP;
+using ReadingHeatmapLayout::GRID_ROWS;
+using ReadingHeatmapLayout::LEGEND_HEIGHT;
+using ReadingHeatmapLayout::MONTH_HEADER_HEIGHT;
+using ReadingHeatmapLayout::SECTION_GAP;
+using ReadingHeatmapLayout::SUMMARY_CARD_GAP;
+using ReadingHeatmapLayout::SUMMARY_CARD_HEIGHT;
+using ReadingHeatmapLayout::WEEKDAY_ROW_HEIGHT;
 constexpr int LEGEND_SWATCH_SIZE = 16;
-constexpr int GRID_ROWS = 6;
-constexpr int GRID_COLS = 7;
-constexpr int GRID_CELLS = GRID_ROWS * GRID_COLS;
 
 struct HeatmapCell {
   uint32_t dayOrdinal = 0;
@@ -224,6 +225,12 @@ void ReadingHeatmapActivity::moveSelection(const int delta) {
   requestUpdate();
 }
 
+void ReadingHeatmapActivity::openSelectedDay() {
+  if (selectedDayOrdinal == 0) return;
+  startActivityForResult(std::make_unique<ReadingDayDetailActivity>(renderer, mappedInput, selectedDayOrdinal),
+                         [this](const ActivityResult&) { requestUpdate(); });
+}
+
 void ReadingHeatmapActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     finish();
@@ -236,11 +243,51 @@ void ReadingHeatmapActivity::loop() {
     return;
   }
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    if (selectedDayOrdinal != 0) {
-      startActivityForResult(std::make_unique<ReadingDayDetailActivity>(renderer, mappedInput, selectedDayOrdinal),
-                             [this](const ActivityResult&) { requestUpdate(); });
-    }
+    openSelectedDay();
     return;
+  }
+
+  // Tap a calendar cell to select it and open its detail directly (no separate
+  // select-then-confirm step for touch, same "tap = the whole action" idiom
+  // AppsActivity uses for its tiles). Cells outside the viewed month (grayed,
+  // spilling from the adjacent month) are real dates too -- selecting one
+  // follows the viewed month across, same as moveSelection() crossing an edge.
+  int tapX = 0;
+  int tapY = 0;
+  if (mappedInput.wasScreenTapped(tapX, tapY)) {
+    const auto grid = computeGridGeometry();
+    const int sidePadding = UITheme::getInstance().getMetrics().contentSidePadding;
+    const int cellIndex = ReadingHeatmapLayout::cellIndexAt(grid, tapX, tapY, sidePadding, I18N.isRtl());
+    if (cellIndex >= 0) {
+      const uint32_t firstDayOrdinal = TimeUtils::getDayOrdinalForDate(viewedYear, viewedMonth, 1);
+      const int firstWeekday = TimeUtils::weekdayForOrdinal(firstDayOrdinal);
+      const uint32_t gridStartOrdinal = firstDayOrdinal - static_cast<uint32_t>(firstWeekday);
+      selectedDayOrdinal = gridStartOrdinal + static_cast<uint32_t>(cellIndex);
+      int year = 0;
+      unsigned month = 0;
+      unsigned day = 0;
+      if (TimeUtils::getDateFromDayOrdinal(selectedDayOrdinal, year, month, day) &&
+          (year != viewedYear || month != viewedMonth)) {
+        viewedYear = year;
+        viewedMonth = month;
+      }
+      openSelectedDay();
+      return;
+    }
+  }
+
+  // Swipe up/down for month navigation, identical direction to the Up/Down
+  // buttons below -- no inversion, so there's exactly one rule to learn
+  // regardless of input method.
+  switch (mappedInput.wasSwipe()) {
+    case MappedInputManager::SwipeDir::Up:
+      goToAdjacentMonth(-1);
+      return;
+    case MappedInputManager::SwipeDir::Down:
+      goToAdjacentMonth(1);
+      return;
+    default:
+      break;
   }
 
   // In RTL the horizontal buttons move with the mirrored calendar.
@@ -251,6 +298,13 @@ void ReadingHeatmapActivity::loop() {
                                        [this, horizontalStep] { moveSelection(horizontalStep); });
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, [this] { goToAdjacentMonth(-1); });
   buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, [this] { goToAdjacentMonth(1); });
+}
+
+ReadingHeatmapLayout::Grid ReadingHeatmapActivity::computeGridGeometry() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  return ReadingHeatmapLayout::computeGrid(renderer.getScreenWidth(), renderer.getScreenHeight(), contentTop,
+                                           metrics.contentSidePadding, metrics.buttonHintsHeight);
 }
 
 void ReadingHeatmapActivity::render(RenderLock&&) {
@@ -321,29 +375,25 @@ void ReadingHeatmapActivity::render(RenderLock&&) {
   snprintf(value, sizeof(value), "%lu", static_cast<unsigned long>(READING_STATS.getCurrentStreakDays()));
   cardAt(1, 1, tr(STR_STREAK), value);
 
-  // Calendar grid with a weekday header row; columns mirror in RTL.
-  const int weekdayTop = summaryTop + (SUMMARY_CARD_HEIGHT + SUMMARY_CARD_GAP) * 2 + SECTION_GAP;
-  const int gridTop = weekdayTop + WEEKDAY_ROW_HEIGHT;
+  // Calendar grid with a weekday header row; columns mirror in RTL. Geometry
+  // comes from computeGridGeometry() (not recomputed here) so a tap always
+  // lands on the cell it visually overlaps -- see loop()'s touch handling.
+  const auto grid = computeGridGeometry();
+  const int weekdayTop = grid.gridTop - WEEKDAY_ROW_HEIGHT;
   const int legendTop = pageHeight - metrics.buttonHintsHeight - LEGEND_HEIGHT - 4;
-  const int gridHeight = std::max(120, legendTop - gridTop - SECTION_GAP);
-  const int cellWidth = (pageWidth - sidePadding * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
-  const int cellHeight = (gridHeight - GRID_GAP * (GRID_ROWS - 1)) / GRID_ROWS;
-  const auto columnX = [&](const int col) {
-    const int slot = rtl ? GRID_COLS - 1 - col : col;
-    return sidePadding + slot * (cellWidth + GRID_GAP);
-  };
+  const auto columnX = [&](const int col) { return ReadingHeatmapLayout::columnX(grid, col, sidePadding, rtl); };
 
   for (int col = 0; col < GRID_COLS; ++col) {
     const char* name = weekdayShortName(col);
-    const int x = columnX(col) + (cellWidth - renderer.getTextWidth(SMALL_FONT_ID, name, EpdFontFamily::BOLD)) / 2;
+    const int x = columnX(col) + (grid.cellWidth - renderer.getTextWidth(SMALL_FONT_ID, name, EpdFontFamily::BOLD)) / 2;
     renderer.drawText(SMALL_FONT_ID, x, weekdayTop, name, true, EpdFontFamily::BOLD);
   }
 
   const auto cells = buildCells(viewedYear, viewedMonth, TimeUtils::todayOrdinal(), selectedDayOrdinal);
   for (int index = 0; index < GRID_CELLS; ++index) {
     const int row = index / GRID_COLS;
-    const int y = gridTop + row * (cellHeight + GRID_GAP);
-    drawHeatCell(renderer, Rect{columnX(index % GRID_COLS), y, cellWidth, cellHeight},
+    const int y = grid.gridTop + row * (grid.cellHeight + GRID_GAP);
+    drawHeatCell(renderer, Rect{columnX(index % GRID_COLS), y, grid.cellWidth, grid.cellHeight},
                  cells[static_cast<size_t>(index)]);
   }
 
