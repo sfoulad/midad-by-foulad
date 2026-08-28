@@ -21,8 +21,6 @@
 #include "ReaderPomodoro.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
-#include "components/icons/book.h"
-#include "components/icons/settings2.h"
 #include "fontIds.h"
 
 namespace {
@@ -112,48 +110,58 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
       currentPage(currentPage),
       totalPages(totalPages),
       bookProgressPercent(bookProgressPercent) {
-  readingItems = buildReadingItems(hasBookmarks);
-  settingsItems = buildSettingsItems(hasFootnotes);
+  definitionTextSizeLabels.reserve(DictionaryStore::DEF_TEXT_SIZE_COUNT);
+  for (uint8_t i = 0; i < DictionaryStore::DEF_TEXT_SIZE_COUNT; ++i) {
+    definitionTextSizeLabels.push_back(DictionaryStore::definitionTextSizeLabel(i));
+  }
+
+  dictionaryItems = buildDictionaryItems();
+  textItems = buildTextItems();
+  navigateItems = buildNavigateItems(hasBookmarks, hasFootnotes);
+  settingsItems = buildSettingsItems();
+
+  // An installed dictionary is the only thing that varies here. Without one the
+  // Dictionary tab has nothing to show and every row on it would open straight into
+  // DICTIONARY_NONE_SELECTED, so the tab is dropped rather than shown-and-inert --
+  // and the opening view moves to the first tab that does exist.
+  if (DICTIONARIES.hasAnyDictionary()) {
+    tabOrder.push_back(View::DICTIONARY);
+  } else {
+    view = View::TEXT;
+  }
+  tabOrder.push_back(View::TEXT);
+  tabOrder.push_back(View::NAVIGATE);
+  tabOrder.push_back(View::SETTINGS_TAB);
 }
 
-// Most-used first: chapters, bookmarking, then the per-book reading settings,
-// then orientation; everything else lives in the Settings tab.
-std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadingItems(const bool hasBookmarks) const {
+// Four tabs, each a single subject: Dictionary (look things up), Text (how the page
+// is set), Navigate (move around the book, bookmarks included) and Settings
+// (everything else). The previous two-tab split -- "Reading" and "Settings" -- had
+// grown to 13 and 10 rows, with the Settings tab acting as an overflow bin for
+// anything that was not a per-book reading setting.
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildDictionaryItems() const {
   std::vector<MenuItem> items;
-  // Every row this can push, including the four conditional ones -- a short reserve here
-  // means a reallocate-copy-free on a heap the reader has already loaded a book onto.
-  items.reserve(13);
-  // First, ahead of even the dictionary: cross-device sync is pressed every time
-  // someone picks the book up after reading elsewhere, which is often. Shown only
-  // when there is an account AND this book carries a catalog id -- the same
-  // condition launchMidadSync() needs, so the row is never present-and-inert.
-  {
-    const auto& opdsServers = OPDS_STORE.getServers();
-    const bool hasMidadAccount = std::any_of(opdsServers.begin(), opdsServers.end(),
-                                             [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
-    // Shown on the strength of the account alone, not on whether THIS book carries
-    // a catalog id. Hiding it when the id is missing was the earlier behaviour and
-    // was worse: a book that genuinely is in the library -- but was only ever opened
-    // from Home, so its id was never recorded -- simply had no row, with no way to
-    // tell that apart from the feature being broken. It now explains itself when
-    // pressed. canSyncMidad_ still decides which of the two it does.
-    if (hasMidadAccount) {
-      items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
-    }
-  }
-  // Only offered once a dictionary is actually installed -- otherwise the row
-  // would open straight into DICTIONARY_NONE_SELECTED every time. Pinned
-  // first (user request) with the same label as the Settings/Apps entry
-  // (STR_DICTIONARY, not STR_LOOKUP_WORD) so it reads as one feature name
-  // whether reached from the reader or from Settings.
-  if (DICTIONARIES.hasAnyDictionary()) {
-    items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_DICTIONARY});
-  }
-  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
-  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
-  if (hasBookmarks) {
-    items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
-  }
+  // Only reached at all when a dictionary is installed -- buildTabOrder() drops the
+  // whole tab otherwise, so no row here needs its own hasAnyDictionary() guard.
+  items.reserve(4);
+  // Labelled "Look up a word", not "Dictionary". On the old Reading tab the row was
+  // deliberately named for the feature, so it read the same whether reached from the
+  // reader or from Settings; inside a tab already called Dictionary the tab supplies
+  // that name and the row is free to say what it does.
+  items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_LOOKUP_WORD});
+  items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
+  // The reason this tab exists: switching dictionaries mid-book used to mean leaving
+  // the reader for Settings -> Dictionary and finding your place again. Just
+  // "Dictionary" -- the value column carries which one is in use, so the label does
+  // not have to.
+  items.push_back({MenuAction::ACTIVE_DICTIONARY, StrId::STR_DICTIONARY});
+  items.push_back({MenuAction::DEFINITION_TEXT_SIZE, StrId::STR_DEFINITION_TEXT_SIZE});
+  return items;
+}
+
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildTextItems() const {
+  std::vector<MenuItem> items;
+  items.reserve(8);
   items.push_back({MenuAction::FONT_SIZE, StrId::STR_FONT_SIZE_GENERIC});
   if (isArabicBook || !sdFamilies.empty()) {
     // Arabic books always get the row (two built-in families: Naskh, UthmanicHafs);
@@ -163,48 +171,105 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildReadi
   }
   items.push_back({MenuAction::LINE_SPACING, StrId::STR_LINE_SPACING_GENERIC});
   items.push_back({MenuAction::TEXT_ALIGN, StrId::STR_TEXT_ALIGNMENT});
+  // Night mode, frontlight and orientation are not typography, but they are the
+  // rest of "how the page looks", and splitting them off would leave Text with four
+  // rows and push three into a tab about going places.
   items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
   if (Frontlight.present()) {
     items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
   }
   items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
-  // Appended last rather than slotted in among the reading settings above: those have a
-  // settled order people reach for by position, and pushing them all down one row to make
-  // space is a worse cost than one extra row to scroll past. Gated on the same
-  // Settings -> Apps -> Pomodoro toggle that pins the My Books tile, so a device that
-  // doesn't use the feature sees no new row at all.
-  if (MIDAD_APP_SETTINGS.pomodoroEnabled) {
-    items.push_back({MenuAction::POMODORO, StrId::STR_POMODORO});
-  }
+  // Last, and on this tab rather than Settings, because clearBookOverrides() resets
+  // exactly the rows above it and nothing else.
+  items.push_back({MenuAction::RESET_BOOK_SETTINGS, StrId::STR_RESET_BOOK_SETTINGS});
   return items;
 }
 
-std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSettingsItems(
-    const bool hasFootnotes) const {
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildNavigateItems(
+    const bool hasBookmarks, const bool hasFootnotes) const {
   std::vector<MenuItem> items;
-  items.reserve(9);
+  items.reserve(6);
+  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
+  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
+  if (hasBookmarks) {
+    items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
+  }
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
   }
-  if (DICTIONARIES.hasAnyDictionary()) {
-    items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
-  }
-  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
+  // Automated page advancement is still page advancement: it moves you through the
+  // book, which is what this tab is for, even though it is set rather than pressed.
   items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
-  items.push_back({MenuAction::RESET_BOOK_SETTINGS, StrId::STR_RESET_BOOK_SETTINGS});
+  return items;
+}
+
+std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSettingsItems() const {
+  std::vector<MenuItem> items;
+  items.reserve(7);
+  // Both syncs together. Midad was pinned to the old Reading tab because it is
+  // pressed every session, but with four tabs it no longer has to be first to be
+  // one press away, and having the two sync rows in different tabs was the odder
+  // arrangement. Shown on the strength of the account alone, not on whether THIS
+  // book carries a catalog id: a book that genuinely is in the library -- but was
+  // only ever opened from Home, so its id was never recorded -- would otherwise
+  // have no row at all, indistinguishable from the feature being broken. It
+  // explains itself when pressed; canSyncMidad_ decides which of the two it does.
+  {
+    const auto& opdsServers = OPDS_STORE.getServers();
+    const bool hasMidadAccount = std::any_of(opdsServers.begin(), opdsServers.end(),
+                                             [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
+    if (hasMidadAccount) {
+      items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
+    }
+  }
+  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_KOREADER});
+  // Gated on the same Settings -> Apps -> Pomodoro toggle that pins the My Books
+  // tile, so a device that does not use the feature sees no row at all.
+  if (MIDAD_APP_SETTINGS.pomodoroEnabled) {
+    items.push_back({MenuAction::POMODORO, StrId::STR_POMODORO});
+  }
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
-  // KOReader sync stays in Settings, where it has always been. Midad's moved to
-  // the Reading tab and pinned first (user request): it is reached constantly,
-  // and a tab labelled Settings is the wrong place for something used every
-  // session. Named for where it goes either way -- repointing this row at Midad
-  // was rejected, since the two sync to different places and silently changing
-  // what a row someone relies on does reads as data loss.
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_KOREADER});
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
   return items;
 }
+
+int EpubReaderMenuActivity::tabPosition(const View v) const {
+  const auto it = std::find(tabOrder.begin(), tabOrder.end(), v);
+  return it == tabOrder.end() ? 0 : static_cast<int>(it - tabOrder.begin());
+}
+
+const char* EpubReaderMenuActivity::tabLabel(const View v) const {
+  switch (v) {
+    case View::TEXT:
+      return tr(STR_TAB_TEXT);
+    case View::NAVIGATE:
+      return tr(STR_TAB_NAVIGATE);
+    case View::SETTINGS_TAB:
+      return tr(STR_SETTINGS_TITLE);
+    default:
+      return tr(STR_DICTIONARY);
+  }
+}
+
+// Forward with wraparound, exactly as SettingsActivity cycles its five categories.
+// Left/Right deliberately stay out of this: they are list-scroll shortcuts too, and
+// binding them to tabs once broke scrolling with the front buttons entirely.
+EpubReaderMenuActivity::View EpubReaderMenuActivity::nextTab() const {
+  if (tabOrder.empty()) return view;
+  const int next = (tabPosition(view) + 1) % static_cast<int>(tabOrder.size());
+  return tabOrder[next];
+}
+
+namespace {
+// Drawer chrome the render pass always draws, shared with the height calculation so
+// the two cannot drift apart.
+constexpr int kHandleToHeaderGap = 14;
+int headerHeightFor(const GfxRenderer& renderer) { return renderer.getLineHeight(UI_10_FONT_ID) + 12; }
+int progressBandHeightFor(const GfxRenderer& renderer) { return renderer.getLineHeight(SMALL_FONT_ID) + 10; }
+}  // namespace
 
 void EpubReaderMenuActivity::onEnter() {
   Activity::onEnter();
@@ -216,6 +281,9 @@ void EpubReaderMenuActivity::onExit() { Activity::onExit(); }
 int EpubReaderMenuActivity::activeItemCount() const {
   if (view == View::CHAPTERS) {
     return epub ? epub->getTocItemsCount() : 0;
+  }
+  if (view == View::DICTIONARY_LIST) {
+    return static_cast<int>(DICTIONARIES.getEntries().size());
   }
   return static_cast<int>(activeItems().size());
 }
@@ -302,6 +370,16 @@ std::string EpubReaderMenuActivity::valueLabel(const MenuAction action) const {
       }
       return formatPomodoroRemaining(pomodoro.remainingMs());
     }
+    case MenuAction::ACTIVE_DICTIONARY: {
+      // The row is the readout as well as the way in: which dictionary a lookup will
+      // use is the single thing someone opens this tab to check.
+      const auto& entries = DICTIONARIES.getEntries();
+      const int active = DICTIONARIES.getActiveIndex();
+      if (active < 0 || active >= static_cast<int>(entries.size())) return I18N.get(StrId::STR_NO_DICTIONARIES);
+      return entries[active].name;
+    }
+    case MenuAction::DEFINITION_TEXT_SIZE:
+      return DictionaryStore::definitionTextSizeLabel(DICTIONARIES.getDefinitionTextSize());
     default:
       return "";
   }
@@ -507,12 +585,52 @@ void EpubReaderMenuActivity::handleListConfirm() {
     return;
   }
 
+  if (view == View::DICTIONARY_LIST) {
+    // Picking a dictionary is the whole point of the tab: set it active and go
+    // straight back, without leaving the drawer or the book.
+    //
+    // setActiveIndex() refuses a folder with missing files or a 64-bit-offset .ifo,
+    // and ignoring that refusal would look exactly like a successful switch -- back
+    // to the tab, with the row still naming the old dictionary. Say so instead, in
+    // the same words Apps -> Dictionary uses for the same two cases.
+    if (!DICTIONARIES.setActiveIndex(dictionarySelectedIndex)) {
+      GUI.drawPopup(renderer, tr(STR_DICTIONARY_MISSING_FILES));
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      delay(1100);
+      requestUpdate();
+      return;
+    }
+    view = dictionaryListReturnTo;
+    requestUpdate();
+    return;
+  }
+
   const auto selectedAction = activeItems()[activeIndex()].action;
   switch (selectedAction) {
     case MenuAction::SELECT_CHAPTER:
       // Chapter list is an in-drawer drill-down, not a separate full-screen activity.
+      chapterReturnTo = view;
       view = View::CHAPTERS;
       chapterSelectedIndex = epub ? std::max(0, epub->getTocIndexForSpineIndex(currentSpineIndex)) : 0;
+      requestUpdate();
+      return;
+    case MenuAction::ACTIVE_DICTIONARY: {
+      DICTIONARIES.ensureScanned();
+      dictionaryListReturnTo = view;
+      view = View::DICTIONARY_LIST;
+      // Open on the dictionary in use, so Confirm without moving is a no-op rather
+      // than a silent switch to whatever happens to sit at index 0.
+      dictionarySelectedIndex = std::max(0, DICTIONARIES.getActiveIndex());
+      requestUpdate();
+      return;
+    }
+    case MenuAction::DEFINITION_TEXT_SIZE:
+      optionPopup.show(I18N.get(StrId::STR_DEFINITION_TEXT_SIZE), definitionTextSizeLabels.data(),
+                       static_cast<int>(definitionTextSizeLabels.size()), DICTIONARIES.getDefinitionTextSize(),
+                       [this](int idx) {
+                         DICTIONARIES.setDefinitionTextSize(static_cast<uint8_t>(idx));
+                         requestUpdate();
+                       });
       requestUpdate();
       return;
     case MenuAction::ROTATE_SCREEN:
@@ -577,7 +695,7 @@ void EpubReaderMenuActivity::loop() {
   // which silently broke list scrolling via the front buttons entirely (user
   // report: "no matter which button I press, it never scrolls, it just
   // switches tabs").
-  const bool tabsActive = view != View::CHAPTERS;
+  const bool tabsActive = view != View::CHAPTERS && view != View::DICTIONARY_LIST;
   const bool onTabRow = tabsActive && activeIndex() == -1;
 
   const int itemCount = activeItemCount();
@@ -598,7 +716,7 @@ void EpubReaderMenuActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (onTabRow) {
-      view = view == View::READING ? View::SETTINGS_TAB : View::READING;
+      view = nextTab();
       activeIndex() = -1;
       requestUpdate();
       return;
@@ -608,8 +726,15 @@ void EpubReaderMenuActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    // Back out of a drill-down returns to the tab it was opened from, not to the
+    // reader -- one Back should never cost you both the list and the drawer.
     if (view == View::CHAPTERS) {
-      view = View::READING;
+      view = chapterReturnTo;
+      requestUpdate();
+      return;
+    }
+    if (view == View::DICTIONARY_LIST) {
+      view = dictionaryListReturnTo;
       requestUpdate();
       return;
     }
@@ -629,7 +754,20 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // list paginates inside the drawer when the items don't fit (drawList).
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
-  const int drawerTop = pageHeight * 3 / 20;  // drawer covers the bottom 85%
+  // The drawer is only as tall as its tallest tab needs, rather than a fixed 85% of
+  // the screen. At four tabs the largest list is 8 rows, and the old fixed height
+  // left room for 11 -- three rows of empty drawer over a page the reader would
+  // rather see. Derived instead of tuned so it holds on both panels and however the
+  // conditional rows land: everything below is the chrome this view always draws,
+  // plus the rows, plus the hint strip the safe area excludes.
+  const int maxRows = std::max({dictionaryItems.size(), textItems.size(), navigateItems.size(), settingsItems.size()});
+  const int neededHeight = kHandleToHeaderGap + headerHeightFor(renderer) + progressBandHeightFor(renderer) +
+                           metrics.tabBarHeight + maxRows * metrics.listRowHeight + metrics.verticalSpacing +
+                           metrics.buttonHintsHeight;
+  // Never taller than the old fixed height: a long drill-down list paginates, which
+  // it already did, and growing the drawer past 85% would start hiding the page the
+  // menu is meant to sit over.
+  const int drawerTop = std::max(pageHeight * 3 / 20, pageHeight - neededHeight);
   renderer.fillRect(0, drawerTop, pageWidth, pageHeight - drawerTop, false);
   constexpr int handleWidth = 48;
   renderer.fillRoundedRect((pageWidth - handleWidth) / 2, drawerTop + 5, handleWidth, 6, 3, Color::Black);
@@ -637,9 +775,8 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   // Material-style header: compact one-line black bar, title in white,
   // no battery. Sized off the font line height (not theme headerHeight) so
   // it stays a slim single line on every theme.
-  const int headerTop = drawerTop + 14;
-  const int titleLineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  const int headerHeight = titleLineHeight + 12;
+  const int headerTop = drawerTop + kHandleToHeaderGap;
+  const int headerHeight = headerHeightFor(renderer);
   renderer.fillRect(0, headerTop, pageWidth, headerHeight, true);
   {
     const int titleMargin = 16;
@@ -658,8 +795,7 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   }
   progressLine += std::string(tr(STR_BOOK_PREFIX)) + std::to_string(bookProgressPercent) + "%";
   const int subTop = headerTop + headerHeight;
-  const int subLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-  const int subHeight = subLineHeight + 10;
+  const int subHeight = progressBandHeightFor(renderer);
   renderer.fillRectDither(0, subTop, pageWidth, subHeight, Color::LightGray);
   {
     const int progressWidth = renderer.getTextWidth(SMALL_FONT_ID, progressLine.c_str(), EpdFontFamily::BOLD);
@@ -667,49 +803,26 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
                       EpdFontFamily::BOLD);
   }
 
-  // Two icon tabs (book = Reading, gear = Settings), each centered in its own
-  // half of the drawer width -- not clustered together in the middle. Hidden
-  // while browsing Chapters -- that's a drill-down from Reading, not a third
-  // tab, so it uses the full content area below like the old MORE view did.
-  const bool showTabs = view != View::CHAPTERS;
+  // Text tabs through the shared theme helper -- the same one Settings uses for its
+  // five categories -- rather than icons laid out at fixed fractions of the width.
+  // The strip is a vector, so it copes with the Dictionary tab being absent without
+  // any of this arithmetic knowing how many tabs there are. Hidden inside a
+  // drill-down, which uses the full content area below.
+  const bool showTabs = view != View::CHAPTERS && view != View::DICTIONARY_LIST;
   const bool onTabRow = showTabs && activeIndex() == -1;
-  const int tabBarTop = subTop + subHeight + metrics.verticalSpacing;
-  // Must match BookIcon/Settings2Icon's actual bitmap size exactly -- drawIcon
-  // has no scaling; it reads the bitmap assuming size x size packed rows.
-  constexpr int kTabIconSize = 32;
-  constexpr int kTabPadding = 10;  // around the icon inside the focused-row pill
-  constexpr int kTabUnderlineGap = 4;
-  constexpr int kTabUnderlineHeight = 2;
-  // Reserve room for the taller of the two states (the focused pill) so the
-  // content below never shifts as focus moves on/off the tab row.
-  const int tabBarHeight = showTabs ? (kTabIconSize + kTabPadding * 2 + metrics.verticalSpacing) : 0;
+  // No gap between the progress band and the tab strip: the band's own fill already
+  // separates them, and the spacer only read as a dead stripe.
+  const int tabBarTop = subTop + subHeight;
+  const int tabBarHeight = showTabs ? metrics.tabBarHeight : 0;
   if (showTabs) {
-    const int readingX = pageWidth / 4 - kTabIconSize / 2;
-    const int settingsX = pageWidth * 3 / 4 - kTabIconSize / 2;
-    const int iconY = tabBarTop + (onTabRow ? kTabPadding : 0);
-    // Focus resting on the tab row itself (index -1, reached by scrolling up
-    // past the first list row) gets a filled pill behind the active icon,
-    // mirroring BaseTheme::drawTabBar's row-focused inversion; otherwise the
-    // active tab just gets a plain underline.
-    if (onTabRow) {
-      const int pillX = (view == View::READING ? readingX : settingsX) - kTabPadding;
-      renderer.fillRoundedRect(pillX, tabBarTop, kTabIconSize + kTabPadding * 2, kTabIconSize + kTabPadding * 2,
-                               kTabPadding, Color::LightGray);
+    std::vector<TabInfo> tabs;
+    tabs.reserve(tabOrder.size());
+    for (const View v : tabOrder) {
+      tabs.push_back({tabLabel(v), v == view});
     }
-    renderer.drawIcon(BookIcon, readingX, iconY, kTabIconSize);
-    renderer.drawIcon(Settings2Icon, settingsX, iconY, kTabIconSize);
-    if (!onTabRow) {
-      const int underlineY = iconY + kTabIconSize + kTabUnderlineGap;
-      const int underlineX = view == View::READING ? readingX : settingsX;
-      renderer.fillRect(underlineX - 2, underlineY, kTabIconSize + 4, kTabUnderlineHeight, true);
-    }
-
-    // Vertical divider between the two icon halves, and a horizontal separator
-    // under the whole tab row -- splits Reading/Settings visually and separates
-    // the tab row from the list below it.
-    const int tabRowBottom = tabBarTop + kTabIconSize + kTabPadding * 2;
-    renderer.drawLine(pageWidth / 2, tabBarTop, pageWidth / 2, tabRowBottom, 1, true);
-    renderer.drawLine(0, tabRowBottom, pageWidth - 1, tabRowBottom, 3, true);
+    // `selected` = focus is resting on the strip itself (index -1), which inverts the
+    // active tab rather than merely underlining it -- the theme's own convention.
+    GUI.drawTabBar(renderer, Rect{0, tabBarTop, pageWidth, tabBarHeight}, tabs, onTabRow);
   }
 
   const int contentTop = tabBarTop + tabBarHeight;
@@ -717,8 +830,9 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   const int contentHeight = (screen.y + screen.height) - contentTop - metrics.verticalSpacing;
 
   const int itemCount = activeItemCount();
-  const int index = view == View::SETTINGS_TAB ? settingsSelectedIndex
-                                               : (view == View::CHAPTERS ? chapterSelectedIndex : selectedIndex);
+  // activeIndex() is the one place that knows which counter each view uses; reading
+  // it through a const_cast beats keeping a second switch here that can drift.
+  const int index = const_cast<EpubReaderMenuActivity*>(this)->activeIndex();
   // The chapter list draws Arabic surah titles through the same compressed-font path
   // as the reader page, but -- unlike renderContents() -- never prewarmed them, so
   // every row hit FontDecompressor's slow per-glyph hot-group fallback on every
@@ -733,6 +847,18 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
         std::string indent((item.level - 1) * 2, ' ');
         return indent + item.title;
       });
+    } else if (view == View::DICTIONARY_LIST) {
+      const auto& entries = DICTIONARIES.getEntries();
+      const int activeDictionary = DICTIONARIES.getActiveIndex();
+      GUI.drawList(
+          renderer, Rect{screen.x, contentTop, screen.width, contentHeight}, itemCount, index,
+          [&entries](int i) { return entries[i].name; }, nullptr, nullptr,
+          // The one in use is marked in the value column rather than by reordering the
+          // list, so a dictionary keeps its position as you switch between them.
+          [activeDictionary](int i) {
+            return i == activeDictionary ? std::string(tr(STR_DICTIONARY_ACTIVE)) : std::string();
+          },
+          true);
     } else {
       const auto& items = activeItems();
       GUI.drawList(
@@ -748,12 +874,12 @@ void EpubReaderMenuActivity::render(RenderLock&&) {
   }
   renderRows(nullptr);  // real draw pass
 
-  // Footer / Hints. While focus is on the tab row, Confirm cycles to the
-  // OTHER tab, so the hint previews its name instead of the generic "Select"
-  // -- same convention as Settings' own tab row (SettingsActivity.cpp's
-  // confirmLabel).
-  const char* confirmLabel =
-      onTabRow ? (view == View::READING ? tr(STR_SETTINGS_TITLE) : tr(STR_CAT_READER)) : tr(STR_SELECT);
+  // Footer / Hints. While focus is on the tab row, Confirm cycles forward, so the
+  // hint previews the name of the tab it will land on instead of the generic
+  // "Select" -- same convention as Settings' own tab row (SettingsActivity.cpp's
+  // confirmLabel). With four tabs that preview earns its keep: cycling is the only
+  // way across, so knowing the next stop is what makes it navigable.
+  const char* confirmLabel = onTabRow ? tabLabel(nextTab()) : tr(STR_SELECT);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN),
                                             /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

@@ -58,6 +58,11 @@ class DictionaryStore {
   // Public: the download store (DictionaryDownloadActivity) installs sets here.
   static constexpr const char* DICTIONARY_ROOT = "/dictionaries";
   enum DefinitionTextSize : uint8_t { DEF_TEXT_SMALL = 0, DEF_TEXT_LARGE = 1, DEF_TEXT_SIZE_COUNT };
+  // Kept next to the enum, and asserted against it, because these two drift silently
+  // otherwise: an option added to the enum but missing from a caller's own label list
+  // simply cannot be picked, and the value column reports the wrong one for it. Any
+  // list of these labels should come from here rather than be spelled out again.
+  static const char* definitionTextSizeLabel(uint8_t size);
 
   static DictionaryStore& getInstance();
 
