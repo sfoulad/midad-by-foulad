@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: Inter, "Helvetica Neue", Arial, sans-serif; background: #e8e6e1; }
+    a { color: #000; } a:hover { color: #333; }
+    .screen { width: 480px; height: 800px; background: #fff; color: #000; position: relative; overflow: hidden; }
+    .hdr { position: absolute; top: 5px; left: 0; width: 480px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; }
+    .batt { position: absolute; right: 12px; top: 10px; display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 400; }
+    .row { height: 50px; display: flex; flex-direction: column; justify-content: center; padding: 0 20px; gap: 2px; }
+    .row .t { font-size: 16px; }
+    .row .s { font-size: 12px; }
+    .row.sel { background: #000; color: #fff; }
+    .sec { padding: 0 20px; font-size: 13px; font-weight: 700; height: 30px; display: flex; align-items: flex-end; padding-bottom: 4px; }
+    .hint { position: absolute; bottom: 0; height: 40px; width: 106px; border: 1px solid #000; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 13px; background: #fff; }
+  </style>
+</helmet>
+<div style="padding: 24px; width: 512px; box-sizing: border-box">
+  <div class="screen" style="border: 2px solid #111">
+    <div class="hdr"><span>New Game</span>
+      <div class="batt"><span>82%</span><svg width="15" height="12" viewBox="0 0 15 12"><rect x="0.5" y="0.5" width="12" height="11" fill="none" stroke="#000"/><rect x="13" y="3.5" width="2" height="5" fill="#000"/><rect x="2" y="2" width="8" height="8" fill="#000"/></svg></div>
+    </div>
+    <div style="position: absolute; top: 60px; left: 0; width: 475px; display: flex; flex-direction: column">
+      <div class="sec">Opponent</div>
+      <div class="row"><span class="t">Rashid</span><span class="s">~600 · Novice — plays instantly, blunders often</span></div>
+      <div class="row"><span class="t">Layla</span><span class="s">~900 · Beginner — sees one move ahead</span></div>
+      <div class="row sel"><span class="t">Omar</span><span class="s">~1200 · Casual — thinks up to 1 s</span></div>
+      <div class="row"><span class="t">Nadia</span><span class="s">~1500 · Club — thinks up to 2 s</span></div>
+      <div class="row"><span class="t">Al-Suli</span><span class="s">~1800 · Strong — thinks up to 4 s</span></div>
+      <div class="sec" style="margin-top: 10px">Your side</div>
+      <div class="row" style="height: 30px"><span class="t">◀ <b>White</b> ▶ &nbsp;&nbsp; Black &nbsp;&nbsp; Random</span></div>
+    </div>
+    <div style="position: absolute; left: 20px; top: 480px; width: 440px; font-size: 13px; text-align: center">Ratings are approximate.</div>
+    <div class="hint" style="left: 25px">Back</div>
+    <div class="hint" style="left: 130px">Start</div>
+    <div class="hint" style="left: 245px">Up</div>
+    <div class="hint" style="left: 350px">Down</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

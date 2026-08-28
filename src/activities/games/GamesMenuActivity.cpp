@@ -8,6 +8,7 @@
 #include "SnakeActivity.h"
 #include "SudokuActivity.h"
 #include "TetrisActivity.h"
+#include "chess/ChessMenuActivity.h"
 #include "components/UITheme.h"
 
 void GamesMenuActivity::onEnter() {
@@ -53,8 +54,11 @@ void GamesMenuActivity::launchSelected() {
       startActivityForResult(std::make_unique<SudokuActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       break;
     case MAZE:
-    default:
       startActivityForResult(std::make_unique<MazeActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      break;
+    case CHESS:
+    default:
+      startActivityForResult(std::make_unique<ChessMenuActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       break;
   }
 }
@@ -79,8 +83,10 @@ void GamesMenuActivity::render(RenderLock&&) {
         return tr(STR_TETRIS);
       case SUDOKU:
         return tr(STR_SUDOKU);
-      default:
+      case MAZE:
         return tr(STR_MAZE);
+      default:
+        return tr(STR_CHESS);
     }
   });
 

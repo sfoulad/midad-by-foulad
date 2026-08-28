@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: Inter, "Helvetica Neue", Arial, sans-serif; background: #e8e6e1; }
+    a { color: #000; } a:hover { color: #333; }
+    .screen { width: 480px; height: 800px; background: #fff; color: #000; position: relative; overflow: hidden; }
+    .hdr { position: absolute; top: 5px; left: 0; width: 480px; height: 45px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; }
+    .cell { width: 56px; height: 56px; position: relative; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+    .dark { background: repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 0 0 / 4px 4px; }
+    .hint { position: absolute; bottom: 0; height: 40px; width: 106px; border: 1px solid #000; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 13px; background: #fff; }
+    .key { min-width: 44px; height: 44px; border: 1.5px solid #333; border-radius: 8px; background: #f4f2ee; display: flex; align-items: center; justify-content: center; font-size: 13px; padding: 0 12px; cursor: pointer; user-select: none; }
+    .key:active { background: #d9d6cf; }
+    .mv { font-family: 'Courier New', monospace; font-size: 14px; padding: 1px 4px; }
+    .mv.cur { background: #000; color: #fff; }
+  </style>
+</helmet>
+<div style="display: flex; flex-direction: column; gap: 16px; padding: 24px; width: 512px; box-sizing: border-box">
+  <div class="screen" style="border: 2px solid #111">
+    <div class="hdr"><span>Italian Game · C50</span></div>
+
+    <div style="position: absolute; left: 16px; top: 54px; width: 450px; display: flex; flex-wrap: wrap; gap: 2px 4px; min-height: 44px; align-content: flex-start">
+      <sc-for list="{{moveChips}}" as="m" hint-placeholder-count="8">
+        <span class="mv {{m.cls}}">{{m.label}}</span>
+      </sc-for>
+    </div>
+
+    <div style="position: absolute; left: 16px; top: 100px; width: 448px; height: 448px; border: 1px solid #000; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr))">
+      <sc-for list="{{cells}}" as="c" hint-placeholder-count="64">
+        <div class="cell {{c.cls}}" style="border: {{c.border}}">
+          <sc-if value="{{c.hasPiece}}" hint-placeholder-val="{{true}}">
+            <svg width="42" height="42" viewBox="0 0 40 40" style="display: block">
+              <path d="{{c.d}}" fill="{{c.fill}}" stroke="{{c.ds}}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"></path>
+              <path d="{{c.dt}}" fill="none" stroke="{{c.ds}}" stroke-width="1.5" stroke-linecap="round"></path>
+            </svg>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="position: absolute; left: 16px; top: 562px; width: 450px; display: flex; flex-direction: column; gap: 8px">
+      <div style="display: flex; justify-content: space-between; font-size: 13px"><span>Move {{plyLabel}}</span><span>{{sideLabel}}</span></div>
+      <div style="height: 1px; background: #000"></div>
+      <sc-if value="{{hasTip}}" hint-placeholder-val="{{true}}">
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <div style="font-size: 13px; font-weight: 700">{{tipTitle}}</div>
+          <div style="font-size: 15px; line-height: 21px; text-wrap: pretty">{{tip}}</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{noTip}}" hint-placeholder-val="{{false}}">
+        <div style="font-size: 14px; color: #000">Book move. Press ▶ to continue.</div>
+      </sc-if>
+    </div>
+
+    <div class="hint" style="left: 25px">Back</div>
+    <div class="hint" style="left: 130px">Restart</div>
+    <div class="hint" style="left: 245px">◀ Prev</div>
+    <div class="hint" style="left: 350px">Next ▶</div>
+  </div>
+
+  <div style="display: flex; gap: 8px; align-items: center">
+    <span style="font-size: 12px; color: #555; width: 56px">front</span>
+    <div class="key" onClick="{{restart}}">Restart</div>
+    <div class="key" onClick="{{prev}}">◀ Prev</div>
+    <div class="key" onClick="{{next}}">Next ▶</div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":512,"height":920}}'>
+const PATH = {
+  p: 'M20 9.5a4 4 0 1 1 0 8a4 4 0 1 1 0-8ZM18 17.5h4l.5 2h2l-1.5 2c2 2 3 4.5 3 7.5h2a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2h2c0-3 1-5.5 3-7.5l-1.5-2h2Z',
+  r: 'M12 5h4v3h2V5h4v3h2V5h4v7l-1.5 2v11l1.5 2v2a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2v-2l1.5-2V14L12 12Z',
+  n: 'M13 29c-1-4 0-8 3-11c-2 0-4 1-5.5 2.5l-2.5-1.5l-1-2.5l4-5c2.5-2.5 5-4 8-4.5l1.5-3l2 3.5c4.5 1.5 7 5.5 7 10.5V29a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2h1Z',
+  b: 'M20 3a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5ZM20 8c5.5 4 8 9.5 8 14.5c0 2.5-.5 4.5-1.5 6.5h1.5a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2h1.5c-1-2-1.5-4-1.5-6.5C12 17.5 14.5 12 20 8Z',
+  q: 'M12 29L9 13.5q.5-2.5 2-1L13.5 18L14 9.5q.5-2.5 2-1L18 16.5L19 6.5q1-2.5 2 0L22 16.5L24 8.5q1.5-1.5 2 1L26.5 18L29 12.5q1.5-1.5 2 1L28 29a2 2 0 0 1 2 2v5H10v-5a2 2 0 0 1 2-2Z',
+  k: 'M18 2h4v3.5h3.5v4H22V13h-4V9.5h-3.5v-4H18ZM13 14c-4 0-5 6-2 9l1.5 6h-.5a2 2 0 0 0-2 2v5h20v-5a2 2 0 0 0-2-2h-.5l1.5-6c3-3 2-9-2-9c-2.5 0-4.5 1-6 2.5h-3C17.5 15 15.5 14 13 14Z'
+};
+const DETAIL = {
+  p: 'M12 29h16',
+  r: 'M13.5 14h13M12 29h16',
+  n: 'M15.5 12.5a1 1 0 1 0 .01 0M12 29h16',
+  b: 'M22.5 12l-3.5 11M12 29h16',
+  q: 'M12 29h16',
+  k: 'M15 19.5l2.5 3.5M25 19.5l-2.5 3.5M12 29h16'
+};
+const START = ['rnbqkbnr','pppppppp','........','........','........','........','PPPPPPPP','RNBQKBNR'].map(r => r.split(''));
+// Each ply: SAN, from, to (row,col), optional tip.
+const LINE = [
+  { san: 'e4', from: [6,4], to: [4,4], title: 'Claim the centre', tip: 'The king pawn takes space in the centre and opens lines for the queen and the light-squared bishop.' },
+  { san: 'e5', from: [1,4], to: [3,4] },
+  { san: 'Nf3', from: [7,6], to: [5,5], title: 'Develop with a threat', tip: 'The knight develops toward the centre and attacks e5 at the same time, forcing Black to respond.' },
+  { san: 'Nc6', from: [0,1], to: [2,2] },
+  { san: 'Bc4', from: [7,5], to: [4,2], title: 'Eye the weak f7 square', tip: 'On c4 the bishop points at f7, defended only by the king. Watch for Ng5 ideas and prepare to castle short.' },
+  { san: 'Bc5', from: [0,5], to: [3,2], title: 'Black mirrors', tip: 'Black takes the same diagonal aiming at f2. Both sides now fight for the d4 and d5 squares.' },
+  { san: 'c3', from: [6,2], to: [5,2], title: 'Prepare d4', tip: 'c3 supports a later d4 push to build a full pawn centre. Playing d4 immediately would let Black trade pieces too easily.' },
+  { san: 'Nf6', from: [0,6], to: [2,5] },
+  { san: 'd3', from: [6,3], to: [5,3], title: 'The quiet Giuoco Pianissimo', tip: 'A slow, solid setup: keep the centre closed, castle, and later push d4 when the pieces are ready.' },
+  { san: 'd6', from: [1,3], to: [2,3] },
+];
+
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { ply: 5 }; }
+  boardAt(ply) {
+    const b = START.map(r => r.slice());
+    for (let i = 0; i < ply; i++) { const m = LINE[i]; b[m.to[0]][m.to[1]] = b[m.from[0]][m.from[1]]; b[m.from[0]][m.from[1]] = '.'; }
+    return b;
+  }
+  renderVals() {
+    const { ply } = this.state;
+    const b = this.boardAt(ply);
+    const last = ply > 0 ? LINE[ply - 1] : null;
+    const cells = [];
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const p = b[r][c];
+      const hl = last && ((last.from[0] === r && last.from[1] === c) || (last.to[0] === r && last.to[1] === c));
+      cells.push({ cls: (r + c) % 2 ? 'dark' : '', border: hl ? '3px solid #000' : '0 solid transparent', hasPiece: p !== '.', d: p !== '.' ? PATH[p.toLowerCase()] : '', dt: p !== '.' ? DETAIL[p.toLowerCase()] : '', fill: p !== '.' && p === p.toUpperCase() ? '#fff' : '#000', ds: p !== '.' && p === p.toUpperCase() ? '#000' : '#fff' });
+    }
+    const moveChips = LINE.map((m, i) => ({ label: (i % 2 === 0 ? (i / 2 + 1) + '.' : '') + m.san, cls: i === ply - 1 ? 'cur' : '' }));
+    const tip = last && last.tip;
+    return {
+      cells, moveChips,
+      plyLabel: ply === 0 ? 'start' : Math.ceil(ply / 2) + (ply % 2 ? ' (White)' : ' (Black)'),
+      sideLabel: ply >= LINE.length ? 'End of line' : (ply % 2 === 0 ? 'White to move' : 'Black to move'),
+      hasTip: !!tip, noTip: !tip, tipTitle: tip ? last.title : '', tip: tip || '',
+      next: () => this.setState({ ply: Math.min(LINE.length, ply + 1) }),
+      prev: () => this.setState({ ply: Math.max(0, ply - 1) }),
+      restart: () => this.setState({ ply: 0 })
+    };
+  }
+}
+</script>
+</body>
+</html>
