@@ -485,8 +485,14 @@ void ChessGameActivity::drawPlayerBar(int y, bool opponentRow) const {
   constexpr int step = chess_view::SMALL_GLYPH_SIZE - 8;
   int x = right - leadWidth - (leadWidth > 0 ? 6 : 0) - count * step;
   x = std::max(x, left + pageWidth / 3);
+  // Stand the pieces on the name's baseline instead of the row's top edge. Every
+  // glyph in the set is drawn with 2 px of clearance below it inside its box
+  // (scripts/gen_chess_pieces.py gives them all one base line), so subtracting that
+  // puts the piece's own foot where the text sits rather than a third of a row above.
+  constexpr int glyphBasePad = 2;
+  const int glyphY = y + renderer.getFontAscenderSize(UI_12_FONT_ID) - glyph + glyphBasePad;
   for (int i = 0; i < count; i++) {
-    chess_view::drawPiece(renderer, captured[i], x, y, glyph);
+    chess_view::drawPiece(renderer, captured[i], x, glyphY, glyph);
     x += step;
   }
   if (leadText[0] != '\0') {
