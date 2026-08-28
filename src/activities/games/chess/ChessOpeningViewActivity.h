@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "ChessBoardView.h"
 #include "ChessGame.h"
@@ -27,6 +29,20 @@ class ChessOpeningViewActivity final : public Activity {
   void drawMoveChips(int y, int width) const;
   void renderTipPage() const;
 
+  // The opened tip is a panel sized to its own text, not a full page: most notes
+  // are two or three lines and a screen-tall block of white around them reads as a
+  // rendering fault. Long ones stop at what fits and scroll instead. Measured in one
+  // place because the scroll clamp in loop() and the panel in render() have to agree
+  // about how many lines fit.
+  struct TipLayout {
+    std::vector<std::string> lines;
+    int shownLines = 0;  // how many of them the panel has room for
+    int maxScroll = 0;   // first line the panel may start at
+    int panelHeight = 0;
+    int panelY = 0;
+  };
+  TipLayout tipLayout() const;
+
   // Same three-step axis as the game board: the tip block sits below the board, so
   // Down steps onto it and Confirm opens it. The inline block is capped at four
   // lines by the space under the board, which truncates the longer coaching notes;
@@ -40,4 +56,7 @@ class ChessOpeningViewActivity final : public Activity {
   int lineIndex_ = 0;
   int ply_ = 0;
   int totalPlies_ = 0;
+  // First body line drawn in the opened tip. Reset whenever one is opened, so every
+  // note starts at its beginning rather than wherever the last one was left.
+  int tipScroll_ = 0;
 };

@@ -96,16 +96,31 @@ void ChessOpeningViewActivity::loop() {
       // Nothing to confirm once the page is open -- one labelled way out, Back.
       if (focus_ == Focus::Tip) {
         focus_ = Focus::TipReading;
+        tipScroll_ = 0;
         requestUpdate();
       }
       return;
     }
     // Up steps back onto the board from the highlighted block, matching the game
-    // screen; inside the opened page it does nothing, Back closes it.
+    // screen. Inside the opened panel the same two buttons scroll a note too long to
+    // fit it, and do nothing when the whole note is already on screen.
     buttonNavigator_.onPress({MappedInputManager::Button::Up}, [this] {
-      if (focus_ != Focus::Tip) return;
-      focus_ = Focus::Board;
-      requestUpdate();
+      if (focus_ == Focus::Tip) {
+        focus_ = Focus::Board;
+        requestUpdate();
+        return;
+      }
+      if (tipScroll_ > 0) {
+        tipScroll_--;
+        requestUpdate();
+      }
+    });
+    buttonNavigator_.onPress({MappedInputManager::Button::Down}, [this] {
+      if (focus_ != Focus::TipReading) return;
+      if (tipScroll_ < tipLayout().maxScroll) {
+        tipScroll_++;
+        requestUpdate();
+      }
     });
     return;
   }
@@ -172,6 +187,13 @@ void ChessOpeningViewActivity::drawMoveChips(int y, int width) const {
 // gives every line a different left edge and the eye loses the start of the next one.
 // UITheme only offers the centred wrapper, so this walks the wrapped lines itself.
 namespace {
+// Well past the longest note in the book, and only an upper bound: wrappedText
+// truncates with an ellipsis at its cap, which would silently eat the tail of a
+// tip the panel is supposed to let you scroll to.
+constexpr int MAX_TIP_LINES = 64;
+// Breathing room inside the tip panel, on all four sides.
+constexpr int TIP_PANEL_PADDING = 16;
+
 void drawTipBody(const GfxRenderer& renderer, Rect bounds, const char* text, int maxLines) {
   if (text == nullptr || *text == '\0' || bounds.width <= 0) return;
   const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
@@ -185,10 +207,41 @@ void drawTipBody(const GfxRenderer& renderer, Rect bounds, const char* text, int
     y += lineHeight;
   }
 }
+
+// Panel chrome above the body: the padding, the ply label and the rule under it.
+int tipPanelChromeHeight(const GfxRenderer& renderer) {
+  return TIP_PANEL_PADDING * 2 + renderer.getLineHeight(UI_10_FONT_ID) + 6 + 1 + 10;
+}
 }  // namespace
 
-// The tip on its own page: no board above it, so the body gets the whole screen
-// and the longer notes stop being cut off after four lines.
+ChessOpeningViewActivity::TipLayout ChessOpeningViewActivity::tipLayout() const {
+  TipLayout layout;
+  const chess_book::Tip* tip = chess_book::tipForPly(chess_book::lineAt(lineIndex_), ply_);
+  if (tip == nullptr) return layout;
+
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int pageWidth = renderer.getScreenWidth();
+  const int side = metrics.contentSidePadding;
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  if (lineHeight <= 0) return layout;
+
+  const int textWidth = pageWidth - side * 2 - TIP_PANEL_PADDING * 2;
+  layout.lines = renderer.wrappedText(UI_12_FONT_ID, I18N.get(tip->body), textWidth, MAX_TIP_LINES);
+
+  const int regionTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int regionHeight = renderer.getScreenHeight() - metrics.buttonHintsHeight - regionTop - metrics.verticalSpacing;
+  const int roomForLines = (regionHeight - tipPanelChromeHeight(renderer)) / lineHeight;
+
+  layout.shownLines = std::clamp(static_cast<int>(layout.lines.size()), 1, std::max(1, roomForLines));
+  layout.maxScroll = std::max(0, static_cast<int>(layout.lines.size()) - layout.shownLines);
+  layout.panelHeight = tipPanelChromeHeight(renderer) + layout.shownLines * lineHeight;
+  layout.panelY = regionTop + std::max(0, (regionHeight - layout.panelHeight) / 2);
+  return layout;
+}
+
+// The tip in a panel of its own, sized to the note rather than to the screen. The
+// board is not drawn behind it, so a long note gets the room a four-line block under
+// the board could not give it -- but only as much of it as the note actually needs.
 void ChessOpeningViewActivity::renderTipPage() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& line = chess_book::lineAt(lineIndex_);
@@ -196,27 +249,38 @@ void ChessOpeningViewActivity::renderTipPage() const {
   if (tip == nullptr) return;
 
   const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
   const int side = metrics.contentSidePadding;
-  const int hintsTop = pageHeight - metrics.buttonHintsHeight;
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, I18N.get(tip->title));
 
-  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const TipLayout layout = tipLayout();
+  const int panelWidth = pageWidth - side * 2;
+  renderer.fillRect(side, layout.panelY, panelWidth, layout.panelHeight, false);
+  renderer.drawRect(side, layout.panelY, panelWidth, layout.panelHeight, 2, true);
+
+  int y = layout.panelY + TIP_PANEL_PADDING;
   char plyLabel[48];
   snprintf(plyLabel, sizeof(plyLabel), tr(STR_CHESS_MOVE_FMT), (ply_ + 1) / 2,
            (ply_ % 2 == 1) ? tr(STR_CHESS_WHITE) : tr(STR_CHESS_BLACK));
-  renderer.drawText(UI_10_FONT_ID, side, y, plyLabel, true);
+  renderer.drawText(UI_10_FONT_ID, side + TIP_PANEL_PADDING, y, plyLabel, true);
   y += renderer.getLineHeight(UI_10_FONT_ID) + 6;
-  renderer.fillRect(side, y, pageWidth - side * 2, 1, true);
+  renderer.fillRect(side + TIP_PANEL_PADDING, y, panelWidth - TIP_PANEL_PADDING * 2, 1, true);
   y += 10;
 
-  const int bodyHeight = hintsTop - y - metrics.verticalSpacing;
-  drawTipBody(renderer, Rect{side, y, pageWidth - side * 2, bodyHeight}, I18N.get(tip->body),
-              bodyHeight / renderer.getLineHeight(UI_12_FONT_ID));
+  const int first = std::clamp(tipScroll_, 0, layout.maxScroll);
+  for (int i = first; i < first + layout.shownLines && i < static_cast<int>(layout.lines.size()); i++) {
+    renderer.drawText(UI_12_FONT_ID, side + TIP_PANEL_PADDING, y, layout.lines[i].c_str(), true);
+    y += lineHeight;
+  }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "", /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  // Only when there is something below the fold: hints for buttons that do nothing
+  // are worse than none, and most notes fit whole.
+  if (layout.maxScroll > 0) {
+    GUI.drawSideButtonHints(renderer, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  }
 }
 
 void ChessOpeningViewActivity::render(RenderLock&&) {
