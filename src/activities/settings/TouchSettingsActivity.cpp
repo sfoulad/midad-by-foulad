@@ -11,6 +11,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "components/icons/customListIcons.h"
+#include "components/icons/midadTouchIcons.h"
 #include "fontIds.h"
 
 namespace fui = freeink::ui;
