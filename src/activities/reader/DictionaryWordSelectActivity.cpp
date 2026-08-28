@@ -371,8 +371,11 @@ void DictionaryWordSelectActivity::drawSelectionHighlight() {
 void DictionaryWordSelectActivity::lookupSelectedWord() {
   if (rows.empty()) return;
   const int wordIndex = rows[currentRow].wordIndices[currentWordInRow];
-  const std::string query = words[wordIndex].lookupText.empty() ? DictionaryStore::cleanWord(words[wordIndex].text)
-                                                                : words[wordIndex].lookupText;
+  lookupQuery(words[wordIndex].lookupText.empty() ? DictionaryStore::cleanWord(words[wordIndex].text)
+                                                  : words[wordIndex].lookupText);
+}
+
+void DictionaryWordSelectActivity::lookupQuery(const std::string& query) {
   freeSelectionRegionCache();
   if (auto* fcm = renderer.getFontCacheManager()) {
     fcm->clearCache();
@@ -461,6 +464,16 @@ void DictionaryWordSelectActivity::lookupSelectedWord() {
 }
 
 void DictionaryWordSelectActivity::loop() {
+  // Deferred to the first loop rather than run in onEnter(): the lookup draws its
+  // own progress popup and pushes a child activity, both of which need this screen
+  // to be the one the render task is actually serving.
+  if (!initialQuery.empty()) {
+    const std::string query = DictionaryStore::cleanWord(initialQuery);
+    initialQuery.clear();
+    lookupQuery(query);
+    return;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     ActivityResult result;
     result.isCancelled = true;

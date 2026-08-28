@@ -12,13 +12,19 @@
 
 class DictionaryWordSelectActivity final : public Activity {
  public:
+  // `initialQuery` non-empty means the word did not come off the page: the reader's
+  // "Type a word" row collected it on the keyboard and handed it over. It is looked
+  // up once, on the first loop, and the screen then behaves as normal word select --
+  // so a typed lookup lands the user on the page they were reading rather than back
+  // in a menu, and a second word can be picked by hand without reopening anything.
   DictionaryWordSelectActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::shared_ptr<Page> page,
-                               int readerFontId, int marginLeft, int marginTop)
+                               int readerFontId, int marginLeft, int marginTop, std::string initialQuery = "")
       : Activity("DictionaryWordSelect", renderer, mappedInput),
         page(std::move(page)),
         readerFontId(readerFontId),
         marginLeft(marginLeft),
-        marginTop(marginTop) {}
+        marginTop(marginTop),
+        initialQuery(std::move(initialQuery)) {}
 
   void onEnter() override;
   void onExit() override;
@@ -71,6 +77,9 @@ class DictionaryWordSelectActivity final : public Activity {
   int readerFontId = 0;
   int marginLeft = 0;
   int marginTop = 0;
+  // Cleared as it is consumed, so the lookup fires once rather than on every loop
+  // and on every return from the definition screen.
+  std::string initialQuery;
   std::vector<WordInfo> words;
   std::vector<Row> rows;
   int currentRow = 0;
@@ -93,6 +102,9 @@ class DictionaryWordSelectActivity final : public Activity {
   void moveRow(int delta);
   void moveWord(int delta);
   void lookupSelectedWord();
+  // Everything after the query is known: the prepare-progress popup, the index
+  // lookup, and pushing the definition, the suggestion list or the failure popup.
+  void lookupQuery(const std::string& query);
   void updateSelectionHighlight();
   bool redrawSelectionFast();
   void prewarmCurrentSelectionText() const;

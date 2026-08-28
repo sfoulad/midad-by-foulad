@@ -48,6 +48,7 @@
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "activities/reader/MidadSyncActivity.h"
+#include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookReaderSettings.h"
@@ -565,6 +566,38 @@ void EpubReaderActivity::openDictionaryWordSelect() {
   } else {
     requestUpdate();
   }
+}
+
+void EpubReaderActivity::openDictionaryTypedLookup() {
+  if (!DICTIONARIES.hasActiveDictionary()) {
+    showDictionaryMessage = true;
+    dictionaryMessageTime = millis();
+    requestUpdate();
+    return;
+  }
+  startActivityForResult(
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_LOOKUP_TYPE_WORD), "", 63, InputType::Text),
+      [this](const ActivityResult& result) {
+        if (result.isCancelled) {
+          requestUpdate();
+          return;
+        }
+        const auto* typed = std::get_if<KeyboardResult>(&result.data);
+        if (typed == nullptr || typed->text.empty()) {
+          requestUpdate();
+          return;
+        }
+        int marginLeft = 0, marginTop = 0;
+        auto page = loadCurrentPageForLookup(marginLeft, marginTop);
+        if (!page) {
+          requestUpdate();
+          return;
+        }
+        startActivityForResult(
+            std::make_unique<DictionaryWordSelectActivity>(
+                renderer, mappedInput, std::move(page), SETTINGS.getReaderFontId(), marginLeft, marginTop, typed->text),
+            [this](const ActivityResult&) { requestUpdate(); });
+      });
 }
 
 void EpubReaderActivity::loop() {
@@ -1293,6 +1326,10 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
     }
     case EpubReaderMenuActivity::MenuAction::LOOKUP_WORD: {
       openDictionaryWordSelect();
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::TYPE_WORD: {
+      openDictionaryTypedLookup();
       break;
     }
     case EpubReaderMenuActivity::MenuAction::LOOKUP_HISTORY: {

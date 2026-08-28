@@ -33,6 +33,7 @@ class EpubReaderMenuActivity final : public Activity {
     BOOKMARKS,
     TOGGLE_BOOKMARK,
     LOOKUP_WORD,
+    TYPE_WORD,
     LOOKUP_HISTORY,
     SCREENSHOT,
     DISPLAY_QR,

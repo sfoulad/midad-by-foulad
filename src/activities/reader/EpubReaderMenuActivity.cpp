@@ -143,12 +143,17 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildDicti
   std::vector<MenuItem> items;
   // Only reached at all when a dictionary is installed -- buildTabOrder() drops the
   // whole tab otherwise, so no row here needs its own hasAnyDictionary() guard.
-  items.reserve(4);
-  // Labelled "Look up a word", not "Dictionary". On the old Reading tab the row was
-  // deliberately named for the feature, so it read the same whether reached from the
-  // reader or from Settings; inside a tab already called Dictionary the tab supplies
-  // that name and the row is free to say what it does.
-  items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_LOOKUP_WORD});
+  items.reserve(5);
+  // Two ways in, spelled out as two rows rather than left to be discovered. Picking
+  // a word off the page is the fast path when the word is in front of you; typing is
+  // the only path when it is not -- a word you heard, or one on a page you have
+  // already turned past -- and until now the reader offered no way to do it at all
+  // without leaving the book for the Dictionary app.
+  //
+  // Neither row is labelled "Dictionary": inside a tab already called Dictionary the
+  // tab supplies that name and the rows are free to say what they do.
+  items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_LOOKUP_SELECT_WORD});
+  items.push_back({MenuAction::TYPE_WORD, StrId::STR_LOOKUP_TYPE_WORD});
   items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
   // The reason this tab exists: switching dictionaries mid-book used to mean leaving
   // the reader for Settings -> Dictionary and finding your place again. Just

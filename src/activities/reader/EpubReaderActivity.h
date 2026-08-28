@@ -170,6 +170,10 @@ class EpubReaderActivity final : public ReaderActivity {
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
   void openDictionaryWordSelect();
+  // "Type a word": collect the query on the keyboard, then hand it to the same
+  // word-select screen the page path uses, which looks it up and leaves the user on
+  // the page rather than back in the menu.
+  void openDictionaryTypedLookup();
   bool launchKOReaderSync();
   // Midad equivalent: same save-release-replace shape, see the implementation.
   void launchMidadSync();
