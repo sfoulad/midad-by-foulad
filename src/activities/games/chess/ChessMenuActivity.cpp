@@ -23,11 +23,8 @@ void ChessMenuActivity::onEnter() {
 
 ChessMenuActivity::Row ChessMenuActivity::rowKindAt(int index) const {
   if (index == 0) return Row::NewGame;
-  if (hasSaved_) {
-    if (index == 1) return Row::Continue;
-    return (index == 2) ? Row::Openings : Row::Statistics;
-  }
-  return (index == 1) ? Row::Openings : Row::Statistics;
+  if (hasSaved_ && index == 1) return Row::Continue;
+  return Row::Openings;
 }
 
 void ChessMenuActivity::loop() {
@@ -71,10 +68,6 @@ void ChessMenuActivity::launchSelected() {
       startActivityForResult(std::make_unique<ChessOpeningsActivity>(renderer, mappedInput),
                              [](const ActivityResult&) {});
       break;
-    case Row::Statistics:
-      // The record already sits under the list; selecting it just redraws.
-      requestUpdate();
-      break;
   }
 }
 
@@ -83,7 +76,6 @@ void ChessMenuActivity::render(RenderLock&&) {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
-  const int pageHeight = renderer.getScreenHeight();
 
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_CHESS));
 
@@ -107,42 +99,10 @@ void ChessMenuActivity::render(RenderLock&&) {
                      return tr(STR_CHESS_NEW_GAME);
                    case Row::Continue:
                      return continueLabel;
-                   case Row::Openings:
-                     return tr(STR_CHESS_LEARN_OPENINGS);
                    default:
-                     return tr(STR_CHESS_STATISTICS);
+                     return tr(STR_CHESS_LEARN_OPENINGS);
                  }
                });
-
-  // Record block: one rule, then two label/value rows, matching the design.
-  int totalWins = 0, totalLosses = 0, totalDraws = 0;
-  for (int i = 0; i < chess::LEVEL_COUNT; i++) {
-    totalWins += CHESS_STORE.getWins(static_cast<uint8_t>(i));
-    totalLosses += CHESS_STORE.getLosses(static_cast<uint8_t>(i));
-    totalDraws += CHESS_STORE.getDraws(static_cast<uint8_t>(i));
-  }
-
-  const int side = metrics.contentSidePadding;
-  int y = listTop + listHeight + metrics.verticalSpacing;
-  renderer.fillRect(side, y, pageWidth - side * 2, 1, true);
-  y += metrics.verticalSpacing;
-
-  const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-  char value[64];
-  snprintf(value, sizeof(value), "%d W  %d L  %d D", totalWins, totalLosses, totalDraws);
-  renderer.drawText(UI_10_FONT_ID, side, y, tr(STR_CHESS_RECORD), true);
-  renderer.drawText(UI_10_FONT_ID, pageWidth - side - renderer.getTextWidth(UI_10_FONT_ID, value), y, value, true);
-  y += lineHeight + 4;
-
-  const int beaten = CHESS_STORE.strongestBeaten();
-  if (beaten >= 0) {
-    snprintf(value, sizeof(value), "%s (~%u)", I18N.get(chess_persona::at(beaten).name),
-             chess_persona::at(beaten).rating);
-  } else {
-    snprintf(value, sizeof(value), "%s", tr(STR_CHESS_NONE_YET));
-  }
-  renderer.drawText(UI_10_FONT_ID, side, y, tr(STR_CHESS_STRONGEST_BEATEN), true);
-  renderer.drawText(UI_10_FONT_ID, pageWidth - side - renderer.getTextWidth(UI_10_FONT_ID, value), y, value, true);
 
   const auto labels =
       mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);

@@ -161,12 +161,46 @@ void ChessGameActivity::moveCursor(int fileDelta, int rankDelta) {
   // The cursor moves in SCREEN directions, so flip the deltas when the board is
   // drawn from Black's side or "right" would walk left.
   const int step = flipped_ ? -1 : 1;
-  int file = chess::fileOf(cursor_) + fileDelta * step;
-  int rank = chess::rankOf(cursor_) + rankDelta * step;
-  file = std::clamp(file, 0, 7);
-  rank = std::clamp(rank, 0, 7);
-  cursor_ = chess::squareOf(file, rank);
+  const int file = std::clamp(chess::fileOf(cursor_) + fileDelta * step, 0, 7);
+  const int rank = chess::rankOf(cursor_) + rankDelta * step;
+
+  // Pressing Down on the bottom rank leaves the board for the move list rather
+  // than doing nothing. Only downwards: the top rank still clamps, because there
+  // is nothing above the board to step onto.
+  if (rankDelta != 0 && (rank < 0 || rank > 7)) {
+    const bool leavingBottom = flipped_ ? (rank > 7) : (rank < 0);
+    if (leavingBottom && rankDelta < 0 && game_->plyCount() > 0) {
+      focus_ = Focus::MoveList;
+      selected_ = -1;
+      refreshLegalTargets();
+    }
+    requestUpdate();
+    return;
+  }
+
+  cursor_ = chess::squareOf(file, std::clamp(rank, 0, 7));
   requestUpdate();
+}
+
+void ChessGameActivity::cursorToOwnKing() {
+  const chess::Piece king = chess::makePiece(chess::KING, playerIsWhite_);
+  for (int square = 0; square < 128; square++) {
+    if ((square & 0x88) != 0) continue;
+    if (game_->board().at(static_cast<uint8_t>(square)) == king) {
+      cursor_ = square;
+      return;
+    }
+  }
+}
+
+void ChessGameActivity::leaveReview() {
+  focus_ = Focus::Board;
+  cursorToOwnKing();
+  requestUpdate();
+}
+
+const chess::Board& ChessGameActivity::visibleBoard() const {
+  return focus_ == Focus::Review ? reviewBoard_ : game_->board();
 }
 
 void ChessGameActivity::applyPlayerMove(uint8_t from, uint8_t to) {
@@ -323,6 +357,65 @@ void ChessGameActivity::loop() {
     return;
   }
 
+  // --- move list focused / being reviewed ---
+  //
+  // Up and Down are the SIDE buttons (Button::Up/Down are hardwired to BTN_UP /
+  // BTN_DOWN). They used to be double-bound: the cursor read Up/Down while the
+  // same physical presses ALSO reached PageBack/PageForward, so every attempt to
+  // walk the cursor up the board took back a move and every attempt to walk it
+  // down flipped the board. Both of those bindings are gone; the side buttons do
+  // nothing now but move up and down, on the board and in the move list alike.
+  if (focus_ != Focus::Board) {
+    buttonNavigator_.onPress({MappedInputManager::Button::Up}, [this] {
+      if (focus_ == Focus::MoveList) {
+        // Up out of the move list goes back to the board it was entered from.
+        focus_ = Focus::Board;
+        requestUpdate();
+        return;
+      }
+      if (reviewPly_ > 0) {
+        reviewPly_--;
+        game_->positionAt(reviewPly_, reviewBoard_);
+        requestUpdate();
+      }
+    });
+    buttonNavigator_.onPress({MappedInputManager::Button::Down}, [this] {
+      if (focus_ != Focus::Review) return;
+      if (reviewPly_ < game_->plyCount()) {
+        reviewPly_++;
+        game_->positionAt(reviewPly_, reviewBoard_);
+        requestUpdate();
+      }
+    });
+
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      if (focus_ == Focus::MoveList) {
+        // Enter the list at the position on the board, so the first Up is a step
+        // backwards through the game rather than a jump to somewhere else.
+        reviewPly_ = game_->plyCount();
+        if (game_->positionAt(reviewPly_, reviewBoard_)) {
+          focus_ = Focus::Review;
+        }
+        requestUpdate();
+      } else {
+        leaveReview();
+      }
+      return;
+    }
+
+    // Back on RELEASE, like the board branch below: acting on the press would
+    // leave the release edge unconsumed, and the board branch would read it on the
+    // very next frame and exit the game.
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      if (backHandled_) {
+        backHandled_ = false;
+        return;
+      }
+      leaveReview();
+    }
+    return;
+  }
+
   // --- playing ---
   buttonNavigator_.onPress({MappedInputManager::Button::Up}, [this] { moveCursor(0, 1); });
   buttonNavigator_.onPress({MappedInputManager::Button::Down}, [this] { moveCursor(0, -1); });
@@ -330,26 +423,6 @@ void ChessGameActivity::loop() {
   buttonNavigator_.onPress({MappedInputManager::Button::Right}, [this] { moveCursor(1, 0); });
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) handleConfirm();
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
-    flipped_ = !flipped_;
-    requestUpdate();
-  }
-
-  if (mappedInput.wasPressed(MappedInputManager::Button::PageBack) && state_ == State::Playing && playerToMove()) {
-    // Take back the pair: the engine's reply and the player's own move.
-    if (game_->undoPly()) game_->undoPly();
-    selected_ = -1;
-    lastFrom_ = lastTo_ = -1;
-    if (game_->plyCount() > 0) {
-      const chess::Move& last = game_->moveAt(game_->plyCount() - 1);
-      lastFrom_ = last.from;
-      lastTo_ = last.to;
-    }
-    refreshLegalTargets();
-    persist();
-    requestUpdate();
-  }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) backHandled_ = false;
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -419,32 +492,63 @@ void ChessGameActivity::drawPlayerBar(int y, bool opponentRow) const {
   (void)metrics;
 }
 
-void ChessGameActivity::drawMoveList(int y) const {
+void ChessGameActivity::drawMoveList(int y, int height) const {
   const int left = layout_.x;
   const int right = layout_.x + layout_.size;
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int blockTop = y;
+
   renderer.fillRect(left, y, right - left, 1, true);
   y += 8;
 
-  // Last three move pairs, oldest at the top -- enough to see the current
-  // sequence without turning the panel into a scoresheet.
   const int plies = game_->plyCount();
   const int pairs = (plies + 1) / 2;
-  const int firstPair = std::max(0, pairs - 3);
-  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  // Three pairs is enough to see the current sequence while playing; reviewing is
+  // reading the scoresheet, so it uses whatever rows the panel actually has.
+  const int visiblePairs = std::max(1, std::min(focus_ == Focus::Review ? (height - 12) / lineHeight : 3, pairs));
 
-  for (int pair = firstPair; pair < pairs; pair++) {
+  // Keep the pair the review cursor sits on inside the window, scrolling it to the
+  // bottom as the cursor walks forward and to the top as it walks back.
+  int firstPair = std::max(0, pairs - visiblePairs);
+  if (focus_ == Focus::Review) {
+    const int cursorPair = std::max(0, (reviewPly_ - 1) / 2);
+    firstPair = std::clamp(firstPair, std::max(0, cursorPair - visiblePairs + 1), cursorPair);
+  }
+
+  for (int pair = firstPair; pair < std::min(pairs, firstPair + visiblePairs); pair++) {
     char number[8];
     snprintf(number, sizeof(number), "%d.", pair + 1);
     const int numberWidth = renderer.getTextWidth(UI_12_FONT_ID, number);
+
+    // The record being previewed is inverted, so "which move produced this board"
+    // is answerable from the list rather than from the ply counter alone.
+    const int whitePly = pair * 2;
+    const bool whiteCurrent = (focus_ == Focus::Review && reviewPly_ == whitePly + 1);
+    const bool blackCurrent = (focus_ == Focus::Review && reviewPly_ == whitePly + 2);
+    if (whiteCurrent) renderer.fillRect(left + 38, y - 2, 88, lineHeight, true);
+    if (blackCurrent) renderer.fillRect(left + 128, y - 2, 88, lineHeight, true);
+
     renderer.drawText(UI_12_FONT_ID, left + 32 - numberWidth, y, number, true);
-    renderer.drawText(UI_12_FONT_ID, left + 42, y, game_->sanAt(pair * 2), true);
-    if (pair * 2 + 1 < plies) renderer.drawText(UI_12_FONT_ID, left + 132, y, game_->sanAt(pair * 2 + 1), true);
+    renderer.drawText(UI_12_FONT_ID, left + 42, y, game_->sanAt(whitePly), !whiteCurrent);
+    if (whitePly + 1 < plies) {
+      renderer.drawText(UI_12_FONT_ID, left + 132, y, game_->sanAt(whitePly + 1), !blackCurrent);
+    }
     y += lineHeight;
+  }
+
+  // Focus box around the whole block, the same affordance a selected list row gets:
+  // the move list is a thing you have stepped onto, not just a thing being drawn.
+  if (focus_ != Focus::Board) {
+    renderer.drawRect(left - 4, blockTop + 4, right - left + 8, std::max(y - blockTop, lineHeight + 8), 2, true);
   }
 
   y = std::max(y, layout_.y + layout_.size + 4);
   const char* status = tr(STR_CHESS_YOUR_MOVE);
-  if (state_ == State::Thinking) {
+  if (focus_ == Focus::MoveList) {
+    status = tr(STR_CHESS_MOVES);
+  } else if (focus_ == Focus::Review) {
+    status = tr(STR_CHESS_REVIEWING);
+  } else if (state_ == State::Thinking) {
     status = tr(STR_CHESS_THINKING);
   } else if (state_ == State::GameOver) {
     status = tr(STR_CHESS_GAME_OVER);
@@ -454,6 +558,12 @@ void ChessGameActivity::drawMoveList(int y) const {
     status = tr(STR_CHESS_THINKING);
   }
   renderer.drawText(UI_12_FONT_ID, left, y + 6, status, true, EpdFontFamily::BOLD);
+
+  // The side buttons carry up/down here, and they have no slot in the four-button
+  // hint bar, so they get their own line -- the same reason the dictionary spells
+  // out "Up"/"Down" instead of leaving the user to guess which button scrolls.
+  const char* sideHint = (focus_ == Focus::Review) ? tr(STR_CHESS_HINT_STEP) : tr(STR_CHESS_HINT_UP_DOWN);
+  renderer.drawText(SMALL_FONT_ID, right - renderer.getTextWidth(SMALL_FONT_ID, sideHint), y + 8, sideHint, true);
 }
 
 void ChessGameActivity::drawOverlay() const {
@@ -557,26 +667,48 @@ void ChessGameActivity::render(RenderLock&&) {
   drawPlayerBar(topBarY, /*opponentRow=*/true);
 
   chess_view::Highlights highlights;
-  highlights.cursor = (state_ == State::Playing && playerToMove()) ? cursor_ : -1;
-  highlights.selected = selected_;
-  highlights.lastFrom = lastFrom_;
-  highlights.lastTo = lastTo_;
-  highlights.legalTargets = (selected_ >= 0) ? legalTargets_ : nullptr;
-  chess_view::drawBoard(renderer, game_->board(), layout_, highlights, flipped_);
+  highlights.cursor = (focus_ == Focus::Board && state_ == State::Playing && playerToMove()) ? cursor_ : -1;
+  highlights.selected = (focus_ == Focus::Board) ? selected_ : -1;
+  if (focus_ == Focus::Review) {
+    // The move that produced the position on screen, not the game's last move.
+    if (reviewPly_ > 0) {
+      const chess::Move& shown = game_->moveAt(reviewPly_ - 1);
+      highlights.lastFrom = shown.from;
+      highlights.lastTo = shown.to;
+    }
+  } else {
+    highlights.lastFrom = lastFrom_;
+    highlights.lastTo = lastTo_;
+    highlights.legalTargets = (selected_ >= 0) ? legalTargets_ : nullptr;
+  }
+  chess_view::drawBoard(renderer, visibleBoard(), layout_, highlights, flipped_);
 
   const int bottomBarY = layout_.y + layout_.size + 6;
   drawPlayerBar(bottomBarY, /*opponentRow=*/false);
-  drawMoveList(bottomBarY + barHeight + 2);
+  const int moveListTop = bottomBarY + barHeight + 2;
+  drawMoveList(moveListTop, hintsTop - moveListTop - renderer.getLineHeight(UI_12_FONT_ID) - 12);
 
   drawOverlay();
 
   const char* backLabel = (selected_ >= 0) ? tr(STR_CANCEL) : tr(STR_BACK);
   const char* confirmLabel = (selected_ >= 0) ? tr(STR_CHESS_MOVE) : tr(STR_SELECT);
-  if (state_ == State::GameOver || state_ == State::QuitMenu) {
+  // Left/Right only mean anything on the board; blanked off it so the bar does not
+  // advertise two buttons that do nothing in the move list.
+  const char* leftLabel = tr(STR_DIR_LEFT);
+  const char* rightLabel = tr(STR_DIR_RIGHT);
+  if (focus_ == Focus::MoveList) {
+    backLabel = tr(STR_BACK);
+    confirmLabel = tr(STR_CHESS_REVIEW_MOVES);
+    leftLabel = rightLabel = "";
+  } else if (focus_ == Focus::Review) {
+    backLabel = tr(STR_CHESS_BACK_TO_BOARD);
+    confirmLabel = tr(STR_CHESS_BACK_TO_BOARD);
+    leftLabel = rightLabel = "";
+  } else if (state_ == State::GameOver || state_ == State::QuitMenu) {
     backLabel = tr(STR_BACK);
     confirmLabel = tr(STR_SELECT);
   }
-  const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, tr(STR_DIR_LEFT), tr(STR_DIR_RIGHT),
+  const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, leftLabel, rightLabel,
                                             /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 

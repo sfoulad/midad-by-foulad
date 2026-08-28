@@ -84,6 +84,29 @@ void ChessOpeningViewActivity::gotoPly(int ply) {
 }
 
 void ChessOpeningViewActivity::loop() {
+  const bool hasTip = (chess_book::tipForPly(chess_book::lineAt(lineIndex_), ply_) != nullptr);
+
+  if (focus_ != Focus::Board) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      focus_ = (focus_ == Focus::TipReading) ? Focus::Tip : Focus::Board;
+      requestUpdate();
+      return;
+    }
+    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+      focus_ = (focus_ == Focus::Tip) ? Focus::TipReading : Focus::Board;
+      requestUpdate();
+      return;
+    }
+    // Up steps back onto the board from the highlighted block, matching the game
+    // screen; inside the opened page it does nothing, Back closes it.
+    buttonNavigator_.onPress({MappedInputManager::Button::Up}, [this] {
+      if (focus_ != Focus::Tip) return;
+      focus_ = Focus::Board;
+      requestUpdate();
+    });
+    return;
+  }
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
     return;
@@ -99,18 +122,14 @@ void ChessOpeningViewActivity::loop() {
     gotoPly(ply_ - 1);
     requestUpdate();
   });
-  if (mappedInput.wasPressed(MappedInputManager::Button::PageForward)) {
-    if (ply_ < totalPlies_) {
-      gotoPly(ply_ + 1);
-      requestUpdate();
-    }
-  }
-  if (mappedInput.wasPressed(MappedInputManager::Button::PageBack)) {
-    if (ply_ > 0) {
-      gotoPly(ply_ - 1);
-      requestUpdate();
-    }
-  }
+
+  // The side buttons carry the vertical axis, so they step onto the tip block
+  // rather than duplicating Left/Right's ply stepping as they used to.
+  buttonNavigator_.onPress({MappedInputManager::Button::Down}, [this, hasTip] {
+    if (!hasTip) return;
+    focus_ = Focus::Tip;
+    requestUpdate();
+  });
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
     gotoPly(0);
@@ -146,8 +165,47 @@ void ChessOpeningViewActivity::drawMoveChips(int y, int width) const {
   }
 }
 
+// The tip on its own page: no board above it, so the body gets the whole screen
+// and the longer notes stop being cut off after four lines.
+void ChessOpeningViewActivity::renderTipPage() const {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const auto& line = chess_book::lineAt(lineIndex_);
+  const chess_book::Tip* tip = chess_book::tipForPly(line, ply_);
+  if (tip == nullptr) return;
+
+  const int pageWidth = renderer.getScreenWidth();
+  const int pageHeight = renderer.getScreenHeight();
+  const int side = metrics.contentSidePadding;
+  const int hintsTop = pageHeight - metrics.buttonHintsHeight;
+
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, I18N.get(tip->title));
+
+  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  char plyLabel[48];
+  snprintf(plyLabel, sizeof(plyLabel), tr(STR_CHESS_MOVE_FMT), (ply_ + 1) / 2,
+           (ply_ % 2 == 1) ? tr(STR_CHESS_WHITE) : tr(STR_CHESS_BLACK));
+  renderer.drawText(UI_10_FONT_ID, side, y, plyLabel, true);
+  y += renderer.getLineHeight(UI_10_FONT_ID) + 6;
+  renderer.fillRect(side, y, pageWidth - side * 2, 1, true);
+  y += 10;
+
+  const int bodyHeight = hintsTop - y - metrics.verticalSpacing;
+  UITheme::drawCenteredWrappedText(renderer, Rect{side, y, pageWidth - side * 2, bodyHeight}, UI_12_FONT_ID,
+                                   I18N.get(tip->body), /*maxLines=*/bodyHeight / renderer.getLineHeight(UI_12_FONT_ID),
+                                   true, EpdFontFamily::REGULAR, UITheme::TextVerticalAlignment::TOP);
+
+  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CHESS_BACK_TO_BOARD), "", "", /*rtlSwap=*/false);
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+}
+
 void ChessOpeningViewActivity::render(RenderLock&&) {
   renderer.clearScreen();
+
+  if (focus_ == Focus::TipReading) {
+    renderTipPage();
+    renderer.displayBuffer();
+    return;
+  }
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& line = chess_book::lineAt(lineIndex_);
@@ -201,17 +259,29 @@ void ChessOpeningViewActivity::render(RenderLock&&) {
 
   const chess_book::Tip* tip = chess_book::tipForPly(line, ply_);
   if (tip != nullptr) {
+    const int blockTop = y;
     renderer.drawText(UI_10_FONT_ID, layout_.x, y, I18N.get(tip->title), true, EpdFontFamily::BOLD);
     y += renderer.getLineHeight(UI_10_FONT_ID) + 2;
     UITheme::drawCenteredWrappedText(renderer, Rect{layout_.x, y, layout_.size, hintsTop - y - 4}, UI_12_FONT_ID,
                                      I18N.get(tip->body), /*maxLines=*/4, true, EpdFontFamily::REGULAR,
                                      UITheme::TextVerticalAlignment::TOP);
+    if (focus_ == Focus::Tip) {
+      renderer.drawRect(layout_.x - 4, blockTop - 4, layout_.size + 8, hintsTop - blockTop, 2, true);
+    } else {
+      // Only advertised when there is something to open, and only from the board.
+      const char* hint = tr(STR_CHESS_HINT_READ_MORE);
+      renderer.drawText(SMALL_FONT_ID, layout_.x + layout_.size - renderer.getTextWidth(SMALL_FONT_ID, hint), blockTop,
+                        hint, true);
+    }
   } else {
     renderer.drawText(UI_10_FONT_ID, layout_.x, y, tr(STR_CHESS_BOOK_MOVE), true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_CHESS_RESTART), tr(STR_CHESS_PREV), tr(STR_CHESS_NEXT),
-                                            /*rtlSwap=*/false);
+  const auto labels =
+      (focus_ == Focus::Tip)
+          ? mappedInput.mapLabels(tr(STR_BACK), tr(STR_CHESS_READ_MORE), "", "", /*rtlSwap=*/false)
+          : mappedInput.mapLabels(tr(STR_BACK), tr(STR_CHESS_RESTART), tr(STR_CHESS_PREV), tr(STR_CHESS_NEXT),
+                                  /*rtlSwap=*/false);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

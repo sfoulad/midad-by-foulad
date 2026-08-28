@@ -71,10 +71,3 @@ void ChessStore::reportResult(uint8_t level, int outcome) {
 uint16_t ChessStore::getWins(uint8_t level) const { return wins[clampLevel(level)]; }
 uint16_t ChessStore::getLosses(uint8_t level) const { return losses[clampLevel(level)]; }
 uint16_t ChessStore::getDraws(uint8_t level) const { return draws[clampLevel(level)]; }
-
-int ChessStore::strongestBeaten() const {
-  for (int i = chess::LEVEL_COUNT - 1; i >= 0; i--) {
-    if (wins[i] > 0) return i;
-  }
-  return -1;
-}

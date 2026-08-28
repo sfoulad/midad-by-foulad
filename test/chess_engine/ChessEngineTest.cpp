@@ -183,6 +183,47 @@ TEST(ChessGame, UndoRestoresPositionAndCaptures) {
   EXPECT_EQ(count, 0);
 }
 
+TEST(ChessGame, PositionAtReplaysWithoutDisturbingTheGame) {
+  Game game;
+  const char* line[] = {"e4", "e5", "Nf3", "Nc6", "Bb5"};
+  for (const char* san : line) ASSERT_TRUE(game.playSan(san));
+
+  char live[100];
+  ASSERT_TRUE(game.board().toFen(live, sizeof(live)));
+
+  Board at2;
+  ASSERT_TRUE(game.positionAt(2, at2));
+  Game reference;
+  ASSERT_TRUE(reference.playSan("e4"));
+  ASSERT_TRUE(reference.playSan("e5"));
+  char expected[100], actual[100];
+  ASSERT_TRUE(reference.board().toFen(expected, sizeof(expected)));
+  ASSERT_TRUE(at2.toFen(actual, sizeof(actual)));
+  EXPECT_STREQ(actual, expected);
+
+  // Ply 0 is the base position, and ply == plyCount() is the live one.
+  Board start;
+  ASSERT_TRUE(game.positionAt(0, start));
+  char startFen[100];
+  ASSERT_TRUE(start.toFen(startFen, sizeof(startFen)));
+  EXPECT_STREQ(startFen, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+
+  Board latest;
+  ASSERT_TRUE(game.positionAt(game.plyCount(), latest));
+  char latestFen[100];
+  ASSERT_TRUE(latest.toFen(latestFen, sizeof(latestFen)));
+  EXPECT_STREQ(latestFen, live);
+
+  EXPECT_FALSE(game.positionAt(-1, at2));
+  EXPECT_FALSE(game.positionAt(game.plyCount() + 1, at2));
+
+  // Browsing must not unwind the game being browsed.
+  char after[100];
+  ASSERT_TRUE(game.board().toFen(after, sizeof(after)));
+  EXPECT_STREQ(after, live);
+  EXPECT_EQ(game.plyCount(), 5);
+}
+
 TEST(ChessGame, SaveStringRoundTripsPositionAndHistory) {
   Game game;
   const char* line[] = {"e4", "e5", "Nf3", "Nc6", "Bb5", "a6"};

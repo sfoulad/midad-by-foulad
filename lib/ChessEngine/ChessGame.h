@@ -42,6 +42,11 @@ class Game {
   // irrelevant at this scale and far less error-prone than storing undo state.
   bool undoPly();
 
+  // Fills `out` with the position after the first `ply` plies, leaving this game
+  // untouched. Replays from the base FEN like rebuildFromBase(), so the caller
+  // can browse the move list without unwinding the game it is browsing.
+  bool positionAt(int ply, Board& out) const;
+
   int plyCount() const { return plyCount_; }
   const char* sanAt(int ply) const { return (ply >= 0 && ply < plyCount_) ? san_[ply] : ""; }
   const Move& moveAt(int ply) const { return moves_[ply]; }

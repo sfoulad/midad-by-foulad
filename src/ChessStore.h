@@ -46,8 +46,6 @@ class ChessStore : public PersistableStore<ChessStore> {
   uint16_t getWins(uint8_t level) const;
   uint16_t getLosses(uint8_t level) const;
   uint16_t getDraws(uint8_t level) const;
-  // Highest level with at least one win, or -1 when the player has beaten none.
-  int strongestBeaten() const;
 };
 
 #define CHESS_STORE ChessStore::getInstance()

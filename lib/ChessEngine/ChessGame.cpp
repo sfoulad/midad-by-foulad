@@ -116,6 +116,16 @@ void Game::rebuildFromBase() {
   }
 }
 
+bool Game::positionAt(int ply, Board& out) const {
+  if (ply < 0 || ply > plyCount_) return false;
+  if (!out.fromFen(baseFen_)) return false;
+  for (int i = 0; i < ply; i++) {
+    Undo undo;
+    out.makeMove(moves_[i], undo);
+  }
+  return true;
+}
+
 bool Game::undoPly() {
   if (plyCount_ == 0) return false;
   plyCount_--;
