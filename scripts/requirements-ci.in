@@ -1,6 +1,6 @@
 # Source spec for scripts/requirements-ci.lock. Every CI job that installs
-# PlatformIO Core or esptool consumes the generated lock, never this file
-# directly. Regenerate with (pinned uv, matching .github/workflows/ci.yml's
+# PlatformIO Core consumes the generated lock, never this file directly.
+# Regenerate with (pinned uv, matching .github/workflows/ci.yml's
 # lock-regression-guard job):
 #
 #   uv pip compile scripts/requirements-ci.in --python-platform linux \
@@ -42,10 +42,3 @@ bitstring>=4.3.1
 reedsolo>=1.5.3,<1.8
 esp-idf-size>=2.0.0
 esp-coredump>=1.14.0
-
-# Pinned to the exact version validated in Phase 1 Milestone 2 (real sign+
-# verify round-trip run against it, not just --help). Do not bump casually:
-# espsecure's CLI has changed command syntax across major versions before
-# (underscored subcommands -> hyphenated, .py suffix -> bare command) --
-# confirm scripts/sign_firmware.sh's exact invocation still matches first.
-esptool==4.12.0

@@ -54,29 +54,6 @@ jobs:
           PATH="/usr/lib/llvm-21/bin:$PATH" ./bin/clang-format-fix
           git diff --exit-code || (echo "Please run 'bin/clang-format-fix' to fix formatting issues" && exit 1)
 
-  ota-signing-flags:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          ref: ${{ inputs.ref || github.ref }}
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.13'
-
-      - name: Verify every release/RC env enables the OTA boot-signature check
-        run: python3 scripts/check-ota-signing-flags.py
-
-      - name: Lint the production key ceremony wizard
-        # The wizard itself is macOS-only (uses diskutil for backup-drive
-        # detection) and touches real GitHub secrets/backups, so it isn't
-        # exercised end-to-end here -- see docs/ota-production-key-ceremony.md
-        # for how it was validated in rehearsal mode. This just keeps static
-        # analysis enforced on every change to it.
-        run: shellcheck scripts/ota-key-ceremony.sh
-
   cppcheck:
     runs-on: ubuntu-latest
     steps:
@@ -299,27 +276,9 @@ jobs:
           echo "$actual"
           [ "$actual" = "PlatformIO Core, version 6.1.19" ] || { echo "::error::Expected PlatformIO Core 6.1.19, got: $actual"; exit 1; }
 
-      - name: Confirm espsecure/esptool version
-        # generate_signing_key's own version banner is the only way to see
-        # espsecure's version without a real sign/verify round-trip -- the
-        # key itself is throwaway, discarded immediately after.
-        run: |
-          set -euo pipefail
-          tmp_key="$(mktemp -u)"  # -u: name only, no file -- generate_signing_key refuses to overwrite an existing one
-          actual="$(espsecure.py generate_signing_key --version 2 --scheme rsa3072 "$tmp_key" 2>&1 | head -1)"
-          rm -f "$tmp_key"
-          echo "$actual"
-          [ "$actual" = "espsecure.py v4.12.0" ] || { echo "::error::Expected espsecure.py v4.12.0, got: $actual"; exit 1; }
-
       - name: Run Python script tests
-        # Supersedes the old inline "ephemeral sign-and-verify" step: this
-        # suite covers that same real sign+verify round trip (with its own
-        # freshly generated throwaway keys, never secrets.OTA_SIGNING_KEY)
-        # plus tampered/wrong-key/unsigned rejection and sign_firmware.sh's
-        # fail-closed guard clauses (scripts/tests/test_sign_firmware.py),
-        # and scripts/check-ota-signing-flags.py /
-        # scripts/verify_platformio_packages.py's own logic. No artifact,
-        # tag, or release is produced by this step.
+        # Covers scripts/verify_platformio_packages.py's own logic. No
+        # artifact, tag, or release is produced by this step.
         run: python3 -m unittest discover -s scripts/tests -v
 
   # This job is used as the PR required actions check, allows for changes to other steps in the future without breaking
@@ -330,7 +289,6 @@ jobs:
       - build
       - clang-format
       - cppcheck
-      - ota-signing-flags
       - unit-tests
       - lock-regression-guard
       - python-lock-validation

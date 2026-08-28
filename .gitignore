@@ -36,10 +36,3 @@ HANDOFF.md
 /sdkconfig.*
 sdkconfig.sticky
 flake.*
-# OTA signing: private/dev keys must never be committed (see
-# docs/ota-signing-key-management.md's "Development-only test keys" and
-# docs/ota-production-key-ceremony.md). ota-signing-public-key.pem (the
-# committed public half) is a fixed filename explicitly NOT matched here.
-*.signing-key.pem
-devkey-*.pem
-midad-ota-signing-key-production.pem

@@ -495,9 +495,7 @@ esp-pylib==1.1.4 \
     # via esp-idf-size
 esptool==4.12.0 \
     --hash=sha256:d797f6529d582173508baf0572542ddadf53aae8c92c84ea9f420f242464103c
-    # via
-    #   -r scripts/requirements-ci.in
-    #   esp-coredump
+    # via esp-coredump
 fatfs-ng==0.1.15 \
     --hash=sha256:004fbabd21a6d2d3b2c098a1bff3d22533adc40f50afaddaee1837e780a4da6a \
     --hash=sha256:06ae1ab4931ec29a23efa1ebba1d9b4fcbad1abac03a56d0fdb116c4ad4b7815 \
