@@ -32,6 +32,7 @@ Examples:
 import sys
 import os
 import re
+
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -728,6 +729,28 @@ def generate_strings_cpp(
 # ---------------------------------------------------------------------------
 
 
+def _console_safe(text: str) -> str:
+    """Degrade a native language name (العربية, فارسی) to ASCII when the console
+    can't represent it.
+
+    PlatformIO runs this as a pre: script and re-echoes our stdout through click,
+    which on Windows encodes to the console codepage rather than to UTF-8. On a
+    cp1252 console that raises UnicodeEncodeError *in PlatformIO*, which aborts
+    the whole build -- so the firmware simply cannot be compiled from a default
+    Windows console. Nothing the child process sets (PYTHONIOENCODING, -X utf8,
+    chcp) fixes it, because the failing encode happens in the parent. Emitting
+    ASCII here is the only thing under our control.
+
+    Unconditional, because every way of detecting whether it is safe to emit the
+    native name has proven wrong through the SCons/PlatformIO layers: probing
+    sys.stdout.encoding or locale.getpreferredencoding() reports utf-8 (this script
+    runs under UTF-8 mode), and isatty() does not reflect what the parent will
+    ultimately encode to either. The Code column already identifies each language
+    unambiguously, so dropping the decorative native spelling costs nothing.
+    """
+    return text.encode("ascii", "replace").decode("ascii")
+
+
 def _print_language_table(
     language_codes: List[str],
     language_names: List[str],
@@ -748,7 +771,9 @@ def _print_language_table(
         fallback = len(inherited)
         # strings this language translated but the code never calls
         unused = len(unused_keys - inherited)
-        rows.append((name, code, str(own), str(fallback), str(unused), str(size)))
+        rows.append(
+            (_console_safe(name), code, str(own), str(fallback), str(unused), str(size))
+        )
 
     # EN first, then alphabetically by ISO code
     rows.sort(key=lambda r: (0 if r[1] == "EN" else 1, r[1]))
