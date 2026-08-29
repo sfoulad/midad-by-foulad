@@ -36,6 +36,25 @@ void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
   metricsValid = false;
 }
 
+int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader, bool hasTabBar, bool hasButtonHints,
+                                     bool hasSubtitle, int extraReservedHeight) {
+  const ThemeMetrics metrics = UITheme::getInstance().getMetrics();
+  auto orientation = renderer.getOrientation();
+  int reservedHeight = metrics.topPadding;
+  if (hasHeader) {
+    reservedHeight += metrics.headerHeight + metrics.verticalSpacing;
+  }
+  if (hasTabBar) {
+    reservedHeight += metrics.tabBarHeight;
+  }
+  if (hasButtonHints && orientation != GfxRenderer::Orientation::LandscapeClockwise &&
+      orientation != GfxRenderer::Orientation::LandscapeCounterClockwise) {
+    reservedHeight += metrics.verticalSpacing + metrics.buttonHintsHeight;
+  }
+  const int availableHeight = renderer.getScreenHeight() - reservedHeight - extraReservedHeight;
+  return UITheme::getInstance().getTheme().getListPageItems(availableHeight, hasSubtitle);
+}
+
 const ThemeMetrics& UITheme::getMetrics() const {
   // hasTouch() can flip once touch init completes after static construction, so the
   // cached copy is refreshed when the flag differs instead of copying the struct per call.
