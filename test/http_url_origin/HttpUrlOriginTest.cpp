@@ -86,3 +86,27 @@ TEST(UrlOrigin, MatchesReferenceImplementationAcrossShapes) {
     EXPECT_EQ(std::string(urlOrigin(c)), referenceUrlOrigin(c)) << "mismatch for input: " << c;
   }
 }
+
+// urlIsHttps() is the plaintext gate on HttpDownloader::fetchUrlVerified: a
+// URL it rejects never reaches a socket on the verified path. The negative
+// cases below are the "HTTPS -> HTTP downgrade fails at the front door" half
+// of the OTA transport's negative security tests (the in-flight redirect
+// downgrade is refused separately by runGetWolf/esp_http_client).
+TEST(UrlIsHttps, AcceptsHttpsAnyCase) {
+  EXPECT_TRUE(urlIsHttps("https://api.github.com/repos/x/y/releases/latest"));
+  EXPECT_TRUE(urlIsHttps("HTTPS://api.github.com/"));
+  EXPECT_TRUE(urlIsHttps("HttpS://release-assets.githubusercontent.com/f.bin"));
+}
+
+TEST(UrlIsHttps, RejectsEveryNonHttpsShape) {
+  EXPECT_FALSE(urlIsHttps("http://api.github.com/"));    // the downgrade itself
+  EXPECT_FALSE(urlIsHttps("HTTP://api.github.com/"));    // case-insensitively
+  EXPECT_FALSE(urlIsHttps("ftp://api.github.com/"));     // other scheme
+  EXPECT_FALSE(urlIsHttps("xhttps://api.github.com/"));  // prefix impostor
+  EXPECT_FALSE(urlIsHttps("https:/api.github.com/"));    // malformed separator
+  EXPECT_FALSE(urlIsHttps("https//api.github.com/"));    // missing colon
+  EXPECT_FALSE(urlIsHttps(" https://api.github.com/"));  // leading whitespace
+  EXPECT_FALSE(urlIsHttps("api.github.com/https://"));   // scheme not at start
+  EXPECT_FALSE(urlIsHttps(""));                          // empty
+  EXPECT_FALSE(urlIsHttps("https:"));                    // truncated
+}

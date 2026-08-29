@@ -77,3 +77,5 @@ add_subdirectory(settings_extension)
 add_subdirectory(firmware_update_policy)
 add_subdirectory(reading_heatmap_layout)
 add_subdirectory(stats_list_layout)
+add_subdirectory(ota_ca_anchors)
+

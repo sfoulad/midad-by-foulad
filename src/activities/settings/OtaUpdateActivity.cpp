@@ -286,8 +286,8 @@ void OtaUpdateActivity::beginInstall() {
   requestUpdateAndWait();
 
   // Free heap again right before the firmware-download TLS handshake, on top
-  // of the onEnter() clear: esp_https_ota_begin() needs a large *contiguous*
-  // block for the mbedTLS session to GitHub's CDN, and the "Checking..." /
+  // of the onEnter() clear: the wolfSSL session to GitHub's CDN still wants
+  // contiguous heap (CA chain verification included), and the "Checking..." /
   // "Update available?" screens drawn since onEnter() will have refilled the
   // glyph cache somewhat (button hints, version strings). On an autoInstall
   // (post silentRestartToOtaInstall) boot this is close to a no-op -- nothing

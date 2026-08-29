@@ -20,6 +20,7 @@
 #include "CrossPointSettings.h"
 #include "FirmwareBoardTag.h"
 #include "FirmwareFlasher.h"
+#include "OtaCaCerts.h"
 
 namespace {
 // Excludes pre-releases/drafts -- GitHub's own documented behavior for this
@@ -116,8 +117,11 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   // /releases/latest object does, since it lists every past release). Buffering
   // the whole body in a std::string would add a growing allocation on top of
   // the TLS session's heap during the fetch; with -fno-exceptions an OOM there
-  // aborts. fetchUrl handles the verified-https GET, redirects, and User-Agent
-  // (see HttpDownloader).
+  // aborts. fetchUrlVerified handles the GET, redirects, and User-Agent, over
+  // wolfSSL with the chain verified against ota_ca::kGithubOtaCaAnchors and
+  // the hostname checked against the leaf -- the same transport, verification
+  // and X3-proven memory profile (X25519 key share, 2KB max-fragment) as the
+  // firmware download itself (see installUpdate).
   // Conditional GET. Unauthenticated GitHub API calls share a 60-per-hour budget
   // with every other device and tool behind the same public IP, and exhausting it
   // answers 403 -- reported from the field as "Update failed ... http 5:403",
@@ -141,7 +145,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
     return true;
   };
 
-  const bool ok = HttpDownloader::fetchUrl(url, feed, conditional);
+  const bool ok = HttpDownloader::fetchUrlVerified(url, feed, conditional, ota_ca::kGithubOtaCaAnchors);
 
   if (!ok) {
     LOG_ERR("OTA", "Release check fetch failed");
@@ -203,11 +207,17 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   // Drive the OTA partition ourselves and stream the firmware through
   // HttpDownloader::fetchUrlVerified, reusing its redirect handling for the
   // GitHub -> CDN hop. Deliberately the *verified* entry point, not fetchUrl:
-  // GitHub's release CDN doesn't need wolfSSL's TLS 1.3 support (that's only
-  // needed for some KOSync/OPDS servers), so the firmware binary -- the one
-  // download on this device where an unverified TLS connection is a full
-  // remote-code-execution risk -- goes over esp_http_client/mbedTLS with the
-  // certificate chain checked against esp_crt_bundle_attach instead.
+  // the firmware binary is the one download on this device where an
+  // unverified TLS connection is a full remote-code-execution risk (signing
+  // is retired, so TLS is the only authentication the image gets). It runs
+  // over the same wolfSSL transport as every other fetch -- the stack whose
+  // memory profile is hardware-proven on the X3 (X25519 key share, 2KB
+  // max-fragment records, SP math) -- with the chain verified against
+  // ota_ca::kGithubOtaCaAnchors and the hostname checked against the leaf,
+  // instead of setInsecure(). The prior esp_http_client/mbedTLS routing of
+  // this download is what produced the field failures: RSA verification at
+  // the release-CDN hop needs a large contiguous block, and devices arrived
+  // here with the largest block at ~21-39KB.
   const esp_partition_t* updatePartition = esp_ota_get_next_update_partition(nullptr);
   if (!updatePartition) {
     LOG_ERR("OTA", "No OTA partition available");
@@ -239,45 +249,48 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   // the inactive OTA slot, but esp_ota_abort() below means it never becomes
   // the boot target.
   board_tag::Scanner tagScanner;
-  const bool fetchOk = HttpDownloader::fetchUrlVerified(otaUrl, [&](const uint8_t* data, size_t len) {
-    if (hdrLen < sizeof(hdr)) {
-      const size_t take = std::min(len, sizeof(hdr) - hdrLen);
-      std::memcpy(hdr + hdrLen, data, take);
-      hdrLen += take;
-      if (hdrLen == sizeof(hdr)) {
-        uint16_t imageChip;
-        std::memcpy(&imageChip, hdr + 12, sizeof(imageChip));
-        const uint16_t deviceChip = firmware_flash::runningPartitionChipId();
-        if (deviceChip != 0xFFFF && imageChip != deviceChip) {
-          LOG_ERR("OTA", "wrong chip: image=0x%04X device=0x%04X", imageChip, deviceChip);
-          wrongChip = true;
+  const bool fetchOk = HttpDownloader::fetchUrlVerified(
+      otaUrl,
+      [&](const uint8_t* data, size_t len) {
+        if (hdrLen < sizeof(hdr)) {
+          const size_t take = std::min(len, sizeof(hdr) - hdrLen);
+          std::memcpy(hdr + hdrLen, data, take);
+          hdrLen += take;
+          if (hdrLen == sizeof(hdr)) {
+            uint16_t imageChip;
+            std::memcpy(&imageChip, hdr + 12, sizeof(imageChip));
+            const uint16_t deviceChip = firmware_flash::runningPartitionChipId();
+            if (deviceChip != 0xFFFF && imageChip != deviceChip) {
+              LOG_ERR("OTA", "wrong chip: image=0x%04X device=0x%04X", imageChip, deviceChip);
+              wrongChip = true;
+              return false;  // abort the transfer
+            }
+          }
+        }
+        tagScanner.feed(data, len);
+        if (tagScanner.mismatch()) {
+          LOG_ERR("OTA", "wrong board: image=%s device=%.*s", tagScanner.foundName(),
+                  static_cast<int>(board_tag::boardNameLen()), board_tag::boardName());
           return false;  // abort the transfer
         }
-      }
-    }
-    tagScanner.feed(data, len);
-    if (tagScanner.mismatch()) {
-      LOG_ERR("OTA", "wrong board: image=%s device=%.*s", tagScanner.foundName(),
-              static_cast<int>(board_tag::boardNameLen()), board_tag::boardName());
-      return false;  // abort the transfer
-    }
-    if (esp_ota_write(otaHandle, data, len) != ESP_OK) {
-      flashOk = false;
-      return false;  // abort the transfer
-    }
-    processedSize += len;
-    // Fire the callback only on whole-percent change. Per-chunk updates wake the
-    // render task, whose framebuffer work contends with TLS on the internal arena,
-    // and e-ink can't repaint faster than a percent tick anyway.
-    if (onProgress && totalSize > 0) {
-      const int pct = static_cast<int>(static_cast<uint64_t>(processedSize) * 100 / totalSize);
-      if (pct != lastReportedPct) {
-        lastReportedPct = pct;
-        onProgress(ctx);
-      }
-    }
-    return true;
-  });
+        if (esp_ota_write(otaHandle, data, len) != ESP_OK) {
+          flashOk = false;
+          return false;  // abort the transfer
+        }
+        processedSize += len;
+        // Fire the callback only on whole-percent change. Per-chunk updates wake the
+        // render task, whose framebuffer work contends with TLS on the internal arena,
+        // and e-ink can't repaint faster than a percent tick anyway.
+        if (onProgress && totalSize > 0) {
+          const int pct = static_cast<int>(static_cast<uint64_t>(processedSize) * 100 / totalSize);
+          if (pct != lastReportedPct) {
+            lastReportedPct = pct;
+            onProgress(ctx);
+          }
+        }
+        return true;
+      },
+      ota_ca::kGithubOtaCaAnchors);
 
   /* Return back to default power saving for WiFi in case of failing */
   esp_wifi_set_ps(WIFI_PS_MIN_MODEM);

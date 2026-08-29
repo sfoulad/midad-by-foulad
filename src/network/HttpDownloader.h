@@ -66,8 +66,12 @@ class HttpDownloader {
     bool notModified = false;  // out: server answered 304, no body was delivered
   };
 
-  static bool fetchUrl(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
-                       const std::string& username = "", const std::string& password = "");
+  // Conditional GETs exist for the OTA release check alone, and that check must
+  // never run over an unverified connection, so the conditional entry point IS
+  // the verified one -- see fetchUrlVerified below for what caPem means. There
+  // is deliberately no unverified conditional overload to fall back to.
+  static bool fetchUrlVerified(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
+                               const char* caPem);
 
   /**
    * Fetch text content from a URL with optional credentials.
@@ -85,16 +89,25 @@ class HttpDownloader {
                        const std::string& password = "");
 
   /**
-   * Same as fetchUrl(DataCallback), but always over the verified esp_http_client/
-   * mbedTLS path (TLS certificate chain checked against esp_crt_bundle_attach),
-   * regardless of FREEINK_NET_WOLFSSL. For fetches where an unverified connection
-   * is not an acceptable risk even though other traffic on this device currently
-   * runs unverified over wolfSSL (see HttpDownloader.cpp's runGetWolf) -- notably
-   * OTA firmware downloads, which don't need wolfSSL's TLS 1.3 support since
-   * GitHub's release CDN doesn't require it.
+   * Same as fetchUrl(DataCallback), but with the TLS peer actually verified --
+   * for fetches where an unverified connection is not an acceptable risk even
+   * though ordinary catalog/book traffic currently runs unverified over
+   * wolfSSL (see HttpDownloader.cpp's runGetWolf). The OTA flow is the primary
+   * caller: with firmware signing retired, the TLS layer is the only thing
+   * standing between the flasher and an attacker-substituted image.
+   *
+   * caPem names the trust anchors (concatenated PEM roots, e.g.
+   * ota_ca::kGithubOtaCaAnchors) and is REQUIRED on wolfSSL builds: wolfSSL
+   * carries no default CA bundle, so a null/empty caPem is refused rather than
+   * silently downgraded to setInsecure(). The chain is verified against caPem
+   * and the hostname against the leaf certificate (SecureClient's
+   * check_domain_name); http:// URLs are refused up front and an https->http
+   * redirect is refused mid-flight. On non-wolfSSL builds (simulator) the
+   * fetch runs over esp_http_client/mbedTLS verified against
+   * esp_crt_bundle_attach, and caPem is unused.
    */
-  static bool fetchUrlVerified(const std::string& url, const DataCallback& onData, const std::string& username = "",
-                               const std::string& password = "");
+  static bool fetchUrlVerified(const std::string& url, const DataCallback& onData, const char* caPem,
+                               const std::string& username = "", const std::string& password = "");
 
   /**
    * Download a file to the SD card with optional credentials.
