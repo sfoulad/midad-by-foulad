@@ -114,11 +114,17 @@ std::array<HeatmapCell, GRID_CELLS> buildCells(const int year, const unsigned mo
   std::array<HeatmapCell, GRID_CELLS> cells{};
   const uint32_t firstDayOrdinal = TimeUtils::getDayOrdinalForDate(year, month, 1);
   const int firstWeekday = TimeUtils::weekdayForOrdinal(firstDayOrdinal);  // Monday = 0
-  const uint32_t gridStartOrdinal = firstDayOrdinal - static_cast<uint32_t>(firstWeekday);
+  const int64_t gridStartOrdinal = ReadingHeatmapLayout::gridStartOrdinal(firstDayOrdinal, firstWeekday);
 
   for (size_t index = 0; index < cells.size(); ++index) {
     auto& cell = cells[index];
-    cell.dayOrdinal = gridStartOrdinal + static_cast<uint32_t>(index);
+    const int64_t cellOrdinal = gridStartOrdinal + static_cast<int64_t>(index);
+    // Pre-epoch leading cells stay value-initialized: day 0 draws no number
+    // (see drawHeatCell) and inViewedMonth stays false, so they render blank.
+    if (!ReadingHeatmapLayout::isValidDayOrdinal(cellOrdinal)) {
+      continue;
+    }
+    cell.dayOrdinal = static_cast<uint32_t>(cellOrdinal);
     int cellYear = 0;
     unsigned cellMonth = 0;
     unsigned cellDay = 0;
@@ -261,8 +267,13 @@ void ReadingHeatmapActivity::loop() {
     if (cellIndex >= 0) {
       const uint32_t firstDayOrdinal = TimeUtils::getDayOrdinalForDate(viewedYear, viewedMonth, 1);
       const int firstWeekday = TimeUtils::weekdayForOrdinal(firstDayOrdinal);
-      const uint32_t gridStartOrdinal = firstDayOrdinal - static_cast<uint32_t>(firstWeekday);
-      selectedDayOrdinal = gridStartOrdinal + static_cast<uint32_t>(cellIndex);
+      const int64_t cellOrdinal =
+          ReadingHeatmapLayout::gridStartOrdinal(firstDayOrdinal, firstWeekday) + static_cast<int64_t>(cellIndex);
+      // A blank pre-epoch cell has no day to open; consume the tap and stop.
+      if (!ReadingHeatmapLayout::isValidDayOrdinal(cellOrdinal)) {
+        return;
+      }
+      selectedDayOrdinal = static_cast<uint32_t>(cellOrdinal);
       int year = 0;
       unsigned month = 0;
       unsigned day = 0;

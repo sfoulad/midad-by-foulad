@@ -103,3 +103,51 @@ TEST(ReadingHeatmapLayoutTouch, DegenerateGridNeverHits) {
   const ReadingHeatmapLayout::Grid empty{0, 0, 0};
   EXPECT_EQ(ReadingHeatmapLayout::cellIndexAt(empty, 0, 0, SIDE_PADDING, false), -1);
 }
+
+// --- Grid-start ordinal: the January-1970 underflow regression ---
+//
+// TimeUtils::getDayOrdinalForDate() clamps any date at or before the
+// 1970-01-01 epoch to ordinal 0, and 1970-01-01 was a Thursday (weekday 3,
+// Monday = 0). Computing the grid start as `0u - 3u` in uint32_t wrapped to
+// 4294967293, so the calendar's leading cells carried ordinals near UINT32_MAX
+// -- garbage day numbers on screen, and a tap opened a day-detail screen for a
+// date millions of years out. Reachable on a device whose clock has never been
+// set, which reports January 1970.
+
+TEST(ReadingHeatmapLayoutOrdinal, JanuaryNineteenSeventyStartsNegativeNotWrapped) {
+  // firstDayOrdinal = 0 (clamped), firstWeekday = 3 (Thursday).
+  const int64_t start = ReadingHeatmapLayout::gridStartOrdinal(0, 3);
+  EXPECT_EQ(start, -3);
+  EXPECT_LT(start, 0);  // the whole point: signed, not wrapped near UINT32_MAX
+}
+
+TEST(ReadingHeatmapLayoutOrdinal, LeadingJanuaryNineteenSeventyCellsAreInvalid) {
+  const int64_t start = ReadingHeatmapLayout::gridStartOrdinal(0, 3);
+  // Cells 0-2 are pre-epoch; cell 3 is 1970-01-01 itself, whose ordinal 0 is
+  // the codebase's "no date" sentinel -- all four must render blank.
+  for (int index = 0; index <= 3; ++index) {
+    EXPECT_FALSE(ReadingHeatmapLayout::isValidDayOrdinal(start + index)) << "index " << index;
+  }
+  // Cell 4 is 1970-01-02, the first representable day.
+  EXPECT_TRUE(ReadingHeatmapLayout::isValidDayOrdinal(start + 4));
+  EXPECT_EQ(start + 4, 1);
+}
+
+TEST(ReadingHeatmapLayoutOrdinal, OrdinaryMonthStartsOnAValidOrdinal) {
+  // A month well past the epoch: every one of the 42 cells is valid.
+  const int64_t start = ReadingHeatmapLayout::gridStartOrdinal(20000, 4);
+  EXPECT_EQ(start, 19996);
+  for (int index = 0; index < ReadingHeatmapLayout::GRID_CELLS; ++index) {
+    EXPECT_TRUE(ReadingHeatmapLayout::isValidDayOrdinal(start + index)) << "index " << index;
+  }
+}
+
+TEST(ReadingHeatmapLayoutOrdinal, MonthStartingOnMondayHasNoLeadingCells) {
+  // firstWeekday 0 means the 1st sits in cell 0; nothing precedes it.
+  EXPECT_EQ(ReadingHeatmapLayout::gridStartOrdinal(19723, 0), 19723);
+}
+
+TEST(ReadingHeatmapLayoutOrdinal, ZeroIsNotAValidDayOrdinal) {
+  EXPECT_FALSE(ReadingHeatmapLayout::isValidDayOrdinal(0));
+  EXPECT_TRUE(ReadingHeatmapLayout::isValidDayOrdinal(1));
+}

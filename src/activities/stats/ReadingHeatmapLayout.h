@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 
 // Pure calendar-grid geometry for ReadingHeatmapActivity, factored out of
 // render()'s local layout math so touch hit-testing can share the exact same
@@ -19,6 +20,22 @@ constexpr int SUMMARY_CARD_GAP = 8;
 constexpr int GRID_GAP = 6;
 constexpr int WEEKDAY_ROW_HEIGHT = 24;
 constexpr int LEGEND_HEIGHT = 30;
+
+// Ordinal of the grid's top-left cell (the Monday on or before the 1st), in
+// signed arithmetic. TimeUtils::getDayOrdinalForDate() clamps any date at or
+// before the 1970-01-01 epoch to 0, so for January 1970 this start legitimately
+// goes negative. Computing it in uint32_t wrapped through UINT32_MAX instead,
+// which rendered garbage day numbers and, on a tap, opened a day-detail screen
+// for a date millions of years out -- reachable on a device whose clock has
+// never been set, since that reports January 1970.
+inline int64_t gridStartOrdinal(const uint32_t firstDayOrdinal, const int firstWeekday) {
+  return static_cast<int64_t>(firstDayOrdinal) - firstWeekday;
+}
+
+// Day ordinals are meaningful from 1 up: 0 is the codebase's "no date" sentinel
+// (TimeUtils::getDateFromDayOrdinal() rejects it) and negatives are pre-epoch
+// leading cells, which render blank and open nothing.
+inline bool isValidDayOrdinal(const int64_t ordinal) { return ordinal >= 1; }
 
 struct Grid {
   int gridTop;
