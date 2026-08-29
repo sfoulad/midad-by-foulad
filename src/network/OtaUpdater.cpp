@@ -132,12 +132,9 @@ OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
   ReleaseJsonParser releaseParser;
   // Each board updates from its own release asset: plain firmware.bin for the
   // C3 X4/X3 binary (pre-existing releases), firmware-<board>.bin otherwise.
-  const bool isX4 = board_tag::boardNameLen() == 2 && memcmp(board_tag::boardName(), "x4", 2) == 0;
-  char assetName[48] = "firmware.bin";
-  if (!isX4) {
-    snprintf(assetName, sizeof(assetName), "firmware-%.*s.bin", static_cast<int>(board_tag::boardNameLen()),
-             board_tag::boardName());
-  }
+  char assetName[48];
+  firmware_update_policy::boardAssetFileName(board_tag::boardName(), board_tag::boardNameLen(), assetName,
+                                             sizeof(assetName));
   releaseParser.setFirmwareAssetName(assetName);
   auto feed = [&releaseParser](const uint8_t* data, size_t len) {
     releaseParser.feed(reinterpret_cast<const char*>(data), len);

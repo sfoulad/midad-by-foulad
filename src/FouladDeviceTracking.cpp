@@ -15,8 +15,9 @@
 #include "KOReaderSyncClient.h"
 #include "MidadAppSettings.h"
 #include "RecentBooksStore.h"
+#include "network/FirmwareBoardTag.h"
+#include "network/FirmwareUpdatePolicy.h"
 #include "network/HttpDownloader.h"
-#include "network/OtaUpdater.h"
 #include "reading/ReadingStatsStore.h"
 #include "util/DebugLog.h"
 #include "util/DebugLogging.h"
@@ -528,17 +529,50 @@ static void captureLatestFirmware(JsonVariantConst latest) {
   const char* rcTag = tagOf(latest["rc"]);
   const char* stableTag = tagOf(latest["stable"]);
 
-  const auto newerOrNull = [&tagOf](JsonVariantConst v) -> const char* {
-    const char* tag = tagOf(v);
-    return OtaUpdater::isVersionNewer(tag) ? tag : nullptr;
+  // Optional per-channel asset lists ("rc_assets"/"stable_assets": arrays of
+  // release asset filenames). A server that names them lets any board verify
+  // its own asset exists before an offer goes up; without them only the
+  // default firmware.bin boards are offerable (see channelHasBoardAsset) --
+  // the X4 Pro once got a dead-end prompt for a release that carried only the
+  // C3 image. Pointers reference responseDoc, which outlives this call.
+  constexpr size_t MAX_ASSETS = 8;
+  const auto readAssets = [](JsonVariantConst v, const char** names, firmware_update_policy::ChannelInfo& channel) {
+    JsonArrayConst arr = v.as<JsonArrayConst>();
+    if (arr.isNull()) return;
+    channel.assetsListed = true;
+    channel.assets = names;
+    for (JsonVariantConst entry : arr) {
+      if (channel.assetCount >= MAX_ASSETS) break;
+      if (entry.is<const char*>()) names[channel.assetCount++] = entry.as<const char*>();
+    }
   };
+
+  firmware_update_policy::ChannelInfo rcInfo{rcTag, nullptr, 0, false};
+  firmware_update_policy::ChannelInfo stableInfo{stableTag, nullptr, 0, false};
+  const char* rcAssets[MAX_ASSETS];
+  const char* stableAssets[MAX_ASSETS];
+  readAssets(latest["rc_assets"], rcAssets, rcInfo);
+  readAssets(latest["stable_assets"], stableAssets, stableInfo);
 
   const bool wantsPrerelease = SETTINGS.otaPrereleaseEnabled != 0 || strstr(CROSSPOINT_VERSION, "-rc") != nullptr;
 
-  const char* offer = nullptr;
-  if (wantsPrerelease) offer = newerOrNull(latest["rc"]);
-  if (offer == nullptr) offer = newerOrNull(latest["stable"]);
-  if (offer == nullptr) {
+  char boardAsset[48];
+  firmware_update_policy::boardAssetFileName(board_tag::boardName(), board_tag::boardNameLen(), boardAsset,
+                                             sizeof(boardAsset));
+
+  const auto decision =
+      firmware_update_policy::chooseOffer(rcInfo, stableInfo, wantsPrerelease, CROSSPOINT_VERSION, boardAsset);
+
+  if (decision.outcome == firmware_update_policy::OfferOutcome::MISSING_BOARD_ASSET) {
+    // A newer build exists but no release carries this board's image; offering
+    // it anyway would only lead to a dead-end "no update" screen after the
+    // reboot into the OTA flow. Suppressed, and recorded as its own outcome so
+    // it is distinguishable from "nothing newer" after the fact.
+    diagLog(std::string("firmware check: newer build (rc=") + orNone(rcTag) + " stable=" + orNone(stableTag) +
+            ") has no " + boardAsset + " asset for this board -- not offering (running " + CROSSPOINT_VERSION + ")");
+    return;
+  }
+  if (decision.outcome != firmware_update_policy::OfferOutcome::OFFER) {
     // The channel is logged too: "rc names a newer build but this device is on the stable
     // channel" and "rc names nothing" both end here, and only the toggle's state separates
     // them.
@@ -547,10 +581,11 @@ static void captureLatestFirmware(JsonVariantConst latest) {
     return;
   }
 
-  latestFirmwareOffer = offer;
-  diagLog(std::string("firmware check: offering ") + offer + " (rc=" + orNone(rcTag) + " stable=" + orNone(stableTag) +
-          " channel=" + (wantsPrerelease ? "pre" : "stable") + ", running " + CROSSPOINT_VERSION + ")");
-  LOG_INF(TAG, "Server reports newer firmware: %s (running %s)", offer, CROSSPOINT_VERSION);
+  latestFirmwareOffer = decision.tag;
+  diagLog(std::string("firmware check: offering ") + decision.tag + " (rc=" + orNone(rcTag) +
+          " stable=" + orNone(stableTag) + " channel=" + (wantsPrerelease ? "pre" : "stable") + ", running " +
+          CROSSPOINT_VERSION + ")");
+  LOG_INF(TAG, "Server reports newer firmware: %s (running %s)", decision.tag, CROSSPOINT_VERSION);
 }
 
 void registerDevice(const std::string& username, const std::string& password) {

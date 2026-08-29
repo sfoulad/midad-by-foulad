@@ -23,6 +23,7 @@
 #include "OpdsServerStore.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "activities/settings/OtaUpdateScreenModel.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "MidadArabicKeyboard.h"
 #include "components/TileCover.h"
@@ -156,19 +157,14 @@ void OpdsBookBrowserActivity::onExit() {
 
 void OpdsBookBrowserActivity::loop() {
   if (state == BrowserState::UPDATE_PROMPT) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      // Reboots into the OTA flow rather than downloading here: this session has an
-      // OPDS feed and its cover cache resident, and the firmware download needs more
-      // contiguous heap than that leaves. Does not return.
-      silentRestartToOtaCheck();
-      return;
-    }
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      state = BrowserState::BROWSING;  // declined; carry on browsing
-      requestUpdate();
-      return;
-    }
-    return;  // nothing else acts while the offer is up
+    // The popup owns all input here: option taps and Confirm/Back button
+    // handling both route through it (see maybeOfferFirmwareUpdate for the
+    // selection callback).
+    if (updatePopup.handleInput(mappedInput, [this] { requestUpdate(); })) return;
+    // Popup dismissed without a selection (Back, or a tap outside): declined.
+    state = BrowserState::BROWSING;
+    requestUpdate();
+    return;
   }
 
   maybeOfferFirmwareUpdate();
@@ -382,16 +378,28 @@ void OpdsBookBrowserActivity::render(RenderLock&&) {
   if (state == BrowserState::UPDATE_PROMPT) {
     const auto& metrics = UITheme::getInstance().getMetrics();
     const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-    const int top = (renderer.getScreenHeight() - lineHeight * 3) / 2;
+    const int pageWidth = renderer.getScreenWidth();
     renderer.clearScreen();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
-                   tr(STR_UPDATE));
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEW_UPDATE), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(
-        UI_10_FONT_ID, top + lineHeight + metrics.verticalSpacing,
-        (std::string(tr(STR_NEW_VERSION)) + FouladDeviceTracking::pendingFirmwareUpdate()).c_str());
-    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_UPDATE));
+    // Version info sits in the upper part of the screen so the centered
+    // Cancel/Update popup doesn't cover it (same layout as OtaUpdateActivity's
+    // confirmation screen).
+    const int infoTop = renderer.getScreenHeight() / 6;
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, infoTop,
+                             pageWidth - metrics.contentSidePadding * 2,
+                             (std::string(tr(STR_CURRENT_VERSION)) + CROSSPOINT_VERSION).c_str());
+    // Strip the tag's conventional leading 'v'/'V' so this reads consistently
+    // next to the bare "Current version:" line above.
+    std::string offeredDisplay = FouladDeviceTracking::pendingFirmwareUpdate();
+    if (!offeredDisplay.empty() && (offeredDisplay[0] == 'v' || offeredDisplay[0] == 'V')) {
+      offeredDisplay.erase(0, 1);
+    }
+    renderer.drawTextInWidth(UI_10_FONT_ID, metrics.contentSidePadding, infoTop + lineHeight + metrics.verticalSpacing,
+                             pageWidth - metrics.contentSidePadding * 2,
+                             (std::string(tr(STR_NEW_VERSION)) + offeredDisplay).c_str());
+    // Draws the Cancel/Update dialog and the buffer; the popup is the control
+    // surface on every input path (touch and physical buttons alike).
+    if (updatePopup.processRender(renderer, mappedInput)) return;
     renderer.displayBuffer();
     return;
   }
@@ -1292,6 +1300,28 @@ void OpdsBookBrowserActivity::maybeOfferFirmwareUpdate() {
   // function may become a network call without moving it off this path entirely.
   gFirmwareOfferShownThisBoot = true;
   state = BrowserState::UPDATE_PROMPT;
+  // The offer must be answerable on every input surface; the popup provides
+  // touch targets and button navigation in one component (see
+  // ota_screen::actionsFor(Screen::LIBRARY_OFFER)).
+  static_assert(ota_screen::actionsFor(ota_screen::Screen::LIBRARY_OFFER).confirmPopup &&
+                    ota_screen::touchOperable(ota_screen::actionsFor(ota_screen::Screen::LIBRARY_OFFER)),
+                "Library update offer must expose a touch-operable Cancel/Update control");
+  const char* options[] = {tr(STR_CANCEL), tr(STR_UPDATE)};
+  // Default the selection to Update so the hardware Confirm button installs
+  // (matching OtaUpdateActivity's confirmation popup); an Update selection
+  // never starts an install directly -- the OTA flow it reboots into asks for
+  // its own confirmation before downloading anything.
+  updatePopup.show(tr(STR_NEW_UPDATE), options, 2, 1, [this](const int idx) {
+    if (idx == 1) {
+      // Reboots into the OTA flow rather than downloading here: this session has an
+      // OPDS feed and its cover cache resident, and the firmware download needs more
+      // contiguous heap than that leaves. Does not return.
+      silentRestartToOtaCheck();
+    } else {
+      state = BrowserState::BROWSING;  // declined; carry on browsing
+      requestUpdate();
+    }
+  });
   requestUpdate();
 }
 

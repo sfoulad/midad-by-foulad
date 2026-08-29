@@ -17,6 +17,20 @@
 #include "reading/ReadingStatsStore.h"
 #include "util/FirmwareDiagLog.h"
 
+// Compile-time guarantee that no update screen can ship without an operable
+// control on either input surface (the host tests cover the same table
+// case-by-case with the reasons).
+namespace {
+constexpr bool allScreensOperable() {
+  for (uint8_t i = 0; i < ota_screen::SCREEN_COUNT; i++) {
+    const auto actions = ota_screen::actionsFor(static_cast<ota_screen::Screen>(i));
+    if (!ota_screen::operable(actions) || !ota_screen::touchOperable(actions)) return false;
+  }
+  return true;
+}
+static_assert(allScreensOperable(), "every firmware-update screen must expose a valid action on buttons and touch");
+}  // namespace
+
 void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
     LOG_ERR("OTA", "WiFi connection failed, exiting");
@@ -342,19 +356,15 @@ void OtaUpdateActivity::loop() {
     return;
   }
 
-  if (state == FAILED) {
+  if (state == FAILED || state == NO_UPDATE) {
+    // Exit affordances come from the shared state->actions contract: Back for
+    // button hardware, tap-anywhere for touch hardware (where button hints
+    // never render -- see BaseTheme::drawButtonHints).
+    const ota_screen::Actions actions = ota_screen::actionsFor(screenFor(state));
     int x = 0;
     int y = 0;
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
-      finish();
-    }
-    return;
-  }
-
-  if (state == NO_UPDATE) {
-    int x = 0;
-    int y = 0;
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) || mappedInput.wasScreenTapped(x, y)) {
+    if ((actions.acceptBack && mappedInput.wasPressed(MappedInputManager::Button::Back)) ||
+        (actions.acceptTap && mappedInput.wasScreenTapped(x, y))) {
       finish();
     }
     return;
