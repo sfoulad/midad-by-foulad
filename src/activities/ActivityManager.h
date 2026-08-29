@@ -25,6 +25,10 @@ enum class HomeMenuItem {
   FILE_BROWSER,
   RECENTS,
   FOULAD_EBOOKS,
+  // Upstream CrossPoint's name for the same destination -- Midad renamed the
+  // catalog browser to Foulad eBooks. Alias keeps byte-identical upstream files
+  // (OpdsServerListActivity) compiling and every value below its number.
+  OPDS_BROWSER = FOULAD_EBOOKS,
   FILE_TRANSFER,
   SETTINGS_MENU,
   CHECK_UPDATE,
