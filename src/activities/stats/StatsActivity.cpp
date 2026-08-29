@@ -147,17 +147,16 @@ void StatsActivity::loop() {
 
   // Long-press a book row to remove it -- checked before the tap block below
   // since a long-press-then-lift must not also open the book. Fires while
-  // still held (see wasScreenLongPressed's doc comment), so the lift is
-  // suppressed rather than relying on ordering against wasScreenTapped.
+  // still held (see wasScreenLongPress's doc comment), which suppresses the
+  // rest of the contact itself, so the lift cannot also register as a tap.
   int longPressX = 0;
   int longPressY = 0;
-  if (mappedInput.wasScreenLongPressed(longPressX, longPressY)) {
+  if (mappedInput.wasScreenLongPress(longPressX, longPressY)) {
     const auto hit = StatsListLayout::hitTest(longPressX, longPressY, layout.heatmapRect.x, layout.heatmapRect.y,
                                               layout.heatmapRect.width, layout.heatmapRect.height, layout.contentTop,
                                               layout.heatmapRect.x, layout.heatmapRect.width, bookCount, selectedIndex);
     if (hit.kind == StatsListLayout::HitKind::BookRow) {
       selectedIndex = hit.bookIndex + 1;
-      mappedInput.suppressTouchContact();
       confirmRemoveSelectedBook();
       return;
     }
