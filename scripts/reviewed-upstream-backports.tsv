@@ -33,3 +33,36 @@
 # the path now. Removed per docs/upstream-sync-architecture.md's "Reviewed
 # upstream backport" section and the maintenance note in that same section
 # of CLAUDE.md's "Midad Thin-Fork Architecture".
+
+# --- Active records ---
+#
+# CrossPoint 218dc6aaf1fc8638d5434e6c071f2784ea2bb1da
+#   "feat: add usb mass storage mode for x4 pro (#3203)"
+#
+# Why these two paths, and why now: adopting CrossPoint's touch-capable
+# WifiSelectionActivity/OptionPopup for X4 Pro requires upstream's
+# UiAppHelpers.h byte-identical, which resolves UIIcon::Usb to icon_usb_24/32.
+# Those two icons live in the generated listIcons.h and its manifest, and were
+# added upstream by the commit above -- AFTER the 69dd947f sync baseline, so
+# both paths were clean relative to shared upstream history and an ordinary
+# adoption reads as new Midad-side divergence.
+#
+# The generated pair is recorded together deliberately: listIcons.h is
+# generated from listIcons.manifest (gen_icons.py), so authorizing the
+# generated output without its source would leave the two able to drift.
+#
+# Both paths satisfy the documented rules exactly:
+#   - single-parent commit (verified: rev-list --parents yields 2 words)
+#   - ancestor of live crosspoint-reader/develop
+#   - the commit touches both paths
+#   - Midad's base blob for each path is byte-identical to the commit's own
+#     parent blob, and the commit's post blob is still live upstream's blob
+#     today (nothing has touched either path since), so the isolated per-path
+#     patch reproduces the recorded head blob exactly.
+#
+# This authorizes exactly these two file states and nothing else. It
+# self-invalidates the moment a real CrossPoint sync merge absorbs 218dc6aa as
+# genuine ancestry, at which point ordinary HEAD==UPSTREAM convergence covers
+# both paths and these records must be removed.
+src/components/icons/listIcons.h	218dc6aaf1fc8638d5434e6c071f2784ea2bb1da	1b88c724ebd4e8a8fe9ad76ffeac5953a2d2baf4	30272589e4b1c4238f732ce7e2e8db5063e6eb2e	USB icon for UIIcon::Usb, required by upstream UiAppHelpers.h (X4 Pro touch Wi-Fi/popup adoption)
+src/components/icons/listIcons.manifest	218dc6aaf1fc8638d5434e6c071f2784ea2bb1da	0f4d875ea52cc0e71614c4a78a3cd1733eec5160	96f0354632a2484ce980c091837b524c5ca8f32e	Generator source for listIcons.h above; recorded together so the pair cannot drift
