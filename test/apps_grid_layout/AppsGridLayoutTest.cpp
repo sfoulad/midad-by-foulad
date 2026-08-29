@@ -45,6 +45,31 @@ TEST(AppsGridLayoutPagination, PageIndexAndStartTrackSelector) {
   EXPECT_EQ(AppsGridLayout::pageStartOf(11), 6);
 }
 
+TEST(AppsGridLayoutPagination, JumpPageNoOpOnSinglePage) {
+  EXPECT_EQ(AppsGridLayout::jumpPage(2, 6, 1), 2);
+  EXPECT_EQ(AppsGridLayout::jumpPage(2, 6, -1), 2);
+  EXPECT_EQ(AppsGridLayout::jumpPage(0, 0, 1), 0);  // empty list
+}
+
+TEST(AppsGridLayoutPagination, JumpPagePreservesIndexInPage) {
+  // 8 items = 2 pages (6 + 2). Index-in-page 1 exists on both pages.
+  EXPECT_EQ(AppsGridLayout::jumpPage(1, 8, 1), 7);   // page 0 -> page 1, same slot
+  EXPECT_EQ(AppsGridLayout::jumpPage(7, 8, -1), 1);  // page 1 -> page 0, same slot
+}
+
+TEST(AppsGridLayoutPagination, JumpPageClampsOnPartialLastPage) {
+  // Page 1 only has 2 items (indices 6-7); index-in-page 4 (from page 0's
+  // index 4) has no counterpart there, so it lands on the last real item.
+  EXPECT_EQ(AppsGridLayout::jumpPage(4, 8, 1), 7);
+}
+
+TEST(AppsGridLayoutPagination, JumpPageWrapsAround) {
+  // 13 items = 3 pages. From the last page, +1 wraps to page 0; from page 0,
+  // -1 wraps to the last page.
+  EXPECT_EQ(AppsGridLayout::pageIndexOf(AppsGridLayout::jumpPage(12, 13, 1)), 0);
+  EXPECT_EQ(AppsGridLayout::pageIndexOf(AppsGridLayout::jumpPage(0, 13, -1)), 2);
+}
+
 TEST(AppsGridLayoutPagination, RowAndColWithinPage) {
   // Index-in-page 0..5 across a 2-col x 3-row page.
   EXPECT_EQ(AppsGridLayout::rowInPage(0), 0);
