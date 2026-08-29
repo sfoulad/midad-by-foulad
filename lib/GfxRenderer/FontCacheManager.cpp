@@ -3,11 +3,33 @@
 #include <FontDecompressor.h>
 #include <Logging.h>
 #include <SdCardFont.h>
+#include <Utf8.h>
 
 #include <algorithm>
 #include <cstring>
-#include <utility>
-#include <vector>
+
+namespace {
+
+char* appendUtf8Codepoint(char* output, const uint32_t codepoint) {
+  if (codepoint < 0x80) {
+    *output++ = static_cast<char>(codepoint);
+  } else if (codepoint < 0x800) {
+    *output++ = static_cast<char>(0xC0 | (codepoint >> 6));
+    *output++ = static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint < 0x10000) {
+    *output++ = static_cast<char>(0xE0 | (codepoint >> 12));
+    *output++ = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    *output++ = static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else {
+    *output++ = static_cast<char>(0xF0 | (codepoint >> 18));
+    *output++ = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+    *output++ = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    *output++ = static_cast<char>(0x80 | (codepoint & 0x3F));
+  }
+  return output;
+}
+
+}  // namespace
 
 FontCacheManager::FontCacheManager(const std::map<int, EpdFontFamily>& fontMap,
                                    const std::map<int, SdCardFont*>& sdCardFonts)
@@ -71,72 +93,67 @@ void FontCacheManager::resetStats() {
 
 bool FontCacheManager::isScanning() const { return scanMode_ == ScanMode::Scanning; }
 
-void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::Style style) {
-  scanText_ += text;
-  if (scanFontId_ < 0) scanFontId_ = fontId;
+uint8_t FontCacheManager::resolveScanStyle(int fontId, EpdFontFamily::Style style) const {
   const uint8_t baseStyle = static_cast<uint8_t>(style) & 0x03;
-  const unsigned char* p = reinterpret_cast<const unsigned char*>(text);
-  uint32_t cpCount = 0;
-  while (*p) {
-    if ((*p & 0xC0) != 0x80) cpCount++;
-    p++;
+
+  const auto sdFont = sdCardFonts_.find(fontId);
+  if (sdFont != sdCardFonts_.end()) return sdFont->second->resolveStyle(baseStyle);
+
+  const auto font = fontMap_.find(fontId);
+  if (font == fontMap_.end()) return baseStyle;
+
+  const EpdFontData* resolvedData = font->second.getData(static_cast<EpdFontFamily::Style>(baseStyle));
+  for (uint8_t candidate = 0; candidate < 4; candidate++) {
+    if (font->second.getData(static_cast<EpdFontFamily::Style>(candidate)) == resolvedData) return candidate;
   }
-  scanStyleCounts_[baseStyle] += cpCount;
+  return baseStyle;
 }
 
-void FontCacheManager::recordArabicText(const char* shapedUtf8, int fontId) {
-  scanArabicTextByFont_[fontId] += shapedUtf8;
-}
+void FontCacheManager::recordText(const char* text, int fontId, EpdFontFamily::Style style) {
+  if (!text || *text == '\0') return;
 
-namespace {
-// Shared by peekScanArabicTextSize()/peekScanArabicFontId() and endScanAndPrewarm():
-// total bytes across every font's buffer, plus the id of whichever buffer is
-// currently largest (the "primary" font for single-value diagnostics fields).
-void summarizeArabicScan(const std::map<int, std::string>& byFont, size_t& totalBytes, int& primaryFontId) {
-  totalBytes = 0;
-  primaryFontId = -1;
-  size_t primaryBytes = 0;
-  for (const auto& [fontId, text] : byFont) {
-    totalBytes += text.size();
-    if (text.size() > primaryBytes) {
-      primaryBytes = text.size();
-      primaryFontId = fontId;
+  uint8_t fontSlot = scanFontCount_;
+  for (uint8_t i = 0; i < scanFontCount_; i++) {
+    if (scanFontIds_[i] == fontId) {
+      fontSlot = i;
+      break;
     }
   }
-}
-}  // namespace
+  if (fontSlot == scanFontCount_) {
+    if (scanFontCount_ >= MAX_SCAN_FONTS) return;
+    scanFontIds_[scanFontCount_++] = fontId;
+  }
 
-size_t FontCacheManager::peekScanArabicTextSize() const {
-  size_t totalBytes;
-  int primaryFontId;
-  summarizeArabicScan(scanArabicTextByFont_, totalBytes, primaryFontId);
-  return totalBytes;
-}
+  const uint8_t resolvedStyle = resolveScanStyle(fontId, style);
+  const uint8_t group = fontSlot * 4 + resolvedStyle;
+  const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text);
+  while (*cursor) {
+    const uint32_t codepoint = utf8NextCodepoint(&cursor);
+    if (codepoint == 0) break;
 
-int FontCacheManager::peekScanArabicFontId() const {
-  size_t totalBytes;
-  int primaryFontId;
-  summarizeArabicScan(scanArabicTextByFont_, totalBytes, primaryFontId);
-  return primaryFontId;
-}
+    const uint32_t packed = (static_cast<uint32_t>(fontSlot) << SCAN_FONT_SHIFT) |
+                            (static_cast<uint32_t>(resolvedStyle) << SCAN_STYLE_SHIFT) | codepoint;
+    bool found = false;
+    for (uint16_t i = 0; i < scanCodepointCount_; i++) {
+      if (scanCodepoints_[i] == packed) {
+        found = true;
+        break;
+      }
+    }
+    if (found) continue;
 
-void FontCacheManager::noteArabicScanEntry(bool fontFound, int resolvedFontId) {
-  arabicScanEntries_++;
-  if (!fontFound) arabicScanFontMissing_++;
-  arabicScanLastResolvedFontId_ = resolvedFontId;
-}
+    if (scanCodepointCount_ >= MAX_SCAN_CODEPOINTS) {
+      if (!scanOverflowWarned_) {
+        LOG_DBG("FCM", "Scan codepoint cap (%u) reached; excess glyphs will load on demand",
+                static_cast<unsigned>(MAX_SCAN_CODEPOINTS));
+        scanOverflowWarned_ = true;
+      }
+      continue;
+    }
 
-void FontCacheManager::getSdFontDiagStats(int fontId, uint32_t& prewarmTotalMs, uint32_t& sdReadTimeMs,
-                                          uint32_t& seekCount, uint32_t& uniqueGlyphs, uint32_t& bitmapBytes) const {
-  prewarmTotalMs = sdReadTimeMs = seekCount = uniqueGlyphs = bitmapBytes = 0;
-  auto it = sdCardFonts_.find(fontId);
-  if (it == sdCardFonts_.end()) return;
-  const auto& s = it->second->getStats();
-  prewarmTotalMs = s.prewarmTotalMs;
-  sdReadTimeMs = s.sdReadTimeMs;
-  seekCount = s.seekCount;
-  uniqueGlyphs = s.uniqueGlyphs;
-  bitmapBytes = s.bitmapBytes;
+    scanCodepoints_[scanCodepointCount_++] = packed;
+    scanGroupCounts_[group]++;
+  }
 }
 
 // --- PrewarmScope implementation ---
@@ -145,115 +162,52 @@ FontCacheManager::PrewarmScope::PrewarmScope(FontCacheManager& manager) : manage
   manager_->scanMode_ = ScanMode::Scanning;
   manager_->clearCache();
   manager_->resetStats();
-  manager_->scanText_.clear();
-  manager_->scanText_.reserve(2048);  // Pre-allocate to avoid heap fragmentation from repeated concat
-  manager_->scanArabicTextByFont_.clear();
-  memset(manager_->scanStyleCounts_, 0, sizeof(manager_->scanStyleCounts_));
-  manager_->scanFontId_ = -1;
-  manager_->arabicScanEntries_ = 0;
-  manager_->arabicScanFontMissing_ = 0;
-  manager_->arabicScanLastResolvedFontId_ = -1;
+  manager_->scanCodepointCount_ = 0;
+  manager_->scanFontCount_ = 0;
+  manager_->scanOverflowWarned_ = false;
+  memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
 }
 
 void FontCacheManager::PrewarmScope::endScanAndPrewarm() {
   manager_->scanMode_ = ScanMode::None;
-  // NOT scanText_.empty() alone: a page that's entirely Arabic (the Quran; any
-  // fully-Arabic book with no incidental Latin digits/punctuation on the page) never
-  // calls recordText(), so scanText_ stays empty even though scanArabicTextByFont_ is
-  // full. The old check returned here before EVER reaching the Arabic prewarmCache()
-  // call below -- meaning prewarm silently never ran at all for such a page, every
-  // single glyph fell through to the slow per-glyph hot-group fallback for the entire
-  // render, and every earlier fix to WHAT got recorded (or how fast a miss was
-  // handled) was moot because prewarmCache() was never being invoked in the first
-  // place. Real-device evidence: a mixed-script Arabic novel (incidental Latin
-  // content keeps scanText_ non-empty) hit ~90%; the Quran (deliberately zero Latin
-  // anywhere, including Arabic-Indic page/ayah numbers) hit ~15%, every page, no
-  // matter which other fix landed.
-  if (manager_->scanText_.empty() && manager_->scanArabicTextByFont_.empty()) return;
+  if (manager_->scanCodepointCount_ == 0) return;
 
-  // Build style bitmask from all styles that appeared during the scan
-  uint8_t styleMask = 0;
-  for (uint8_t i = 0; i < 4; i++) {
-    if (manager_->scanStyleCounts_[i] > 0) styleMask |= (1 << i);
-  }
-  if (styleMask == 0) styleMask = 1;  // default to regular
+  std::sort(manager_->scanCodepoints_, manager_->scanCodepoints_ + manager_->scanCodepointCount_);
 
-  if (!manager_->scanText_.empty()) {
-    manager_->prewarmCache(manager_->scanFontId_, manager_->scanText_.c_str(), styleMask);
-  }
-  if (!manager_->scanArabicTextByFont_.empty()) {
-    size_t totalBytes;
-    int primaryFontId;
-    summarizeArabicScan(manager_->scanArabicTextByFont_, totalBytes, primaryFontId);
-    manager_->lastArabicScanTextBytes_ = totalBytes;
-    manager_->lastArabicPrewarmFontId_ = primaryFontId;
-    manager_->lastArabicPrewarmFontCount_ = manager_->scanArabicTextByFont_.size();
-    // NOT `primaryFontId >= 0`: SD-card font ids are FNV-1a hashes cast to `int`
-    // (SdCardFontManager::computeFontId), which are legitimately negative about half
-    // the time. That stray sign check meant every SD-card Arabic font whose hash came
-    // out negative silently skipped this branch on every single page -- the
-    // accumulator was full (see peekScanArabicTextSize() diagnostics: pre_bytes>0
-    // every page) but this guard rejected it before prewarmCache() was ever called,
-    // so the Quran (whose configured Arabic font hashed to a negative id) always fell
-    // through to the slow per-glyph decompression path. A non-empty accumulator
-    // already proves recordArabicText() ran at least once, which is all this needs to
-    // know -- same check the Latin branch above already uses without a sign gate on
-    // scanFontId_.
-    if (manager_->sdCardFonts_.count(primaryFontId) > 0) {
-      manager_->lastArabicPrewarmPath_ = LastPrewarmPath::SdCardFont;
-    } else if (manager_->fontMap_.count(primaryFontId) > 0) {
-      manager_->lastArabicPrewarmPath_ = LastPrewarmPath::Compressed;
-    } else {
-      manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NoFontFound;
-    }
-    // Prewarm EVERY font that appeared during the scan, not just one -- a single
-    // Quran page legitimately mixes several Arabic fonts (the reading font for ayah
-    // body text, plus the surah banner's own dedicated calligraphy/label fonts).
-    // Dumping every font's shaped text into one shared buffer and prewarming only
-    // that buffer's (first- or largest-recorded) font meant glyphs belonging to the
-    // OTHER fonts were silently "missing" from that one prewarm call and never got
-    // cached -- see recordArabicText()'s comment for the real-device symptom this
-    // caused (7-9s page turns, pages left blank mid-render). Arabic reading text is
-    // always REGULAR style.
-    //
-    // Largest-text-first, not map (font id) order: prewarming now does up to 5x the
-    // malloc/free churn per page it used to (one call per font instead of one call
-    // total), which real-device logs showed fragmenting the heap badly enough that
-    // by the time a LATER font's turn came up, its own page-buffer malloc -- and
-    // then its hot-group fallback for nearly every glyph -- failed outright
-    // (bitmap_fail almost exactly equal to misses, every turn, heap otherwise
-    // stable around 75-80KB: the signature of "no contiguous block big enough",
-    // not "actually out of memory"). The reading font's text dwarfs the banner/
-    // label/digit fonts' combined total (thousands of bytes vs a few hundred), so
-    // give it first crack at the least-fragmented heap this page's cycle will see;
-    // if the small decorative fonts lose that race instead, a missed banner glyph
-    // or ayah digit is far less noticeable than a paragraph of blank body text.
-    std::vector<std::pair<int, const std::string*>> byFontDescending;
-    byFontDescending.reserve(manager_->scanArabicTextByFont_.size());
-    for (const auto& [fontId, text] : manager_->scanArabicTextByFont_) {
-      byFontDescending.emplace_back(fontId, &text);
-    }
-    std::sort(byFontDescending.begin(), byFontDescending.end(),
-              [](const auto& a, const auto& b) { return a.second->size() > b.second->size(); });
-    for (const auto& [fontId, text] : byFontDescending) {
-      manager_->prewarmCache(fontId, text->c_str(), 0x01);
-    }
-  } else {
-    manager_->lastArabicPrewarmPath_ = LastPrewarmPath::NotAttempted;
-    manager_->lastArabicScanTextBytes_ = 0;
-    manager_->lastArabicPrewarmFontId_ = -1;
-    manager_->lastArabicPrewarmFontCount_ = 0;
+  uint16_t groupStarts[SCAN_GROUP_COUNT] = {};
+  for (uint8_t group = 1; group < SCAN_GROUP_COUNT; group++) {
+    groupStarts[group] = groupStarts[group - 1] + manager_->scanGroupCounts_[group - 1];
   }
 
-  // Free scan string memory
-  manager_->scanText_.clear();
-  manager_->scanText_.shrink_to_fit();
-  manager_->scanArabicTextByFont_.clear();
+  // Each packed entry provides four bytes, enough for one UTF-8 codepoint.
+  // Encoding high groups first means a terminator can overwrite only a group
+  // that has already been prewarmed; unread lower groups remain intact.
+  for (int group = SCAN_GROUP_COUNT - 1; group >= 0; group--) {
+    const uint16_t groupCount = manager_->scanGroupCounts_[group];
+    if (groupCount == 0) continue;
+
+    const uint16_t groupStart = groupStarts[group];
+    char* const utf8Text = reinterpret_cast<char*>(manager_->scanCodepoints_ + groupStart);
+    char* output = utf8Text;
+    for (uint16_t i = 0; i < groupCount; i++) {
+      const uint32_t codepoint = manager_->scanCodepoints_[groupStart + i] & SCAN_CODEPOINT_MASK;
+      output = appendUtf8Codepoint(output, codepoint);
+    }
+    *output = '\0';
+
+    const uint8_t fontSlot = static_cast<uint8_t>(group) / 4;
+    const uint8_t style = static_cast<uint8_t>(group) & 0x03;
+    manager_->prewarmCache(manager_->scanFontIds_[fontSlot], utf8Text, 1 << style);
+  }
+
+  manager_->scanCodepointCount_ = 0;
+  manager_->scanFontCount_ = 0;
+  memset(manager_->scanGroupCounts_, 0, sizeof(manager_->scanGroupCounts_));
 }
 
 FontCacheManager::PrewarmScope::~PrewarmScope() {
   if (active_) {
-    endScanAndPrewarm();  // no-op if already called (scanText_ is empty)
+    endScanAndPrewarm();  // no-op if already called
     manager_->clearCache();
   }
 }

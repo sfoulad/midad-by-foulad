@@ -6,9 +6,8 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
-#include "activities/Activity.h"
+#include "activities/UiTabListActivity.h"
 #include "components/OptionPopup.h"
-#include "util/ButtonNavigator.h"
 
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
 
@@ -24,11 +23,7 @@ enum class SettingAction {
   SdFirmwareUpdate,
   Language,
   DownloadFonts,
-  Dictionary,
-  BrowseFiles,
-  FileTransfer,
-  FouladEbooksLogout,
-  FouladEbooksLogin,
+  TextSettings,
 };
 
 struct SettingInfo {
@@ -49,6 +44,7 @@ struct SettingInfo {
   const char* key = nullptr;             // JSON API key (nullptr for ACTION types)
   StrId category = StrId::STR_NONE_OPT;  // Category for web UI grouping
   bool obfuscated = false;               // Save/load via base64 obfuscation (passwords)
+  bool inTextSettings = false;           // Surfaced in the Text Settings screen; hidden from the flat Reader list
 
   // Direct char[] string fields (for settings stored in CrossPointSettings)
   size_t stringOffset = 0;
@@ -62,6 +58,11 @@ struct SettingInfo {
 
   SettingInfo& withObfuscated() {
     obfuscated = true;
+    return *this;
+  }
+
+  SettingInfo& withTextSettings() {
+    inTextSettings = true;
     return *this;
   }
 
@@ -134,35 +135,6 @@ struct SettingInfo {
     return s;
   }
 
-  // For a TOGGLE/VALUE field stored outside CrossPointSettings (e.g.
-  // MidadAppSettings) -- same reasoning as DynamicEnum above: Toggle()/Value()'s
-  // pointer-to-member only works for fields that actually live on CrossPointSettings.
-  static SettingInfo DynamicToggle(StrId nameId, std::function<uint8_t()> getter, std::function<void(uint8_t)> setter,
-                                   const char* key = nullptr, StrId category = StrId::STR_NONE_OPT) {
-    SettingInfo s;
-    s.nameId = nameId;
-    s.type = SettingType::TOGGLE;
-    s.valueGetter = std::move(getter);
-    s.valueSetter = std::move(setter);
-    s.key = key;
-    s.category = category;
-    return s;
-  }
-
-  static SettingInfo DynamicValue(StrId nameId, std::function<uint8_t()> getter, std::function<void(uint8_t)> setter,
-                                  const ValueRange valueRange, const char* key = nullptr,
-                                  StrId category = StrId::STR_NONE_OPT) {
-    SettingInfo s;
-    s.nameId = nameId;
-    s.type = SettingType::VALUE;
-    s.valueGetter = std::move(getter);
-    s.valueSetter = std::move(setter);
-    s.valueRange = valueRange;
-    s.key = key;
-    s.category = category;
-    return s;
-  }
-
   static SettingInfo DynamicString(StrId nameId, std::function<std::string()> getter,
                                    std::function<void(const std::string&)> setter, const char* key = nullptr,
                                    StrId category = StrId::STR_NONE_OPT) {
@@ -177,18 +149,14 @@ struct SettingInfo {
   }
 };
 
-class SettingsActivity final : public Activity {
-  ButtonNavigator buttonNavigator;
-
+class SettingsActivity final : public UiTabListActivity {
   int selectedCategoryIndex = 0;  // Currently selected category
-  int selectedSettingIndex = 0;
   int settingsCount = 0;
 
   // Per-category settings derived from shared list + device-only actions
   std::vector<SettingInfo> displaySettings;
   std::vector<SettingInfo> readerSettings;
   std::vector<SettingInfo> controlsSettings;
-  std::vector<SettingInfo> appsSettings;
   std::vector<SettingInfo> systemSettings;
   const std::vector<SettingInfo>* currentSettings = nullptr;
 
@@ -197,8 +165,34 @@ class SettingsActivity final : public Activity {
 
   OptionPopup optionPopup;
 
-  static constexpr int categoryCount = 5;
+  // Row structure (label/actionValue) for *currentSettings, rebuilt only when
+  // the active category or a category's setting list changes
+  // (rebuildRowItems(), called from selectCategory()/rebuildSettingsLists())
+  // — not on every repaint. rowValues_ holds the live per-row value text,
+  // refreshed every buildScreen() call by assigning into the existing
+  // strings (no vector growth).
+  std::vector<std::string> rowValues_;
+  std::vector<freeink::ui::ListItem> rowItems_;
+  void rebuildRowItems();
+
+  static constexpr int categoryCount = 4;
   static const StrId categoryNames[categoryCount];
+
+  // --- UiTabListActivity contract ---
+  int listCount() const override { return settingsCount; }
+  int tabCount() const override { return categoryCount; }
+  int activeTab() const override { return selectedCategoryIndex; }
+  const char* tabLabel(int index) const override { return I18N.get(categoryNames[index]); }
+  void buildScreen(UiScreen& screen) override;
+  void activateIndex(int index) override;
+  void onTabAction(int index) override;
+  void stepTab(int direction) override;
+  bool handleButtons() override;
+  bool handleCustomInput() override;
+
+  static std::string settingValueText(const SettingInfo& setting);
+  void selectCategory(int categoryIndex);
+  void applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr);
 
   void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
@@ -207,10 +201,8 @@ class SettingsActivity final : public Activity {
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-      : Activity("Settings", renderer, mappedInput) {}
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
   void onEnter() override;
   void onExit() override;
-  void loop() override;
   void render(RenderLock&&) override;
 };

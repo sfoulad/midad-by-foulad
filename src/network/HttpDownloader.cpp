@@ -133,28 +133,25 @@ bool isRedirect(int status) {
   return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
-// scheme://host[:port] prefix, i.e. everything before the first '/', '?', or
-// '#' after the scheme separator (a URL with no path but a query/fragment --
-// e.g. "https://host?key=value" -- has no '/' at all, so stopping at '/' alone
-// would fold the query string into the "origin" and misclassify a same-origin
-// redirect as cross-origin). Used to decide whether a redirect crosses trust
-// boundaries -- see the Authorization/X-Device-Serial-stripping logic in
-// runGet() and runGetWolf() below.
 // Disables WiFi modem-sleep power-save for the duration of an HTTP operation,
 // restoring the default on scope exit regardless of which return path is taken.
-// OtaUpdater.cpp already does this for firmware downloads ("For better timing and
-// connectivity, we disable power saving for WiFi"); OPDS feed/book fetches never
-// did, despite being able to run just as long for a large category. Modem sleep
-// periodically powers the radio down between DTIM beacon intervals, which can drop
-// or stall packets mid-transfer -- more likely to be hit the longer a transfer
+// OtaUpdater.cpp already does this for firmware downloads; OPDS feed/book fetches
+// never did, despite being able to run just as long for a large category. Modem
+// sleep periodically powers the radio down between DTIM beacon intervals, which can
+// drop or stall packets mid-transfer -- more likely to be hit the longer a transfer
 // takes, so small feeds mostly get away with it while a 200+ book category
-// consistently doesn't. Matches a real device report: a 3-book category fetched
-// fine while a 200+ book category on the same server/network failed every time
-// with a bare ESP_ERR_HTTP_CONNECT (errno=0, i.e. failed before a socket-level
-// error was even set -- consistent with the radio being asleep at connect time).
+// consistently doesn't (real device report: a 3-book category fetched fine while a
+// 200+ book category on the same server/network failed every time with a bare
+// ESP_ERR_HTTP_CONNECT, errno=0 -- failed before a socket-level error was even set).
 struct WifiPowerSaveGuard {
-  WifiPowerSaveGuard() { esp_wifi_set_ps(WIFI_PS_NONE); }
-  ~WifiPowerSaveGuard() { esp_wifi_set_ps(WIFI_PS_MIN_MODEM); }
+  WifiPowerSaveGuard() {
+    esp_err_t err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (err != ESP_OK) LOG_ERR("HTTP", "Failed to disable WiFi power-save: %d", err);
+  }
+  ~WifiPowerSaveGuard() {
+    esp_err_t err = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    if (err != ESP_OK) LOG_ERR("HTTP", "Failed to restore WiFi power-save: %d", err);
+  }
 };
 
 #if defined(FREEINK_NET_WOLFSSL)

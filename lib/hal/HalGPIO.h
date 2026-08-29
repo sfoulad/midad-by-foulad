@@ -126,18 +126,31 @@ class HalGPIO {
   bool wasTouchReleased() const;
   bool isTouchTapCandidate(float& nx, float& ny, unsigned long& heldMs) const;
   bool isTouchHeldAt(float& nx, float& ny) const;
+  // One-shot long-press, fired by the SDK classifier while the finger is still
+  // down (stationary contact held past its threshold). Position = touch-down
+  // point. Callers that act on it should suppressTouchContact() so the lift
+  // cannot also tap.
+  bool wasTouchLongPress(float& nx, float& ny) const;
+  // Ignore the remainder of the current contact (its continued hold and its
+  // release edge). Self-clears once the contact ends.
+  void suppressTouchContact();
   unsigned long lastTouchHeldMs() const;
   bool wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
   bool wasTouchActivity() const;
   void setSharedConfirmPowerShortPressEmitsPower(bool enabled);
 
-  // Verify power button was held long enough after wakeup.
+  // Verify that the physical power button remains held through input debounce.
   // Returns true if verification succeeded, false if device should return to sleep.
   // Should only be called when wakeup reason is PowerButton.
-  bool verifyPowerButtonWakeup(uint16_t requiredDurationMs, bool shortPressAllowed);
+  bool verifyPowerButtonWakeup();
 
   // Check if USB is connected
   bool isUsbConnected() const;
+
+  // Whether a cold boot with no USB detected can be trusted to mean a held
+  // power button (Xteink-style button-energized rail with reliable USB
+  // detection). When false, cold boots always proceed to a normal boot.
+  bool coldBootImpliesPowerButton() const;
 
   // Sample USB state without a full input update. Called during setup() BEFORE
   // the first e-ink refresh: the boot paint happens before loop() ever runs

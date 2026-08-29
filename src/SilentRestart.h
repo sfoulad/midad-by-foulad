@@ -48,3 +48,7 @@ void silentRestartToDictionary();  // DictionaryActivity (dictionary download ca
 // callers that trigger a silent restart to escape heap fragmentation: if the
 // fresh boot STILL can't satisfy them, rebooting again won't help.
 bool bootWasSilentRestart();
+
+// Reboots immediately after an activity releases exclusive raw storage. The
+// RTC target ensures setup() lands on Home instead of resuming a reader.
+void restartToHomeAfterStorageHandoff();

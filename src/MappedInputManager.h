@@ -46,7 +46,7 @@ class MappedInputManager {
 
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(renderer) {}
 
-  void update() const { gpio.update(); }
+  void update() const;
   // Drives the X4 Pro power-button double-click gesture for one input frame;
   // a no-op on other boards. The main loop calls this once per iteration,
   // right after gpio.update(), every frame regardless of whether a release
@@ -60,10 +60,20 @@ class MappedInputManager {
   bool wasShortPowerClick() const;
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
+  // One-shot threshold event while the button is down; consumes its release.
+  bool wasLongPressed(Button button, unsigned long thresholdMs) const;
+  bool consumeSuppressedRelease() const;
   bool isPressed(Button button) const;
   bool hasTouch() const;
   bool wasScreenTapped(int& x, int& y) const;
   bool wasScreenTouchDown(int& x, int& y) const;
+  // One-shot long-press from the SDK touch classifier, fired WHILE the finger
+  // is still down (stationary contact held past the SDK threshold). Consuming
+  // it suppresses the remainder of the contact — its continued hold and its
+  // release edge — so the ensuing finger lift can't also tap-dismiss the popup
+  // the long-press opened. The SDK owns that latch and self-clears it once the
+  // contact ends.
+  bool wasScreenLongPress(int& x, int& y) const;
   bool isScreenTouchHeld(int& x, int& y) const;
   // Raw release edge, also true when the contact ended in a swipe or drag-off
   // (which wasScreenTapped never reports). InputSnapshot builders forward it
@@ -94,6 +104,11 @@ class MappedInputManager {
   // A Home-key hold runs the configured long-press action in the reader.
   bool wasHomeKeyHold() const;
   bool wasMenuGesture() const;
+  // Bottom-edge up-swipe as the reader-menu gesture (SHOW_READER_MENU's Swipe
+  // Up option). Only meaningful on home-key boards, where Home lives on the
+  // key and the bottom edge is free; elsewhere the same swipe is the Home
+  // gesture and this returns false.
+  bool wasReaderMenuSwipeUp() const;
   // Top-edge down-swipe opens the light panel when the active board actually
   // has a frontlight. ActivityManager consumes it before activity input.
   bool wasLightPanelGesture() const;
@@ -145,10 +160,13 @@ class MappedInputManager {
   bool wasPowerConfirmClick() const;
 #endif
   void rememberTouchHeldTime() const;
+  void suppressNextRelease(Button button) const;
 
   mutable bool touchHeldOverrideValid = false;
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
+  mutable uint16_t longPressFiredButtons = 0;
+  mutable uint16_t suppressedReleaseButtons = 0;
   // X4 Pro's power-button gesture state; harmless, near-zero-cost on other
   // boards (never armed there since updateX4ProPowerGesture() no-ops for
   // !BoardConfig::isX4Pro()).

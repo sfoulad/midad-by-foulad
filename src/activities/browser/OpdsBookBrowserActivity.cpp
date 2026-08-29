@@ -24,6 +24,7 @@
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
+#include "MidadArabicKeyboard.h"
 #include "components/TileCover.h"
 #include "components/UITheme.h"
 #include "components/icons/book.h"
@@ -1221,9 +1222,9 @@ void OpdsBookBrowserActivity::launchSearch() {
   // Opens on the Arabic panel when the interface is Arabic: this catalog is mostly
   // Arabic books, and making an Arabic reader press Mode twice before typing a title
   // is the same discoverability failure the search row itself just fixed.
-  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH), "", 0, InputType::Text,
-                                                          "", /*numericOnly=*/false,
-                                                          /*preferArabic=*/I18N.isRtl());
+  if (I18N.isRtl()) midad_arabic_keyboard::preferForNextEntry();
+  auto keyboard =
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH), "", 0, InputType::Text);
   startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
     state = BrowserState::BROWSING;
     if (!result.isCancelled) {

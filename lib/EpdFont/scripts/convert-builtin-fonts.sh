@@ -4,9 +4,7 @@ set -e
 
 cd "$(dirname "$0")"
 
-READER_FONT_STYLES=("Regular" "Italic" "Bold" "BoldItalic")
 LEXENDDECA_FONT_SIZES=(12 14 16 18)
-NOTOSANS_FONT_SIZES=(12 14 16 18)
 
 # Bitter was the built-in Latin reading serif until its glyph data (~778KB) was
 # moved to the Manage Fonts catalog; Lexend Deca is the built-in now. The TTF stays
@@ -43,25 +41,22 @@ for size in ${LEXENDDECA_FONT_SIZES[@]}; do
     font_name="lexenddeca_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
     font_path="../builtinFonts/source/LexendDeca/LexendDeca-${style}.ttf"
     output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
+    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum --zopfli > $output_path
     echo "Generated $output_path"
   done
 done
 
-for size in ${NOTOSANS_FONT_SIZES[@]}; do
-  for style in ${READER_FONT_STYLES[@]}; do
-    font_name="notosans_${size}_$(echo $style | tr '[:upper:]' '[:lower:]')"
-    font_path="../builtinFonts/source/NotoSans/NotoSans-${style}.ttf"
-    output_path="../builtinFonts/${font_name}.h"
-    python fontconvert.py $font_name $size $font_path --2bit --compress --pnum > $output_path
-    echo "Generated $output_path"
-  done
-done
+# Noto Sans and Noto Serif are Manage Fonts catalog entries (NotoSansExtended /
+# NotoSerifExtended in sd-fonts.yaml), not built-ins, so no reading-size headers
+# are generated for them. NotoSans-Regular.ttf stays in source/ because the 8pt
+# UI fallback below still cuts from it.
 
 UI_FONT_SIZES=(10 12)
-# Medium, not Regular, is the UI text weight: 1-bit rasterisation at these sizes
-# snaps stems to whole pixels, and Regular lands on 2px where Medium lands on 3.
-UI_FONT_STYLES=("Medium" "Bold")
+# Inter ships no Medium cut, so the UI text weight is Regular. (Ubuntu, the
+# previous UI face, used Medium: 1-bit rasterisation at these sizes snaps stems
+# to whole pixels, and Ubuntu Regular landed on 2px where Medium landed on 3.
+# Inter Regular is drawn heavier and does not need the compensation.)
+UI_FONT_STYLES=("Regular" "Bold")
 
 python generate-ui-noto-fonts.py
 
