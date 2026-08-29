@@ -353,6 +353,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t readerMenuStyle = READER_MENU_LIST;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
+  // Dictionary folder name under /dictionaries (empty = no dictionary)
+  char dictionaryName[32] = "";
   // SD card font family supplying Arabic glyphs for drawArabicText (empty = use the
   // built-in arabicFontFamily below). Independent of sdFontFamilyName/fontFamily --
   // see ArabicFontSystem.

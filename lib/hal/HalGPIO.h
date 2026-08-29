@@ -135,11 +135,6 @@ class HalGPIO {
   // release edge). Self-clears once the contact ends.
   void suppressTouchContact();
   unsigned long lastTouchHeldMs() const;
-  // One-shot long-press, fired while the finger is still down (see
-  // InputManager::wasTouchLongPress). Callers that act on it should also
-  // call suppressTouchContact() so the eventual lift doesn't also tap.
-  bool wasTouchLongPress(float& nx, float& ny) const;
-  void suppressTouchContact();
   bool wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
   bool wasTouchActivity() const;
   void setSharedConfirmPowerShortPressEmitsPower(bool enabled);
