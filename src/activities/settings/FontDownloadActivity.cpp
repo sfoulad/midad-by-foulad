@@ -8,6 +8,9 @@
 #include <WiFi.h>
 #include <esp_rom_crc.h>
 
+#include <algorithm>
+#include <cstring>
+
 #include "MappedInputManager.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
@@ -17,13 +20,55 @@
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
+namespace fui = freeink::ui;
+
 FontDownloadActivity::FontDownloadActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : Activity("FontDownload", renderer, mappedInput), fontInstaller_(sdFontSystem.registry()) {}
+    : UiListActivity("FontDownload", renderer, mappedInput), fontInstaller_(sdFontSystem.registry()) {}
+
+void FontDownloadActivity::activateIndex(const int index) {
+  switch (state_) {
+    case GROUP_LIST:
+      app.clearTapFlash();
+      enterGroup(index);
+      requestUpdate();
+      return;
+    case FAMILY_LIST:
+      nav.selected = index;
+      // Activation starts a download or opens the delete prompt; a lingering
+      // flash would gray an unrelated row.
+      app.clearTapFlash();
+      activateSelected();  // ends with requestUpdateAndWait itself
+      return;
+    case WIFI_SELECTION:
+    case LOADING_MANIFEST:
+    case DOWNLOADING:
+    case COMPLETE:
+    case ERROR:
+      return;
+  }
+}
+
+fui::ListNav& FontDownloadActivity::activeNav() { return state_ == GROUP_LIST ? groupNav_ : nav; }
+
+void FontDownloadActivity::onBackButton() {
+  if (state_ != FAMILY_LIST || !hasGroupScreen()) {
+    finish();
+    return;
+  }
+
+  closeRouting();
+  {
+    RenderLock lock(*this);
+    state_ = GROUP_LIST;
+    rowsDirty_ = true;
+  }
+  requestUpdate();
+}
 
 // --- Lifecycle ---
 
 void FontDownloadActivity::onEnter() {
-  Activity::onEnter();
+  UiListActivity::onEnter();
   WiFi.mode(WIFI_STA);
   startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
@@ -32,12 +77,10 @@ void FontDownloadActivity::onEnter() {
 void FontDownloadActivity::onExit() {
   Activity::onExit();
 
-  // Targeted restart (not bare silentRestart()) so the user lands back on
-  // Settings, where this activity is always launched from, not on Home.
   if (WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
-    silentRestartToSettings();
+    silentRestart();
   }
 }
 
@@ -61,10 +104,18 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
     return;
   }
 
+  if (!hasGroupScreen()) buildFilteredIndices(0);
+
   {
     RenderLock lock(*this);
-    state_ = FAMILY_LIST;
-    selectedIndex_ = 0;
+    rowsDirty_ = true;  // families_ just loaded
+    if (hasGroupScreen()) {
+      groupNav_.reset();
+      state_ = GROUP_LIST;
+    } else {
+      nav.reset();
+      state_ = FAMILY_LIST;
+    }
   }
 }
 
@@ -72,15 +123,14 @@ void FontDownloadActivity::onWifiSelectionComplete(const bool success) {
 
 bool FontDownloadActivity::fetchAndParseManifest() {
   // Foulad eBooks catalog first; the legacy crosspoint-fonts manifest stays as
-  // a fallback so Manage Fonts keeps working even if foulad.one is down (or
+  // a fallback so Manage Fonts keeps working even if the catalog is down (or
   // this firmware ships before the catalog endpoint does).
-  if (fetchManifestFrom(FOULAD_FONTS_CATALOG_URL)) return true;
+  if (fetchManifestFrom(FOULAD_FONTS_CATALOG_URL, /*languageSchema=*/true)) return true;
   LOG_ERR("FONT", "Foulad eBooks catalog unreachable, falling back to legacy manifest");
-  if (!fetchManifestFrom(FONT_MANIFEST_URL)) return false;
-  return true;
+  return fetchManifestFrom(FONT_MANIFEST_URL, /*languageSchema=*/false);
 }
 
-bool FontDownloadActivity::fetchManifestFrom(const char* url) {
+bool FontDownloadActivity::fetchManifestFrom(const char* url, const bool languageSchema) {
   // Download manifest to a temp file on SD card to avoid holding both
   // TLS buffers and the full JSON string in RAM simultaneously.
   static constexpr const char* MANIFEST_TMP = "/fonts_manifest.tmp";
@@ -122,21 +172,73 @@ bool FontDownloadActivity::fetchManifestFrom(const char* url) {
 
   baseUrl_ = doc["baseUrl"] | "";
   families_.clear();
+  scriptGroupLabels_.clear();
+  filteredIndices_.clear();
   fontInstaller_.refreshRegistry();
+
+  JsonArray groupsArr = doc["scriptGroups"].as<JsonArray>();
+  const size_t groupCount = std::min(groupsArr.size(), MAX_SCRIPT_GROUPS);
+  // +2 covers the synthesized Arabic/English pair the language schema can add.
+  scriptGroupLabels_.reserve(groupCount + (languageSchema ? 2 : 0));
+  if (groupsArr.size() > MAX_SCRIPT_GROUPS) {
+    LOG_ERR("FONT", "Manifest declares more than %zu script groups; extra groups ignored", MAX_SCRIPT_GROUPS);
+  }
+  for (size_t groupIndex = 0; groupIndex < groupCount; groupIndex++) {
+    JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
+    const char* tag = groupObj["tag"] | "";
+    const char* label = groupObj["label"] | "";
+    if (*tag == '\0' || *label == '\0') {
+      LOG_ERR("FONT", "Malformed script group at index %zu", groupIndex);
+      errorMessage_ = "Invalid font manifest";
+      return false;
+    }
+    scriptGroupLabels_.push_back(label);
+  }
 
   JsonArray familiesArr = doc["families"].as<JsonArray>();
   families_.reserve(familiesArr.size());
+  filteredIndices_.reserve(familiesArr.size());
 
   for (JsonObject fObj : familiesArr) {
     ManifestFamily family;
     family.name = fObj["name"] | "";
     family.description = fObj["description"] | "";
-    // Foulad eBooks catalog extension; absent in the legacy manifest, whose
-    // fonts are all Latin-script -> default english.
-    family.arabic = std::string(fObj["language"] | "english") == "arabic";
 
     for (JsonVariant s : fObj["styles"].as<JsonArray>()) {
       family.styles.push_back(s.as<std::string>());
+    }
+
+    for (JsonVariant script : fObj["scripts"].as<JsonArray>()) {
+      const char* familyTag = script.as<const char*>();
+      if (!familyTag) continue;
+      for (size_t groupIndex = 0; groupIndex < scriptGroupLabels_.size(); groupIndex++) {
+        JsonObject groupObj = groupsArr[groupIndex].as<JsonObject>();
+        const char* groupTag = groupObj["tag"] | "";
+        if (std::strcmp(familyTag, groupTag) == 0) {
+          family.scriptMask |= uint32_t{1} << groupIndex;
+          break;
+        }
+      }
+    }
+
+    if (languageSchema) {
+      // Foulad eBooks catalog extension: a per-family "language" field
+      // ("arabic"/"english", absent = english) instead of scriptGroups +
+      // scripts. Map it onto the script-group architecture by synthesizing an
+      // Arabic/English group pair, so the standard group screen doubles as
+      // the catalog's language filter.
+      const bool arabic = std::strcmp(fObj["language"] | "english", "arabic") == 0;
+      const char* label = arabic ? tr(STR_ARABIC_FONTS) : tr(STR_ENGLISH_FONTS);
+      size_t groupIndex = 0;
+      while (groupIndex < scriptGroupLabels_.size() && scriptGroupLabels_[groupIndex] != label) {
+        groupIndex++;
+      }
+      if (groupIndex == scriptGroupLabels_.size() && scriptGroupLabels_.size() < MAX_SCRIPT_GROUPS) {
+        scriptGroupLabels_.push_back(label);
+      }
+      if (groupIndex < MAX_SCRIPT_GROUPS) {
+        family.scriptMask |= uint32_t{1} << groupIndex;
+      }
     }
 
     family.totalSize = 0;
@@ -183,40 +285,21 @@ bool FontDownloadActivity::fetchManifestFrom(const char* url) {
     families_.push_back(std::move(family));
   }
 
-  // Default the filter to the UI language's script, then clamp to a tab that
-  // actually has fonts (the legacy manifest has no Arabic families at all).
-  showArabic_ = I18N.isRtl();
-  bool anyArabic = false, anyEnglish = false;
-  for (const auto& f : families_) (f.arabic ? anyArabic : anyEnglish) = true;
-  if (showArabic_ && !anyArabic) showArabic_ = false;
-  if (!showArabic_ && !anyEnglish && anyArabic) showArabic_ = true;
-  rebuildVisibleList();
+  const size_t rowCapacity = std::max(families_.size() + 2, scriptGroupLabels_.size() + 1);
+  rowLabels_.reserve(rowCapacity);
+  rowItems_.reserve(rowCapacity);
 
-  LOG_DBG("FONT", "Manifest loaded: %zu families (%s filter)", families_.size(), showArabic_ ? "arabic" : "english");
+  LOG_DBG("FONT", "Manifest loaded: %zu families, %zu script groups", families_.size(), scriptGroupLabels_.size());
   return true;
-}
-
-void FontDownloadActivity::rebuildVisibleList() {
-  visible_.clear();
-  for (int i = 0; i < static_cast<int>(families_.size()); i++) {
-    if (families_[i].arabic == showArabic_) visible_.push_back(i);
-  }
-  selectedIndex_ = 0;
-}
-
-int FontDownloadActivity::familyIndexFromList(int listIndex) const {
-  const int idx = listIndex - specialRowCount();
-  if (idx < 0 || idx >= static_cast<int>(visible_.size())) return -1;
-  return visible_[idx];
 }
 
 // --- Download ---
 
 void FontDownloadActivity::downloadAll() {
   cancelRequested_ = false;
-  for (const int i : visible_) {
-    if (families_[i].installed) continue;
-    downloadFamily(families_[i]);
+  for (const int familyIndex : filteredIndices_) {
+    if (families_[familyIndex].installed) continue;
+    downloadFamily(families_[familyIndex]);
     if (state_ == ERROR || cancelRequested_) return;
   }
 
@@ -228,9 +311,9 @@ void FontDownloadActivity::downloadAll() {
 
 void FontDownloadActivity::updateAll() {
   cancelRequested_ = false;
-  for (const int i : visible_) {
-    if (!families_[i].hasUpdate) continue;
-    downloadFamily(families_[i]);
+  for (const int familyIndex : filteredIndices_) {
+    if (!families_[familyIndex].hasUpdate) continue;
+    downloadFamily(families_[familyIndex]);
     if (state_ == ERROR || cancelRequested_) return;
   }
 
@@ -240,19 +323,16 @@ void FontDownloadActivity::updateAll() {
   }
 }
 
-// All the aggregate rows/totals below are scoped to the VISIBLE (language-
-// filtered) families, so "Download all" on the Arabic tab never pulls the
-// English catalog and vice versa.
 bool FontDownloadActivity::showDownloadAllRow() const {
-  for (const int i : visible_) {
-    if (!families_[i].installed) return true;
+  for (const int familyIndex : filteredIndices_) {
+    if (!families_[familyIndex].installed) return true;
   }
   return false;
 }
 
 bool FontDownloadActivity::showUpdateAllRow() const {
-  for (const int i : visible_) {
-    if (families_[i].hasUpdate) return true;
+  for (const int familyIndex : filteredIndices_) {
+    if (families_[familyIndex].hasUpdate) return true;
   }
   return false;
 }
@@ -261,8 +341,6 @@ int FontDownloadActivity::specialRowCount() const {
   return (showDownloadAllRow() ? 1 : 0) + (showUpdateAllRow() ? 1 : 0);
 }
 
-// The language tab bar lives above the list now (see showArabic_'s comment),
-// so "Download all" is back to being row 0 when present.
 bool FontDownloadActivity::isDownloadAllRow(int index) const { return showDownloadAllRow() && index == 0; }
 
 bool FontDownloadActivity::isUpdateAllRow(int index) const {
@@ -270,21 +348,80 @@ bool FontDownloadActivity::isUpdateAllRow(int index) const {
 }
 
 int FontDownloadActivity::listItemCount() const {
-  return families_.empty() ? 0 : specialRowCount() + static_cast<int>(visible_.size());
+  return filteredIndices_.empty() ? 0 : static_cast<int>(filteredIndices_.size()) + specialRowCount();
+}
+
+int FontDownloadActivity::listCount() const {
+  switch (state_) {
+    case GROUP_LIST:
+      return groupListItemCount();
+    case FAMILY_LIST:
+      return listItemCount();
+    case WIFI_SELECTION:
+    case LOADING_MANIFEST:
+    case DOWNLOADING:
+    case COMPLETE:
+    case ERROR:
+      return 0;
+  }
+  return 0;
+}
+
+int FontDownloadActivity::familyIndexFromList(const int listIndex) const {
+  const int filteredIndex = listIndex - specialRowCount();
+  if (filteredIndex < 0 || filteredIndex >= static_cast<int>(filteredIndices_.size())) return -1;
+  return filteredIndices_[filteredIndex];
+}
+
+int FontDownloadActivity::groupMemberCount(const int scriptGroupIndex) const {
+  if (scriptGroupIndex < 0 || scriptGroupIndex >= static_cast<int>(scriptGroupLabels_.size())) return 0;
+  const uint32_t groupBit = uint32_t{1} << scriptGroupIndex;
+  int count = 0;
+  for (const auto& family : families_) {
+    if (family.scriptMask & groupBit) count++;
+  }
+  return count;
+}
+
+void FontDownloadActivity::buildFilteredIndices(const int groupListIndex) {
+  filteredIndices_.clear();
+  filteredIndices_.reserve(families_.size());
+  if (groupListIndex <= 0) {
+    for (int familyIndex = 0; familyIndex < static_cast<int>(families_.size()); familyIndex++) {
+      filteredIndices_.push_back(familyIndex);
+    }
+    return;
+  }
+
+  const uint32_t groupBit = uint32_t{1} << (groupListIndex - 1);
+  for (int familyIndex = 0; familyIndex < static_cast<int>(families_.size()); familyIndex++) {
+    if (families_[familyIndex].scriptMask & groupBit) filteredIndices_.push_back(familyIndex);
+  }
+}
+
+void FontDownloadActivity::enterGroup(const int groupListIndex) {
+  closeRouting();
+  buildFilteredIndices(groupListIndex);
+  {
+    RenderLock lock(*this);
+    nav.reset();
+    state_ = FAMILY_LIST;
+    rowsDirty_ = true;
+  }
 }
 
 size_t FontDownloadActivity::totalDownloadSize() const {
   size_t total = 0;
-  for (const int i : visible_) {
-    if (!families_[i].installed) total += families_[i].totalSize;
+  for (const int familyIndex : filteredIndices_) {
+    if (!families_[familyIndex].installed) total += families_[familyIndex].totalSize;
   }
   return total;
 }
 
 size_t FontDownloadActivity::totalUpdateSize() const {
   size_t total = 0;
-  for (const int i : visible_) {
-    if (families_[i].hasUpdate) total += families_[i].totalSize;
+  for (const int familyIndex : filteredIndices_) {
+    if (families_[familyIndex].hasUpdate) total += families_[familyIndex].totalSize;
   }
   return total;
 }
@@ -373,6 +510,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
       {
         RenderLock lock(*this);
         state_ = FAMILY_LIST;
+        rowsDirty_ = true;  // installed/hasUpdate just changed above
       }
       return;
     }
@@ -435,7 +573,7 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
 }
 
 void FontDownloadActivity::promptDeleteSelectedFamily() {
-  const int pendingDeleteFamilyIndex = familyIndexFromList(selectedIndex_);
+  const int pendingDeleteFamilyIndex = familyIndexFromList(nav.selected);
   if (pendingDeleteFamilyIndex < 0 || pendingDeleteFamilyIndex >= static_cast<int>(families_.size())) {
     return;
   }
@@ -453,12 +591,12 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     return;
   }
 
-  const int familyIdx = familyIndexFromList(selectedIndex_);
-  if (familyIdx < 0) {
+  const int familyIndex = familyIndexFromList(nav.selected);
+  if (familyIndex < 0) {
     requestUpdate();
     return;
   }
-  auto& family = families_[familyIdx];
+  auto& family = families_[familyIndex];
 
   if (fontInstaller_.deleteFamily(family.name.c_str()) != FontInstaller::Error::OK) {
     RenderLock lock(*this);
@@ -468,111 +606,167 @@ void FontDownloadActivity::onDeleteConfirmationResult(const ActivityResult& resu
     fontInstaller_.refreshRegistry();
     family.installed = false;
     family.hasUpdate = false;
+    // Unlike the other family_ mutations, this one stays in FAMILY_LIST (no
+    // state_ transition to hang the rebuild off), so it must set the flag
+    // directly.
+    rowsDirty_ = true;
   }
 
   requestUpdate();
 }
 
 bool FontDownloadActivity::isSelectedFamilyDeletable() const {
-  const int familyIdx = familyIndexFromList(selectedIndex_);  // -1 covers filter/special/out-of-range rows
-  if (familyIdx < 0) return false;
-  const auto& family = families_[familyIdx];
+  if (isDownloadAllRow(nav.selected) || isUpdateAllRow(nav.selected)) return false;
+  if (nav.selected < specialRowCount() || nav.selected >= listItemCount()) return false;
+  const auto& family = families_[familyIndexFromList(nav.selected)];
   return family.installed && !family.hasUpdate;
+}
+
+void FontDownloadActivity::activateSelected() {
+  if (filteredIndices_.empty()) return;
+  if (isDownloadAllRow(nav.selected)) {
+    currentFileIndex_ = 0;
+    currentFileTotal_ = 0;
+    for (const int familyIndex : filteredIndices_) {
+      if (!families_[familyIndex].installed) currentFileTotal_ += families_[familyIndex].files.size();
+    }
+    downloadAll();
+  } else if (isUpdateAllRow(nav.selected)) {
+    currentFileIndex_ = 0;
+    currentFileTotal_ = 0;
+    for (const int familyIndex : filteredIndices_) {
+      if (families_[familyIndex].hasUpdate) currentFileTotal_ += families_[familyIndex].files.size();
+    }
+    updateAll();
+  } else {
+    // The special rows disappear when a download starts, so a stale selection
+    // can map past the family table.
+    const int familyIndex = familyIndexFromList(nav.selected);
+    if (familyIndex < 0 || familyIndex >= static_cast<int>(families_.size())) return;
+    auto& family = families_[familyIndex];
+    if (!family.installed || family.hasUpdate) {
+      currentFileIndex_ = 0;
+      currentFileTotal_ = family.files.size();
+      downloadFamily(family);
+    } else {
+      promptDeleteSelectedFamily();
+      return;
+    }
+  }
+  requestUpdateAndWait();
+}
+
+void FontDownloadActivity::buildScreen(UiScreen& screen) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  // Content below the GUI.drawHeader band, above the button hints.
+  screen.setContentMargin(fui::Insets{static_cast<int16_t>(metrics.topPadding + metrics.headerHeight), 0,
+                                      static_cast<int16_t>(metrics.buttonHintsHeight), 0});
+  screen.spacer(static_cast<int16_t>(metrics.verticalSpacing));
+
+  if (state_ == FAMILY_LIST && filteredIndices_.empty()) {
+    screen.centeredText(tr(STR_NO_FONTS_AVAILABLE), screen.theme().bodyText);
+    return;
+  }
+
+  if (rowsDirty_) {
+    rebuildRowItems();
+    rowsDirty_ = false;
+  }
+
+  fui::ListProps props;
+  props.items = rowItems_.data();
+  props.count = static_cast<uint16_t>(rowItems_.size());
+  props.action = ACTION_ROW;
+  props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
+  props.valueInset = 8;               // air between the status and the row edge
+  syncListViewport(screen, props, /*hasSubtitle=*/state_ == FAMILY_LIST);
+  screen.list(props);
+}
+
+void FontDownloadActivity::rebuildRowItems() {
+  switch (state_) {
+    case GROUP_LIST:
+      rebuildGroupRowItems();
+      return;
+    case FAMILY_LIST:
+      rebuildFamilyRowItems();
+      return;
+    case WIFI_SELECTION:
+    case LOADING_MANIFEST:
+    case DOWNLOADING:
+    case COMPLETE:
+    case ERROR:
+      rowLabels_.clear();
+      rowItems_.clear();
+      return;
+  }
+}
+
+void FontDownloadActivity::rebuildGroupRowItems() {
+  const int listSize = groupListItemCount();
+  rowLabels_.assign(listSize, std::string());
+  rowItems_.clear();
+  rowItems_.reserve(listSize);
+  for (int rowIndex = 0; rowIndex < listSize; rowIndex++) {
+    fui::ListItem item;
+    item.label = rowIndex == 0 ? tr(STR_ALL_FONTS) : scriptGroupLabels_[rowIndex - 1].c_str();
+    const int memberCount = rowIndex == 0 ? static_cast<int>(families_.size()) : groupMemberCount(rowIndex - 1);
+    rowLabels_[rowIndex] = std::to_string(memberCount);
+    item.value = rowLabels_[rowIndex].c_str();
+    item.actionValue = static_cast<int16_t>(rowIndex);
+    rowItems_.push_back(item);
+  }
+}
+
+void FontDownloadActivity::rebuildFamilyRowItems() {
+  const int listSize = listItemCount();
+  rowLabels_.assign(listSize, std::string());
+  rowItems_.clear();
+  rowItems_.reserve(listSize);
+  for (int i = 0; i < listSize; i++) {
+    fui::ListItem item;
+    if (isDownloadAllRow(i)) {
+      rowLabels_[i] = std::string(tr(STR_DOWNLOAD_ALL)) + " (" + formatSize(totalDownloadSize()) + ")";
+      item.label = rowLabels_[i].c_str();
+    } else if (isUpdateAllRow(i)) {
+      rowLabels_[i] = std::string(tr(STR_UPDATE_ALL)) + " (" + formatSize(totalUpdateSize()) + ")";
+      item.label = rowLabels_[i].c_str();
+    } else {
+      const auto& family = families_[familyIndexFromList(i)];
+      item.label = family.name.c_str();
+      if (!family.description.empty()) item.subtitle = family.description.c_str();
+      if (family.hasUpdate) {
+        item.value = tr(STR_UPDATE_AVAILABLE);
+      } else if (family.installed) {
+        item.value = tr(STR_INSTALLED);
+        // Dimmed but still tappable (opens the delete prompt): visual-only
+        // disabled state, the row stays enabled for hit registration.
+        item.state = fui::StateDisabled;
+      }
+    }
+    item.actionValue = static_cast<int16_t>(i);
+    rowItems_.push_back(item);
+  }
 }
 
 // --- Input handling ---
 
-void FontDownloadActivity::loop() {
-  if (state_ == FAMILY_LIST) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      finish();
-      return;
-    }
+bool FontDownloadActivity::handleCustomInput() {
+  if (state_ == GROUP_LIST || state_ == FAMILY_LIST) {
+    // The base list protocol (Back/Confirm, touch routing, swipe scroll,
+    // button navigation) handles both list states.
+    return false;
+  }
 
-    const int listSize = listItemCount();
-    const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
-
-    // Same model as the book drawer: the tab row is index -1 in the same scroll
-    // range, so Up/Down walks [-1, listSize) and Confirm does the contextual thing.
-    // That is what makes the two screens feel identical rather than merely similar.
-    buttonNavigator_.onScrollNextRelease([this, listSize] {
-      selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_ + 1, listSize + 1) - 1;
-      requestUpdate();
-    });
-
-    buttonNavigator_.onScrollPreviousRelease([this, listSize] {
-      selectedIndex_ = ButtonNavigator::previousIndex(selectedIndex_ + 1, listSize + 1) - 1;
-      requestUpdate();
-    });
-
-    buttonNavigator_.onScrollNextContinuous([this, listSize, pageItems] {
-      selectedIndex_ = ButtonNavigator::nextPageIndex(selectedIndex_, listSize, pageItems);
-      requestUpdate();
-    });
-
-    buttonNavigator_.onScrollPreviousContinuous([this, listSize, pageItems] {
-      selectedIndex_ = ButtonNavigator::previousPageIndex(selectedIndex_, listSize, pageItems);
-      requestUpdate();
-    });
-
-    // Left/Right are deliberately NOT bound to tab switching. They are list-scroll
-    // shortcuts (MappedInputManager maps the front Left/Right to the same
-    // next/previous row as the side Up/Down), and intercepting them here is what
-    // broke scrolling on this screen -- the book drawer carries the same warning
-    // after the identical bug was reported against it.
-
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      // On the tab row, Confirm switches language -- the drawer's behaviour on its
-      // own tab row, and the reason Left/Right no longer need to be hijacked.
-      if (selectedIndex_ < 0) {
-        {
-          RenderLock lock(*this);
-          showArabic_ = !showArabic_;
-          rebuildVisibleList();
-          selectedIndex_ = -1;  // stay on the tabs after switching
-        }
-        requestUpdate();
-        return;
-      }
-      if (!families_.empty()) {
-        if (isDownloadAllRow(selectedIndex_)) {
-          currentFileIndex_ = 0;
-          currentFileTotal_ = 0;
-          for (const int i : visible_) {
-            if (!families_[i].installed) currentFileTotal_ += families_[i].files.size();
-          }
-
-          downloadAll();
-        } else if (isUpdateAllRow(selectedIndex_)) {
-          currentFileIndex_ = 0;
-          currentFileTotal_ = 0;
-          for (const int i : visible_) {
-            if (families_[i].hasUpdate) currentFileTotal_ += families_[i].files.size();
-          }
-          updateAll();
-        } else {
-          const int familyIdx = familyIndexFromList(selectedIndex_);
-          if (familyIdx < 0) return;
-          auto& family = families_[familyIdx];
-          if (!family.installed || family.hasUpdate) {
-            currentFileIndex_ = 0;
-            currentFileTotal_ = family.files.size();
-            downloadFamily(family);
-          } else {
-            promptDeleteSelectedFamily();
-            return;
-          }
-        }
-        requestUpdateAndWait();
-        return;
-      }
-    }
-  } else if (state_ == COMPLETE) {
+  if (state_ == COMPLETE) {
+    int x = 0;
+    int y = 0;
     if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
-        mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+        mappedInput.wasPressed(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
       {
         RenderLock lock(*this);
         state_ = FAMILY_LIST;
+        rowsDirty_ = true;  // the completed download changed installed/hasUpdate
       }
       requestUpdate();
     }
@@ -581,22 +775,42 @@ void FontDownloadActivity::loop() {
       {
         RenderLock lock(*this);
         state_ = FAMILY_LIST;
+        rowsDirty_ = true;  // the failed download reset installed/hasUpdate
       }
       requestUpdate();
     } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
       if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(families_.size())) {
         downloadFamily(families_[downloadingFamilyIndex_]);
         requestUpdateAndWait();
-        return;
+        return true;
       } else {
         {
           RenderLock lock(*this);
           state_ = FAMILY_LIST;
+          rowsDirty_ = true;
+        }
+        requestUpdate();
+      }
+    } else {
+      int x = 0;
+      int y = 0;
+      if (mappedInput.wasScreenTapped(x, y)) {
+        if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(families_.size())) {
+          downloadFamily(families_[downloadingFamilyIndex_]);
+          requestUpdateAndWait();
+          return true;
+        }
+        {
+          RenderLock lock(*this);
+          state_ = FAMILY_LIST;
+          rowsDirty_ = true;
         }
         requestUpdate();
       }
     }
   }
+
+  return true;
 }
 
 // --- Rendering ---
@@ -620,92 +834,38 @@ void FontDownloadActivity::render(RenderLock&&) {
 
   renderer.clearScreen();
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FONT_BROWSER));
+  const char* headerSubtitle = nullptr;
+  if (state_ == FAMILY_LIST && hasGroupScreen()) {
+    const int scriptGroupIndex = groupNav_.selected - 1;
+    headerSubtitle = scriptGroupIndex >= 0 && scriptGroupIndex < static_cast<int>(scriptGroupLabels_.size())
+                         ? scriptGroupLabels_[scriptGroupIndex].c_str()
+                         : tr(STR_ALL_FONTS);
+  }
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, tr(STR_FONT_BROWSER),
+                 headerSubtitle);
 
   const auto lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
+  const auto contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const auto centerY = (pageHeight - lineHeight) / 2;
 
   if (state_ == LOADING_MANIFEST) {
     renderer.drawCenteredText(UI_10_FONT_ID, centerY, tr(STR_LOADING_FONT_LIST));
+  } else if (state_ == GROUP_LIST) {
+    renderUi();
+    const auto labels =
+        mappedInput.mapLabels(tr(STR_BACK), tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state_ == FAMILY_LIST) {
-    if (families_.empty()) {
-      renderer.drawCenteredText(UI_10_FONT_ID, centerY, tr(STR_NO_FONTS_AVAILABLE));
-      const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    } else {
-      // Language selector: a fixed tab bar (same widget SettingsActivity uses
-      // for its own categories), Arabic first to match the reading direction
-      // it serves. A thin divider below separates it from the list, and a
-      // second divider (only when a "Download/Update all" row is present)
-      // separates that action from the plain font list beneath it -- three
-      // visually distinct sections instead of one flat list.
-      const int tabBarTop = metrics.topPadding + metrics.headerHeight;
-      GUI.drawTabBar(renderer, Rect{0, tabBarTop, pageWidth, metrics.tabBarHeight},
-                     {{tr(STR_ARABIC_FONTS), showArabic_}, {tr(STR_ENGLISH_FONTS), !showArabic_}}, selectedIndex_ < 0);
+    renderUi();
 
-      constexpr int DIVIDER_THICKNESS = 1;
-      constexpr int DIVIDER_MARGIN = 12;  // inset from the screen edges, like the list's own side padding
-      const int listTop = tabBarTop + metrics.tabBarHeight + metrics.verticalSpacing;
-      renderer.fillRect(DIVIDER_MARGIN, listTop, pageWidth - 2 * DIVIDER_MARGIN, DIVIDER_THICKNESS, true);
-
-      const int listContentTop = listTop + metrics.verticalSpacing;
-      const int rows = specialRowCount();
-      if (rows > 0) {
-        const int specialBottom = listContentTop + rows * metrics.listWithSubtitleRowHeight;
-        renderer.fillRect(DIVIDER_MARGIN, specialBottom, pageWidth - 2 * DIVIDER_MARGIN, DIVIDER_THICKNESS, true);
-      }
-
-      GUI.drawList(
-          renderer,
-          Rect{0, listContentTop, pageWidth,
-               pageHeight - listContentTop - metrics.buttonHintsHeight - metrics.verticalSpacing},
-          listItemCount(), selectedIndex_,
-          [this](int index) -> std::string {
-            if (isDownloadAllRow(index)) {
-              return std::string(tr(STR_DOWNLOAD_ALL)) + " (" + formatSize(totalDownloadSize()) + ")";
-            }
-            if (isUpdateAllRow(index)) {
-              return std::string(tr(STR_UPDATE_ALL)) + " (" + formatSize(totalUpdateSize()) + ")";
-            }
-            const int fi = familyIndexFromList(index);
-            return fi >= 0 ? families_[fi].name : std::string();
-          },
-          [this](int index) -> std::string {
-            const int fi = familyIndexFromList(index);
-            return fi >= 0 ? families_[fi].description : std::string();
-          },
-          nullptr,
-          [this](int index) -> std::string {
-            const int fi = familyIndexFromList(index);
-            if (fi < 0) return "";
-            const auto& f = families_[fi];
-            if (f.hasUpdate) return tr(STR_UPDATE_AVAILABLE);
-            if (f.installed) return tr(STR_INSTALLED);
-            return "";
-          },
-          true,
-          [this](int index) -> bool {
-            const int fi = familyIndexFromList(index);
-            if (fi < 0) return false;
-            const auto& f = families_[fi];
-            return f.installed && !f.hasUpdate;
-          });
-
-      // Confirm's label follows what it will actually do from here -- switching
-      // language on the tab row, acting on the row otherwise. Up/Down keep their
-      // labels throughout, since one scroll axis now covers tabs and list alike.
-      //
-      // On the tab row the label names the language you will land on, not the one
-      // already highlighted: a hint that repeated the active tab would tell you
-      // something the tab bar is showing you anyway, and say nothing about the button.
-      const char* confirmLabel = selectedIndex_ < 0               ? (showArabic_ ? tr(STR_ENGLISH) : tr(STR_ARABIC))
-                                 : isSelectedFamilyDeletable()    ? tr(STR_DELETE)
-                                 : isUpdateAllRow(selectedIndex_) ? tr(STR_UPDATE)
-                                                                  : tr(STR_DOWNLOAD);
-      const auto labels =
-          mappedInput.mapLabels(tr(STR_BACK), confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN), /*rtlSwap=*/false);
-      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    }
+    const bool hasVisibleFamilies = !filteredIndices_.empty();
+    const char* confirmLabel = !hasVisibleFamilies            ? ""
+                               : isSelectedFamilyDeletable()  ? tr(STR_DELETE)
+                               : isUpdateAllRow(nav.selected) ? tr(STR_UPDATE)
+                                                              : tr(STR_DOWNLOAD);
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), confirmLabel, hasVisibleFamilies ? tr(STR_DIR_UP) : "",
+                                              hasVisibleFamilies ? tr(STR_DIR_DOWN) : "", /*rtlSwap=*/false);
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state_ == DOWNLOADING) {
     const auto& family = families_[downloadingFamilyIndex_];
 

@@ -254,6 +254,71 @@ void RecentBooksActivity::loop() {
   const int listSize = static_cast<int>(recentBooks.size());
   const GridGeometry geometry = computeGridGeometry();
 
+  // Touch: hit-test against the exact cell geometry render() draws
+  // (gridStartX/contentTop/cell steps, RTL column mirroring included).
+  // Touch-down moves the selection ring; a tap released on a cell opens that
+  // book; swipe up/down pages the grid. The home gesture stays global
+  // (ActivityManager) and book removal stays on the Confirm long-press.
+  {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int titleHeight = getGridTitleHeight();
+    const int totalGridWidth = geometry.columns * (geometry.coverWidth + GRID_GUTTER) - GRID_GUTTER;
+    const int gridStartX = std::max(0, (static_cast<int>(renderer.getScreenWidth()) - totalGridWidth) / 2);
+    const int cellStepX = geometry.coverWidth + GRID_GUTTER;
+    const int cellStepY = geometry.coverHeight + titleHeight + GRID_GUTTER;
+    const int gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
+    const bool rtlGrid = I18N.isRtl();
+
+    const auto hitCell = [&](const int x, const int y, int& outIdx) {
+      if (x < gridStartX || y < contentTop) return false;
+      const int col = (x - gridStartX) / cellStepX;
+      const int row = (y - contentTop) / cellStepY;
+      if (col >= geometry.columns) return false;
+      // Cover + caption band only, not the gutter around the cell.
+      if ((x - gridStartX) % cellStepX >= geometry.coverWidth) return false;
+      if ((y - contentTop) % cellStepY >= geometry.coverHeight + titleHeight) return false;
+      // Columns render mirrored under RTL (see render()); undo the mirror to
+      // recover the logical index.
+      const int logicalCol = rtlGrid ? geometry.columns - 1 - col : col;
+      const int pageOffset = row * geometry.columns + logicalCol;
+      if (pageOffset >= geometry.itemsPerPage) return false;
+      const int idx = gridPageStart + pageOffset;
+      if (idx >= listSize) return false;
+      outIdx = idx;
+      return true;
+    };
+
+    int touchX = 0;
+    int touchY = 0;
+    int touchedIdx = -1;
+    if (mappedInput.wasScreenTouchDown(touchX, touchY) && hitCell(touchX, touchY, touchedIdx)) {
+      if (static_cast<int>(selectorIndex) != touchedIdx) {
+        selectorIndex = touchedIdx;
+        requestUpdate();
+      }
+    } else if (mappedInput.wasScreenTapped(touchX, touchY) && hitCell(touchX, touchY, touchedIdx)) {
+      selectorIndex = touchedIdx;
+      LOG_DBG("RBA", "Tapped recent book: %s", recentBooks[touchedIdx].path.c_str());
+      onSelectBook(recentBooks[touchedIdx].path);
+      return;
+    }
+
+    const auto swipe = mappedInput.wasSwipe();
+    if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+      // Swipe up = next grid page, down = previous (content follows the
+      // finger). Selection lands on the first cell of the new page.
+      const int pageCount = (listSize + geometry.itemsPerPage - 1) / geometry.itemsPerPage;
+      const int currentPage = gridPageStart / geometry.itemsPerPage;
+      const int targetPage = swipe == MappedInputManager::SwipeDir::Up ? currentPage + 1 : currentPage - 1;
+      if (targetPage >= 0 && targetPage < pageCount) {
+        selectorIndex = static_cast<size_t>(targetPage * geometry.itemsPerPage);
+        requestUpdate();
+        return;
+      }
+    }
+  }
+
   auto moveUp = [this, listSize, geometry] {
     selectorIndex = GridNav::moveVertical(static_cast<int>(selectorIndex), listSize, geometry.columns,
                                           geometry.itemsPerPage, false);
