@@ -1,6 +1,7 @@
 _language_name: "فارسی"
 _language_code: "FA"
 _order: "2"
+_bcp47: "fa"
 
 STR_CROSSPOINT: "فولاد ای‌اینک"
 STR_BRAND_MIDAD: "مداد"
