@@ -398,10 +398,21 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU, &CrossPointSettings::longPressMenuFunction,
                           {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY},
                           "longPressMenuFunction", StrId::STR_CAT_CONTROLS));
+#if FREEINK_CAP_TOUCH
+    // PWR_CONFIRM (=5) is offered only on touch boards, where MappedInputManager
+    // turns a short Power click into Button::Confirm. The list must stay the same
+    // length as the stored enum range, or a stored 5 is rendered out of bounds and
+    // rewritten to a lower value on the next visit to this row.
+    v.push_back(SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
+                                  {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
+                                   StrId::STR_FOOTNOTES, StrId::STR_CONFIRM},
+                                  "shortPwrBtn", StrId::STR_CAT_CONTROLS));
+#else
     v.push_back(SettingInfo::Enum(
         StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
         {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},
         "shortPwrBtn", StrId::STR_CAT_CONTROLS));
+#endif
     v.push_back(SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
                                     "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
     v.push_back(SettingInfo::Toggle(StrId::STR_BACK_SHORT_TO_FILE_BROWSER, &CrossPointSettings::backShortToFileBrowser,
