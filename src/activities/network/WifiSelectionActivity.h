@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "activities/Activity.h"
+#include "components/UiAppHost.h"
 #include "util/ButtonNavigator.h"
 
 struct Rect;
@@ -47,7 +48,7 @@ enum class WifiSelectionState {
  *
  * The onComplete callback receives true if connected successfully, false if cancelled.
  */
-class WifiSelectionActivity final : public Activity {
+class WifiSelectionActivity final : public Activity, private UiAppHost {
   ButtonNavigator buttonNavigator;
 
   WifiSelectionState state = WifiSelectionState::SCANNING;
@@ -55,6 +56,14 @@ class WifiSelectionActivity final : public Activity {
   std::vector<WifiNetworkInfo> networks;
   // Number of real (scanned) networks, excluding the synthetic hidden-network entry
   size_t realNetworkCount = 0;
+
+  // Row buffers derived from `networks`, rebuilt only when it changes
+  // (processWifiScanResults()) instead of on every repaint — buildListScreen()
+  // used to re-derive a "+ * ||||" status string per network on every render
+  // (cursor move, tap flash, ...).
+  std::vector<std::string> networkStatuses;
+  std::vector<freeink::ui::ListItem> networkRowItems;
+  void rebuildNetworkRowItems();
 
   // Selected network for connection
   std::string selectedSSID;
@@ -82,28 +91,37 @@ class WifiSelectionActivity final : public Activity {
   // True from the Confirm press that stops auto-connect until that button is released.
   bool manualNetworkListRequested = false;
 
-  // Saved SSIDs already attempted during the current auto-connect session, so a
-  // network that fails once isn't retried in a loop against the same scan result.
+  // Saved SSIDs already attempted during the current auto-connect session.
   std::vector<std::string> autoAttemptedSsids;
 
   // Save/forget prompt selection (0 = Yes, 1 = No)
   int savePromptSelection = 0;
   int forgetPromptSelection = 0;
 
-  // Connection timeout. Auto-connect uses a shorter timeout than a user-initiated
-  // connect: it may need to work through several saved networks in sequence, and a
-  // network that's merely out of range should fail fast rather than eat 15s each.
+  // Connection timeout
   static constexpr unsigned long CONNECTION_TIMEOUT_MS = 15000;
   static constexpr unsigned long AUTO_CONNECTION_TIMEOUT_MS = 7000;
   unsigned long connectionStartTime = 0;
 
-  void renderNetworkList(const Rect* screen, const ThemeMetrics* metrics) const;
+  // The UiAppHost app hosts the network list and the save/forget prompts
+  // (themed rows and dialogs, touch routing); every other state keeps its
+  // legacy centered-text rendering.
+  // Viewport memory (top/visibleRows) for the network list; `selected` is
+  // mirrored from selectedNetworkIndex at build/move time.
+  freeink::ui::ListNav listNav;
+
+  static void listScreen(UiScreen& screen, void* user);
+  static void onRowEvent(const freeink::ui::ActionEvent& event, void* user);
+  static void onScanEvent(const freeink::ui::ActionEvent& event, void* user);
+  static void onPromptEvent(const freeink::ui::ActionEvent& event, void* user);
+  void buildListScreen(UiScreen& screen);
+  void buildPromptDialog(UiScreen& screen);
+
+  void renderNetworkList(const Rect* screen, const ThemeMetrics* metrics);
   void renderPasswordEntry(const Rect* screen, const ThemeMetrics* metrics) const;
   void renderConnecting(const Rect* screen, const ThemeMetrics* metrics) const;
   void renderConnected(const Rect* screen, const ThemeMetrics* metrics) const;
-  void renderSavePrompt(const Rect* screen, const ThemeMetrics* metrics) const;
   void renderConnectionFailed(const Rect* screen, const ThemeMetrics* metrics) const;
-  void renderForgetPrompt(const Rect* screen, const ThemeMetrics* metrics) const;
 
   void startWifiScan(bool autoScan = false);
   void processWifiScanResults();
@@ -113,20 +131,17 @@ class WifiSelectionActivity final : public Activity {
   void promptPasswordEntry();
   void attemptConnection();
   void checkConnectionStatus();
-  // Auto-connect helpers: try a saved credential, fall through the scan result for
-  // the next untried saved network, or give up and drop to the manual list.
-  bool hasAttemptedAutoSsid(const std::string& ssid) const;
   bool tryAutoConnectCredential(const WifiCredential& cred);
   bool tryNextSavedNetworkFromScan();
   void handleAutoConnectFailure();
   void showNetworkListFromAutoConnect();
+  bool hasAttemptedAutoSsid(const std::string& ssid) const;
   std::string getSignalStrengthIndicator(int32_t rssi) const;
 
   void onComplete(bool connected);
 
  public:
-  explicit WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoConnect = true)
-      : Activity("WifiSelection", renderer, mappedInput), allowAutoConnect(autoConnect) {}
+  explicit WifiSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool autoConnect = true);
   void onEnter() override;
   void onExit() override;
   void loop() override;
