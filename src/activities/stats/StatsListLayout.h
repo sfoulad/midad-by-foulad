@@ -43,8 +43,8 @@ struct Hit {
 // computeLayout()); bookRowX/Width are the shared row band (same x/width as
 // the heatmap button). bookCount/selectedIndex determine which page of rows
 // is currently visible.
-inline Hit hitTest(int x, int y, int heatmapX, int heatmapY, int heatmapW, int heatmapH, int contentTop,
-                    int bookRowX, int bookRowWidth, int bookCount, int selectedIndex) {
+inline Hit hitTest(int x, int y, int heatmapX, int heatmapY, int heatmapW, int heatmapH, int contentTop, int bookRowX,
+                   int bookRowWidth, int bookCount, int selectedIndex) {
   if (x >= heatmapX && x < heatmapX + heatmapW && y >= heatmapY && y < heatmapY + heatmapH) {
     return Hit{HitKind::Heatmap, -1};
   }

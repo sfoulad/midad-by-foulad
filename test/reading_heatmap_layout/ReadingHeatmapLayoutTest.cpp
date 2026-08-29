@@ -32,7 +32,8 @@ TEST(ReadingHeatmapLayoutGrid, ProducesPositiveCellDimensions) {
 }
 
 TEST(ReadingHeatmapLayoutGrid, WiderPageWidensEachCell) {
-  const auto narrow = ReadingHeatmapLayout::computeGrid(400, PAGE_HEIGHT, CONTENT_TOP, SIDE_PADDING, BUTTON_HINTS_HEIGHT);
+  const auto narrow =
+      ReadingHeatmapLayout::computeGrid(400, PAGE_HEIGHT, CONTENT_TOP, SIDE_PADDING, BUTTON_HINTS_HEIGHT);
   const auto wide = ReadingHeatmapLayout::computeGrid(800, PAGE_HEIGHT, CONTENT_TOP, SIDE_PADDING, BUTTON_HINTS_HEIGHT);
   EXPECT_GT(wide.cellWidth, narrow.cellWidth);
 }
@@ -42,9 +43,9 @@ TEST(ReadingHeatmapLayoutColumn, RtlReversesColumnOrder) {
   // Column 0 in LTR sits at the grid's left edge; column 0 in RTL sits where
   // LTR's last column (GRID_COLS-1) would be, and vice versa.
   EXPECT_EQ(ReadingHeatmapLayout::columnX(grid, 0, SIDE_PADDING, false),
-           ReadingHeatmapLayout::columnX(grid, GRID_COLS - 1, SIDE_PADDING, true));
+            ReadingHeatmapLayout::columnX(grid, GRID_COLS - 1, SIDE_PADDING, true));
   EXPECT_EQ(ReadingHeatmapLayout::columnX(grid, GRID_COLS - 1, SIDE_PADDING, false),
-           ReadingHeatmapLayout::columnX(grid, 0, SIDE_PADDING, true));
+            ReadingHeatmapLayout::columnX(grid, 0, SIDE_PADDING, true));
 }
 
 TEST(ReadingHeatmapLayoutTouch, HitsEveryCellCenterLtr) {

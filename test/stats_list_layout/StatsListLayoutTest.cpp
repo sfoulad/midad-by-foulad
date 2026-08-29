@@ -22,9 +22,7 @@ constexpr int HEATMAP_H = 54;
 constexpr int CONTENT_TOP = 280;
 }  // namespace
 
-TEST(StatsListLayoutPageStart, EmptyListIsPageZero) {
-  EXPECT_EQ(StatsListLayout::pageStartForSelection(0, 0), 0);
-}
+TEST(StatsListLayoutPageStart, EmptyListIsPageZero) { EXPECT_EQ(StatsListLayout::pageStartForSelection(0, 0), 0); }
 
 TEST(StatsListLayoutPageStart, FirstPageForEarlyIndices) {
   for (int selectedIndex = 1; selectedIndex <= BOOKS_PER_PAGE; selectedIndex++) {
