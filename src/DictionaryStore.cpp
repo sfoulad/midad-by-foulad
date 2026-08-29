@@ -1711,8 +1711,7 @@ std::string DictionaryStore::headwordAtOrdinal(const StarDictEntry& entry, uint3
   return headword;
 }
 
-bool DictionaryStore::lookupSynonym(const StarDictEntry& entry, const std::string& word,
-                                    std::string& canonical) const {
+bool DictionaryStore::lookupSynonym(const StarDictEntry& entry, const std::string& word, std::string& canonical) const {
   if (entry.synPath.empty()) return false;
   HalFile syn;
   if (!Storage.openFileForRead("DICT", entry.synPath, syn)) return false;
@@ -1885,8 +1884,7 @@ std::string DictionaryStore::readDefinition(const StarDictEntry& entry, const In
   return stripHtmlAndEntities(decoded);
 }
 
-std::vector<std::string> DictionaryStore::getFallbackForms(const StarDictEntry& entry,
-                                                           const std::string& word) const {
+std::vector<std::string> DictionaryStore::getFallbackForms(const StarDictEntry& entry, const std::string& word) const {
   std::vector<std::string> forms;
   const std::string lower = lowercaseLatinUtf8(word);
   if (lower != word) forms.push_back(lower);

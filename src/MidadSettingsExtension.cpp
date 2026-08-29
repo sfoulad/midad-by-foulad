@@ -88,9 +88,9 @@ void openFouladEbooksLogout(Activity& host) {
         break;
       }
     }
-    host.startActivityForResult(std::make_unique<FouladLogoutActivity>(renderer, mappedInputManager,
-                                                                      std::move(username), std::move(password)),
-                                removedHandler);
+    host.startActivityForResult(
+        std::make_unique<FouladLogoutActivity>(renderer, mappedInputManager, std::move(username), std::move(password)),
+        removedHandler);
   };
 
   host.startActivityForResult(
