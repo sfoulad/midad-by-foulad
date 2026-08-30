@@ -119,6 +119,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels) }}
         run: |
           set -euo pipefail
 
@@ -152,8 +153,23 @@ jobs:
           fi
           echo "Changed files: $file_count"
 
-          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/labels" \
-            --jq '.[].name' > labels.txt || true
+          # Labels come from the event payload, not the API. There is no
+          # `pulls/{n}/labels` route -- it 404s (verified against this repo:
+          # `pulls/214/labels` -> 404, `issues/214/labels` -> the list) -- and
+          # the original spelling swallowed that 404, producing a silently
+          # empty labels.txt. The label-driven UI escalation was therefore
+          # dead in production while the step still reported success.
+          #
+          # The issues endpoint would work but needs an `issues: read` scope
+          # this workflow deliberately does not hold. The payload carries the
+          # same list, already, for free, and stays correct on the `labeled`
+          # and `unlabeled` events that exist precisely to re-run this gate.
+          # Like PR_TITLE and PR_BODY it is untrusted data delivered through
+          # `env:`, never interpolated into this script.
+          if ! printf '%s' "$PR_LABELS" | jq -r '.[].name' > labels.txt; then
+            echo "::warning::could not parse PR labels; continuing without label-based escalation"
+            : > labels.txt
+          fi
 
           # Evidence = the PR body, plus the content of any hardware
           # validation report the PR adds or edits. Report content is read
