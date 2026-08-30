@@ -23,19 +23,5 @@ inline std::string_view urlOrigin(std::string_view url) {
   return pathStart == std::string_view::npos ? url : url.substr(0, pathStart);
 }
 
-// True only for URLs whose scheme is https, compared case-insensitively (URL
-// schemes are case-insensitive per RFC 3986 §3.1, and esp_http_client parses
-// them that way too). The gate HttpDownloader::fetchUrlVerified uses to refuse
-// plaintext up front -- pure and header-only so the host tests
-// (test/http_url_origin) can prove the refusal covers every non-https spelling
-// rather than trusting call sites to only ever pass https:// strings.
-inline bool urlIsHttps(std::string_view url) {
-  constexpr std::string_view scheme = "https://";
-  if (url.size() < scheme.size()) return false;
-  for (size_t i = 0; i < scheme.size(); i++) {
-    char c = url[i];
-    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-    if (c != scheme[i]) return false;
-  }
-  return true;
-}
+// urlIsHttps() lives in src/network/HttpVerifiedFetch.h alongside the rest of
+// the verified-fetch preconditions.
