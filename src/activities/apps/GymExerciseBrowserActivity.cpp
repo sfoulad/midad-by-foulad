@@ -9,6 +9,7 @@
 
 #include "GymPlanStore.h"
 #include "MappedInputManager.h"
+#include "MidadUiHelpers.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -98,7 +99,7 @@ void GymExerciseBrowserActivity::loop() {
     // Body-part list has no subtitle callback (its 2nd drawList arg is
     // nullptr -- the count is drawn via the value/badge slot instead), so it
     // uses the shorter no-subtitle row height.
-    const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false);
+    const int pageItems = midadListItemsPerPage(renderer, true, false, true, false);
     buttonNavigator_.onScrollNextRelease([this, count] {
       if (count > 0) {
         bodyPartIndex_ = ButtonNavigator::nextIndex(bodyPartIndex_, count);
@@ -138,7 +139,7 @@ void GymExerciseBrowserActivity::loop() {
     // Exercise list's 2nd drawList arg is the equipment subtitle, so it uses
     // the taller with-subtitle row height -- must match here or page jumps
     // would land on the wrong row.
-    const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
+    const int pageItems = midadListItemsPerPage(renderer, true, false, true, true);
     buttonNavigator_.onScrollNextRelease([this, count] {
       if (count > 0) {
         exerciseIndex_ = ButtonNavigator::nextIndex(exerciseIndex_, count);

@@ -10,6 +10,7 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "MidadUiHelpers.h"
 #include "SdCardFontSystem.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -107,7 +108,7 @@ void FontSelectionActivity::loop() {
 
   const int listSize = static_cast<int>(fonts_.size());
   const int pageItems =
-      UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, previewHeight + metrics_.verticalSpacing);
+      midadListItemsPerPage(renderer, true, false, true, false, previewHeight + metrics_.verticalSpacing);
 
   buttonNavigator_.onScrollNextRelease([this, listSize] {
     selectedIndex_ = ButtonNavigator::nextIndex(selectedIndex_, listSize);
