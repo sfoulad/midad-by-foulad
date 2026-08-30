@@ -59,8 +59,8 @@ bool classifyEdgeSwipe(const MappedInputManager::ScreenEdge edge, const int sx, 
 
 void MappedInputManager::update() const {
   gpio.update();
-  for (uint8_t value = 0; value <= static_cast<uint8_t>(Button::ScreenDown); ++value) {
-    if (!isPressed(static_cast<Button>(value))) longPressFiredButtons &= ~(1u << value);
+  for (uint8_t value = 0; value <= BUTTON_LAST; ++value) {
+    if (!isPressed(static_cast<Button>(value))) longPressFiredButtons &= ~(static_cast<ButtonMask>(1u) << value);
   }
 }
 
@@ -410,7 +410,7 @@ bool MappedInputManager::wasReleased(const Button button) const {
 
 bool MappedInputManager::wasLongPressed(const Button button, const unsigned long thresholdMs) const {
   if (!isPressed(button)) return false;
-  const uint16_t bit = 1u << static_cast<uint8_t>(button);
+  const ButtonMask bit = static_cast<ButtonMask>(1u) << static_cast<uint8_t>(button);
   if ((longPressFiredButtons & bit) != 0 || getHeldTime() < thresholdMs) return false;
   longPressFiredButtons |= bit;
   suppressNextRelease(button);
@@ -418,13 +418,13 @@ bool MappedInputManager::wasLongPressed(const Button button, const unsigned long
 }
 
 void MappedInputManager::suppressNextRelease(const Button button) const {
-  suppressedReleaseButtons |= 1u << static_cast<uint8_t>(button);
+  suppressedReleaseButtons |= static_cast<ButtonMask>(1u) << static_cast<uint8_t>(button);
 }
 
 bool MappedInputManager::consumeSuppressedRelease() const {
-  uint16_t released = 0;
-  for (uint8_t value = 0; value <= static_cast<uint8_t>(Button::ScreenDown); ++value) {
-    const uint16_t bit = 1u << value;
+  ButtonMask released = 0;
+  for (uint8_t value = 0; value <= BUTTON_LAST; ++value) {
+    const ButtonMask bit = static_cast<ButtonMask>(1u) << value;
     if ((suppressedReleaseButtons & bit) != 0 && mapButton(static_cast<Button>(value), &HalGPIO::wasReleased)) {
       released |= bit;
     }

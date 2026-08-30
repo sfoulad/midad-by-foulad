@@ -20,6 +20,13 @@
 // never needs the definition here.
 class Activity;
 
+// Forward declaration only, for SettingsExtensionCategory::icon below: a
+// pointer to an incomplete type keeps this header free of the assets library
+// (and of any include path the host tests would have to reproduce).
+namespace freeink {
+struct Icon;
+}
+
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
 
 enum class SettingAction {
@@ -41,17 +48,24 @@ enum class SettingAction {
 };
 
 struct SettingInfo {
-  StrId nameId;
-  SettingType type;
+  // Every field carries a default: a row built by a factory that does not set
+  // one (ExtensionAction, which has no compiled-in StrId to point nameId at)
+  // is still fully initialized. nameId in particular is compared against
+  // specific StrIds by the host, so an indeterminate value could silently
+  // impersonate a built-in row.
+  StrId nameId = StrId::STR_NONE_OPT;
+  // ACTION + SettingAction::None (the default below) is the inert combination:
+  // it neither mutates a setting nor dispatches anywhere.
+  SettingType type = SettingType::ACTION;
   uint8_t CrossPointSettings::* valuePtr = nullptr;
   std::vector<StrId> enumValues;
   std::vector<std::string> enumStringValues;  // runtime alternative to StrId enumValues (for SD card fonts etc.)
   SettingAction action = SettingAction::None;
 
   struct ValueRange {
-    uint8_t min;
-    uint8_t max;
-    uint8_t step;
+    uint8_t min = 0;
+    uint8_t max = 0;
+    uint8_t step = 0;
   };
   ValueRange valueRange = {};
 
@@ -223,4 +237,45 @@ struct SettingInfo {
 struct SettingsExtensionCategory {
   std::string label;  // pre-localized by the provider; shown as the tab title
   std::vector<SettingInfo> settings;
+  // Card artwork on the touch category landing screen (see
+  // SettingsCategoryGridLayout.h). Optional: nullptr draws the generic
+  // extra-category icon, so a provider that only wants rows supplies nothing.
+  // Ignored by the tab band, which is text-only.
+  const freeink::Icon* icon = nullptr;
+};
+
+// Index arithmetic for a tab band made of built-in categories followed by an
+// extension provider's categories. A provider is re-consulted on every rebuild
+// and may return a different number of categories each time (see
+// SettingsExtension.h), so the band's size is not fixed once the screen has
+// been entered. Everything that indexes the band -- the tab count, the label
+// lookup, the remembered active tab, and the host's per-tab navigation state --
+// has to be derived from the same, current range; restating the arithmetic at
+// each use site is what lets one of them index past the others.
+struct SettingsTabRange {
+  int builtInCount = 0;
+  int extraCount = 0;
+
+  [[nodiscard]] constexpr int count() const { return builtInCount + extraCount; }
+  [[nodiscard]] constexpr bool isExtension(const int index) const { return index >= builtInCount; }
+  // Position within the provider's categories; meaningful only when isExtension().
+  [[nodiscard]] constexpr int extraIndex(const int index) const { return index - builtInCount; }
+
+  // Keeps a remembered tab addressable after the provider grew or shrank.
+  [[nodiscard]] constexpr int clamp(const int index) const {
+    const int last = count() - 1;
+    if (last < 0) return 0;
+    if (index < 0) return 0;
+    return index > last ? last : index;
+  }
+
+  // Resizes per-tab state to one entry per tab, preserving the entries of the
+  // tabs that survive. Must run on every rebuild, not only on screen entry:
+  // state sized against a stale count is exactly one entry short of the tab a
+  // grown provider just made selectable.
+  template <typename TabState>
+  void sizeTabState(std::vector<TabState>& state) const {
+    const int wanted = count() < 0 ? 0 : count();
+    if (state.size() != static_cast<size_t>(wanted)) state.resize(static_cast<size_t>(wanted));
+  }
 };

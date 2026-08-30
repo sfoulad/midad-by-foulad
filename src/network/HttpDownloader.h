@@ -39,6 +39,7 @@ class HttpDownloader {
     STATUS,       // non-200 final status; detail = HTTP status code
     READ,         // esp_http_client_read returned < 0; detail = bytes read so far (clamped)
     INCOMPLETE,   // stream ended before is_complete_data_received(); detail = bytes received (clamped)
+    REFUSED,      // fetchUrlVerified() precondition refused the request before any transport ran; detail = 0
   };
   struct LastFailure {
     FailStage stage = FailStage::NONE;

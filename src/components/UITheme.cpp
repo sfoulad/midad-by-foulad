@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "components/themes/BaseTheme.h"
 #include "components/themes/foulad/FouladTheme.h"
+#include "util/CoverDiagnostics.h"
 
 UITheme UITheme::instance;
 
@@ -86,11 +88,9 @@ Rect UITheme::getScreenSafeArea(const GfxRenderer& renderer, bool hasFrontButton
 }
 
 std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight) {
-  size_t pos = coverBmpPath.find("[HEIGHT]", 0);
-  if (pos != std::string::npos) {
-    coverBmpPath.replace(pos, 8, std::to_string(coverHeight));
-  }
-  return coverBmpPath;
+  // Single implementation, shared with the host-tested cover diagnostics, so the
+  // name a screen reads can never drift from the name generateThumbBmp() wrote.
+  return CoverDiag::thumbPathForHeight(std::move(coverBmpPath), coverHeight);
 }
 
 UIIcon UITheme::getFileIcon(const std::string& filename) {

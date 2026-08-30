@@ -485,7 +485,14 @@ void EpubReaderActivity::openReaderMenu() {
     focusedTool = 0;
     panelHoldJumped = false;
     panelCursorShown = !mappedInput.hasTouch();
-    if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
+    if (!ensureToolbarUi()) {
+      // Nothing to draw the menu with; repaint the page rather than aborting --
+      // openReaderMenu() can run right after a child activity returned, so the
+      // framebuffer may still hold that child's screen.
+      overlay = Overlay::None;
+      requestUpdate();
+      return;
+    }
     toolbarUi->begin();
     discardOverlayPage();
     requestUpdate();
@@ -806,6 +813,35 @@ void EpubReaderActivity::loop() {
 
   const auto touch = ReaderUtils::detectTouchPageTurn(renderer, mappedInput);
 
+  if (showBookmarkMessage && (millis() - bookmarkMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showBookmarkMessage = false;
+    requestUpdate();
+  }
+
+  if (showDictionaryMessage && (millis() - dictionaryMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
+    showDictionaryMessage = false;
+    requestUpdate();
+  }
+
+  // The toolbar reader menu owns all input while shown, ahead of the automatic page turn
+  // below: the More panel's rate popup switches automatic turning on and leaves the panel
+  // open, so the timer must neither flip the page under it nor eat the panel's next
+  // Confirm/Back release.
+  if (overlay != Overlay::None) {
+    if (usesToolbarMenu()) {
+      // Hold the interval at zero elapsed so closing the panel starts a fresh one.
+      lastPageTurnTime = millis();
+      handleOverlayInput();
+      return;
+    }
+    // The style was switched off while an overlay was up (Settings reached via
+    // the More panel); fall back to the clean page.
+    overlay = Overlay::None;
+    discardOverlayPage();
+    requestUpdate();
+    return;
+  }
+
   if (automaticPageTurnActive) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
         mappedInput.wasReleased(MappedInputManager::Button::Back) ||
@@ -832,33 +868,26 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  if (showBookmarkMessage && (millis() - bookmarkMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showBookmarkMessage = false;
-    requestUpdate();
-  }
-
-  if (showDictionaryMessage && (millis() - dictionaryMessageTime) >= ReaderUtils::BOOKMARK_MESSAGE_DURATION_MS) {
-    showDictionaryMessage = false;
-    requestUpdate();
-  }
-
-  // The toolbar reader menu owns all input while shown.
-  if (overlay != Overlay::None) {
-    if (usesToolbarMenu()) {
-      handleOverlayInput();
-      return;
-    }
-    // The style was switched off while an overlay was up (Settings reached via
-    // the More panel); fall back to the clean page.
-    overlay = Overlay::None;
-    discardOverlayPage();
-    requestUpdate();
+  // While the end-of-book suggestion menu is up it owns Confirm/Back/navigation, so it
+  // gets this tick's input first and the long-press shortcuts below stay inert behind it
+  // -- a hold there must not drop a bookmark onto the suggestion screen or paint the
+  // dictionary word picker over it. Anything the menu does not handle (long-press Back to
+  // the file browser, say) still falls through to the regular handlers.
+  if (handleEndOfBookMenu()) {
     return;
   }
+  // Inlined rather than calling a ReaderActivity helper: keeping the shared
+  // upstream reader base byte-identical is what lets the thin-fork guard pass
+  // without an exemption. The upstream PR carrying this fix factors it out
+  // there instead.
+  const bool endOfBookMenuOpen =
+      isAtEndOfBook() && endOfBookOptionsReady.load(std::memory_order_acquire) && endOfBookOptions->menuActive();
 
   const unsigned long confirmHoldMs = confirmLongPressThreshold();
-  const bool confirmLongPressed =
-      confirmHoldMs != 0 && mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, confirmHoldMs);
+  // wasLongPressed() suppresses the release that follows it, so leave it unpolled while
+  // the end-of-book menu owns Confirm -- otherwise the menu never sees that release.
+  const bool confirmLongPressed = !endOfBookMenuOpen && confirmHoldMs != 0 &&
+                                  mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, confirmHoldMs);
   const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
   if (confirmLongPressed) {
     switch (SETTINGS.longPressMenuFunction) {
@@ -886,7 +915,7 @@ void EpubReaderActivity::loop() {
   // Home-key boards have no front Confirm button, so a Home-key hold runs the
   // same user-selected long-press action. The SDK emits this event once per
   // hold and suppresses the short Home tap for the same contact.
-  if (mappedInput.wasHomeKeyHold()) {
+  if (mappedInput.wasHomeKeyHold() && !endOfBookMenuOpen) {
     switch (SETTINGS.longPressMenuFunction) {
       case CrossPointSettings::LP_MENU_BOOKMARK:
         if (!showBookmarkMessage) {
@@ -915,10 +944,6 @@ void EpubReaderActivity::loop() {
       default:
         break;
     }
-  }
-
-  if (handleEndOfBookMenu()) {
-    return;
   }
 
   if (confirmReleased || ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
@@ -2751,10 +2776,24 @@ void EpubReaderActivity::discardOverlayPage() {
   overlayPageStored = false;
 }
 
+bool EpubReaderActivity::ensureToolbarUi() {
+  // ~2 KB claimed only while the menu is open, which is peak heap pressure with an EPUB
+  // section resident. A throwing new would abort() here rather than return null.
+  if (!toolbarUi) {
+    toolbarUi = makeUniqueNoThrow<ReaderToolbarUi>(renderer);
+    if (!toolbarUi) LOG_ERR("EPUBREADER", "OOM: ReaderToolbarUi");
+  }
+  return toolbarUi != nullptr;
+}
+
 void EpubReaderActivity::openOverlay(Overlay target) {
   const Overlay previous = overlay;
   overlay = target;
-  if (!toolbarUi) toolbarUi = std::make_unique<ReaderToolbarUi>(renderer);
+  if (!ensureToolbarUi()) {
+    // Nothing to draw the panel with; stay on the page instead of resetting the device.
+    overlay = previous;
+    return;
+  }
   if (previous == Overlay::None) toolbarUi->begin();
   // Buttons show a cursor from the start; touch boards only once a button moves it.
   panelCursorShown = !mappedInput.hasTouch();

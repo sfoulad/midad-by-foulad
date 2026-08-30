@@ -200,6 +200,11 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (sdArabicFontFamilyName[0] != '\0') {
     doc["sdArabicFontFamilyName"] = sdArabicFontFamilyName;
   }
+  // Built-in Arabic reading family. Its row (buildArabicFontFamilySetting) is a
+  // dynamic getter/setter entry contributed by the Settings extension, so the
+  // generic loop above never sees it -- without this the picked family would be
+  // forgotten on the next boot.
+  doc["arabicFontFamily"] = arabicFontFamily;
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
@@ -316,6 +321,12 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   const char* safn = doc["sdArabicFontFamilyName"] | "";
   strncpy(sdArabicFontFamilyName, safn, sizeof(sdArabicFontFamilyName) - 1);
   sdArabicFontFamilyName[sizeof(sdArabicFontFamilyName) - 1] = '\0';
+  // Counterpart to the manual write in toJson(); AMIRI (1) is still a valid
+  // stored value even though it is no longer offered -- ArabicFontSystem aliases
+  // it to Naskh, so it is clamped by ARABIC_FONT_FAMILY_COUNT, not by the
+  // shorter picker list.
+  arabicFontFamily =
+      clamp(doc["arabicFontFamily"] | (uint8_t)NOTONASKHARABIC, ARABIC_FONT_FAMILY_COUNT, (uint8_t)NOTONASKHARABIC);
   if (storedFontFamily == LEGACY_OPENDYSLEXIC && sdFontFamilyName[0] == '\0') {
     fontFamily = LEXENDDECA;
     strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);

@@ -1,10 +1,13 @@
 #pragma once
 #include <OpdsParser.h>
 
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "OpdsBrowserLayout.h"
+#include "OpdsRowIcon.h"
 #include "OpdsServerStore.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
@@ -94,46 +97,25 @@ class OpdsBookBrowserActivity final : public Activity {
   // (the synthetic PREV_PAGE/NEXT_PAGE entries fetchFeed() may insert) render
   // as slim strips above/below the grid instead of grid cells.
   //
-  // Cover size is NOT a fixed constant: covers must fill the actual screen
-  // width edge-to-edge (minus gutters), which differs by device (X3 portrait
-  // logical width 528, X4 portrait 480) and orientation. GRID_MIN_CELL_WIDTH
-  // only decides how many columns fit; computeGridLayout() derives the real
-  // per-cover pixel size from renderer.getScreenWidth() every time, so cover
-  // size and column count can never drift apart the way two independent
-  // fixed constants did previously (covers rendering much smaller than the
-  // grid cells they sat in, leaving dead space).
-  // 140 reliably yields 3 columns on both X3 portrait (528px logical width) and
-  // X4 portrait (480px) -- 150 only reached 3 columns on the X3, giving just 2 on
-  // the X4 (verified by computing actual column counts for both device widths).
-  static constexpr int GRID_MIN_CELL_WIDTH = 140;  // decides column count, not the rendered cover size
-  static constexpr int GRID_GUTTER = 12;
-  static constexpr float GRID_COVER_ASPECT = 1.5f;  // coverHeight = coverWidth * aspect
-  static constexpr int GRID_TITLE_LINES = 2;        // caption below the cover wraps up to this many lines
-  static constexpr int GRID_TITLE_TOP_GAP = 4;      // gap between cover bottom and first title line
-  static constexpr int GRID_CONTENT_TOP = 60;       // matches the existing list's content start y
-  static constexpr int GRID_BOTTOM_MARGIN = 40;     // reserved for button hints
+  // All of the page's geometry -- content band, gutters, column count, cover
+  // size, row/cell rectangles -- lives in OpdsBrowserLayout.h, a pure header
+  // shared by render() (drawing) and loop() (touch hit-testing) so a tap can
+  // never land somewhere other than what was drawn. See that header for why
+  // cover size is derived from the live screen width rather than fixed.
   static constexpr int NO_GRID_PAGE_LOADED = -1;
   int loadedGridPageStart = NO_GRID_PAGE_LOADED;
 
-  // Total space reserved below a cover for its (up to GRID_TITLE_LINES-line) title caption.
-  // Computed from actual font metrics rather than a fixed constant: the Arabic font's line
-  // height runs noticeably taller than SMALL_FONT_ID's Latin metrics (same reasoning as
-  // getListRowHeight() below), so a fixed reservation sized for Latin text would clip an
-  // Arabic title's second line. Uses the worst case unconditionally (not per-page detection)
-  // since the grid's row spacing must stay stable regardless of which page is showing.
+  // Total space reserved below a cover for its (up to OpdsBrowserLayout::TITLE_LINES-line)
+  // title caption. Computed from actual font metrics rather than a fixed constant: the
+  // Arabic font's line height runs noticeably taller than SMALL_FONT_ID's Latin metrics
+  // (same reasoning as getListRowHeight() below), so a fixed reservation sized for Latin
+  // text would clip an Arabic title's second line.
   int getGridTitleHeight() const;
+  // Worst-case caption line height across the scripts a title may use; the
+  // grid's row pitch must stay stable regardless of which page is showing.
+  int getCaptionLineHeight() const;
 
-  struct GridLayout {
-    bool isGridPage = false;
-    int topNavCount = 0;  // entries[0, topNavCount) -> nav strip above the grid
-    int bookStart = 0;    // entries[bookStart, bookStart+bookCount) -> the grid
-    int bookCount = 0;
-    int bottomNavStart = 0;  // entries[bottomNavStart, entries.size()) -> nav strip below the grid
-    int columns = 1;
-    int itemsPerPage = 1;
-    int coverWidth = 0;  // fills the actual screen width -- see GRID_MIN_CELL_WIDTH comment above
-    int coverHeight = 0;
-  };
+  using GridLayout = OpdsBrowserLayout::Grid;
   GridLayout computeGridLayout() const;
   void loadGridPageCovers(const GridLayout& layout, int pageStart);
 
@@ -148,7 +130,7 @@ class OpdsBookBrowserActivity final : public Activity {
 
   // Selector fast path helper: toggles only the 4px selection-ring border around a cell --
   // no SD read, no BMP decode, cover art and title untouched. The ring lives entirely in
-  // the GRID_GUTTER=12 gap around a cell (same reasoning as RecentBooksActivity's identical
+  // the OpdsBrowserLayout::GUTTER gap around a cell (same reasoning as RecentBooksActivity's
   // ringRect idiom), so drawing white then black over it never touches the cover or caption.
   // Real-device testing showed the previous drawGridCell-based fast path (full erase + SD
   // read + decode for both the old and new cell) still cost ~1.2-1.4s per selector move --
@@ -199,6 +181,49 @@ class OpdsBookBrowserActivity final : public Activity {
   // the screen, and so this adapts across orientations/devices instead of assuming one
   // fixed screen height.
   int getListPageItems(int rowHeight) const;
+
+  // --- touch ----------------------------------------------------------------
+  // Touch is an additional input path over the same selection/activation code
+  // the buttons drive: a tap resolves to an entry index through
+  // OpdsBrowserLayout::hitTest() -- the same geometry render() draws with --
+  // and then runs activateEntry(), exactly as Confirm does. Nothing about the
+  // button paths below changes, and on a board with no touch digitiser
+  // wasScreenTapped()/wasSwipe() never report, so those boards never enter any
+  // of this.
+  //
+  // Returns true when the frame was consumed and loop() should stop.
+  bool handleBrowsingTouch(const GridLayout& layout);
+  // Shared Confirm/tap activation for the entry at `index`: search row opens
+  // the keyboard, book downloads, anything else navigates.
+  void activateEntry(int index);
+  // Swipe paging: moves a whole grid page (or list page) in one gesture, and
+  // fetches the feed's next/previous page at the ends, mirroring what holding
+  // Down/Right already does. `pageDelta` is +1 forward, -1 back.
+  void swipePage(const GridLayout& layout, int pageDelta);
+  // Fetches the feed's next (forward) or previous page, landing the selection
+  // so the reading direction continues instead of parking on a strip row.
+  void goToFeedPage(bool forward);
+  // Touch boards render the navigation list with a leading 32px icon and a
+  // finger-sized row; button boards keep the existing tight text-only row
+  // untouched, so their pagination and selection are bit-for-bit unchanged.
+  bool listRowsShowIcons() const;
+  static constexpr int LIST_ICON_SIZE = 32;  // the drawIcon-convention bitmaps are all 32x32
+  static constexpr int LIST_ICON_GAP = 10;   // between the icon and the title
+  // Vertical breathing room around a 32px icon, which together with it sets the
+  // touch row pitch (and so the finger target height).
+  static constexpr int LIST_ICON_ROW_PADDING = 16;
+  // Thickness of the selection frame drawn around a selected icon row. An icon
+  // row cannot use the inverted-band highlight: drawIcon() plots black ink only,
+  // so a filled band would hide the icon.
+  static constexpr int LIST_SELECTION_FRAME = 3;
+  // 32px raw icon bitmap for a navigation/search row, or nullptr for a row
+  // that gets no icon (the Prev/Next Page strip rows, whose « » chevrons
+  // already say what they are). The icon column is reserved either way so
+  // titles stay aligned.
+  const uint8_t* listRowIcon(const OpdsEntry& entry) const;
+  // The one place a navigation/search/book text row is drawn -- the plain list
+  // and both nav strips go through it, so they cannot drift apart.
+  void drawListRow(const OpdsEntry& entry, int rowTop, bool selected) const;
 
   void checkAndConnectWifi();
   void launchWifiSelection();

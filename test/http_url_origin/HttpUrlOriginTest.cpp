@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "HttpVerifiedFetch.h"
 #include "UrlOrigin.h"
 
 // Regression coverage for the origin-comparison logic HttpDownloader's
@@ -91,7 +92,9 @@ TEST(UrlOrigin, MatchesReferenceImplementationAcrossShapes) {
 // URL it rejects never reaches a socket on the verified path. The negative
 // cases below are the "HTTPS -> HTTP downgrade fails at the front door" half
 // of the OTA transport's negative security tests (the in-flight redirect
-// downgrade is refused separately by runGetWolf/esp_http_client).
+// downgrade is refused separately by runGetWolf/esp_http_client). The
+// function itself is covered by test/http_verified_fetch; the malformed
+// spellings below are extra shapes that suite does not enumerate.
 TEST(UrlIsHttps, AcceptsHttpsAnyCase) {
   EXPECT_TRUE(urlIsHttps("https://api.github.com/repos/x/y/releases/latest"));
   EXPECT_TRUE(urlIsHttps("HTTPS://api.github.com/"));

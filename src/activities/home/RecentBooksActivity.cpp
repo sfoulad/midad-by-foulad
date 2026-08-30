@@ -10,6 +10,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 
 #include "CrossPointSettings.h"
@@ -23,6 +24,7 @@
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "fontIds.h"
+#include "util/CoverDiagnostics.h"
 #include "util/CoverThumbs.h"
 #include "util/DebugLog.h"
 #include "util/DebugLogging.h"
@@ -459,7 +461,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     // historically succeeded where Home's attempt failed -- gating it behind
     // Home's failed attempt turned "grid rescues the covers" into "nothing
     // does" (confirmed on device after a cache clear).
-    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight))) {
+    if (!CoverThumbs::isUsableThumb(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight),
+                                    geometry.thumbHeight)) {
       needsGeneration = true;
       break;
     }
@@ -484,7 +487,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
       // comment above) but still records the attempt so HOME's once-per-boot
       // gate stays quiet for a book the grid itself couldn't generate. Failure
       // leaves book.coverBmpPath untouched (not cleared to "") for the same reason.
-      if (!Bitmap::isValidCachedBmp(coverPath)) {
+      if (!CoverThumbs::isUsableThumb(coverPath, geometry.thumbHeight)) {
         CoverThumbs::markAttempted(coverPath);
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
@@ -632,16 +635,36 @@ void RecentBooksActivity::render(RenderLock&&) {
         // Read from the shared canonical-height thumb (see computeGridGeometry);
         // drawBitmap scales it down to this grid cell's own display size.
         const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
-        if (Storage.exists(coverPath.c_str())) {
-          HalFile file;
-          if (Storage.openFileForRead("RBA", coverPath, file)) {
-            Bitmap bitmap(file);
-            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-              renderer.drawBitmap(bitmap, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
-              drawn = true;
+        // Named-fault reporting, same as the Home hero (see FouladTheme's
+        // drawCoverAt): every route to the placeholder book icon says which one
+        // it took, so a card that stays blank is diagnosable from a log instead
+        // of being indistinguishable from every other cause.
+        CoverDiag::Fault fault = CoverDiag::Fault::Missing;
+        char detail[48] = {0};
+        HalFile file;
+        if (Storage.openFileForRead("RBA", coverPath, file)) {
+          Bitmap bitmap(file);
+          const BmpReaderError err = bitmap.parseHeaders();
+          if (err != BmpReaderError::Ok) {
+            fault = CoverDiag::Fault::Invalid;
+            snprintf(detail, sizeof(detail), "%s", Bitmap::errorToString(err));
+          } else if (bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            // Headers parsed cleanly and it is the dimensions that are
+            // unusable, so the detail must name them -- reporting
+            // errorToString(Ok) here made the log blame the parser for a fault
+            // the parser did not find.
+            fault = CoverDiag::Fault::Invalid;
+            snprintf(detail, sizeof(detail), "degenerate dimensions %dx%d", bitmap.getWidth(), bitmap.getHeight());
+          } else {
+            drawn = renderer.drawBitmap(bitmap, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
+            if (!drawn) {
+              fault = CoverDiag::Fault::NotPainted;
+              snprintf(detail, sizeof(detail), "%dx%d into %dx%d", bitmap.getWidth(), bitmap.getHeight(),
+                       geometry.coverWidth, geometry.coverHeight);
             }
           }
         }
+        if (!drawn) CoverThumbs::reportFault("MYBOOKS", fault, coverPath, geometry.thumbHeight, detail);
       }
       renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
       if (!drawn) {

@@ -21,6 +21,7 @@
 
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "HttpVerifiedFetch.h"
 
 #if defined(FREEINK_NET_WOLFSSL)
 #include <SecureHttpClient.h>
@@ -957,38 +958,21 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
   return runGetSecure(url, username, password, sink) == OK;
 }
 
-namespace {
-// Shared preconditions of both fetchUrlVerified overloads. "Verified" means
-// TLS too, not just certificate-chain checking once connected -- reject
-// plaintext up front rather than relying on every caller to only ever pass an
-// https:// URL (the redirect paths refuse a mid-flight downgrade separately:
-// esp_http_client_set_redirection() on the mbedTLS path, runGetWolf's own
-// urlIsHttps check on the wolfSSL path). And on wolfSSL builds a missing CA
-// anchor set is refused outright: there is no default bundle to verify
-// against, and silently proceeding would mean setInsecure() -- the exact
-// downgrade this entry point exists to rule out.
-bool verifiedFetchAllowed(const std::string& url, const char* caPem) {
-  if (!urlIsHttps(url)) {
-    LOG_ERR("HTTP", "Refusing unverified fetch of non-HTTPS URL");
-    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
-    return false;
-  }
-#if defined(FREEINK_NET_WOLFSSL)
-  if (caPem == nullptr || *caPem == '\0') {
-    LOG_ERR("HTTP", "Refusing verified fetch without CA anchors");
-    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
-    return false;
-  }
-#else
-  (void)caPem;  // mbedTLS path verifies against esp_crt_bundle_attach
-#endif
-  return true;
-}
-}  // namespace
-
 bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback& onData, const char* caPem,
                                       const std::string& username, const std::string& password) {
-  if (!verifiedFetchAllowed(url, caPem)) return false;
+  // Runs on every build, wolfSSL or not: on the esp_http_client path caPem is
+  // unused (esp_crt_bundle verifies the chain), but the https-only requirement
+  // still has to hold or a "verified" fetch of an http:// URL would go out in
+  // clear.
+  if (const char* refusal = verifiedFetchRefusal(url, caPem, kVerifiedFetchNeedsAnchors)) {
+    LOG_ERR("HTTP", "Refusing verified fetch: %s", refusal);
+    // Stamp the refusal: we return before any transport runs, so without this
+    // getLastFailure() would still describe the *previous* request. Reachable --
+    // the OTA download URL comes from the release feed, not a literal.
+    // FailStage is Midad-only instrumentation; upstream's copy has no equivalent.
+    setLastFailure(FailStage::REFUSED, 0);
+    return false;
+  }
   LOG_DBG("HTTP", "Fetching (verified): %s", url.c_str());
   Sink sink;
   sink.write = onData;
@@ -1001,7 +985,17 @@ bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback
 
 bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
                                       const char* caPem) {
-  if (!verifiedFetchAllowed(url, caPem)) return false;
+  // Same preconditions as the plain verified fetch above -- deliberately the
+  // shared verifiedFetchRefusal(), not a second copy of the rules.
+  if (const char* refusal = verifiedFetchRefusal(url, caPem, kVerifiedFetchNeedsAnchors)) {
+    LOG_ERR("HTTP", "Refusing verified fetch: %s", refusal);
+    // Stamp the refusal: we return before any transport runs, so without this
+    // getLastFailure() would still describe the *previous* request. Reachable --
+    // the OTA download URL comes from the release feed, not a literal.
+    // FailStage is Midad-only instrumentation; upstream's copy has no equivalent.
+    setLastFailure(FailStage::REFUSED, 0);
+    return false;
+  }
   LOG_DBG("HTTP", "Fetching (verified, conditional): %s", url.c_str());
   conditional.notModified = false;
   conditional.etag.clear();

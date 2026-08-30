@@ -1,6 +1,7 @@
 #include "MidadSettingsExtension.h"
 
 #include <GfxRenderer.h>
+#include <HalFrontlight.h>
 #include <I18n.h>
 
 #include <algorithm>
@@ -11,6 +12,8 @@
 #include "FouladEbooksConfig.h"
 #include "MidadSettingsList.h"
 #include "OpdsServerStore.h"
+#include "SdCardFontSystem.h"
+#include "SettingsList.h"
 #include "SilentRestart.h"
 #include "activities/Activity.h"
 #include "activities/apps/DictionaryActivity.h"
@@ -19,6 +22,7 @@
 #include "activities/home/FileBrowserActivity.h"
 #include "activities/settings/SettingsExtension.h"
 #include "activities/util/ConfirmationActivity.h"
+#include "activities/util/FrontlightPanelActivity.h"
 
 // main.cpp's globals. An extension handler is handed the hosting Activity so
 // it can call startActivityForResult(), but Activity::renderer/mappedInput are
@@ -98,6 +102,11 @@ void openFouladEbooksLogout(Activity& host) {
       confirmHandler);
 }
 
+void openFrontlightPanel(Activity& host) {
+  host.startActivityForResult(std::make_unique<FrontlightPanelActivity>(renderer, mappedInputManager),
+                              [](const ActivityResult&) {});
+}
+
 }  // namespace
 
 std::vector<SettingsExtensionCategory> midadSettingsExtensionProvider() {
@@ -126,9 +135,33 @@ std::vector<SettingsExtensionCategory> midadSettingsExtensionProvider() {
   // the extension point consumes -- no adapter needed.
   appendMidadAppSettings(apps.settings);
 
+  // Second tab: device rows CrossPoint's own four categories have no slot for.
+  // The Arabic reading font is Midad-only, and the frontlight panel is reached
+  // by a top-edge swipe that etched-glass panels make unreliable -- both need a
+  // list entry, and contributing them here is what keeps SettingsActivity.cpp
+  // byte-identical to upstream.
+  SettingsExtensionCategory more;
+  more.label = I18N.get(StrId::STR_MORE);
+  more.settings.reserve(3);
+  // Global Arabic reading font. An ENUM (not an action row) so the selected
+  // family's name shows inline, exactly as Font Family does.
+  more.settings.push_back(buildArabicFontFamilySetting(&sdFontSystem.registry()));
+  // Mirrors MappedInputManager::wasLightPanelGesture()'s own guard: on a
+  // lightless board the panel has nothing to control, so no dead row.
+  if (Frontlight.present()) {
+    more.settings.push_back(
+        SettingInfo::ExtensionAction(&openFrontlightPanel).withLabel(I18N.get(StrId::STR_FRONTLIGHT)));
+    // Read at boot (main.cpp's Frontlight.begin) but editable nowhere else; the
+    // panel owns brightness/warmth/on, not this. Persisted by the category-less
+    // SettingsList.h entry, so no key is declared here.
+    more.settings.push_back(
+        SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake));
+  }
+
   std::vector<SettingsExtensionCategory> categories;
-  categories.reserve(1);
+  categories.reserve(2);
   categories.push_back(std::move(apps));
+  categories.push_back(std::move(more));
   return categories;
 }
 

@@ -165,8 +165,17 @@ class MappedInputManager {
   mutable bool touchHeldOverrideValid = false;
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
-  mutable uint16_t longPressFiredButtons = 0;
-  mutable uint16_t suppressedReleaseButtons = 0;
+  // One bit per Button value. Button::ScreenDown must stay the highest
+  // enumerator: both latch masks and the update()/consumeSuppressedRelease()
+  // sweeps are sized from it. Inserting a Button without widening ButtonMask
+  // would make `1u << value` truncate to 0, so the long-press latch could
+  // never trip (wasLongPressed would fire every frame) and the release it
+  // suppresses could never be consumed -- hence the static_assert.
+  using ButtonMask = uint32_t;
+  static constexpr uint8_t BUTTON_LAST = static_cast<uint8_t>(Button::ScreenDown);
+  static_assert(BUTTON_LAST < sizeof(ButtonMask) * 8, "Button enum outgrew ButtonMask; widen ButtonMask");
+  mutable ButtonMask longPressFiredButtons = 0;
+  mutable ButtonMask suppressedReleaseButtons = 0;
   // X4 Pro's power-button gesture state; harmless, near-zero-cost on other
   // boards (never armed there since updateX4ProPowerGesture() no-ops for
   // !BoardConfig::isX4Pro()).
