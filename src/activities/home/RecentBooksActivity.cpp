@@ -645,9 +645,16 @@ void RecentBooksActivity::render(RenderLock&&) {
         if (Storage.openFileForRead("RBA", coverPath, file)) {
           Bitmap bitmap(file);
           const BmpReaderError err = bitmap.parseHeaders();
-          if (err != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+          if (err != BmpReaderError::Ok) {
             fault = CoverDiag::Fault::Invalid;
             snprintf(detail, sizeof(detail), "%s", Bitmap::errorToString(err));
+          } else if (bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            // Headers parsed cleanly and it is the dimensions that are
+            // unusable, so the detail must name them -- reporting
+            // errorToString(Ok) here made the log blame the parser for a fault
+            // the parser did not find.
+            fault = CoverDiag::Fault::Invalid;
+            snprintf(detail, sizeof(detail), "degenerate dimensions %dx%d", bitmap.getWidth(), bitmap.getHeight());
           } else {
             drawn = renderer.drawBitmap(bitmap, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
             if (!drawn) {

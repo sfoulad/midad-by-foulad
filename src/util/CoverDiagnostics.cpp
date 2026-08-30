@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace CoverDiag {
 namespace {
@@ -97,6 +98,14 @@ BmpHeaderInfo inspectBmpHeader(const uint8_t* data, const size_t len) {
   const auto width = static_cast<int32_t>(readLE32(data + 18));
   const auto rawHeight = static_cast<int32_t>(readLE32(data + 22));
   info.width = width;
+  // INT32_MIN has no positive counterpart, so negating it below would be signed
+  // overflow (UB) -- rejected here rather than at the dimension check further
+  // down, which never gets to run. Same guard as SleepActivity's overlay header
+  // reader.
+  if (rawHeight == std::numeric_limits<int32_t>::min()) {
+    info.reason = "bad dimensions";
+    return info;
+  }
   // Negative biHeight means top-down row order, which is exactly what the cover
   // converters emit. Recording the flag (rather than treating the sign as
   // corruption) is what keeps a valid top-down thumb from being thrown away.

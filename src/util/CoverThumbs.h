@@ -38,15 +38,20 @@ void diagLog(const std::string& line);
 // SPECIFIC reason it is unusable (CoverDiag::Fault::None when it is fine) and
 // writing a short human-readable explanation into `detail` (e.g. the BMP reader
 // error, or the size actually found). `expectedHeight <= 0` skips the size check.
+// `detail` may be null when the caller only wants the verdict.
 //
-// Probing is quiet by design -- "this thumb has not been generated yet" is the
-// normal first-visit state, not a fault worth an error line. Screens that are
-// about to fall back to the placeholder call reportFault() instead.
+// Every fault return logs itself, exactly once, before returning: one
+// "[COVER] <FAULT-NAME> <path> want=N (reason)" line, so callers must NOT log
+// again. Missing is emitted at debug level because "not generated yet" is the
+// normal first-visit state; the rest are errors. Screens that fall back to the
+// placeholder without probing (they parse the bitmap themselves, because they
+// are about to draw it) call reportFault() to emit the same one line.
 CoverDiag::Fault probeThumb(const std::string& thumbPath, int expectedHeight, char* detail, size_t detailLen);
 
-// The "should I (re)generate this?" gate. A size mismatch is LOGGED but still
-// counts as usable -- see the implementation for why invalidating on size would
-// loop -- so this returns false only for a missing, corrupt, or empty-marker file.
+// The "should I (re)generate this?" gate. A size mismatch is logged by
+// probeThumb() but still counts as usable -- see the implementation for why
+// invalidating on size would loop -- so this returns false only for a missing,
+// corrupt, or empty-marker file.
 bool isUsableThumb(const std::string& thumbPath, int expectedHeight);
 
 // The one greppable line a cover failure leaves behind, so the next report can

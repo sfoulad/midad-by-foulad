@@ -19,7 +19,9 @@
 #include <vector>
 
 #include "Bitmap.h"
+#include "Logging.h"  // capturing stub; see stubs/Logging.h
 #include "util/CoverDiagnostics.h"
+#include "util/CoverThumbs.h"
 
 namespace {
 
@@ -159,6 +161,25 @@ TEST(BmpHeaderInspection, RejectsAZeroHeightImage) {
   const std::string bmp = makeOneBitBmp(199, 0, false, [](int, int) { return true; });
   const CoverDiag::BmpHeaderInfo info = CoverDiag::inspectBmpHeader(asBytes(bmp), bmp.size());
   EXPECT_FALSE(info.ok);
+}
+
+TEST(BmpHeaderInspection, RejectsIntMinHeightBeforeNegatingIt) {
+  // biHeight = 0x80000000 is INT32_MIN, which has no positive counterpart:
+  // negating it to recover the top-down row count is signed-integer overflow
+  // (undefined behaviour), and it happens BEFORE the "bad dimensions" check
+  // that would otherwise reject the header. It has to be refused up front.
+  std::string bmp = makeOneBitBmp(199, 4, /*topDown=*/true, [](int, int) { return true; });
+  ASSERT_GT(bmp.size(), 26u);
+  bmp[22] = 0x00;
+  bmp[23] = 0x00;
+  bmp[24] = 0x00;
+  bmp[25] = static_cast<char>(0x80);
+
+  const CoverDiag::BmpHeaderInfo info = CoverDiag::inspectBmpHeader(asBytes(bmp), bmp.size());
+  EXPECT_FALSE(info.ok);
+  EXPECT_STREQ(info.reason, "bad dimensions");
+  // The negation never ran, so no bogus positive height was recorded.
+  EXPECT_EQ(info.height, 0);
 }
 
 // --- The real firmware parser over the real file layout ---------------------
@@ -328,4 +349,99 @@ TEST(CoverFaultClassification, EveryFaultHasAGreppableName) {
   EXPECT_STREQ(CoverDiag::faultName(CoverDiag::Fault::StaleSize), "STALE-CACHE-SIZE");
   EXPECT_STREQ(CoverDiag::faultName(CoverDiag::Fault::OutOfMemory), "OOM");
   EXPECT_STREQ(CoverDiag::faultName(CoverDiag::Fault::NotPainted), "DRAW-SKIPPED");
+}
+
+// --- One greppable line per fault, emitted by probeThumb itself -------------
+//
+// CLAUDE.md requires a log before every error return, but the callers already
+// print a "[COVER] ..." fault line of their own, so the requirement is really
+// "exactly one" in both directions: a silent return leaves a cover failure
+// undiagnosable, and a second line doubles every failure in the capture. These
+// count the captured lines rather than merely asserting one exists.
+
+namespace {
+
+std::string absentPath() { return std::string(testing::TempDir()) + "/probe_absent.bmp"; }
+
+}  // namespace
+
+TEST(ProbeThumbLogging, EmptyPathLogsExactlyOneNamedLine) {
+  test_log::clear();
+  char detail[48] = {0};
+  EXPECT_EQ(CoverThumbs::probeThumb("", 300, detail, sizeof(detail)), CoverDiag::Fault::NoPath);
+  ASSERT_EQ(test_log::lines().size(), 1u);
+  EXPECT_EQ(test_log::lines()[0].origin, "COVER");
+  EXPECT_TRUE(test_log::onlyLineContains("NO-COVER-PATH"));
+}
+
+TEST(ProbeThumbLogging, MissingFileLogsExactlyOneNamedLine) {
+  test_log::clear();
+  char detail[48] = {0};
+  EXPECT_EQ(CoverThumbs::probeThumb(absentPath(), 300, detail, sizeof(detail)), CoverDiag::Fault::Missing);
+  ASSERT_EQ(test_log::lines().size(), 1u);
+  EXPECT_TRUE(test_log::onlyLineContains("MISSING-COVER"));
+  // Debug level, not error: "not generated yet" is the normal first-visit state
+  // that the generation pass this gate feeds then heals.
+  EXPECT_EQ(test_log::lines()[0].level, "DBG");
+}
+
+TEST(ProbeThumbLogging, CorruptFileLogsExactlyOneNamedLine) {
+  const std::string path = writeTempFile("probe_corrupt.bmp", "not a bitmap at all, just text");
+  test_log::clear();
+  char detail[48] = {0};
+  EXPECT_EQ(CoverThumbs::probeThumb(path, 300, detail, sizeof(detail)), CoverDiag::Fault::Invalid);
+  ASSERT_EQ(test_log::lines().size(), 1u);
+  EXPECT_TRUE(test_log::onlyLineContains("INVALID-CACHE"));
+  EXPECT_EQ(test_log::lines()[0].level, "ERR");
+  // The caller's copy of the reason matches what was logged.
+  EXPECT_NE(test_log::lines()[0].text.find(detail), std::string::npos);
+}
+
+TEST(ProbeThumbLogging, EmptyFailureMarkerLogsExactlyOneNamedLine) {
+  // generateThumbBmp() drops a zero-byte file to record "tried and failed".
+  const std::string path = writeTempFile("probe_marker.bmp", "");
+  test_log::clear();
+  EXPECT_EQ(CoverThumbs::probeThumb(path, 300, nullptr, 0), CoverDiag::Fault::Invalid);
+  ASSERT_EQ(test_log::lines().size(), 1u);
+  EXPECT_TRUE(test_log::onlyLineContains("INVALID-CACHE"));
+}
+
+TEST(ProbeThumbLogging, WrongSizedThumbLogsExactlyOneNamedLine) {
+  const std::string path =
+      writeTempFile("probe_stale.bmp", makeOneBitBmp(139, 210, true, [](int, int) { return true; }));
+  test_log::clear();
+  char detail[48] = {0};
+  EXPECT_EQ(CoverThumbs::probeThumb(path, 300, detail, sizeof(detail)), CoverDiag::Fault::StaleSize);
+  ASSERT_EQ(test_log::lines().size(), 1u);
+  EXPECT_TRUE(test_log::onlyLineContains("STALE-CACHE-SIZE"));
+  EXPECT_TRUE(test_log::onlyLineContains("found 139x210"));
+}
+
+TEST(ProbeThumbLogging, AGoodThumbLogsNothing) {
+  const std::string path = writeTempFile("probe_ok.bmp", makeOneBitBmp(199, 300, true, [](int, int) { return true; }));
+  test_log::clear();
+  char detail[48] = {0};
+  EXPECT_EQ(CoverThumbs::probeThumb(path, 300, detail, sizeof(detail)), CoverDiag::Fault::None);
+  EXPECT_TRUE(test_log::lines().empty());
+  EXPECT_STREQ(detail, "");
+}
+
+TEST(ProbeThumbLogging, IsUsableThumbDoesNotSecondGuessTheProbeLine) {
+  // The regression this guards: probeThumb() now logs, so the gate above it must
+  // not log the same fault again. One fault, one line, either way in.
+  const std::string stale =
+      writeTempFile("gate_stale.bmp", makeOneBitBmp(139, 210, true, [](int, int) { return true; }));
+
+  test_log::clear();
+  EXPECT_TRUE(CoverThumbs::isUsableThumb(stale, 300));  // reported, but still usable
+  EXPECT_EQ(test_log::lines().size(), 1u);
+
+  test_log::clear();
+  EXPECT_FALSE(CoverThumbs::isUsableThumb(absentPath(), 300));
+  EXPECT_EQ(test_log::lines().size(), 1u);
+
+  const std::string good = writeTempFile("gate_ok.bmp", makeOneBitBmp(199, 300, true, [](int, int) { return true; }));
+  test_log::clear();
+  EXPECT_TRUE(CoverThumbs::isUsableThumb(good, 300));
+  EXPECT_TRUE(test_log::lines().empty());
 }

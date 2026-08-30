@@ -227,15 +227,103 @@ TEST(OpdsBrowserLayoutGrid, TheGridNeverReachesIntoTheBottomStrip) {
       const int books = 60;
       const int entryCount = 2 + books + 1;
       const L::Grid grid = L::computeGrid(w, h, rowHeight, CAPTION_H, entryCount, 2, 2 + books - 1);
-      ASSERT_TRUE(grid.isGridPage);
+      // A band too short for even one whole row is not a grid page at all any
+      // more -- it renders as a plain list, which is what keeps the promise
+      // below absolute (see the OpdsBrowserLayoutShortBand tests). Landscape at
+      // the 48px touch row height is exactly that case.
+      if (!grid.isGridPage) continue;
       const int lastSlot = grid.itemsPerPage - 1;
       const L::Rect cell = L::gridCellHitRect(grid, w, rowHeight, CAPTION_H, lastSlot);
       const int stripTop = L::bottomStripTop(grid, h, entryCount, rowHeight);
-      // One row is the floor: a panel too short for even one cover row cannot
-      // be fixed by dropping rows, and that case is reported, not asserted away.
-      if (grid.itemsPerPage > grid.columns) {
-        EXPECT_LE(cell.y + cell.height, stripTop) << w << "x" << h << " rowHeight=" << rowHeight;
-      }
+      // Unconditional now: the "one row is the floor" carve-out this test used
+      // to need was the bug -- it drew a cell across the strip and let the strip
+      // steal its taps.
+      EXPECT_LE(cell.y + cell.height, stripTop) << w << "x" << h << " rowHeight=" << rowHeight;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A band too short for one whole cover row
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A landscape touch board: 800x480 with the taller icon rows the touch builds
+// use for the Search / Previous Page / Next Page strips.
+constexpr int TOUCH_ROW_H = 44;
+constexpr int TOUCH_TOP_NAV = 2;     // Search + Previous Page
+constexpr int TOUCH_BOTTOM_NAV = 1;  // Next Page
+
+L::Grid touchGrid(const int books, const int width, const int height) {
+  const int entryCount = TOUCH_TOP_NAV + books + TOUCH_BOTTOM_NAV;
+  return L::computeGrid(width, height, TOUCH_ROW_H, CAPTION_H, entryCount, TOUCH_TOP_NAV, TOUCH_TOP_NAV + books - 1);
+}
+
+// Everything the band's height is spent on besides the grid itself, so a test
+// can name the screen height at which exactly one row fits.
+constexpr int bandOverhead() {
+  return L::CONTENT_TOP + TOUCH_TOP_NAV * TOUCH_ROW_H + L::TOP_STRIP_GAP + L::BOTTOM_MARGIN +
+         TOUCH_BOTTOM_NAV * TOUCH_ROW_H;
+}
+
+}  // namespace
+
+TEST(OpdsBrowserLayoutShortBand, NoCompleteRowFallsBackToTheList) {
+  // The reported case: landscape touch board, Search + Previous Page above the
+  // grid and Next Page below it, all at the 44px icon-row height. That leaves
+  // less than one cover pitch, and forcing a row anyway drew the cell across
+  // the bottom strip -- where hitTest() gives the strip priority, so tapping a
+  // VISIBLE part of the book activated "Next Page" instead of opening it.
+  const L::Grid grid = touchGrid(12, X4_H, X4_W);  // 800x480
+  EXPECT_FALSE(grid.isGridPage);
+  EXPECT_EQ(grid.bookCount, 0);
+
+  // The page still works -- it is simply a plain list now, so every entry
+  // (including the Next Page control) is reachable at its own row.
+  const int entryCount = TOUCH_TOP_NAV + 12 + TOUCH_BOTTOM_NAV;
+  const L::Rect firstRow = L::listRowRect(X4_H, 0, TOUCH_ROW_H);
+  const L::Hit h = L::hitTest(firstRow.x + 5, firstRow.y + TOUCH_ROW_H / 2, grid, X4_H, X4_W, TOUCH_ROW_H, CAPTION_H,
+                              entryCount, 0, 0);
+  EXPECT_EQ(h.kind, L::HitKind::ListRow);
+  EXPECT_EQ(h.entryIndex, 0);
+}
+
+TEST(OpdsBrowserLayoutShortBand, ABandExactlyOnePitchTallStillGetsItsRow) {
+  // Boundary. Measure the pitch off a screen tall enough to be a grid page
+  // (cover size depends only on width), then name the exact height at which the
+  // band is one pitch: that height must keep its single row, and one pixel less
+  // must fall back to the list.
+  const L::Grid tall = touchGrid(12, X4_H, 900);
+  ASSERT_TRUE(tall.isGridPage);
+  const int pitch = tall.coverHeight + L::titleHeight(CAPTION_H) + L::GUTTER;
+  const int exactHeight = pitch + bandOverhead();
+
+  const L::Grid exact = touchGrid(12, X4_H, exactHeight);
+  ASSERT_TRUE(exact.isGridPage) << "a band of exactly one pitch must keep its row";
+  EXPECT_EQ(exact.itemsPerPage, exact.columns) << "exactly one row, not two";
+
+  const L::Grid oneShort = touchGrid(12, X4_H, exactHeight - 1);
+  EXPECT_FALSE(oneShort.isGridPage) << "one pixel short of a whole row is not a grid page";
+}
+
+TEST(OpdsBrowserLayoutShortBand, NoDrawnCellEverOverlapsTheBottomStripAtAnyHeight) {
+  // The invariant the fix exists to hold, swept rather than spot-checked: at
+  // every screen height, either the page is not a grid at all, or every drawn
+  // cell (cover PLUS its caption -- what the user sees as "the book") finishes
+  // above the strip that would otherwise steal its taps.
+  constexpr int BOOKS = 12;
+  const int entryCount = TOUCH_TOP_NAV + BOOKS + TOUCH_BOTTOM_NAV;
+  for (int height = 200; height <= 900; height++) {
+    const L::Grid grid = touchGrid(BOOKS, X4_H, height);
+    if (!grid.isGridPage) continue;
+
+    const int stripTop = L::bottomStripTop(grid, height, entryCount, TOUCH_ROW_H);
+    const int cells = L::gridCellsOnPage(grid, 0);
+    ASSERT_GT(cells, 0) << "height=" << height;
+    for (int slot = 0; slot < cells; slot++) {
+      const L::Rect cell = L::gridCellHitRect(grid, X4_H, TOUCH_ROW_H, CAPTION_H, slot);
+      EXPECT_LE(cell.y + cell.height, stripTop) << "height=" << height << " slot=" << slot;
     }
   }
 }

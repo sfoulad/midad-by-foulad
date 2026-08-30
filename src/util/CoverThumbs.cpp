@@ -18,6 +18,22 @@ std::set<std::string>& attemptedSet() {
   static std::set<std::string> attempted;
   return attempted;
 }
+
+// Emits the single greppable line for a probe fault and hands the fault back,
+// so every `return` in probeThumb() logs exactly once and no caller has to
+// remember to do it. Missing stays at debug level: "this thumb has not been
+// generated yet" is the normal first-visit state that the generation pass this
+// feeds then heals, not an error worth a red line on every fresh book.
+CoverDiag::Fault logProbeFault(const CoverDiag::Fault fault, const std::string& thumbPath, const int expectedHeight,
+                               const char* reason) {
+  if (fault == CoverDiag::Fault::Missing) {
+    LOG_DBG("COVER", "%s %s want=%d", CoverDiag::faultName(fault), thumbPath.c_str(), expectedHeight);
+  } else {
+    LOG_ERR("COVER", "%s %s want=%d (%s)", CoverDiag::faultName(fault), thumbPath.c_str(), expectedHeight,
+            reason != nullptr ? reason : "");
+  }
+  return fault;
+}
 }  // namespace
 
 namespace CoverThumbs {
@@ -38,35 +54,42 @@ void diagLog(const std::string& line) {
 CoverDiag::Fault probeThumb(const std::string& thumbPath, const int expectedHeight, char* detail,
                             const size_t detailLen) {
   if (detail != nullptr && detailLen > 0) detail[0] = '\0';
-  if (thumbPath.empty()) return CoverDiag::Fault::NoPath;
+  // Built once per fault and then copied into the caller's optional `detail`,
+  // so the logged reason and the returned reason can never disagree.
+  char reason[48] = {0};
+  const auto publish = [&](const CoverDiag::Fault fault) {
+    if (detail != nullptr && detailLen > 0) snprintf(detail, detailLen, "%s", reason);
+    return logProbeFault(fault, thumbPath, expectedHeight, reason);
+  };
+
+  if (thumbPath.empty()) return publish(CoverDiag::Fault::NoPath);
 
   HalFile file;
   if (!Storage.openFileForRead("COVER", thumbPath, file)) {
-    return CoverDiag::Fault::Missing;
+    return publish(CoverDiag::Fault::Missing);
   }
   Bitmap bitmap(file);
   const BmpReaderError err = bitmap.parseHeaders();
   if (err != BmpReaderError::Ok) {
-    if (detail != nullptr && detailLen > 0) snprintf(detail, detailLen, "%s", Bitmap::errorToString(err));
-    return CoverDiag::Fault::Invalid;
+    snprintf(reason, sizeof(reason), "%s", Bitmap::errorToString(err));
+    return publish(CoverDiag::Fault::Invalid);
   }
   if (bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
-    if (detail != nullptr && detailLen > 0) snprintf(detail, detailLen, "degenerate dimensions");
-    return CoverDiag::Fault::Invalid;
+    snprintf(reason, sizeof(reason), "degenerate dimensions %dx%d", bitmap.getWidth(), bitmap.getHeight());
+    return publish(CoverDiag::Fault::Invalid);
   }
   if (expectedHeight > 0 && bitmap.getHeight() != expectedHeight) {
-    if (detail != nullptr && detailLen > 0) {
-      snprintf(detail, detailLen, "found %dx%d", bitmap.getWidth(), bitmap.getHeight());
-    }
-    return CoverDiag::Fault::StaleSize;
+    snprintf(reason, sizeof(reason), "found %dx%d", bitmap.getWidth(), bitmap.getHeight());
+    return publish(CoverDiag::Fault::StaleSize);
   }
   return CoverDiag::Fault::None;
 }
 
 bool isUsableThumb(const std::string& thumbPath, const int expectedHeight) {
-  char detail[48];
-  const CoverDiag::Fault fault = probeThumb(thumbPath, expectedHeight, detail, sizeof(detail));
-  switch (fault) {
+  // probeThumb() has already emitted the one line naming whichever fault it
+  // found, so this only decides usability -- logging here too would double every
+  // cover fault in the capture.
+  switch (probeThumb(thumbPath, expectedHeight, nullptr, 0)) {
     case CoverDiag::Fault::None:
       return true;
     case CoverDiag::Fault::StaleSize:
@@ -78,14 +101,8 @@ bool isUsableThumb(const std::string& thumbPath, const int expectedHeight) {
       // re-run generation -- loading popup included -- on every boot for a file
       // that draws correctly. Naming it in the log is what separates a genuinely
       // stale cache from a missing or corrupt one.
-      LOG_ERR("COVER", "%s %s want=%d (%s)", CoverDiag::faultName(fault), thumbPath.c_str(), expectedHeight, detail);
       return true;
-    case CoverDiag::Fault::Missing:
-      // The normal first-visit state; the generation pass this gate feeds heals it.
-      LOG_DBG("COVER", "%s %s want=%d", CoverDiag::faultName(fault), thumbPath.c_str(), expectedHeight);
-      return false;
     default:
-      LOG_ERR("COVER", "%s %s want=%d (%s)", CoverDiag::faultName(fault), thumbPath.c_str(), expectedHeight, detail);
       return false;
   }
 }

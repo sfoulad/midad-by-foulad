@@ -148,7 +148,18 @@ inline Grid computeGrid(const int screenWidth, const int screenHeight, const int
   const int bandTop = gridTop(grid, rowHeight);
   const int bandBottom = bottomStripTop(grid, screenHeight, entryCount, rowHeight);
   const int gridRowPitch = grid.coverHeight + titleHeight(captionHeight) + GUTTER;
-  const int rows = std::max(1, gridRowPitch > 0 ? (bandBottom - bandTop) / gridRowPitch : 1);
+  const int rows = gridRowPitch > 0 ? (bandBottom - bandTop) / gridRowPitch : 0;
+  // No complete row fits (a landscape touch board carrying Search + Prev Page
+  // above and Next Page below can leave a band shorter than one cover cell).
+  // Claiming a row anyway drew a cover across the bottom strip, and since
+  // hitTest() gives the strips priority, a tap on the visible part of that
+  // cover activated "Next Page" instead of opening the book. Falling back to
+  // the plain list -- the same shape a coverless navigation feed already gets
+  // -- is the one move that keeps render(), swipePage() and hitTest() in
+  // agreement, because all three branch on this single isGridPage flag. It
+  // also always terminates, which shrinking the cover to fit does not: a band
+  // thinner than the caption plus gutter has no positive cover height to find.
+  if (rows <= 0) return Grid{};
   grid.itemsPerPage = grid.columns * rows;
   return grid;
 }
