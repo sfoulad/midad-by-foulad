@@ -21,6 +21,7 @@
 #include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
 #include "ReaderFontSizes.h"
+#include "SettingsEnumLabels.h"
 #include "activities/settings/SettingsActivity.h"
 #include "util/DictionaryRegistry.h"
 
@@ -30,6 +31,26 @@ inline bool boardHasTouch() {
 #else
   return BoardConfig::hasTouch();
 #endif
+}
+
+// Capacitive Home key (X4 Pro). Same simulator caveat as boardHasTouch().
+inline bool boardHasHomeKey() {
+#ifdef SIMULATOR
+  return false;
+#else
+  return BoardConfig::hasHomeKey();
+#endif
+}
+
+// Copy a compile-time label table into the std::vector<StrId> SettingInfo::Enum
+// takes. `count` trims trailing board-conditional entries (see
+// settings_labels::kLongPressMenuNoHomeKeyCount / kShortPwrBtnNoTouchCount);
+// the trimmed list stays a prefix of the full one, so no stored value shifts.
+inline std::vector<StrId> enumLabels(const StrId* labels, const std::size_t count) { return {labels, labels + count}; }
+
+template <std::size_t N>
+inline std::vector<StrId> enumLabels(const StrId (&labels)[N]) {
+  return {labels, labels + N};
 }
 
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
@@ -158,14 +179,17 @@ inline SettingInfo buildFontSizeSetting(const SdCardFontRegistry* registry) {
 }
 
 // Build the Arabic font family setting dynamically, mirroring buildFontFamilySetting()
-// above -- same two-axis structure (5 built-in families + optional SD override) as the
+// above -- same two-axis structure (built-in families + optional SD override) as the
 // main reading font. Built as an ENUM (not a plain SettingInfo::Action) specifically so
 // the settings list shows the currently selected font's name inline, the same way Font
 // Family does, instead of requiring the user to open the picker just to see what's
-// selected. SettingsActivity::toggleCurrentSetting() special-cases STR_ARABIC_FONT (like
-// it already does for STR_FONT_FAMILY) to launch the picker on Confirm instead of cycling
-// through a plain popup -- the picker's live glyph preview is worth keeping for Arabic
-// specifically, where the built-in styles look meaningfully different from each other.
+// selected. Confirm opens SettingsActivity's standard option popup (three or more
+// values), listing the same families this table defines.
+//
+// Contributed to the Settings screen by Midad's SettingsExtension provider (see
+// src/MidadSettingsExtension.cpp), not from getSettingsList() below: the Arabic
+// reading font is a Midad feature, and the extension point is how a downstream
+// integration adds rows without CrossPoint's own files knowing about it.
 inline SettingInfo buildArabicFontFamilySetting(const SdCardFontRegistry* registry) {
   // Selectable built-in font labels (StrId) and their stored ARABIC_FONT_FAMILY value,
   // in display order -- mirrors ArabicFontSelectionActivity.cpp's own
@@ -292,11 +316,11 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
   return s;
 }
 
+// "Reader Menu" (the last entry) is only offered on home-key boards, where the
+// key's long press keeps the menu reachable; elsewhere the list stops one short.
 inline std::vector<StrId> buildLongPressMenuValues() {
-  static constexpr StrId VALUES[] = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
-                                     StrId::STR_DICTIONARY, StrId::STR_READER_MENU};
-  const size_t count = BoardConfig::hasHomeKey() ? std::size(VALUES) : std::size(VALUES) - 1;
-  return {VALUES, VALUES + count};
+  return enumLabels(settings_labels::kLongPressMenu, boardHasHomeKey() ? std::size(settings_labels::kLongPressMenu)
+                                                                       : settings_labels::kLongPressMenuNoHomeKeyCount);
 }
 
 // Shared settings list used by both the device settings UI and the web settings API.
@@ -322,7 +346,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // (Gym's toggle + weight-unit enum) were added -- v1.7.64 hung on every
     // boot. push_back keeps only one entry's temporary alive at a time.
     std::vector<SettingInfo> v;
-    v.reserve(64);
+    v.reserve(72);
     // --- Display ---
     // Enum settings are persisted as numeric values. Assign these labels by enum
     // value (not positional order) so a reordered menu or enum cannot silently
@@ -346,20 +370,20 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_SCREEN, &CrossPointSettings::sleepScreen,
                                   std::move(sleepScreenValues), "sleepScreen", StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_MODE, &CrossPointSettings::sleepScreenCoverMode,
-                                  {StrId::STR_FIT, StrId::STR_CROP}, "sleepScreenCoverMode", StrId::STR_CAT_DISPLAY));
+                                  enumLabels(settings_labels::kSleepCoverMode), "sleepScreenCoverMode",
+                                  StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_SLEEP_COVER_FILTER, &CrossPointSettings::sleepScreenCoverFilter,
-                                  {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
-                                  "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY));
+                                  enumLabels(settings_labels::kSleepCoverFilter), "sleepScreenCoverFilter",
+                                  StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
-                                  {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
+                                  enumLabels(settings_labels::kQuickResumeTimeout), "quickResumeSleepScreen",
                                   StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
-                                  {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideBatteryPercentage",
+                                  enumLabels(settings_labels::kHideBattery), "hideBatteryPercentage",
                                   StrId::STR_CAT_DISPLAY));
-    v.push_back(SettingInfo::Enum(
-        StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
-        {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15, StrId::STR_PAGES_30},
-        "refreshFrequency", StrId::STR_CAT_DISPLAY));
+    v.push_back(SettingInfo::Enum(StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
+                                  enumLabels(settings_labels::kRefreshFrequency), "refreshFrequency",
+                                  StrId::STR_CAT_DISPLAY));
     v.push_back(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                                     StrId::STR_CAT_DISPLAY));
     // Whole-UI inversion (reader + Arabic + games + theme) applied at the
@@ -372,28 +396,26 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // does not apply; RoundedRaffTheme was removed entirely (Group I).
 
     // --- Reader ---
-    // Built-in font-family entry. Replaced per-call with a registry-aware
-    // version when SD fonts are installed.
-    v.push_back(SettingInfo::Enum(StrId::STR_FONT_FAMILY, &CrossPointSettings::fontFamily, {StrId::STR_LEXEND_DECA},
-                                  "fontFamily", StrId::STR_CAT_READER));
+    // Placeholder -- replaced unconditionally below with buildFontFamilySetting().
+    // It only fixes the row's position in the Reader category; the real option
+    // list depends on the SD font registry.
+    v.push_back(SettingInfo::Enum(StrId::STR_FONT_FAMILY, nullptr, {}, "fontFamily", StrId::STR_CAT_READER));
     // Placeholder -- replaced unconditionally below with buildFontSizeSetting(),
     // since the selectable point sizes depend on the active family (built-in
     // fixed set, or an SD family's actually-installed sizes), not a fixed enum.
     v.push_back(SettingInfo::Enum(StrId::STR_FONT_SIZE, nullptr, {}, "fontSize", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Enum(StrId::STR_ARABIC_FONT_SIZE, &CrossPointSettings::arabicFontSize,
-                                  {StrId::STR_SMALL, StrId::STR_MEDIUM, StrId::STR_LARGE, StrId::STR_X_LARGE},
-                                  "arabicFontSize", StrId::STR_CAT_READER));
+                                  enumLabels(settings_labels::kArabicFontSize), "arabicFontSize",
+                                  StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Enum(StrId::STR_LINE_SPACING, &CrossPointSettings::lineSpacing,
-                                  {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE, StrId::STR_EXTRA_WIDE},
-                                  "lineSpacing", StrId::STR_CAT_READER));
+                                  enumLabels(settings_labels::kLineSpacing), "lineSpacing", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Value(StrId::STR_SCREEN_MARGIN, &CrossPointSettings::screenMargin,
                                    {CrossPointSettings::SCREEN_MARGIN_MIN, CrossPointSettings::SCREEN_MARGIN_MAX,
                                     CrossPointSettings::SCREEN_MARGIN_STEP},
                                    "screenMargin", StrId::STR_CAT_READER));
-    v.push_back(SettingInfo::Enum(
-        StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
-        {StrId::STR_JUSTIFY, StrId::STR_ALIGN_LEFT, StrId::STR_CENTER, StrId::STR_ALIGN_RIGHT, StrId::STR_BOOK_S_STYLE},
-        "paragraphAlignment", StrId::STR_CAT_READER));
+    v.push_back(SettingInfo::Enum(StrId::STR_PARA_ALIGNMENT, &CrossPointSettings::paragraphAlignment,
+                                  enumLabels(settings_labels::kParagraphAlignment), "paragraphAlignment",
+                                  StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_EMBEDDED_STYLE, &CrossPointSettings::embeddedStyle, "embeddedStyle",
                                     StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_FOCUS_READING, &CrossPointSettings::focusReadingEnabled,
@@ -403,21 +425,23 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.push_back(SettingInfo::Toggle(StrId::STR_TRACK_READING_STATS, &CrossPointSettings::trackReadingStats,
                                     "trackReadingStats", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Enum(StrId::STR_DAILY_READING_GOAL, &CrossPointSettings::dailyReadingGoal,
-                                  {StrId::STR_GOAL_15M, StrId::STR_GOAL_30M, StrId::STR_GOAL_45M, StrId::STR_GOAL_1H,
-                                   StrId::STR_GOAL_90M, StrId::STR_GOAL_2H},
-                                  "dailyReadingGoal", StrId::STR_CAT_READER));
-    v.push_back(SettingInfo::Enum(
-        StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
-        {StrId::STR_PORTRAIT, StrId::STR_LANDSCAPE_CW, StrId::STR_ORIENTATION_INVERTED, StrId::STR_LANDSCAPE_CCW},
-        "orientation", StrId::STR_CAT_READER));
+                                  enumLabels(settings_labels::kDailyReadingGoal), "dailyReadingGoal",
+                                  StrId::STR_CAT_READER));
+    v.push_back(SettingInfo::Enum(StrId::STR_ORIENTATION, &CrossPointSettings::orientation,
+                                  enumLabels(settings_labels::kOrientation), "orientation", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_EXTRA_SPACING, &CrossPointSettings::extraParagraphSpacing,
                                     "extraParagraphSpacing", StrId::STR_CAT_READER));
     v.push_back(SettingInfo::Toggle(StrId::STR_TEXT_AA, &CrossPointSettings::textAntiAliasing, "textAntiAliasing",
                                     StrId::STR_CAT_READER));
-    v.push_back(
-        SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
-                          {StrId::STR_IMAGES_DISPLAY, StrId::STR_IMAGES_PLACEHOLDER, StrId::STR_IMAGES_SUPPRESS},
-                          "imageRendering", StrId::STR_CAT_READER));
+    v.push_back(SettingInfo::Enum(StrId::STR_IMAGES, &CrossPointSettings::imageRendering,
+                                  enumLabels(settings_labels::kImageRendering), "imageRendering",
+                                  StrId::STR_CAT_READER));
+    // How Select opens the reader menu: the full-screen list or the toolbar
+    // overlay. main.cpp seeds Toolbar on touch boards before the settings load,
+    // so this row is what lets a user pick the other style and keep it.
+    v.push_back(SettingInfo::Enum(StrId::STR_READER_MENU_STYLE, &CrossPointSettings::readerMenuStyle,
+                                  enumLabels(settings_labels::kReaderMenuStyle), "readerMenuStyle",
+                                  StrId::STR_CAT_READER));
     // Night mode = inverted output polarity on the reading surfaces only
     // (EPUB/TXT/XTC; ActivityManager resolves the polarity per render).
     // Reader category, since it does not affect the rest of the UI.
@@ -425,32 +449,33 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     StrId::STR_CAT_READER));
     // --- Controls ---
     v.push_back(SettingInfo::Enum(StrId::STR_SIDE_BTN_LAYOUT, &CrossPointSettings::sideButtonLayout,
-                                  {StrId::STR_PREV_NEXT, StrId::STR_NEXT_PREV, StrId::STR_DISABLED}, "sideButtonLayout",
+                                  enumLabels(settings_labels::kSideButtonLayout), "sideButtonLayout",
                                   StrId::STR_CAT_CONTROLS));
     v.push_back(SettingInfo::Enum(StrId::STR_TOUCH_READER_CONTROLS, &CrossPointSettings::touchReaderControls,
-                                  {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "touchReaderControls",
+                                  enumLabels(settings_labels::kTouchReaderControls), "touchReaderControls",
+                                  StrId::STR_CAT_CONTROLS));
+    // Persisted under the legacy "tapForReaderMenu" key: old saves map
+    // 0 = Off, 1 = Tap.
+    v.push_back(SettingInfo::Enum(StrId::STR_SHOW_READER_MENU, &CrossPointSettings::showReaderMenu,
+                                  enumLabels(settings_labels::kShowReaderMenu), "tapForReaderMenu",
                                   StrId::STR_CAT_CONTROLS));
     v.push_back(SettingInfo::Toggle(StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION,
                                     &CrossPointSettings::frontButtonFollowOrientation, "frontButtonFollowOrientation",
                                     StrId::STR_CAT_CONTROLS));
     v.push_back(SettingInfo::Enum(StrId::STR_LONG_PRESS_BEHAVIOR, &CrossPointSettings::longPressButtonBehavior,
-                                  {StrId::STR_LONG_PRESS_BEHAVIOR_OFF, StrId::STR_LONG_PRESS_BEHAVIOR_SKIP,
-                                   StrId::STR_LONG_PRESS_BEHAVIOR_ORIENTATION},
-                                  "longPressButtonBehavior", StrId::STR_CAT_CONTROLS));
-    v.push_back(
-        SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU, &CrossPointSettings::longPressMenuFunction,
-                          {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY},
-                          "longPressMenuFunction", StrId::STR_CAT_CONTROLS));
+                                  enumLabels(settings_labels::kLongPressBehavior), "longPressButtonBehavior",
+                                  StrId::STR_CAT_CONTROLS));
+    v.push_back(SettingInfo::Enum(StrId::STR_LONG_PRESS_MENU, &CrossPointSettings::longPressMenuFunction,
+                                  buildLongPressMenuValues(), "longPressMenuFunction", StrId::STR_CAT_CONTROLS));
 #if FREEINK_CAP_TOUCH
     v.push_back(SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
-                                  {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
-                                   StrId::STR_FOOTNOTES, StrId::STR_CONFIRM},
-                                  "shortPwrBtn", StrId::STR_CAT_CONTROLS));
+                                  enumLabels(settings_labels::kShortPwrBtn), "shortPwrBtn", StrId::STR_CAT_CONTROLS));
 #else
-    v.push_back(SettingInfo::Enum(
-        StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
-        {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},
-        "shortPwrBtn", StrId::STR_CAT_CONTROLS));
+    // No Confirm option: the power button is only pressed into Confirm service
+    // on touch boards, which have no front Confirm key.
+    v.push_back(SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
+                                  enumLabels(settings_labels::kShortPwrBtn, settings_labels::kShortPwrBtnNoTouchCount),
+                                  "shortPwrBtn", StrId::STR_CAT_CONTROLS));
 #endif
     v.push_back(SettingInfo::Toggle(StrId::STR_PWR_BTN_FOOTNOTE_BACK, &CrossPointSettings::pwrBtnFootnoteBack,
                                     "pwrBtnFootnoteBack", StrId::STR_CAT_CONTROLS));
@@ -491,8 +516,22 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     // OPDS download filename format: persisted + web-exposed, category-less so it
     // is hidden from the on-device Settings screen (cycled from the OPDS UI).
     v.push_back(SettingInfo::Enum(StrId::STR_OPDS_FILENAME_FORMAT, &CrossPointSettings::opdsFilenameFormat,
-                                  {StrId::STR_FMT_AUTHOR_TITLE, StrId::STR_FMT_TITLE_AUTHOR, StrId::STR_FMT_TITLE},
-                                  "opdsFilenameFormat"));
+                                  enumLabels(settings_labels::kOpdsFilenameFormat), "opdsFilenameFormat"));
+
+    // Frontlight state: persisted and web-exposed, but category-less so the
+    // Settings screen shows nothing here -- FrontlightPanelActivity owns
+    // brightness/warmth/on, and Midad's extension provider contributes the
+    // Restore Light on Wake row (see src/MidadSettingsExtension.cpp). Kept
+    // unconditional: on a lightless board these are four inert bytes, and a
+    // runtime Frontlight.present() guard would run before
+    // HalFrontlight::begin(), which reads its starting brightness from here.
+    v.push_back(SettingInfo::Value(StrId::STR_BRIGHTNESS, &CrossPointSettings::frontlightBrightness, {0, 100, 5},
+                                   "frontlightBrightness"));
+    v.push_back(
+        SettingInfo::Value(StrId::STR_WARMTH, &CrossPointSettings::frontlightWarmth, {0, 100, 5}, "frontlightWarmth"));
+    v.push_back(SettingInfo::Toggle(StrId::STR_FRONTLIGHT, &CrossPointSettings::frontlightOn, "frontlightOn"));
+    v.push_back(SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
+                                    "frontlightRestoreOnWake"));
 
     // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
     v.push_back(SettingInfo::DynamicString(
@@ -547,19 +586,18 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                                     &CrossPointSettings::statusBarBookProgressPercentage,
                                     "statusBarBookProgressPercentage", StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Enum(StrId::STR_PROGRESS_BAR, &CrossPointSettings::statusBarProgressBar,
-                                  {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarProgressBar",
+                                  enumLabels(settings_labels::kStatusBarProgressBar), "statusBarProgressBar",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));
-    v.push_back(
-        SettingInfo::Enum(StrId::STR_PROGRESS_BAR_THICKNESS, &CrossPointSettings::statusBarProgressBarThickness,
-                          {StrId::STR_PROGRESS_BAR_THIN, StrId::STR_PROGRESS_BAR_MEDIUM, StrId::STR_PROGRESS_BAR_THICK},
-                          "statusBarProgressBarThickness", StrId::STR_CUSTOMISE_STATUS_BAR));
+    v.push_back(SettingInfo::Enum(StrId::STR_PROGRESS_BAR_THICKNESS, &CrossPointSettings::statusBarProgressBarThickness,
+                                  enumLabels(settings_labels::kProgressBarThickness), "statusBarProgressBarThickness",
+                                  StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Enum(StrId::STR_TITLE, &CrossPointSettings::statusBarTitle,
-                                  {StrId::STR_BOOK, StrId::STR_CHAPTER, StrId::STR_HIDE}, "statusBarTitle",
+                                  enumLabels(settings_labels::kStatusBarTitle), "statusBarTitle",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Toggle(StrId::STR_BATTERY, &CrossPointSettings::statusBarBattery, "statusBarBattery",
                                     StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Enum(StrId::STR_XTC_STATUS_BAR, &CrossPointSettings::xtcStatusBarMode,
-                                  {StrId::STR_HIDE, StrId::STR_BOTTOM, StrId::STR_TOP}, "xtcStatusBarMode",
+                                  enumLabels(settings_labels::kXtcStatusBar), "xtcStatusBarMode",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));
     // Clock entries (web settings only; device UI uses ClockOffsetActivity for the offset).
     // Range 0..104 = quarter-hour steps from UTC-12:00 to UTC+14:00, biased by 48.
@@ -573,7 +611,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
     v.push_back(SettingInfo::Value(StrId::STR_CLOCK_UTC_OFFSET, &CrossPointSettings::clockUtcOffsetQ, {0, 104, 1},
                                    "clockUtcOffsetQ", StrId::STR_CUSTOMISE_STATUS_BAR));
     v.push_back(SettingInfo::Enum(StrId::STR_CLOCK_FORMAT, &CrossPointSettings::clockFormat,
-                                  {StrId::STR_CLOCK_FORMAT_24H, StrId::STR_CLOCK_FORMAT_12H}, "clockFormat",
+                                  enumLabels(settings_labels::kClockFormat), "clockFormat",
                                   StrId::STR_CUSTOMISE_STATUS_BAR));
     // Persistence flag for NTP debounce. Resetting from the web UI forces a re-sync
     // on next WiFi connect, which is useful when crossing time zones.
@@ -585,8 +623,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
       for (auto it = v.begin(); it != v.end(); ++it) {
         if (it->nameId == StrId::STR_SHORT_PWR_BTN) {
           v.insert(it + 1, SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,
-                                             {StrId::STR_STATE_OFF, StrId::STR_NORMAL, StrId::STR_INVERTED},
-                                             "tiltPageTurn", StrId::STR_CAT_CONTROLS));
+                                             enumLabels(settings_labels::kTiltPageTurn), "tiltPageTurn",
+                                             StrId::STR_CAT_CONTROLS));
           break;
         }
       }
@@ -600,6 +638,15 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            [](const SettingInfo& s) { return s.nameId == StrId::STR_TOUCH_READER_CONTROLS; }),
             v.end());
   }
+  // The reader-menu gesture choice only makes sense where the menu stays
+  // reachable without the tap and the bottom edge is free (the capacitive Home
+  // key); elsewhere the bottom-edge up-swipe is Home and the center tap is the
+  // only path, so the setting stays at its Tap default.
+  if (!boardHasHomeKey()) {
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const SettingInfo& s) { return s.nameId == StrId::STR_SHOW_READER_MENU; }),
+            v.end());
+  }
   if (boardHasTouch()) {
     v.erase(std::remove_if(v.begin(), v.end(),
                            [](const SettingInfo& s) {
@@ -609,7 +656,12 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                            }),
             v.end());
   }
-  if (registry && registry->getFamilyCount() > 0) {
+  // Unconditional, like the font-size rebuild below. The placeholder entry
+  // indexes its single label by the raw fontFamily byte, so a device holding
+  // LEXENDDECA=1 (set from Text Settings) would render an out-of-range blank
+  // row; buildFontFamilySetting()'s getter collapses every built-in value onto
+  // the one remaining family instead.
+  {
     auto it = std::find_if(v.begin(), v.end(), [](const SettingInfo& s) { return s.nameId == StrId::STR_FONT_FAMILY; });
     if (it != v.end()) {
       *it = buildFontFamilySetting(registry);

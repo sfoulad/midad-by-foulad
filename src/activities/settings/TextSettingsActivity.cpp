@@ -29,17 +29,26 @@ constexpr StrId LAYOUT_ROW_NAME_IDS[] = {StrId::STR_LINE_SPACING, StrId::STR_EXT
 constexpr StrId STYLE_ROW_NAME_IDS[] = {StrId::STR_FOCUS_READING, StrId::STR_HYPHENATION, StrId::STR_EMBEDDED_STYLE,
                                         StrId::STR_TEXT_AA};
 
-int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName, uint8_t fontFamily) {
+// Built-in rows this screen offers, which is NOT CrossPointSettings::
+// BUILTIN_FONT_COUNT: Bitter's glyph data was removed from flash and BITTER=0
+// stays a reserved enum value aliasing Lexend Deca (see
+// CrossPointSettings::FONT_FAMILY and SettingsList.h's buildFontFamilySetting),
+// so every built-in fontFamily value lands on the single Lexend Deca row.
+// FontEntry::settingIndex still carries the STORED value, so SD families keep
+// their BUILTIN_FONT_COUNT-based offset -- only the display index shrinks.
+constexpr int BUILTIN_FONT_ROWS = 1;
+
+int findCurrentFontIndex(const SdCardFontRegistry* registry, const char* sdFontFamilyName) {
   if (sdFontFamilyName[0] != '\0' && registry) {
     const auto& families = registry->getFamilies();
     for (int i = 0; i < static_cast<int>(families.size()); i++) {
       if (families[i].name == sdFontFamilyName) {
-        return CrossPointSettings::BUILTIN_FONT_COUNT + i;
+        return BUILTIN_FONT_ROWS + i;
       }
     }
   }
 
-  return fontFamily < CrossPointSettings::BUILTIN_FONT_COUNT ? fontFamily : 0;
+  return 0;
 }
 
 constexpr StrId LINE_SPACING_IDS[] = {StrId::STR_TIGHT, StrId::STR_NORMAL, StrId::STR_WIDE, StrId::STR_EXTRA_WIDE};
@@ -66,10 +75,11 @@ void TextSettingsActivity::onEnter() {
   previewHeight = usableHeight * metrics_.previewHeightPercent / 100;
 
   fonts_.clear();
-  fonts_.reserve(CrossPointSettings::BUILTIN_FONT_COUNT + (registry_ ? registry_->getFamilyCount() : 0));
-  // Midad's built-in reading families (data-level adaptation of upstream's
-  // NOTOSERIF/NOTOSANS rows; the activity's architecture is unchanged).
-  fonts_.push_back({I18N.get(StrId::STR_BITTER), true, static_cast<uint8_t>(CrossPointSettings::BITTER)});
+  fonts_.reserve(BUILTIN_FONT_ROWS + (registry_ ? registry_->getFamilyCount() : 0));
+  // Midad's one built-in reading family (data-level adaptation of upstream's
+  // NOTOSERIF/NOTOSANS rows; the activity's architecture is unchanged). Listing
+  // the same single family Settings -> Reader -> Font Family offers is what
+  // keeps the two screens agreeing on what is selected.
   fonts_.push_back({I18N.get(StrId::STR_LEXEND_DECA), true, static_cast<uint8_t>(CrossPointSettings::LEXENDDECA)});
   if (registry_) {
     const auto& families = registry_->getFamilies();
@@ -80,7 +90,7 @@ void TextSettingsActivity::onEnter() {
 
   rebuildSizeList();
 
-  currentFamilyIndex_ = findCurrentFontIndex(registry_, SETTINGS.sdFontFamilyName, SETTINGS.fontFamily);
+  currentFamilyIndex_ = findCurrentFontIndex(registry_, SETTINGS.sdFontFamilyName);
   // Per-tab ring positions (0 = tab bar, 1..N = row). The base reset each
   // tab's nav with followOnBuild armed, so each tab's first build shows its
   // remembered selection (Family/Size open on the current item).
