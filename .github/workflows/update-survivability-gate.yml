@@ -70,44 +70,51 @@ name: Update Survivability Gate
 # actually establish is precisely the bug that bricked the device; applying
 # the opposite posture to the CI that guards it is the point.
 #
-# Design decision 4: the result is PUBLISHED against the PR head SHA
+# Design decision 4: the required result is THIS JOB'S OWN CHECK RUN
 # ------------------------------------------------------------------
-# Same mechanism as thin-fork-guard-trusted.yml's "property B". This job does
-# not rely on the ordinary GitHub Actions check run to carry the verdict to
-# branch protection. It explicitly PUBLISHES a commit status via the REST
-# Statuses API (POST /repos/{owner}/{repo}/statuses/{sha}) with
-# `sha: github.event.pull_request.head.sha` and
-# `context: update-survivability-gate`.
+# The verdict reaches branch protection as the ordinary GitHub Actions check
+# run produced by this job. The job is therefore named exactly
+# `update-survivability-gate`, and that string is the context a ruleset must
+# require.
 #
-# The head SHA comes from the event payload, never from `GITHUB_SHA`: under
-# `pull_request_target`, `GITHUB_SHA` is a commit on the BASE branch, so a
-# result keyed to it would not be a result about this pull request's code at
-# all. The payload's `pull_request.head.sha` is the commit branch protection
-# evaluates, is correct for fork PRs as well as same-repo ones, and does not
-# depend on how GitHub happens to associate a workflow run's check suite.
-# Triggering on `synchronize` means every push re-runs this workflow and posts
-# a FRESH status against the NEW head SHA, so a required check keeps tracking
-# the PR as it moves.
+# This deliberately does NOT post a commit status via the Statuses API, the
+# way thin-fork-guard-trusted.yml does. Posting one needs `statuses: write`,
+# and the only place to authorise that is the gate-7 allowlist inside
+# scripts/thin-fork-guard.sh -- a SECURITY_BOUNDARY_FILES entry, as is
+# scripts/check-workflow-permissions.rb. Editing either is blocked for an
+# ordinary PR by design, so shipping a status writer here would have required
+# temporarily relaxing branch protection to merge this very workflow, and
+# would have added a second workflow able to write a required status,
+# weakening the invariant that only one known evaluator can. Not worth it for
+# a property the check run already provides.
 #
-# The status is posted on EVERY outcome -- pass, block, and the fail-closed
-# "could not determine a verdict" path -- from a step that runs `if: always()`.
-# A gate that only posts on success leaves a required check pending forever,
-# which is just a slower way of not being a gate.
+# The measured fact this rests on, checked on this repository rather than
+# assumed:
 #
-# The JOB is named `update-survivability-gate`, the same string as the status
-# context, deliberately: a ruleset entry naming that context then matches both
-# the posted commit status and this job's own check run, so the required check
-# does not depend on which of the two GitHub resolves it against.
+#   For `pull_request_target`, `GITHUB_SHA` inside the job IS a commit on the
+#   BASE branch -- but the workflow RUN and its CHECK SUITE are associated
+#   with the PR HEAD SHA. Verified against thin-fork-guard-trusted.yml (also
+#   `pull_request_target`) on PR #216: run head_sha, check-suite head_sha and
+#   the PR head SHA were all b186c1e8, while the base was 42802346.
 #
-# Permissions note: `statuses: write` is required for the publish above, and is
-# the reason this workflow appears on scripts/thin-fork-guard.sh's gate-7
-# allowlist alongside thin-fork-guard-trusted.yml. That allowlist stays
-# exhaustive: any OTHER workflow acquiring `statuses: write`, `checks: write`
-# or `write-all` still fails the thin-fork guard, because the invariant it
-# protects is that only known, reviewed evaluators can write a required status.
-# `contents: read` and `pull-requests: read` cover the rest: the base-branch
-# checkout, the changed-file listing, the report content, and the review list
-# that clears a gate self-modification.
+# So the check run lands on the commit branch protection actually evaluates,
+# and `synchronize` re-runs it on every push. Nothing in this workflow reads
+# `GITHUB_SHA`; where the head SHA is genuinely needed (clearing a gate
+# self-modification requires an approval on the CURRENT head) it comes from
+# `github.event.pull_request.head.sha` via `env:`.
+#
+# The limit of that measurement, stated plainly: it was taken on a SAME-REPO
+# pull request. It has not been verified for a pull request opened from a
+# FORK. Confirm the context appears on a fork PR's head SHA before making this
+# a required check -- if it does not, a required check that never reports
+# blocks every fork PR, and the status-writer route above becomes necessary
+# after all.
+#
+# Permissions: `contents: read` and `pull-requests: read` only -- the
+# base-branch checkout, the changed-file listing, the report content, and the
+# review list that clears a gate self-modification. No write scope of any
+# kind, so this workflow stays off scripts/thin-fork-guard.sh's gate-7
+# allowlist and that allowlist stays exhaustive at one entry.
 #
 # Because `pull_request_target` runs the BASE branch's copy of a workflow,
 # this gate only applies to PRs whose target branch already contains this
@@ -123,7 +130,6 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  statuses: write
 
 jobs:
   update-survivability-gate:
@@ -256,11 +262,11 @@ jobs:
 
       - name: Evaluate the gate
         id: evaluate
-        # Sets `state` and `description` for the publish step below on every
-        # path, then exits non-zero for a blocking verdict so the run itself is
-        # red in the Actions tab too. Outputs written before a non-zero exit are
-        # still read by the runner, and the publish step runs `if: always()`, so
-        # the commit status is posted either way.
+        # Exits non-zero for a blocking verdict, which turns this job's check
+        # run red. That check run IS the required status -- see "Design
+        # decision 4" in the header. `state`/`description` outputs are also
+        # written on every path so the verdict is machine-readable from the run
+        # without re-parsing the summary.
         run: |
           set -uo pipefail
           title="$(cat pr-title.txt)"
@@ -292,33 +298,3 @@ jobs:
               exit 1
               ;;
           esac
-
-      - name: Publish the result against the PR head SHA
-        # `if: always()` so a required check is never left pending: if any step
-        # above failed outright -- a truncated file listing, a failed API call,
-        # a runner fault -- the `|| 'error'` fallback publishes a blocking
-        # status rather than nothing at all.
-        #
-        # Every value reaches the shell through `env`, never `${{ }}` inside
-        # the script: this job holds `statuses: write`, so inline interpolation
-        # of any payload-derived string would be the highest-value script
-        # injection target in this repository.
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          STATUS_STATE: ${{ steps.evaluate.outputs.state || 'error' }}
-          STATUS_DESCRIPTION: ${{ steps.evaluate.outputs.description || 'gate did not run to completion -- failing closed' }}
-          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          gh api \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$REPO/statuses/$PR_HEAD_SHA" \
-            -f "state=$STATUS_STATE" \
-            -f "context=update-survivability-gate" \
-            -f "description=$STATUS_DESCRIPTION" \
-            -f "target_url=$TARGET_URL"

@@ -376,26 +376,44 @@ and its residual failure mode.
 
 ### How the result reaches branch protection
 
-The job publishes a **commit status** with the context
-**`update-survivability-gate`** against
-`github.event.pull_request.head.sha`, via
-`POST /repos/{owner}/{repo}/statuses/{sha}` — the same mechanism
-[`thin-fork-guard-trusted.yml`](../.github/workflows/thin-fork-guard-trusted.yml)
-uses. The head SHA comes from the event payload and never from `GITHUB_SHA`,
-which under `pull_request_target` is a commit on the *base* branch: a result
-keyed to that would not be a result about the pull request's code. Every push
-re-runs the workflow and posts a fresh status against the new head SHA, and the
-status is posted on **every** outcome — pass, block, and the fail-closed
-"could not determine a verdict" path — so a required check is never left
-pending. The job is named `update-survivability-gate` too, so a ruleset entry
-naming that context matches both the posted status and the job's own check run.
+The verdict reaches branch protection as this job's own **GitHub Actions check
+run**. The job is named exactly **`update-survivability-gate`**, and that string
+is the context a ruleset must require.
 
-Publishing that status is why this workflow holds `statuses: write`, and why it
-is the second (and only other) entry on
-[`scripts/thin-fork-guard.sh`](../scripts/thin-fork-guard.sh)'s gate-7
-allowlist. That list stays exhaustive: any other workflow acquiring
-`statuses: write`, `checks: write` or `write-all` still fails the thin-fork
-guard.
+The gate deliberately does **not** publish a commit status via the Statuses API,
+the way [`thin-fork-guard-trusted.yml`](../.github/workflows/thin-fork-guard-trusted.yml)
+does. Doing so needs `statuses: write`, and the only place to authorise that is
+the gate-7 allowlist inside
+[`scripts/thin-fork-guard.sh`](../scripts/thin-fork-guard.sh) — a
+`SECURITY_BOUNDARY_FILES` entry, as is `scripts/check-workflow-permissions.rb`.
+An ordinary PR cannot edit either, by design, so shipping a status writer here
+would have meant temporarily relaxing branch protection in order to merge the
+very workflow that tightens it, and would have left the repository with a second
+workflow able to write a required status — weakening the invariant that only one
+known evaluator can. The check run already provides the property, so this
+workflow holds **no write scope of any kind** and the gate-7 allowlist stays
+exhaustive at one entry.
+
+That choice rests on a fact measured on this repository rather than assumed:
+
+> For `pull_request_target`, `GITHUB_SHA` inside the job **is** a commit on the
+> base branch — but the workflow **run** and its **check suite** are associated
+> with the **PR head SHA**. Verified against `thin-fork-guard-trusted.yml`
+> (also `pull_request_target`) on PR #216: the run's `head_sha`, the check
+> suite's `head_sha` and the PR head SHA were all `b186c1e8`, while the base was
+> `42802346`.
+
+So the check run lands on the commit branch protection actually evaluates, and
+`synchronize` re-runs it on every push. Nothing in the workflow reads
+`GITHUB_SHA`; where the head SHA is genuinely needed — clearing a gate
+self-modification requires an approving review on the *current* head — it comes
+from `github.event.pull_request.head.sha` through `env:`.
+
+**The limit of that measurement, stated plainly:** it was taken on a *same-repo*
+pull request. It has not been verified for a pull request opened from a **fork**.
+Confirm the context appears on a fork PR's head SHA before making this a required
+check. If it does not, a required check that never reports blocks every fork PR,
+and the status-writer route above becomes necessary after all.
 
 ### The gate protects itself: gate self-modification
 

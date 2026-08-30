@@ -47,11 +47,9 @@
 #      "Security-boundary file maintenance" in
 #      docs/upstream-sync-architecture.md for the explicit human procedure
 #      required to change one legitimately.
-#   5. INTRODUCE another status/check-writing workflow (section 7) --
-#      `.github/workflows/*.yml` at HEAD other than the two allowlisted
-#      trusted evaluators (thin-fork-guard-trusted.yml and
-#      update-survivability-gate.yml, both of which publish a required
-#      commit status against the PR head SHA) must never SEMANTICALLY grant
+#   5. INTRODUCE a second status/check-writing workflow (section 7) --
+#      `.github/workflows/*.yml` at HEAD other than
+#      thin-fork-guard-trusted.yml itself must never SEMANTICALLY grant
 #      `statuses: write`, `checks: write`, or the `write-all` shorthand.
 #      One invariant: no ordinary PR may create another workflow capable of
 #      spoofing the trusted required status. Each workflow file is parsed
@@ -790,30 +788,6 @@ done < <(git diff --name-status --diff-filter=R "$BASE_REF...$HEAD_REF")
 # backwards for a security gate -- WORKFLOW_AUDIT_ERROR captures any such
 # failure and aborts the whole script immediately (see below), the same
 # fail-closed posture COMMON_REF and measure-conflicts.sh already use.
-# The workflows allowed to hold status/check-write permissions. Both are
-# `pull_request_target` evaluators that publish a REQUIRED commit status
-# against the PR's head SHA, which is the one thing that genuinely cannot be
-# done without `statuses: write`:
-#   thin-fork-guard-trusted.yml  -> context `thin-fork-guard-trusted`
-#   update-survivability-gate.yml -> context `update-survivability-gate`
-# This list is EXHAUSTIVE by design and must stay short. The invariant is not
-# "status-writing is fine"; it is that only these known, reviewed evaluators
-# can write a required status, so no ordinary PR can introduce a workflow that
-# spoofs one. Adding an entry here is a security-boundary change and follows
-# the same procedure as any other (see docs/upstream-sync-architecture.md).
-STATUS_WRITE_ALLOWED_WORKFLOWS=(
-  ".github/workflows/thin-fork-guard-trusted.yml"
-  ".github/workflows/update-survivability-gate.yml"
-)
-
-is_status_write_allowed_workflow() {
-  local candidate="$1" allowed
-  for allowed in "${STATUS_WRITE_ALLOWED_WORKFLOWS[@]}"; do
-    [ "$candidate" = "$allowed" ] && return 0
-  done
-  return 1
-}
-
 CHECK_PERMS_SCRIPT="$SCRIPT_DIR/check-workflow-permissions.rb"
 WORKFLOW_PERMISSION_VIOLATIONS=""
 WORKFLOW_AUDIT_ERROR=""
@@ -839,7 +813,7 @@ fi
 if [ -z "$WORKFLOW_AUDIT_ERROR" ]; then
   while IFS= read -r path; do
     [ -z "$path" ] && continue
-    is_status_write_allowed_workflow "$path" && continue
+    [ "$path" = ".github/workflows/thin-fork-guard-trusted.yml" ] && continue
 
     if ! content="$(git show "$HEAD_REF:$path" 2>&1)"; then
       WORKFLOW_AUDIT_ERROR="${WORKFLOW_AUDIT_ERROR}failed to read '$path' at '$HEAD_REF': $content"$'\n'
@@ -1062,7 +1036,7 @@ fi
 
   if [ -n "$WORKFLOW_PERMISSION_VIOLATIONS" ]; then
     echo "### Workflow files with forbidden status/check-write permissions (gates this PR)"
-    echo "Only \`thin-fork-guard-trusted.yml\` and \`update-survivability-gate.yml\` may hold these permissions:"
+    echo "Only \`thin-fork-guard-trusted.yml\` may hold these permissions:"
     echo '```'
     echo "$WORKFLOW_PERMISSION_VIOLATIONS"
     echo '```'
@@ -1075,7 +1049,7 @@ FAIL_REASONS=()
 [ -n "$MIDAD_NEW_DIVERGED" ] && FAIL_REASONS+=("introduces new Midad-side divergence in a file that was clean relative to the shared upstream history")
 [ -n "$RENAME_NEW_DIVERGED" ] && FAIL_REASONS+=("renames a Midad-clean shared file away from tracking upstream")
 [ -n "$SECURITY_BOUNDARY_TOUCHED" ] && FAIL_REASONS+=("security-boundary file modified -- explicit guard-maintenance procedure required")
-[ -n "$WORKFLOW_PERMISSION_VIOLATIONS" ] && FAIL_REASONS+=("introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml and update-survivability-gate.yml, the only allowlisted trusted evaluators")
+[ -n "$WORKFLOW_PERMISSION_VIOLATIONS" ] && FAIL_REASONS+=("introduces a workflow with status/check-write permissions outside thin-fork-guard-trusted.yml")
 
 if [ "${#FAIL_REASONS[@]}" -gt 0 ]; then
   echo "FAIL: this PR:"
