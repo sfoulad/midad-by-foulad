@@ -40,18 +40,15 @@ struct Orientation {
   int height;
 };
 
-const std::vector<Orientation> ORIENTATIONS = {{"Portrait", 480, 800},
-                                               {"InvertedPortrait", 480, 800},
-                                               {"LandscapeCW", 800, 480},
-                                               {"LandscapeCCW", 800, 480}};
+const std::vector<Orientation> ORIENTATIONS = {
+    {"Portrait", 480, 800}, {"InvertedPortrait", 480, 800}, {"LandscapeCW", 800, 480}, {"LandscapeCCW", 800, 480}};
 
 bool overlaps(const grid::Rect& a, const grid::Rect& b) {
   return a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom();
 }
 
 bool encloses(const grid::Rect& outer, const grid::Rect& inner) {
-  return inner.x >= outer.x && inner.y >= outer.y && inner.right() <= outer.right() &&
-         inner.bottom() <= outer.bottom();
+  return inner.x >= outer.x && inner.y >= outer.y && inner.right() <= outer.right() && inner.bottom() <= outer.bottom();
 }
 
 }  // namespace
@@ -217,9 +214,9 @@ TEST(SettingsCategoryGridLayout, CellCornersHitAndTheExclusiveEdgeDoesNot) {
   const grid::Plan p = grid::plan(bandFor(800, 480), 6, defaultMetrics());
   ASSERT_TRUE(p.valid());
   const grid::Rect c = grid::cellRect(p, 0);
-  EXPECT_EQ(grid::hitTest(p, c.x, c.y), 0);                              // inclusive top-left
-  EXPECT_EQ(grid::hitTest(p, c.right() - 1, c.bottom() - 1), 0);         // inclusive last pixel
-  EXPECT_NE(grid::hitTest(p, c.x - 1 - p.gap / 2, c.y), 0);              // past the padded left edge
+  EXPECT_EQ(grid::hitTest(p, c.x, c.y), 0);                       // inclusive top-left
+  EXPECT_EQ(grid::hitTest(p, c.right() - 1, c.bottom() - 1), 0);  // inclusive last pixel
+  EXPECT_NE(grid::hitTest(p, c.x - 1 - p.gap / 2, c.y), 0);       // past the padded left edge
 }
 
 TEST(SettingsCategoryGridLayout, GutterTapsReachTheNearerCardInsteadOfNothing) {
@@ -264,11 +261,11 @@ TEST(SettingsCategoryGridLayout, TapsOutsideTheGridMiss) {
   const grid::Rect band = bandFor(800, 480);
   const grid::Plan p = grid::plan(band, 6, defaultMetrics());
   ASSERT_TRUE(p.valid());
-  EXPECT_EQ(grid::hitTest(p, p.x - p.gap, p.y + 10), -1);                    // left of the grid
-  EXPECT_EQ(grid::hitTest(p, p.x + p.gridWidth() + p.gap, p.y + 10), -1);    // right of it
-  EXPECT_EQ(grid::hitTest(p, p.x + 10, p.y - p.gap), -1);                    // above it
-  EXPECT_EQ(grid::hitTest(p, p.x + 10, p.y + p.gridHeight() + p.gap), -1);   // below it
-  EXPECT_EQ(grid::hitTest(p, 0, 0), -1);                                     // the header band
+  EXPECT_EQ(grid::hitTest(p, p.x - p.gap, p.y + 10), -1);                   // left of the grid
+  EXPECT_EQ(grid::hitTest(p, p.x + p.gridWidth() + p.gap, p.y + 10), -1);   // right of it
+  EXPECT_EQ(grid::hitTest(p, p.x + 10, p.y - p.gap), -1);                   // above it
+  EXPECT_EQ(grid::hitTest(p, p.x + 10, p.y + p.gridHeight() + p.gap), -1);  // below it
+  EXPECT_EQ(grid::hitTest(p, 0, 0), -1);                                    // the header band
 }
 
 TEST(SettingsCategoryGridLayout, PartialLastRowLeavesTheEmptySlotUnclaimed) {

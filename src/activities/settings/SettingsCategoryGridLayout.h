@@ -74,9 +74,7 @@ struct Plan {
   [[nodiscard]] constexpr int gridHeight() const { return rows * cellHeight + gap * (rows - 1); }
 };
 
-constexpr int ceilDiv(const int value, const int divisor) {
-  return divisor <= 0 ? 0 : (value + divisor - 1) / divisor;
-}
+constexpr int ceilDiv(const int value, const int divisor) { return divisor <= 0 ? 0 : (value + divisor - 1) / divisor; }
 
 // Extent of one lane when `total` is split into `lanes` lanes separated by
 // `gap`. Floors, so lanes * extent plus the gaps never exceeds total.
@@ -86,9 +84,7 @@ constexpr int laneExtent(const int total, const int lanes, const int gap) {
 
 // Self-inverse: applied twice it returns the original column, so one function
 // maps logical to visual (render) and visual to logical (hit-test).
-constexpr int mirroredColumn(const int col, const int columns, const bool rtl) {
-  return rtl ? columns - 1 - col : col;
-}
+constexpr int mirroredColumn(const int col, const int columns, const bool rtl) { return rtl ? columns - 1 - col : col; }
 
 // Number of columns the band's width asks for, before the height check in
 // plan() gets a say. Rounds to the nearest whole number of target-width cards,
