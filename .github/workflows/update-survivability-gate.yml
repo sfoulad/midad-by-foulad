@@ -54,8 +54,9 @@ name: Update Survivability Gate
 # of scripts/update-survivability-gate.sh, so a PR could edit the gate to pass
 # itself. This workflow checks out the BASE branch and runs only its copy. It
 # never checks out, builds, or executes anything from PR HEAD -- the diff, the
-# labels, the title and the body all arrive as inert DATA through the GitHub
-# API and the event payload, and every one of them is routed through `env`
+# labels, the title, the body and the review list all arrive as inert DATA
+# through the GitHub API and the event payload, and every one of them is
+# routed through `env`
 # rather than `${{ }}` string interpolation (a PR title and body are
 # attacker-controlled free text; inline interpolation into a shell script is
 # the classic Actions injection vector).
@@ -69,12 +70,44 @@ name: Update Survivability Gate
 # actually establish is precisely the bug that bricked the device; applying
 # the opposite posture to the CI that guards it is the point.
 #
-# Permissions note: this workflow deliberately grants only `contents: read`
-# and `pull-requests: read`. It must never request `statuses: write`,
-# `checks: write` or `write-all` -- scripts/thin-fork-guard.sh's
-# workflow-permission audit (gate 7) fails any PR that introduces a second
-# workflow able to spoof the trusted required status, and this workflow is
-# audited by it like any other.
+# Design decision 4: the result is PUBLISHED against the PR head SHA
+# ------------------------------------------------------------------
+# Same mechanism as thin-fork-guard-trusted.yml's "property B". This job does
+# not rely on the ordinary GitHub Actions check run to carry the verdict to
+# branch protection. It explicitly PUBLISHES a commit status via the REST
+# Statuses API (POST /repos/{owner}/{repo}/statuses/{sha}) with
+# `sha: github.event.pull_request.head.sha` and
+# `context: update-survivability-gate`.
+#
+# The head SHA comes from the event payload, never from `GITHUB_SHA`: under
+# `pull_request_target`, `GITHUB_SHA` is a commit on the BASE branch, so a
+# result keyed to it would not be a result about this pull request's code at
+# all. The payload's `pull_request.head.sha` is the commit branch protection
+# evaluates, is correct for fork PRs as well as same-repo ones, and does not
+# depend on how GitHub happens to associate a workflow run's check suite.
+# Triggering on `synchronize` means every push re-runs this workflow and posts
+# a FRESH status against the NEW head SHA, so a required check keeps tracking
+# the PR as it moves.
+#
+# The status is posted on EVERY outcome -- pass, block, and the fail-closed
+# "could not determine a verdict" path -- from a step that runs `if: always()`.
+# A gate that only posts on success leaves a required check pending forever,
+# which is just a slower way of not being a gate.
+#
+# The JOB is named `update-survivability-gate`, the same string as the status
+# context, deliberately: a ruleset entry naming that context then matches both
+# the posted commit status and this job's own check run, so the required check
+# does not depend on which of the two GitHub resolves it against.
+#
+# Permissions note: `statuses: write` is required for the publish above, and is
+# the reason this workflow appears on scripts/thin-fork-guard.sh's gate-7
+# allowlist alongside thin-fork-guard-trusted.yml. That allowlist stays
+# exhaustive: any OTHER workflow acquiring `statuses: write`, `checks: write`
+# or `write-all` still fails the thin-fork guard, because the invariant it
+# protects is that only known, reviewed evaluators can write a required status.
+# `contents: read` and `pull-requests: read` cover the rest: the base-branch
+# checkout, the changed-file listing, the report content, and the review list
+# that clears a gate self-modification.
 #
 # Because `pull_request_target` runs the BASE branch's copy of a workflow,
 # this gate only applies to PRs whose target branch already contains this
@@ -90,10 +123,13 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  statuses: write
 
 jobs:
   update-survivability-gate:
-    name: Update Survivability Gate
+    # Same string as the published status context, on purpose -- see
+    # "Design decision 4" above.
+    name: update-survivability-gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout base branch (trusted scripts only -- never PR HEAD)
@@ -199,27 +235,90 @@ jobs:
 
           printf '%s' "$PR_TITLE" > pr-title.txt
 
+          # Reviews clear the gate-self-modification classification. Only
+          # GitHub can say who has write access, so authorization is read from
+          # `author_association` (which GitHub computes from the reviewer's
+          # permission on this repository) and from `commit_id`, which pins an
+          # approval to the commit it was given against. Nothing the PR author
+          # writes -- body, title, label -- is accepted for this, because the
+          # author controls all three.
+          #
+          # `pulls/{n}/reviews` needs only the `pull-requests: read` scope this
+          # workflow already holds. A run with no reviews yields an empty file,
+          # which the evaluator reads as "nobody has approved", not as an
+          # undetermined input.
+          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '.[] | [.state, .author_association, (.commit_id // "")] | @tsv' \
+            > reviews.txt
+          echo "Reviews: $(wc -l < reviews.txt)"
+
+          printf '%s' "$PR_HEAD_SHA" > pr-head-sha.txt
+
       - name: Evaluate the gate
+        id: evaluate
+        # Sets `state` and `description` for the publish step below on every
+        # path, then exits non-zero for a blocking verdict so the run itself is
+        # red in the Actions tab too. Outputs written before a non-zero exit are
+        # still read by the runner, and the publish step runs `if: always()`, so
+        # the commit status is posted either way.
         run: |
           set -uo pipefail
           title="$(cat pr-title.txt)"
+          head_sha="$(cat pr-head-sha.txt)"
           set +e
           scripts/update-survivability-gate.sh \
             changed-files.txt evidence.txt labels.txt "$title" \
+            reviews.txt "$head_sha" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           verdict=${PIPESTATUS[0]}
           set -e
 
           case "$verdict" in
             0)
+              echo "state=success" >>"$GITHUB_OUTPUT"
+              echo "description=update survivability gate passed" >>"$GITHUB_OUTPUT"
               echo "Update Survivability Gate: pass"
               ;;
             1)
-              echo "::error::Update Survivability Gate: this PR changes the firmware update path without a complete hardware validation report. Builds, host tests, cppcheck, CodeQL and CodeRabbit all passed on the change that left the only X4 Pro update-locked -- none of them runs on hardware or exercises an install cycle, so none of them can substitute. See docs/update-survivability-gate.md and the job summary for the exact files and missing rows."
+              echo "state=failure" >>"$GITHUB_OUTPUT"
+              echo "description=blocked: hardware validation report and/or maintainer approval missing" >>"$GITHUB_OUTPUT"
+              echo "::error::Update Survivability Gate: blocked. Either this PR changes the firmware update path without a complete hardware validation report, or it modifies the gate itself without an approving maintainer review on the current head SHA. Builds, host tests, cppcheck, CodeQL and CodeRabbit all passed on the change that left the only X4 Pro update-locked -- none of them runs on hardware or exercises an install cycle, so none of them can substitute. See docs/update-survivability-gate.md and the job summary."
               exit 1
               ;;
             *)
+              echo "state=error" >>"$GITHUB_OUTPUT"
+              echo "description=undetermined verdict -- failing closed (see run summary)" >>"$GITHUB_OUTPUT"
               echo "::error::Update Survivability Gate: could not determine a verdict (script exit $verdict) and is failing closed. An undetermined result is never a pass -- that fail-open reading is the same mistake that caused the incident this gate guards. See docs/update-survivability-gate.md."
               exit 1
               ;;
           esac
+
+      - name: Publish the result against the PR head SHA
+        # `if: always()` so a required check is never left pending: if any step
+        # above failed outright -- a truncated file listing, a failed API call,
+        # a runner fault -- the `|| 'error'` fallback publishes a blocking
+        # status rather than nothing at all.
+        #
+        # Every value reaches the shell through `env`, never `${{ }}` inside
+        # the script: this job holds `statuses: write`, so inline interpolation
+        # of any payload-derived string would be the highest-value script
+        # injection target in this repository.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STATUS_STATE: ${{ steps.evaluate.outputs.state || 'error' }}
+          STATUS_DESCRIPTION: ${{ steps.evaluate.outputs.description || 'gate did not run to completion -- failing closed' }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/$REPO/statuses/$PR_HEAD_SHA" \
+            -f "state=$STATUS_STATE" \
+            -f "context=update-survivability-gate" \
+            -f "description=$STATUS_DESCRIPTION" \
+            -f "target_url=$TARGET_URL"
