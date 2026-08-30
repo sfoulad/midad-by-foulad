@@ -966,6 +966,11 @@ bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback
   // clear.
   if (const char* refusal = verifiedFetchRefusal(url, caPem, kVerifiedFetchNeedsAnchors)) {
     LOG_ERR("HTTP", "Refusing verified fetch: %s", refusal);
+    // Stamp the refusal: we return before any transport runs, so without this
+    // getLastFailure() would still describe the *previous* request. Reachable --
+    // the OTA download URL comes from the release feed, not a literal.
+    // FailStage is Midad-only instrumentation; upstream's copy has no equivalent.
+    setLastFailure(FailStage::REFUSED, 0);
     return false;
   }
   LOG_DBG("HTTP", "Fetching (verified): %s", url.c_str());
@@ -984,6 +989,11 @@ bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback
   // shared verifiedFetchRefusal(), not a second copy of the rules.
   if (const char* refusal = verifiedFetchRefusal(url, caPem, kVerifiedFetchNeedsAnchors)) {
     LOG_ERR("HTTP", "Refusing verified fetch: %s", refusal);
+    // Stamp the refusal: we return before any transport runs, so without this
+    // getLastFailure() would still describe the *previous* request. Reachable --
+    // the OTA download URL comes from the release feed, not a literal.
+    // FailStage is Midad-only instrumentation; upstream's copy has no equivalent.
+    setLastFailure(FailStage::REFUSED, 0);
     return false;
   }
   LOG_DBG("HTTP", "Fetching (verified, conditional): %s", url.c_str());
