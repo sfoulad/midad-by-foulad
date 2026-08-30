@@ -30,7 +30,7 @@ pioarduino-core @ https://github.com/pioarduino/platformio-core/archive/d3321155
 littlefs-python>=0.16.0
 fatfs-ng>=0.1.14
 pyyaml>=6.0.2
-rich-click>=1.8.6
+rich-click>=1.9.8
 zopfli>=0.2.2
 intelhex>=2.3.0
 rich>=14.0.0
