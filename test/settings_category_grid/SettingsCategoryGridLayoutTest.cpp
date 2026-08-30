@@ -11,7 +11,10 @@ namespace grid = SettingsCategoryGridLayout;
 namespace {
 
 // The metrics SettingsActivity::landingMetrics() derives from the default
-// FreeInkUI ThemeTokens (spaceMd 8, rowHeight 44, minTouchSize 44).
+// FreeInkUI ThemeTokens (spaceMd 8, rowHeight 44, minTouchSize 44). These fixed
+// numbers live HERE and nowhere else: the layout header deliberately carries no
+// defaults, so that a caller cannot lay the grid out at some constant scale
+// instead of the active theme's. This fixture stands in for the theme.
 grid::Metrics defaultMetrics() {
   grid::Metrics m;
   m.gap = 8;
@@ -52,6 +55,64 @@ bool encloses(const grid::Rect& outer, const grid::Rect& inner) {
 }
 
 }  // namespace
+
+// --- Metrics carries no layout defaults ------------------------------------
+
+TEST(SettingsCategoryGridLayout, DefaultConstructedMetricsIsNotUsable) {
+  // The header must not ship fixed sizing of its own: a caller that forgets to
+  // read the active theme has to get nothing, not a grid laid out at some
+  // constant scale that ignores UITheme.
+  const grid::Metrics bare;
+  EXPECT_FALSE(bare.populated());
+  EXPECT_EQ(bare.targetCellWidth, 0);
+  EXPECT_EQ(bare.minCellWidth, 0);
+  EXPECT_EQ(bare.minCellHeight, 0);
+  EXPECT_EQ(bare.maxColumns, 0);
+
+  EXPECT_EQ(grid::columnsForWidth(800, 6, bare), 0);
+  const grid::Plan p = grid::plan(bandFor(800, 480), 6, bare);
+  EXPECT_FALSE(p.valid());
+  EXPECT_EQ(grid::hitTest(p, 400, 240), -1);
+  EXPECT_EQ(grid::cellRect(p, 0).width, 0);
+}
+
+TEST(SettingsCategoryGridLayout, ThemeSuppliedMetricsIsUsable) {
+  const grid::Metrics m = defaultMetrics();
+  EXPECT_TRUE(m.populated());
+  EXPECT_TRUE(grid::plan(bandFor(800, 480), 6, m).valid());
+}
+
+TEST(SettingsCategoryGridLayout, EveryScaleMetricIsRequired) {
+  // Dropping any one of the four scale-bearing fields makes the whole Metrics
+  // unusable, so a partially-populated one cannot half-follow the theme.
+  // gap and maxCellHeight are excluded on purpose: 0 means "no gutter" and
+  // "no height ceiling", both legitimate.
+  for (int field = 0; field < 4; field++) {
+    grid::Metrics m = defaultMetrics();
+    switch (field) {
+      case 0:
+        m.targetCellWidth = 0;
+        break;
+      case 1:
+        m.minCellWidth = 0;
+        break;
+      case 2:
+        m.minCellHeight = 0;
+        break;
+      default:
+        m.maxColumns = 0;
+        break;
+    }
+    EXPECT_FALSE(m.populated()) << "field " << field;
+    EXPECT_FALSE(grid::plan(bandFor(800, 480), 6, m).valid()) << "field " << field;
+  }
+
+  grid::Metrics zeroGap = defaultMetrics();
+  zeroGap.gap = 0;
+  zeroGap.maxCellHeight = 0;
+  EXPECT_TRUE(zeroGap.populated());
+  EXPECT_TRUE(grid::plan(bandFor(800, 480), 6, zeroGap).valid());
+}
 
 // --- plan(): column and row choice -----------------------------------------
 
