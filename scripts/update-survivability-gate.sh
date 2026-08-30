@@ -515,11 +515,25 @@ evaluate_matrix() {
   for id in "${REQUIRED_CASES[@]}"; do
     # The first cell must be EXACTLY the id, so US-1 can never be satisfied by
     # US-10 or US-11 and prose mentioning an id is never mistaken for a result.
-    row="$(grep -E "^[[:space:]>]*\|[[:space:]]*${id}[[:space:]]*\|" <<<"$EVIDENCE" | head -n 1 || true)"
-    if [ -z "$row" ]; then
+    #
+    # EXACTLY ONE row per id. Taking the first match (`head -n 1`) would let an
+    # earlier PASS -- in the PR body, say -- hide a later FAIL for the same case
+    # in the attached hardware report, which is the precise opposite of the
+    # documented rule that any failed row blocks the RC. Evidence here is the PR
+    # body concatenated with every report the PR touches, so more than one row
+    # for a case is genuinely ambiguous: refuse to pick a winner and say so.
+    rows="$(grep -E "^[[:space:]>]*\|[[:space:]]*${id}[[:space:]]*\|" <<<"$EVIDENCE" || true)"
+    row_count=0
+    [ -n "$rows" ] && row_count="$(printf '%s\n' "$rows" | grep -c . || true)"
+    if [ "$row_count" -eq 0 ]; then
       MISSING_CASES="${MISSING_CASES}${id}"$'\n'
       continue
     fi
+    if [ "$row_count" -gt 1 ]; then
+      FAILED_CASES="${FAILED_CASES}${id}: ${row_count} rows for this case -- exactly one is required. Two rows can disagree, and taking either one silently would let a PASS hide a FAIL. Remove the duplicate so the record is unambiguous."$'\n'
+      continue
+    fi
+    row="$rows"
 
     verdict="$(row_cell "$row" "$ROW_CELL_VERDICT" | tr '[:lower:]' '[:upper:]')"
     case "$verdict" in

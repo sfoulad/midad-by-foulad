@@ -127,6 +127,24 @@ on:
     # re-run the gate rather than leaving a stale red check.
     types: [opened, reopened, synchronize, edited, labeled, unlabeled]
 
+# One gate run per PR at a time, newest wins.
+#
+# `edited`, `labeled` and `unlabeled` all start a run WITHOUT changing the head
+# SHA, so several runs can be in flight against the same commit. Branch
+# protection reads the latest check run for this name on that commit, and
+# "latest" is decided by when a run finishes -- so a stale run that started
+# before a blocking edit could finish afterwards and become the result of
+# record, reporting a verdict about evidence that no longer exists.
+#
+# Cancelling supersedes it: a cancelled run's check run is `cancelled`, which is
+# not success, so the fail-closed posture holds while the replacement run
+# produces the real verdict. (This workflow publishes no commit status -- see
+# design decision 4 -- so there is no status context to overwrite; the race that
+# remains is purely about which check run is newest.)
+concurrency:
+  group: update-survivability-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: read

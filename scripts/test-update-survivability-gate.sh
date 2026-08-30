@@ -379,6 +379,30 @@ expect_output "the message explains that a mention is not a row" \
   "$(complete_report | sed 's/^| US-6 .*/US-6 was fine: PASS/')" "" "fix: ota"
 
 echo
+echo "== exactly one row per case: a duplicate must never let PASS hide FAIL =="
+# The reported hazard, precisely: evidence is the PR body concatenated with the
+# hardware report, so an author can present a PASS row for a case in the body
+# while the attached report records FAIL for the same case. Taking the first
+# match would report the RC as validated.
+run_case "an earlier PASS cannot hide a later FAIL for the same case" 1 \
+  "src/network/OtaUpdater.cpp" \
+  "$(complete_report)
+| US-2  | app1    | app0   | 3c4d5e6f      | ok   | FAIL |" "" "fix: ota"
+run_case "a later PASS cannot hide an earlier FAIL for the same case" 1 \
+  "src/network/OtaUpdater.cpp" \
+  "$(complete_report | sed 's/^| US-2 \(.*\)PASS |/| US-2 \1FAIL |/')
+| US-2  | app1    | app0   | 3c4d5e6f      | ok   | PASS |" "" "fix: ota"
+run_case "two identical PASS rows for one case are still ambiguous" 1 \
+  "src/network/OtaUpdater.cpp" \
+  "$(complete_report)
+| US-2  | app1    | app0   | 3c4d5e6f      | ok   | PASS |" "" "fix: ota"
+expect_output "the message says exactly one row is required" \
+  'exactly one is required' \
+  "src/network/OtaUpdater.cpp" \
+  "$(complete_report)
+| US-2  | app1    | app0   | 3c4d5e6f      | ok   | FAIL |" "" "fix: ota"
+
+echo
 echo "== N/A is permitted only for US-4 =="
 run_case "N/A on US-4 is accepted" 0 \
   "src/network/OtaUpdater.cpp" "$(complete_report)" "" "fix: ota"
