@@ -784,8 +784,10 @@ void OpdsBookBrowserActivity::drawGridCell(const GridLayout& layout, const int p
         // no-op for the common case where the cache file already matches the cell.
         const int offsetX = std::max(0, (layout.coverWidth - bitmap.getWidth()) / 2);
         const int offsetY = std::max(0, (layout.coverHeight - bitmap.getHeight()) / 2);
-        renderer.drawBitmap(bitmap, cellX + offsetX, cellY + offsetY, layout.coverWidth, layout.coverHeight);
-        drawn = true;
+        // drawBitmap reports whether it actually painted; assuming it did left an
+        // empty outlined cell whenever the blit was skipped (font-cache scan, or a
+        // failed row-buffer allocation) instead of falling back to the tile below.
+        drawn = renderer.drawBitmap(bitmap, cellX + offsetX, cellY + offsetY, layout.coverWidth, layout.coverHeight);
       }
     }
   }

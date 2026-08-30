@@ -1,6 +1,5 @@
 #include "HomeActivity.h"
 
-#include <Bitmap.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -73,7 +72,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   for (const RecentBook& book : recentBooks) {
     if (book.coverBmpPath.empty()) continue;
     const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-    if (Bitmap::isValidCachedBmp(thumbPath) || CoverThumbs::wasAttemptedThisBoot(thumbPath)) continue;
+    // Same "is this cache usable?" decision as before, but it now names WHY a
+    // thumb was rejected (missing / corrupt / marker / wrong size) in the log
+    // instead of collapsing every cause into the same silent placeholder.
+    if (CoverThumbs::isUsableThumb(thumbPath, coverHeight) || CoverThumbs::wasAttemptedThisBoot(thumbPath)) continue;
     anyToGenerate = true;
     if (!Storage.exists(thumbPath.c_str())) anyNeverAttempted = true;
   }
@@ -118,12 +120,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   for (RecentBook& book : recentBooks) {
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
-      // from a PRIOR failed attempt doesn't permanently block a retry once the
+      // isUsableThumb (not a plain existence check) so a stale marker from a
+      // PRIOR failed attempt doesn't permanently block a retry once the
       // underlying failure is fixed; CoverThumbs bounds those retries to once
       // per boot so a genuinely coverless book doesn't re-attempt (and re-show
       // the loading popup) on every Home entry.
-      if (!Bitmap::isValidCachedBmp(coverPath) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
+      if (!CoverThumbs::isUsableThumb(coverPath, coverHeight) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
         CoverThumbs::markAttempted(coverPath);
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
@@ -155,7 +157,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
             // Failure leaves book.coverBmpPath untouched (not cleared to "") --
-            // see the isValidCachedBmp comment above for why a retry must stay
+            // see the isUsableThumb comment above for why a retry must stay
             // possible instead of being disabled forever.
             generated = epub.generateThumbBmp(coverHeight);
             coverRendered = false;

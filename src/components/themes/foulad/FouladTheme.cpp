@@ -24,6 +24,8 @@
 #include "components/icons/transfer.h"
 #include "fontIds.h"
 #include "reading/ReadingStatsStore.h"
+#include "util/CoverDiagnostics.h"
+#include "util/CoverThumbs.h"
 
 // Home layout ported from aalu (github.com/dawsonfi/aalu) HomeRenderer: top status
 // line, 200x300 hero cover with a metadata column (title / author / rounded pill
@@ -180,30 +182,41 @@ void drawRoundCountBadge(const GfxRenderer& renderer, const int coverX, const in
 void drawCoverAt(const GfxRenderer& renderer, const std::string& coverBmpPath, const int x, const int y, const int w,
                  const int h, const int thumbHeight) {
   bool hasCover = false;
+  // Every branch that ends in the placeholder names itself in the log. The
+  // placeholder is a white top third over a solid black block, which looks the
+  // same whether the art is missing, the cache is stale, or the blit was
+  // skipped -- so without this line those causes are indistinguishable from a
+  // photo of the screen.
+  CoverDiag::Fault fault = CoverDiag::Fault::NoPath;
+  char detail[48] = {0};
+  std::string path;
   if (!coverBmpPath.empty()) {
-    const std::string path = UITheme::getCoverThumbPath(coverBmpPath, thumbHeight);
+    path = UITheme::getCoverThumbPath(coverBmpPath, thumbHeight);
     HalFile file;
-    if (Storage.openFileForRead("HOME", path, file)) {
+    if (!Storage.openFileForRead("HOME", path, file)) {
+      fault = CoverDiag::Fault::Missing;
+    } else {
       Bitmap bitmap(file);
-      if (bitmap.parseHeaders() == BmpReaderError::Ok && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-        if (bitmap.getHeight() == h) {
-          // Exact-height thumb (the hero): crop horizontally to fill the box.
-          const float ratio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-          const float tileRatio = static_cast<float>(w) / static_cast<float>(h);
-          const float cropX = std::max(0.0f, 1.0f - (tileRatio / ratio));
-          renderer.drawBitmap(bitmap, x, y, w, h, cropX);
-        } else {
-          // Larger thumb reused for a smaller tile: shrink-to-fit, centered.
-          const float scale =
-              std::min(static_cast<float>(w) / bitmap.getWidth(), static_cast<float>(h) / bitmap.getHeight());
-          const int scaledW = static_cast<int>(bitmap.getWidth() * scale);
-          const int scaledH = static_cast<int>(bitmap.getHeight() * scale);
-          renderer.drawBitmap(bitmap, x + std::max(0, (w - scaledW) / 2), y + std::max(0, (h - scaledH) / 2), w, h);
+      const BmpReaderError err = bitmap.parseHeaders();
+      if (err != BmpReaderError::Ok || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+        fault = CoverDiag::Fault::Invalid;
+        snprintf(detail, sizeof(detail), "%s", Bitmap::errorToString(err));
+      } else {
+        const CoverDiag::CoverFit fit = CoverDiag::fitCoverIntoBox(bitmap.getWidth(), bitmap.getHeight(), w, h);
+        // drawBitmap returns false when it painted nothing (font-cache scan in
+        // progress, or its row buffers could not be allocated). Claiming a cover
+        // regardless left an empty outlined box with no explanation anywhere.
+        hasCover = fit.valid && (fit.exactHeight ? renderer.drawBitmap(bitmap, x, y, w, h, fit.cropX)
+                                                 : renderer.drawBitmap(bitmap, x + fit.offsetX, y + fit.offsetY, w, h));
+        if (!hasCover) {
+          fault = CoverDiag::Fault::NotPainted;
+          snprintf(detail, sizeof(detail), "%dx%d into %dx%d", bitmap.getWidth(), bitmap.getHeight(), w, h);
         }
-        hasCover = true;
       }
     }
   }
+  if (!hasCover) CoverThumbs::reportFault("HOME", fault, path, thumbHeight, detail);
+
   renderer.drawRoundedRect(x, y, w, h, 1, kCoverCornerRadius, true);
   if (!hasCover) {
     renderer.fillRect(x + 1, y + h / 3, w - 2, 2 * h / 3 - 1, true);
