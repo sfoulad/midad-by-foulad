@@ -82,3 +82,4 @@ add_subdirectory(reading_heatmap_layout)
 add_subdirectory(stats_list_layout)
 add_subdirectory(ota_ca_anchors)
 
+add_subdirectory(settings_category_grid)
