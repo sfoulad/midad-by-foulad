@@ -873,7 +873,12 @@ void EpubReaderActivity::loop() {
   if (handleEndOfBookMenu()) {
     return;
   }
-  const bool endOfBookMenuOpen = endOfBookMenuActive();
+  // Inlined rather than calling a ReaderActivity helper: keeping the shared
+  // upstream reader base byte-identical is what lets the thin-fork guard pass
+  // without an exemption. The upstream PR carrying this fix factors it out
+  // there instead.
+  const bool endOfBookMenuOpen =
+      isAtEndOfBook() && endOfBookOptionsReady.load(std::memory_order_acquire) && endOfBookOptions->menuActive();
 
   const unsigned long confirmHoldMs = confirmLongPressThreshold();
   // wasLongPressed() suppresses the release that follows it, so leave it unpolled while

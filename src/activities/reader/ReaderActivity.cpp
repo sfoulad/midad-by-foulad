@@ -93,12 +93,9 @@ void ReaderActivity::clearEndOfBookOptionsIfNeeded() {
   endOfBookOptions.reset();
 }
 
-bool ReaderActivity::endOfBookMenuActive() const {
-  return isAtEndOfBook() && endOfBookOptionsReady.load(std::memory_order_acquire) && endOfBookOptions->menuActive();
-}
-
 bool ReaderActivity::handleEndOfBookMenu(const bool suppressConfirmRelease) {
-  if (suppressConfirmRelease || !endOfBookMenuActive()) {
+  if (!isAtEndOfBook() || !endOfBookOptionsReady.load(std::memory_order_acquire) || !endOfBookOptions->menuActive() ||
+      suppressConfirmRelease) {
     return false;
   }
 
