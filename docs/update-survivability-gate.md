@@ -332,3 +332,43 @@ blocking path will not be in the diff you are looking at.
 The gate is triggered by the **diff**, not by a label. A PR cannot opt out of
 it by omitting or removing a label — see the workflow header for that decision
 and its residual failure mode.
+
+### Branches that do not carry this workflow
+
+The gate runs on `pull_request_target`, so GitHub executes the **base branch's**
+copy of the workflow, not the pull request's. A pull request opened against a
+branch that predates this file therefore gets no gate run at all — and it gets
+none *silently*. There is no red check, no skipped check, and nothing in the
+PR's check list to notice; the absence looks exactly like a clean sheet. That
+is the same shape of failure the gate exists to prevent, so it is called out
+here rather than left to be discovered.
+
+Two rules follow.
+
+**Create every future `release/*` and `sync/*` branch from `develop` once
+`develop` carries this workflow.** A branch cut from protected `develop` carries
+the gate with it, and every PR into it is checked automatically. Existing
+release and sync branches are deliberately **not** retrofitted: rewriting the
+history of a branch that has already produced a tested artifact would cost the
+provenance of that artifact for no gain the manual route below does not
+already provide.
+
+**A PR into a branch without the workflow needs a trusted manual gate result
+attached before it merges.** Run
+[`scripts/update-survivability-gate.sh`](../scripts/update-survivability-gate.sh)
+from a commit on a protected branch — never from the PR's own head, which the
+PR author controls — against that PR's exact base and head SHAs, and attach the
+complete output as a comment. To count as trusted, the comment must state:
+
+- the branch and commit the gate script itself came from;
+- the PR's base SHA and head SHA, verbatim;
+- the changed-record count, and whether the API's 3000-file cap was hit;
+- the gate's **complete** output, untruncated;
+- the exit code and its meaning — and note that exit 2 means the gate could not
+  determine an answer, which is a failure, never a pass;
+- that the gate's own self-test suite was run and passed.
+
+A manual result is weaker evidence than an automatic one, because a human chose
+when to run it and against what. Attaching one is a reviewer-facing obligation,
+not a formality — the reviewer is the enforcement mechanism, and should refuse a
+PR that lacks it exactly as CI would.
