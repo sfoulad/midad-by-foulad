@@ -8,7 +8,9 @@ two places, neither of them a shipping build: as an *open, unmerged* upstream pu
 (CrossPoint PR #3311), and as a locally-built, fully-verified bridge image that cannot be delivered
 to the device by any means currently available. No branch that reaches a user carries it, and no
 on-device install channel will accept it. The host-side USB recovery route exists on this board and
-is untested, blocked on a confirmed data-capable adapter.
+is untested, blocked on a confirmed data-capable adapter — and the adapter only unblocks *testing*,
+not recovery: enumeration, the chip probe and a verified full-flash backup are each separate gates
+that must clear on this unit (see [Recovery status](#recovery-status)).
 
 Unless stated otherwise, source citations are against `a94d3d31` (the firmware image currently
 running on the device). `src/network/FirmwareFlasher.cpp` is byte-identical between `a94d3d31`
@@ -417,21 +419,40 @@ is, it arrives at the same chip comparison (`:262`) and is refused there. The US
 closed — it is untested (see
 [The USB route](#the-usb-route-exists-and-is-untested-not-absent)).
 
-Recovery is **blocked pending a confirmed data-capable X4 Pro magnetic adapter**, and then proceeds
-in this order:
+Recovery is **blocked pending a confirmed data-capable X4 Pro magnetic adapter**. What follows is
+a sequence of **gates**, not a checklist of formalities. Each one is cleared only by that step
+actually completing *on this unit*; none of them may be assumed from the step before it. The
+adapter in particular enables *testing* — it does not establish that the later steps will work.
 
 1. **Adapter.** Obtain a magnetic/pogo cable confirmed to carry the USB data pairs, not a
    charge-only one.
 2. **ROM enumeration.** Hold **Left** (GPIO0) across reset and confirm the S3 enumerates in
-   download mode on the host.
+   download mode on the host. Unproven until observed: this unit's USB has never enumerated for
+   any purpose.
 3. **Non-writing chip probe.** Read-only identification (`chip_id` / `flash_id`) to confirm the
    connection and the flash geometry before anything at all is written.
-4. **Full backup.** Read the entire SPI flash out to a host-side image, verified by size and hash,
-   so every subsequent step is reversible. This is also what makes the app1 question answerable: the
-   backup contains the whole slot, so it can be validated offline as an image — magic, segment walk,
-   checksum, appended SHA — rather than merely inspected for an erased header.
+4. **Full backup — a real gate, and a known failure point.** Read the entire SPI flash out to a
+   host-side image, verified by size and hash, so every subsequent step is reversible. This is also
+   what makes the app1 question answerable: the backup contains the whole slot, so it can be
+   validated offline as an image — magic, segment walk, checksum, appended SHA — rather than merely
+   inspected for an erased header.
+
+   **This step is documented to fail on X4 Pro hardware.** `crosspoint-tools` issue
+   [#28](https://github.com/crosspoint-reader/crosspoint-tools/issues/28), *"X4 Pro cannot
+   successfully 'Save full flash'"*, opened 2026-08-03 and **still open**, reports another owner's
+   X4 Pro failing the full-flash save at roughly 34% progress, repeatably, on OFW `XT V7.0.8` —
+   while trying to take exactly this kind of pre-flash backup. That is a different unit and a
+   different host, so it does not predict this unit's behaviour; it does establish that a
+   successful readback is an open question on this hardware rather than a formality. If the backup
+   cannot be completed and verified, recovery does **not** proceed to step 6 — an irreversible
+   write without a restorable image is precisely the risk this gate exists to refuse.
 5. **Owner approval.** Explicit go-ahead, given on the backup, before any write.
 6. **Flash.** Write the bridge image, then re-verify.
+
+Consequently "recovery is ready" is **not** established by the adapter arriving. It is established
+only when gates 1–4 have each completed on this device, with the backup verified. Until then the
+correct description of the device's state is unchanged: it reads books, and it cannot accept
+firmware.
 
 The SPI-flash-programmer route in `docs/fix-bricked-xteink.md` remains a last resort behind all of
 the above, on account of being physically invasive.
