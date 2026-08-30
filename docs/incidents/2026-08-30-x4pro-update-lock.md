@@ -3,9 +3,12 @@
 **Date:** 2026-08-30
 **Severity:** Critical — the owner's only working X4 Pro refuses every image on every *on-device*
 install channel.
-**Status:** Root cause identified and fixed in code. The fix cannot currently be delivered on-device;
-the host-side USB recovery route exists on this board and is untested, blocked on a confirmed
-data-capable adapter.
+**Status:** Root cause identified. **Not fixed in anything that ships.** The fix exists in exactly
+two places, neither of them a shipping build: as an *open, unmerged* upstream pull request
+(CrossPoint PR #3311), and as a locally-built, fully-verified bridge image that cannot be delivered
+to the device by any means currently available. No branch that reaches a user carries it, and no
+on-device install channel will accept it. The host-side USB recovery route exists on this board and
+is untested, blocked on a confirmed data-capable adapter.
 
 Unless stated otherwise, source citations are against `a94d3d31` (the firmware image currently
 running on the device). `src/network/FirmwareFlasher.cpp` is byte-identical between `a94d3d31`
@@ -16,13 +19,27 @@ and the `release/x4pro-convergence-rc` tip, so its line numbers hold on both.
 ## Summary
 
 An X4 Pro is update-locked. It reads books normally, but every firmware installation path the
-device itself offers refuses every image — including an image byte-identical to the firmware
-already running.
+device itself offers refuses every image it is offered. On the **SD** path that includes an image
+byte-identical to the firmware already running.
 
-The cause is a pre-flight chip-identity check that derives the *device's* identity by reading
-bytes out of SPI flash rather than from the build target. On this device that read returns a
-value that is neither the correct `0x0009` (ESP32-S3) nor the `0xFFFF` "unknown" sentinel, and
-both install paths compare against it and fail **closed**.
+That last point is specific to the SD path, and an earlier draft of this report wrongly generalised
+it to both channels. The two paths refuse a same-version image for different reasons, at different
+points:
+
+- **SD** has no version gate. `validateImageFile()` checks size, then magic
+  (`a94d3d31:src/network/FirmwareFlasher.cpp:139-143`), then chip identity (`:147-153`) — so a
+  byte-identical image reaches the chip comparison and is rejected there, on the bad device id.
+  This is the path on which the identical-image rejection is actually demonstrated.
+- **Network OTA never reaches that comparison for a same-version image.** `installUpdate()` returns
+  `UPDATE_OLDER_ERROR` at its first statement (`a94d3d31:src/network/OtaUpdater.cpp:203-204`) for
+  any image that is not newer — before `esp_ota_begin()` (`:228`) and before the chip check (`:262`)
+  runs at all. A same-version network attempt fails on the version gate, not on chip identity.
+
+The underlying cause of the lock is a pre-flight chip-identity check that derives the *device's*
+identity by reading bytes out of SPI flash rather than from the build target. On this device that
+read returns a value that is neither the correct `0x0009` (ESP32-S3) nor the `0xFFFF` "unknown"
+sentinel, and both install paths compare against it and fail **closed** for every image that reaches
+the comparison.
 
 This was a release-process failure, not a user error and not bad luck. Two specific process
 decisions caused it:
@@ -53,7 +70,7 @@ not exist. It exists now only as a mandate.
 | — | The RC is handed to the owner. No two-slot install matrix is run. |
 | — | The device, running from **app1**, installs the RC successfully into **app0**. `/debug_log.txt` records `dest=app0 size=4958448` — the format emitted at `src/network/FirmwareFlasher.cpp:370`. |
 | — | Running from app0, the device refuses every subsequent image on every on-device install channel. |
-| 2026-08-30 | Root cause identified. Fix raised upstream as CrossPoint PR #3311; a local bridge build (`bridge/x4pro-3311` @ `018cc72b`) is produced and verified. It cannot be installed on-device; delivery now depends on the host-side USB route, which is untested for want of a data-capable adapter. |
+| 2026-08-30 | Root cause identified. Fix raised upstream as CrossPoint PR #3311 — **open, not merged**; a local bridge build (`bridge/x4pro-3311` @ `018cc72b`) is produced and verified. Neither is in a shipping build, and the bridge image cannot be installed on-device; delivery now depends on the host-side USB route, which is untested for want of a data-capable adapter. |
 
 ---
 
@@ -99,11 +116,16 @@ Both install channels then compare against it and fail closed:
   ```
 
 - **Network OTA** — `src/network/OtaUpdater.cpp:262-265`, the same comparison against the same
-  memoised value, inside the download callback.
+  memoised value, inside the download callback. It is reached only by an image that first clears the
+  version gate at `:203-204`; a same-version image returns `UPDATE_OLDER_ERROR` there and never
+  arrives at this comparison.
 
 Because the correct image chip id for this board is `0x0009` and `deviceChip` is neither that nor
-the sentinel, the predicate is true for every well-formed X4 Pro image. The device rejects the
-firmware it is already running.
+the sentinel, the predicate is true for every well-formed X4 Pro image *that reaches it*. On the SD
+path that includes an image byte-identical to the firmware the device is already running — the SD
+path has no version gate, so the identical image gets all the way to the chip comparison and is
+rejected there. On the network path a same-version image is turned away earlier still, by the
+version gate at `OtaUpdater.cpp:203-204`, and so never exercises this defect at all.
 
 ---
 
@@ -174,14 +196,18 @@ direction the device was left in.
 
 ## Why every on-device install channel closed
 
-Every path the device can take on its own is downstream of the same comparison. The host-side USB
-route is deliberately *not* in this table — it bypasses the firmware entirely, and it is untested
-rather than closed. See [The USB route](#the-usb-route-exists-and-is-untested-not-absent) below.
+Every path the device can take on its own ends in refusal. All of them sit downstream of the same
+chip comparison — with the one wrinkle that the network path can also refuse *ahead* of the
+comparison, at its version gate, for an image that is not newer. The outcome is identical; the
+reason is not, and the distinction matters when designing a test that would have caught this. The
+host-side USB route is deliberately *not* in this table — it bypasses the firmware entirely, and it
+is untested rather than closed.
+See [The USB route](#the-usb-route-exists-and-is-untested-not-absent) below.
 
 | Channel | Outcome |
 | --- | --- |
 | **SD card update** | Blocked by the gate. `SdFirmwareUpdateActivity.cpp:100` calls `firmware_flash::validateImageFile()` unconditionally; `BAD_CHIP` returns at `FirmwareFlasher.cpp:153`. The activity's `recoveryMode` flag changes only headers and navigation (`SdFirmwareUpdateActivity.cpp:35, 137, 206, 224, 268`) — it does **not** bypass validation. |
-| **Network OTA** | Blocked by the same gate, at `OtaUpdater.cpp:262-265`. |
+| **Network OTA** | Blocked by the same gate, at `OtaUpdater.cpp:262-265`, for any image that reaches it. A *same-version* image never does: `installUpdate()` returns `UPDATE_OLDER_ERROR` at `:203-204`, before `esp_ota_begin()` (`:228`) and before the chip check. Either way the channel delivers nothing. |
 | **Xteink Unlocker** | Attempted once; failed before installation (see below). |
 | **OEM SD `/update.bin` bootloader route** | Does not exist for the X4 Pro. This route works on X3/X4, but the CrossPoint maintainers state on crosspointreader.com's unlock page that the X4 Pro has "no known way to SD flash it — you must use the OTA Unlocker Tool". |
 | **USB / ESP32-S3 ROM download** | **Not closed — untested.** Not an on-device install path; it bypasses the firmware and the gate entirely. The interface exists on this board; this unit has never been made to enumerate. See below. |
@@ -265,17 +291,39 @@ around it is unambiguous:
 **If** `http 3:-1` was in fact on that screen alongside `code 2`, the failure occurred inside
 `checkForUpdate()`, at `esp_http_client_open` — **before** `esp_ota_begin()` ran, and so before any
 erase, meaning the attempt never reached the code that erases app1. The code reasoning above is
-solid; the conditional at the front of that sentence is the whole of the residual doubt.
+solid; the conditional at the front of that sentence is the whole of the residual doubt *in this
+line of argument*.
+
+A **second, independent reason** points the same way, and it does not depend on the screen reading
+at all. `installUpdate()` returns `UPDATE_OLDER_ERROR` at `OtaUpdater.cpp:203-204` — its very first
+statement — for any image that is not newer than the running one, and `esp_ota_begin()` is not until
+`:228`. So if the attempt in question was an offer of a *same-version* image, the erase was
+unreachable from that path no matter where or how the attempt subsequently failed. This is a
+genuinely separate support: the first argument turns on a transcribed failure code, this one turns
+only on the control flow.
+
+It does not, however, make the conclusion certain. It carries its own open condition — that the
+image offered was in fact same-version, which the record does not establish — and two supporting
+arguments, each resting on something unverified, still do not add up to an observation. The status
+is unchanged: **strong inference, not confirmed fact.**
 
 ### Why this stays an inference
 
-The chain has exactly one weak link, and it is not the source reading: **both values were read off
-the same failure screen by a person and relayed by hand.** If `http 3:-1` in fact belonged to an
-earlier check attempt, or was misread, or the two values were not on screen at the same time, the
-argument collapses back to the ambiguity of `HTTP_ERROR` alone. Nothing recovered so far rules that
-out, so the correct statement is *probably intact*, not *confirmed intact*. This is not a doubt
-about the owner's account; it is that a single unverifiable screen reading is the only thing
-standing between the two possible histories, and an incident report should say so.
+Two arguments now point the same way, and **neither one closes.** Each terminates in a premise that
+cannot be checked from anything currently in hand.
+
+The primary chain has exactly one weak link, and it is not the source reading: **both values were
+read off the same failure screen by a person and relayed by hand.** If `http 3:-1` in fact belonged
+to an earlier check attempt, or was misread, or the two values were not on screen at the same time,
+that argument collapses back to the ambiguity of `HTTP_ERROR` alone. The version-gate corollary does
+not rescue it — that argument is conditional on the offered image having been same-version, which is
+equally unestablished. It is a second unverified premise, not a verification of the first. Two
+arguments resting on two different unverified premises are still two inferences.
+
+Nothing recovered so far rules either premise out, so the correct statement remains *probably
+intact*, not *confirmed intact*. This is not a doubt about the owner's account; it is that both
+lines of reasoning end at something nobody can now go back and check, and an incident report should
+say so.
 
 The log line that would have settled it without depending on a transcription was never read.
 `OtaUpdateActivity.cpp:66` writes "check failed" and `:312` writes "install failed" — either would
@@ -286,9 +334,20 @@ use before anyone looked at them.
 
 What *would* confirm it, strongest first:
 
-1. **A non-writing read of the app1 partition** over an ESP32-S3 ROM connection (see
-   [Recovery status](#recovery-status)): dumping the header at `0x650000` and comparing it against
-   an erased-flash pattern settles the question by observation instead of by argument.
+1. **A full app1 dump, validated as an image**, over an ESP32-S3 ROM connection (see
+   [Recovery status](#recovery-status)). Note what the cheap version of this does *not* buy:
+   dumping the header at `0x650000` and comparing it against an erased-flash pattern would
+   distinguish an erased slot from a non-erased one, and that is all. A header that is not `0xFF`
+   proves only that those particular bytes were written. It says nothing about the remaining
+   segments, the XOR checksum, the appended SHA-256 trailer, whether the image sits within its
+   partition bounds, or whether it would boot. Proof requires reading the whole slot out and putting
+   it through the same passes `validateImageFile()` makes over an SD image: magic
+   (`a94d3d31:src/network/FirmwareFlasher.cpp:139-143`), a segment walk bounds-checked against the
+   declared segment count (`:176-209`), the size-and-trailer accounting (`:220-229`), the XOR
+   checksum (`:246-252`) and the appended SHA-256 (`:254-269`). The only other proof is item 3
+   below — actually booting it. Neither may be attempted before a verified full-device backup
+   exists (step 4 of [Recovery status](#recovery-status)); on the owner's only working unit, an
+   unbacked boot test is not an acceptable experiment.
 2. **Reading `/debug_log.txt` before it rotates** on any future attempt, and finding "check failed"
    rather than "install failed". This is why the bridge build adds a chip verdict to that log.
 3. **Booting app1 successfully.** Not currently selectable — the boot-slot switch is itself
@@ -301,7 +360,11 @@ not be. Either way, nothing in the current state allows us to *select* it.
 
 ## Remediation
 
-**CrossPoint PR #3311** (open upstream, not merged). Verified locally on `bridge/x4pro-3311`:
+**CrossPoint PR #3311** — **open upstream, not merged.** Verified locally on `bridge/x4pro-3311`.
+
+Nothing described below is in a shipping build, on any branch, on any device. The list states what
+the fix *does*; it is not a statement about what the fleet or the affected unit is running. The
+shipped `a94d3d31` code, and every branch derived from it, still carries the defect in full.
 
 1. **Chip identity from the build target.** `deviceChipId()` derives the device's family from
    `CONFIG_IDF_FIRMWARE_CHIP_ID` — the same constant the bootloader compares every image against
@@ -347,8 +410,11 @@ Reported build artefact properties (from the build, not reproducible from the re
 - exactly one `x4pro` board tag
 - valid appended SHA-256
 
-**It cannot be installed on-device.** No on-device install channel accepts it, because all of them
-sit downstream of the same gate. The USB route is not closed — it is untested (see
+**It cannot be installed on-device.** No on-device install channel accepts it. The SD path refuses
+it at the chip comparison (`FirmwareFlasher.cpp:147-153`). The network path refuses it either way:
+if the image is not version-newer it stops at the version gate (`OtaUpdater.cpp:203-204`), and if it
+is, it arrives at the same chip comparison (`:262`) and is refused there. The USB route is not
+closed — it is untested (see
 [The USB route](#the-usb-route-exists-and-is-untested-not-absent)).
 
 Recovery is **blocked pending a confirmed data-capable X4 Pro magnetic adapter**, and then proceeds
@@ -361,8 +427,9 @@ in this order:
 3. **Non-writing chip probe.** Read-only identification (`chip_id` / `flash_id`) to confirm the
    connection and the flash geometry before anything at all is written.
 4. **Full backup.** Read the entire SPI flash out to a host-side image, verified by size and hash,
-   so every subsequent step is reversible. This is also the opportunity to settle the app1 question
-   by observation.
+   so every subsequent step is reversible. This is also what makes the app1 question answerable: the
+   backup contains the whole slot, so it can be validated offline as an image — magic, segment walk,
+   checksum, appended SHA — rather than merely inspected for an erased header.
 5. **Owner approval.** Explicit go-ahead, given on the backup, before any write.
 6. **Flash.** Write the bridge image, then re-verify.
 
@@ -379,7 +446,10 @@ Being implemented on `chore/update-survivability-gate`.
    full two-slot install matrix: install from app0 → app1, reboot, install from app1 → app0,
    reboot, and re-install an image identical to the running one from each slot. The last case is
    the one that catches an identity source that fails closed, and it is cheap. "It installed once"
-   is not evidence that it can install again.
+   is not evidence that it can install again. Run the identical-image case over **SD**: the network
+   OTA path short-circuits a same-version image at its version gate
+   (`OtaUpdater.cpp:203-204`) and so never exercises the chip comparison at all. To cover the
+   network path, the matrix needs a *version-bumped but otherwise identical* image as well.
 2. **Strict separation of UI RCs from updater changes.** A change to the installation path gets its
    own RC, with its own survivability run. It does not ride along in a touch/UI convergence branch
    because it happened to be in the same sync window.
@@ -401,10 +471,10 @@ Being implemented on `chore/update-survivability-gate`.
 
 **A guard that fails closed on its own uncertainty is a brick.** The original code has exactly one
 escape hatch, `0xFFFF`, and no way to express "this identity source returned something I should not
-trust". A pre-flight check that can refuse an image identical to the running firmware is not a
-safety feature; it is a single point of failure sitting in front of the only mechanism that could
-repair it. The bootloader already re-checks `chip_id` on every boot — the guard was never the
-authority it was written as if it were.
+trust". A pre-flight check that can refuse — as the SD path here does — an image byte-identical to
+the running firmware is not a safety feature; it is a single point of failure sitting in front of
+the only mechanism that could repair it. The bootloader already re-checks `chip_id` on every boot —
+the guard was never the authority it was written as if it were.
 
 **Never derive a device's identity from mutable storage.** What chip this is, is a property of the
 build. Reading it back out of flash makes a compile-time constant into a runtime variable that can
