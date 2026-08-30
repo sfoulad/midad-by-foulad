@@ -125,8 +125,26 @@ jobs:
           # Changed files. `--paginate` walks every page; GitHub caps this
           # endpoint at 3000 files, so a listing at the cap is a TRUNCATED
           # listing and must fail closed rather than be judged as complete.
+          #
+          # One line per API RECORD, as `filename<TAB>previous_filename`.
+          # `previous_filename` is present ONLY on a rename, where it holds
+          # the SOURCE path while `filename` holds the destination; `// ""`
+          # turns its absence on every other record into an empty second
+          # field. Writing `.filename` alone -- the obvious spelling -- is a
+          # total bypass of this gate: renaming src/network/OtaUpdater.cpp to
+          # src/network/Updater.cpp and rewriting it in the same commit yields
+          # a list matching no protected pattern, so the gate says "Not
+          # applicable" and the updater ships unvalidated. This step only
+          # TRANSPORTS the pair; scripts/update-survivability-gate.sh does all
+          # of the classification and is self-tested against both rename
+          # directions, so the matching logic never lives in un-runnable
+          # inline YAML.
+          #
+          # Still one line per changed file, so the 3000-file cap check below
+          # continues to count API records rather than paths.
           gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
-            --jq '.[].filename' > changed-files.txt
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' \
+            > changed-files.txt
           file_count="$(wc -l < changed-files.txt)"
           if [ "$file_count" -ge 3000 ]; then
             echo "::error::PR file listing hit the API's 3000-file cap and is truncated; the gate cannot judge it. Failing closed."
@@ -142,8 +160,10 @@ jobs:
           # from PR HEAD through the contents API and is only ever scanned as
           # text -- nothing from HEAD is checked out or run. Paths are
           # filtered to a strict charset before being used in a URL.
+          # Field 1 of each record is `filename` -- for a rename, the path the
+          # report lives at on PR HEAD, which is the one to read content from.
           printf '%s\n' "$PR_BODY" > evidence.txt
-          while IFS= read -r hv; do
+          while IFS=$'\t' read -r hv _; do
             case "$hv" in
               docs/hardware-validation/*.md) ;;
               *) continue ;;

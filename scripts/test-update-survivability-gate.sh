@@ -95,6 +95,29 @@ expect_output() {
   fi
 }
 
+# expect_absent <name> <grep-ere> <changed-files> <evidence> <labels> <title>
+expect_absent() {
+  local name="$1" pattern="$2" changed="$3" evidence="$4" labels="$5" title="$6"
+  local cf="$TMP/changed" ev="$TMP/evidence" lb="$TMP/labels" out="$TMP/out"
+
+  printf '%s\n' "$changed" >"$cf"
+  printf '%s\n' "$evidence" >"$ev"
+  printf '%s' "$labels" >"$lb"
+
+  set +e
+  "$GATE" "$cf" "$ev" "$lb" "$title" >"$out" 2>&1
+  set -e
+
+  if grep -qE "$pattern" "$out"; then
+    echo "  FAIL $name: output unexpectedly matched /$pattern/"
+    sed 's/^/       | /' "$out"
+    FAILED=$((FAILED + 1))
+  else
+    echo "  ok   $name"
+    PASSED=$((PASSED + 1))
+  fi
+}
+
 UI_ONLY_DIFF='src/activities/settings/DisplaySettingsActivity.cpp
 lib/UITheme/UITheme.cpp
 lib/I18n/translations/english.yaml'
@@ -134,6 +157,90 @@ run_case "broad pattern catches a NEW updater file the named list predates" 1 \
   "src/network/FirmwareSignature.cpp" "New signature verifier." "" "feat: verify signatures"
 run_case "signing script" 1 \
   "scripts/sign_firmware.py" "New signer." "" "feat: sign images"
+
+echo
+echo "== renames: BOTH sides of every rename are classified =="
+# The GitHub pull-files API reports a rename's destination in `filename` and
+# its source in `previous_filename`; the gate's changed-file records carry them
+# as `destination<TAB>source`. Matching the destination alone was a total
+# bypass: rename src/network/OtaUpdater.cpp to src/network/Updater.cpp, rewrite
+# it in the same commit, and the resulting list matches no protected pattern,
+# so the gate reports "Not applicable" and the updater ships with no hardware
+# validation. Every case below fails loudly if that regresses.
+TAB=$'\t'
+
+# Protected SOURCE -> unprotected destination. Contents changed in the same
+# commit. This is the reported bypass; it must block.
+RENAME_AWAY_DIFF="src/network/Updater.cpp${TAB}src/network/OtaUpdater.cpp
+src/network/Updater.h${TAB}src/network/OtaUpdater.h
+src/activities/settings/DisplaySettingsActivity.cpp"
+
+# Unprotected source -> protected DESTINATION. Whatever now lives at the
+# protected pathname is the update path from this commit on.
+RENAME_INTO_DIFF="src/network/OtaUpdater.cpp${TAB}src/network/Updater.cpp
+lib/UITheme/UITheme.cpp"
+
+run_case "protected source renamed to unprotected destination, contents changed" 1 \
+  "$RENAME_AWAY_DIFF" "Renames the updater while reworking the install screen." "ui" \
+  "feat(ui): touch install screen"
+run_case "unprotected source renamed INTO a protected path" 1 \
+  "$RENAME_INTO_DIFF" "Moves the download helper." "" "refactor: rename Updater to OtaUpdater"
+run_case "unprotected renamed to unprotected" 0 \
+  "src/network/HttpClient.cpp${TAB}src/network/HttpDownloader.cpp" "Rename only." "" \
+  "refactor: rename the downloader"
+# The gate has no diff-size, patch or similarity-score input at all: a pure
+# 100%-similarity rename that changes not one byte is classified exactly like a
+# rewrite, because the question is which paths moved, never how much moved.
+run_case "pure rename, no content change, is still classified by path" 1 \
+  "src/network/Updater.cpp${TAB}src/network/OtaUpdater.cpp" \
+  "Pure rename, zero content change." "" "refactor: shorter filename"
+run_case "renamed protected path WITH a complete report" 0 \
+  "$RENAME_AWAY_DIFF" "$(complete_report)" "ui" "feat(ui): touch install screen"
+run_case "both sides protected (OtaUpdater -> FirmwareFlasher-ish)" 1 \
+  "src/network/OtaBootSwitch.cpp${TAB}src/network/OtaUpdater.cpp" "Split." "" "refactor: split ota"
+
+# Exclusions are evaluated per PATH, not per record, so the one documented
+# carve-out cannot be used as a laundering route in either direction.
+run_case "carve-out source renamed INTO real release machinery" 1 \
+  ".github/workflows/release-firmware.yml${TAB}.github/workflows/release-fonts.yml" \
+  "Repurpose the font workflow." "" "chore: reuse the workflow"
+run_case "carve-out renamed to something unprotected" 0 \
+  "docs/font-packs.md${TAB}.github/workflows/release-fonts.yml" "Retire the workflow." "" \
+  "chore: drop the font workflow"
+run_case "protected path laundered through the carve-out name" 1 \
+  ".github/workflows/release-fonts.yml${TAB}.github/workflows/release.yml" "Rename." "" \
+  "chore: rename release workflow"
+
+# A record with an empty second field is an ordinary non-rename change, so a
+# plain one-path-per-line list (every other test above) stays valid input.
+run_case "empty rename field is a plain change (protected)" 1 \
+  "src/network/OtaUpdater.cpp${TAB}" "No report." "" "fix: ota"
+run_case "empty rename field is a plain change (unprotected)" 0 \
+  "docs/troubleshooting.md${TAB}" "Typo." "" "docs: typo"
+
+echo
+echo "== rename message quality: name BOTH paths and the direction =="
+expect_output "rename-away failure names the source path the author no longer has" \
+  'src/network/OtaUpdater\.cpp -> src/network/Updater\.cpp' \
+  "$RENAME_AWAY_DIFF" "no report" "" "refactor: rename the updater"
+expect_output "rename-away failure says it matched on the SOURCE path" \
+  'RENAMED AWAY from a protected path' \
+  "$RENAME_AWAY_DIFF" "no report" "" "refactor: rename the updater"
+expect_output "rename-into failure names both paths" \
+  'src/network/Updater\.cpp -> src/network/OtaUpdater\.cpp' \
+  "$RENAME_INTO_DIFF" "no report" "" "refactor: rename Updater to OtaUpdater"
+expect_output "rename-into failure says it matched on the DESTINATION path" \
+  'RENAMED INTO a protected path' \
+  "$RENAME_INTO_DIFF" "no report" "" "refactor: rename Updater to OtaUpdater"
+expect_output "the failure explains why a path not in the diff is blocking" \
+  'A rename is what put a protected path in this list' \
+  "$RENAME_AWAY_DIFF" "no report" "" "refactor: rename the updater"
+expect_absent "a non-rename failure carries no rename explanation" \
+  'RENAMED|A rename is what put' \
+  "src/network/OtaUpdater.cpp" "no report" "" "fix: ota"
+expect_absent "an unprotected rename is not reported as touching a protected path" \
+  'Blocked|Protected files touched' \
+  "src/network/HttpClient.cpp${TAB}src/network/HttpDownloader.cpp" "no report" "" "refactor: rename"
 
 echo
 echo "== report completeness =="

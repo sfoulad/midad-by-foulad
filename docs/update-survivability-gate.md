@@ -311,6 +311,24 @@ false positive, because a gate that hard-blocks work it has nothing to say
 about is a gate people learn to route around. Any new exclusion must clear the
 same bar.
 
+Renaming a protected file does not get you out of the gate. Both the **source**
+and the **destination** path of every rename are matched against the list
+above, so all three of these block:
+
+- `src/network/OtaUpdater.cpp` → `src/network/Updater.cpp` — the file that was
+  the updater still is the updater; matching only the destination would report
+  this PR as "Not applicable" while the install path was rewritten under a new
+  name.
+- `src/network/Updater.cpp` → `src/network/OtaUpdater.cpp` — whatever content
+  lands at a protected pathname *is* the update path from that commit on.
+- A rename through the `release-fonts.yml` carve-out in either direction — the
+  exclusion is evaluated per path, not per rename.
+
+A rename that changes not one byte is classified identically to a rewrite; the
+gate reads paths, never patch size. When a rename is what triggered the gate,
+the failure message names both paths and which side matched, because the
+blocking path will not be in the diff you are looking at.
+
 The gate is triggered by the **diff**, not by a label. A PR cannot opt out of
 it by omitting or removing a label — see the workflow header for that decision
 and its residual failure mode.

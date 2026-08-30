@@ -46,10 +46,28 @@
 #         as "nothing to check" is the identical fail-open mistake that
 #         produced the incident this gate exists to prevent.
 #
+# Renames are a first-class hazard, not a detail
+# ----------------------------------------------
+# Classifying only the DESTINATION path of a rename is a complete bypass of
+# this gate: a PR that renames src/network/OtaUpdater.cpp to
+# src/network/Updater.cpp AND rewrites it in the same commit presents a
+# changed-file list that matches no protected pattern at all, so the gate
+# reports "Not applicable" and waves the updater change through with no
+# hardware validation. Both sides of every rename are therefore classified
+# independently -- the same conclusion scripts/thin-fork-guard.sh reached for
+# its security-boundary files, and for the same reason.
+#
 # Usage:
 #   update-survivability-gate.sh CHANGED_FILES EVIDENCE LABELS PR_TITLE
 #
-#   CHANGED_FILES  file, one repo-relative changed path per line
+#   CHANGED_FILES  file, one CHANGED RECORD per line. A record is either a
+#                  bare repo-relative path, or a rename written as
+#                  `destination<TAB>source` -- the field order of the GitHub
+#                  pull-files API, which reports a rename's destination in
+#                  `filename` and its source in `previous_filename`. A line
+#                  with no tab (or an empty second field) is a non-rename
+#                  change, so a plain one-path-per-line list is still valid
+#                  input.
 #   EVIDENCE       file, the PR body concatenated with the content of any
 #                  docs/hardware-validation/*.md the PR adds or edits
 #   LABELS         file, one PR label per line (may be empty)
@@ -165,27 +183,74 @@ EVIDENCE="$(cat "$EVIDENCE_PATH")"
 LABELS="$(cat "$LABELS_PATH")"
 
 # --- 1. Which protected paths does this PR touch? ----------------------------
-TOUCHED=""
-while IFS= read -r changed; do
-  [ -z "$changed" ] && continue
-  excluded=false
+# One path in isolation: protected when it matches PROTECTED_PATTERNS and is
+# not carved out by EXCLUDED_PATTERNS. Exclusions are evaluated per PATH, not
+# per record, so a rename FROM a carved-out path INTO a protected one is still
+# judged on the protected side.
+is_protected_path() {
+  local candidate="$1" pattern
+  [ -z "$candidate" ] && return 1
   for pattern in "${EXCLUDED_PATTERNS[@]}"; do
     # shellcheck disable=SC2053  # deliberate glob match, not a string compare
-    if [[ "$changed" == $pattern ]]; then
-      excluded=true
-      break
+    if [[ "$candidate" == $pattern ]]; then
+      return 1
     fi
   done
-  [ "$excluded" = true ] && continue
   for pattern in "${PROTECTED_PATTERNS[@]}"; do
     # shellcheck disable=SC2053  # deliberate glob match, not a string compare
-    if [[ "$changed" == $pattern ]]; then
-      TOUCHED="${TOUCHED}${changed}"$'\n'
-      break
+    if [[ "$candidate" == $pattern ]]; then
+      return 0
     fi
   done
+  return 1
+}
+
+# Both sides of a rename are classified, and a hit on EITHER side blocks:
+#
+#   protected -> unprotected  a rename AWAY from the update path. The moved
+#                             content is still the updater, and the
+#                             destination matches nothing, so destination-only
+#                             matching sees an ordinary new file. This is the
+#                             reported bypass.
+#   unprotected -> protected  a rename INTO the update path. Whatever content
+#                             lands at src/network/OtaUpdater.cpp IS the OTA
+#                             updater from that commit on, whatever it was
+#                             called yesterday -- functionally a rewrite of a
+#                             protected file, and it must block for exactly
+#                             the reason a modification does.
+#
+# TOUCHED holds display entries, so a rename names BOTH paths and says which
+# direction tripped the gate; an author looking at a diff that no longer
+# contains the protected path needs to be told where it went.
+TOUCHED=""
+RENAME_HIT=false
+while IFS=$'\t' read -r new_path old_path; do
+  old_path="${old_path:-}"
+  [ -z "$new_path" ] && [ -z "$old_path" ] && continue
+
+  new_protected=false
+  old_protected=false
+  if is_protected_path "$new_path"; then new_protected=true; fi
+  if is_protected_path "$old_path"; then old_protected=true; fi
+  if [ "$new_protected" = false ] && [ "$old_protected" = false ]; then
+    continue
+  fi
+
+  if [ -z "$old_path" ]; then
+    TOUCHED="${TOUCHED}${new_path}"$'\n'
+    continue
+  fi
+
+  RENAME_HIT=true
+  if [ "$new_protected" = true ] && [ "$old_protected" = true ]; then
+    TOUCHED="${TOUCHED}${old_path} -> ${new_path}  (RENAMED, both paths protected)"$'\n'
+  elif [ "$old_protected" = true ]; then
+    TOUCHED="${TOUCHED}${old_path} -> ${new_path}  (RENAMED AWAY from a protected path: matched on the SOURCE path -- the destination matches no pattern)"$'\n'
+  else
+    TOUCHED="${TOUCHED}${old_path} -> ${new_path}  (RENAMED INTO a protected path: matched on the DESTINATION path)"$'\n'
+  fi
 done <<<"$CHANGED_FILES"
-TOUCHED="$(printf '%s' "$TOUCHED" | sed '/^$/d')"
+TOUCHED="$(printf '%s' "$TOUCHED" | sed '/^$/d' | awk '!seen[$0]++')"
 
 # --- 2. Does the PR present itself as UI work? -------------------------------
 # Informational only. Used to escalate the failure message for the scope-creep
@@ -207,12 +272,21 @@ ui_presentation() {
     esac
   done <<<"$LABELS"
 
-  # Path heuristic: at least half the diff is UI surface.
-  local total=0 ui=0 changed
-  while IFS= read -r changed; do
-    [ -z "$changed" ] && continue
+  # Path heuristic: at least half the diff is UI surface. Counted per RECORD,
+  # so a rename is one changed file rather than two; either side counting as
+  # UI surface makes the record UI.
+  local total=0 ui=0 new_path old_path
+  while IFS=$'\t' read -r new_path old_path; do
+    old_path="${old_path:-}"
+    [ -z "$new_path" ] && [ -z "$old_path" ] && continue
     total=$((total + 1))
-    case "$changed" in
+    case "$new_path" in
+      src/activities/*|lib/UITheme/*|lib/GfxRenderer/*|lib/I18n/*|lib/EpdFont/*)
+        ui=$((ui + 1))
+        continue
+        ;;
+    esac
+    case "$old_path" in
       src/activities/*|lib/UITheme/*|lib/GfxRenderer/*|lib/I18n/*|lib/EpdFont/*) ui=$((ui + 1)) ;;
     esac
   done <<<"$CHANGED_FILES"
@@ -311,6 +385,18 @@ fi
   echo "$TOUCHED"
   echo '```'
   echo
+
+  if [ "$RENAME_HIT" = true ]; then
+    echo "### A rename is what put a protected path in this list"
+    echo
+    echo "One of the entries above is a **rename**, shown as \`source -> destination\`. Both paths of every rename are checked, which is why this gate can block on a path your diff no longer contains:"
+    echo
+    echo "- **Renamed away from a protected path** -- the file that was the updater still is the updater; it is just called something else now. Its destination matches no pattern, so matching the destination alone would have reported this PR as \"Not applicable\"."
+    echo "- **Renamed into a protected path** -- whatever content now lives at that pathname is the update path from this commit on, regardless of what the file was called before."
+    echo
+    echo "Renaming, splitting or moving these files does not make the change safer to ship; if anything it makes the two-slot matrix more important, because the install path the device runs after this PR is code that has never completed a full install cycle under its new name."
+    echo
+  fi
 
   if [ -n "$UI_SIGNAL" ]; then
     echo "### :rotating_light: This PR presents as UI work (detected via: $UI_SIGNAL)"
