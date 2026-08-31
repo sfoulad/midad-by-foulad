@@ -443,7 +443,7 @@ commit statuses carried the `update-survivability-gate` context: the verdict
 travels as this job's own check run (app `github-actions`, app id `15368`) and
 the Statuses API is genuinely unused, exactly as designed above.
 
-#217, #218 and #219 were disposable probes; they were closed unmerged and their
+PRs #217, #218 and #219 were disposable probes; they were closed unmerged and their
 branches deleted. #215 was ordinary project work.
 
 **Fork association remains explicitly unproven.** Every observation above came
