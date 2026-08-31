@@ -1,5 +1,6 @@
 #pragma once
 
+#include "OtaUpdateScreenModel.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
 #include "network/OtaUpdater.h"
@@ -15,6 +16,31 @@ class OtaUpdateActivity : public Activity {
     FINISHED,
     SHUTTING_DOWN
   };
+
+  // Bridge to the pure state->actions contract (OtaUpdateScreenModel.h); the
+  // host tests assert every screen it names stays operable on both button and
+  // touch hardware.
+  static constexpr ota_screen::Screen screenFor(const State s) {
+    switch (s) {
+      case WIFI_SELECTION:
+        return ota_screen::Screen::WIFI_SELECTION;
+      case CHECKING_FOR_UPDATE:
+        return ota_screen::Screen::CHECKING;
+      case WAITING_CONFIRMATION:
+        return ota_screen::Screen::CONFIRMING;
+      case UPDATE_IN_PROGRESS:
+        return ota_screen::Screen::INSTALLING;
+      case NO_UPDATE:
+        return ota_screen::Screen::NO_UPDATE;
+      case FAILED:
+        return ota_screen::Screen::FAILED;
+      case FINISHED:
+        return ota_screen::Screen::FINISHED;
+      case SHUTTING_DOWN:
+        return ota_screen::Screen::SHUTTING_DOWN;
+    }
+    return ota_screen::Screen::FAILED;
+  }
 
   // Can't initialize this to 0 or the first render doesn't happen
   static constexpr unsigned int UNINITIALIZED_PERCENTAGE = 111;

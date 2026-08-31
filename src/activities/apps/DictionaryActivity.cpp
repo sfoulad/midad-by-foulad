@@ -8,6 +8,7 @@
 #include "CrossPointSettings.h"
 #include "DictionaryStore.h"
 #include "MappedInputManager.h"
+#include "MidadUiHelpers.h"
 #include "activities/reader/DictionaryDefinitionActivity.h"
 #include "activities/reader/DictionaryHistoryActivity.h"
 #include "activities/reader/DictionarySuggestionsActivity.h"
@@ -164,7 +165,7 @@ void DictionaryActivity::selectCurrent() {
 void DictionaryActivity::loop() {
   const auto& entries = DICTIONARIES.getEntries();
   const int totalItems = static_cast<int>(entries.size()) + DICTIONARY_ACTION_COUNT;
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, true);
+  const int pageItems = midadListItemsPerPage(renderer, true, false, true, true);
 
   // wasPressed, NOT vcodex's wasReleased: our SettingsActivity dispatches on
   // the Confirm PRESS, so the leftover RELEASE landed here and instantly

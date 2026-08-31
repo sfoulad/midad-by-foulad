@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <string>
 
@@ -193,6 +194,9 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (sdFontFamilyName[0] != '\0') {
     doc["sdFontFamilyName"] = sdFontFamilyName;
   }
+  if (dictionaryName[0] != '\0') {
+    doc["dictionaryName"] = dictionaryName;
+  }
   if (sdArabicFontFamilyName[0] != '\0') {
     doc["sdArabicFontFamilyName"] = sdArabicFontFamilyName;
   }
@@ -306,6 +310,8 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   // SD card font family name — not in SettingsList, load manually
   const char* sfn = doc["sdFontFamilyName"] | "";
   strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
+  const char* dn = doc["dictionaryName"] | "";
+  strncpy(dictionaryName, dn, sizeof(dictionaryName) - 1);
   sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
   const char* safn = doc["sdArabicFontFamilyName"] | "";
   strncpy(sdArabicFontFamilyName, safn, sizeof(sdArabicFontFamilyName) - 1);
@@ -586,6 +592,10 @@ int CrossPointSettings::getRefreshFrequency() const {
       return 15;
     case REFRESH_30:
       return 30;
+    case REFRESH_NEVER:
+      // Effectively disables the periodic full refresh; the page counter
+      // counts down from here and never reaches the threshold in practice.
+      return std::numeric_limits<int>::max();
   }
 }
 

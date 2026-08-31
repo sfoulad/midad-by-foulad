@@ -25,6 +25,10 @@ enum class HomeMenuItem {
   FILE_BROWSER,
   RECENTS,
   FOULAD_EBOOKS,
+  // Upstream CrossPoint's name for the same destination -- Midad renamed the
+  // catalog browser to Foulad eBooks. Alias keeps byte-identical upstream files
+  // (OpdsServerListActivity) compiling and every value below its number.
+  OPDS_BROWSER = FOULAD_EBOOKS,
   FILE_TRANSFER,
   SETTINGS_MENU,
   CHECK_UPDATE,
@@ -137,6 +141,7 @@ class ActivityManager {
 
   // goTo... functions are convenient wrapper for replaceActivity()
   void goToFileTransfer();
+  void goToUsbDrive();
   void goToSettings();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
@@ -162,6 +167,7 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  bool requiresExclusiveStorageLoop() const;
   const char* currentActivityDebugName() const;
   bool isReaderActivity() const;
   bool handleForcedRefresh();

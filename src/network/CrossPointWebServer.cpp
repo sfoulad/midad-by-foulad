@@ -2560,7 +2560,7 @@ void CrossPointWebServer::handleDictionaryDelete() {
 
   const std::string ifoPath = doc["ifoPath"].as<const char*>();
   DICTIONARIES.scan();
-  const DictionaryEntry* target = nullptr;
+  const StarDictEntry* target = nullptr;
   for (const auto& entry : DICTIONARIES.getEntries()) {
     if (entry.ifoPath == ifoPath) {
       target = &entry;

@@ -13,6 +13,8 @@
 #include "EpubReaderMenuActivity.h"
 #include "ProgressMapper.h"
 #include "ReaderActivity.h"
+#include "ReaderToolbarUi.h"
+#include "components/OptionPopup.h"
 #include "reading/ReadingStatsStore.h"
 
 class EpubReaderActivity final : public ReaderActivity {
@@ -48,9 +50,6 @@ class EpubReaderActivity final : public ReaderActivity {
   bool showBookmarkMessage = false;
   bool showDictionaryMessage = false;
   unsigned long dictionaryMessageTime = 0UL;
-  // A long-press action (bookmark/KOSync/dictionary) already fired for this hold; suppresses
-  // the openReaderMenu() that would otherwise run on the release that follows it.
-  bool ignoreNextConfirmRelease = false;
   bool currentPageBookmarked = false;
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
@@ -60,6 +59,37 @@ class EpubReaderActivity final : public ReaderActivity {
   bool recentsEntryRemoved = false;
   unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
+
+  // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
+  // over the page instead of pushing the full-screen list menu. Select opens the
+  // Toolbar; its tools open the Contents/Text/More bottom-sheet panels.
+  enum class Overlay { None, Toolbar, Contents, Text, More };
+  Overlay overlay = Overlay::None;
+  int focusedTool = 0;  // toolbar tool focus: 0=Contents, 1=Text, 2=More
+  int panelIndex = 0;   // selected row within the active panel
+  // Panel list navigation: a tap steps one row, a hold jumps PANEL_HOLD_STEP rows in one go
+  // (a contents list runs to hundreds of chapters). One jump per hold, not a repeat -- every
+  // step repaints the panel, so repeating is bounded by the e-ink refresh anyway and reads as
+  // sluggish. True once a hold has jumped, so the release that ends it is swallowed.
+  static constexpr unsigned long PANEL_HOLD_MS = 1500;
+  static constexpr int PANEL_HOLD_STEP = 10;
+  bool panelHoldJumped = false;
+  // Whether the panel draws its cursor row. Button boards always do; touch
+  // boards only once a button has moved it, so a tapped row is not left inverted.
+  bool panelCursorShown = false;
+  // FreeInkUI chrome + tap targets for the overlay; created when it opens,
+  // released when it closes.
+  std::unique_ptr<ReaderToolbarUi> toolbarUi;
+  // Modal option picker over the panel (same component the Settings screens
+  // use), for enum rows: font size / line spacing / alignment / orientation /
+  // auto page turn. Toggle rows stay one-tap toggles, as in Settings.
+  OptionPopup overlayPopup;
+  // True while a clean-page snapshot (renderer.storeBwBuffer) backs the open
+  // overlay, letting panel->toolbar steps restore the page without a full
+  // re-render. Discarded on close / whenever the page under the overlay changes.
+  bool overlayPageStored = false;
+  int autoTurnOption = 0;  // current auto page-turn rate index (More panel)
+  std::vector<EpubReaderMenuActivity::MenuItem> moreItems;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -160,7 +190,10 @@ class EpubReaderActivity final : public ReaderActivity {
   void jumpToPercent(int percent);
   // Spine-anchored jump, preferred over the percentage when the server supplies one.
   void jumpToSpine(int spineIndex);
-  void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu);
+  // `menu` carries the drawer's extra payload (chapter pick, per-book setting
+  // edits). The toolbar's More panel dispatches leaf actions with no payload,
+  // so it defaults -- every case that reads `menu` is filtered out there.
+  void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action, const MenuResult& menu = MenuResult{});
   // Reloads the current page fresh from the section (mirrors the loadPage()
   // call in render()) as a shared_ptr for DictionaryWordSelectActivity /
   // DictionaryHistoryActivity, which outlive the menu-confirm call. Also
@@ -169,9 +202,34 @@ class EpubReaderActivity final : public ReaderActivity {
   std::shared_ptr<Page> loadCurrentPageForLookup(int& outMarginLeft, int& outMarginTop);
   // Opens the reader menu for the current position (short-press Confirm)
   void openReaderMenu();
+  // Toolbar reader menu (see Overlay above).
+  bool usesToolbarMenu() const;
+  void openOverlay(Overlay target);
+  void closeOverlayToPage();
+  void discardOverlayPage();
+  void handleOverlayInput();
+  void renderOverlay();
+  std::string currentChapterTitle() const;
+  // Text panel rows (font, size, line spacing, alignment, focus reading).
+  std::string textRowName(int row) const;
+  std::string textRowValue(int row) const;
+  void showTextRowPopup(int row);
+  // Persist + re-paginate + re-render under the open panel (live preview).
+  void applyTextSettingLive();
+  void paintOverlayPopup();
+  // Persist the reader text settings, (re)load the selected SD font, and
+  // re-paginate the current chapter so changes apply without re-opening the book.
+  void applyReaderTextSettings();
+  // More panel rows.
+  void buildMoreActions();
+  std::string moreRowName(int row) const;
+  std::string moreRowValue(int row) const;
+  void activateMoreRow(int row);
   void openDictionaryWordSelect();
   bool launchKOReaderSync();
-  // Midad equivalent: same save-release-replace shape, see the implementation.
+  unsigned long confirmLongPressThreshold() const;
+  // Midad equivalent of launchKOReaderSync(): same save-release-replace shape,
+  // see the implementation.
   void launchMidadSync();
   // True when this book carries a Foulad eBooks catalog id, i.e. Sync can do
   // something. Gates the drawer row so it is never shown-and-inert.
@@ -179,6 +237,12 @@ class EpubReaderActivity final : public ReaderActivity {
   // Catalog id for the open book: stats store first, recents as fallback.
   std::string currentBookFouladId() const;
   void applyOrientation(uint8_t orientation);
+  void applyInitialOrientation() override;
+  // The orientation the current layout was built for. The control center's
+  // orientation tile can move SETTINGS.orientation while this reader sits on
+  // the activity stack, and Pop restores it without onEnter(), so the drift has
+  // to be noticed here rather than assumed away.
+  uint8_t appliedOrientation = 0;
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   // Gives the status bar's text lane back when it is hidden or progress-bar-only, so a
   // footer indicator has somewhere to draw. Costs a re-layout, so it is only called when

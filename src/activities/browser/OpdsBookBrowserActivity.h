@@ -7,6 +7,7 @@
 
 #include "OpdsServerStore.h"
 #include "activities/Activity.h"
+#include "components/OptionPopup.h"
 #include "util/ButtonNavigator.h"
 
 /**
@@ -206,6 +207,12 @@ class OpdsBookBrowserActivity final : public Activity {
   // cached string; makes no request. An earlier version of this asked GitHub from
   // here and aborted the device -- see the implementation.
   void maybeOfferFirmwareUpdate();
+  // Cancel/Update control surface for UPDATE_PROMPT, same component the OTA
+  // flow's own confirmation uses: touch-tappable and button-navigable. The
+  // previous hand-rolled prompt drew only button hints, which
+  // BaseTheme::drawButtonHints suppresses on touch hardware -- the X4 Pro
+  // showed the offer with no Update or Cancel control at all.
+  OptionPopup updatePopup;
   // Counts painted BROWSING frames, so the offer waits until the catalog it covers
   // is actually on screen.
   uint8_t browsingFramesRendered = 0;

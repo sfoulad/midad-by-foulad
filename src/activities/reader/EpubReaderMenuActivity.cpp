@@ -206,6 +206,59 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildSetti
   return items;
 }
 
+// Flat row list for the toolbar reader menu's More panel (see ReaderToolbarUi).
+// CrossPoint's own order, with the drawer-only Midad rows appended under the
+// same gates buildReadingItems()/buildSettingsItems() use -- the touch path
+// must not reach fewer features than the button path. Static: the panel builds
+// its rows without constructing this activity.
+void EpubReaderMenuActivity::buildMenuItems(std::vector<MenuItem>& items, const bool hasFootnotes,
+                                            const bool hasBookmarks) {
+  items.clear();
+  items.reserve(MAX_MENU_ITEMS);
+  items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
+  if (hasFootnotes) {
+    items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
+  }
+  if (hasBookmarks) {
+    items.push_back({MenuAction::BOOKMARKS, StrId::STR_BOOKMARKS});
+  }
+  items.push_back({MenuAction::TOGGLE_BOOKMARK, StrId::STR_TOGGLE_BOOKMARK});
+  items.push_back({MenuAction::TEXT_SETTINGS, StrId::STR_TEXT_SETTINGS});
+  items.push_back({MenuAction::NIGHT_MODE, StrId::STR_NIGHT_MODE});
+  if (Frontlight.present()) {
+    items.push_back({MenuAction::FRONTLIGHT, StrId::STR_FRONTLIGHT});
+  }
+  // LOOKUP_WORD rather than a generic dictionary action: the reader dispatches
+  // the lookup on this one. Offered only once a dictionary is installed, or the
+  // row opens straight into DICTIONARY_NONE_SELECTED every time.
+  if (DICTIONARIES.hasAnyDictionary()) {
+    items.push_back({MenuAction::LOOKUP_WORD, StrId::STR_DICTIONARY});
+    items.push_back({MenuAction::LOOKUP_HISTORY, StrId::STR_LOOKUP_HISTORY});
+  }
+  items.push_back({MenuAction::ROTATE_SCREEN, StrId::STR_ORIENTATION});
+  items.push_back({MenuAction::AUTO_PAGE_TURN, StrId::STR_AUTO_TURN_PAGES_PER_MIN});
+  items.push_back({MenuAction::GO_TO_PERCENT, StrId::STR_GO_TO_PERCENT});
+  items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
+  items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
+  // Same Settings -> Apps -> Pomodoro toggle that gates the drawer row.
+  if (MIDAD_APP_SETTINGS.pomodoroEnabled) {
+    items.push_back({MenuAction::POMODORO, StrId::STR_POMODORO});
+  }
+  items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
+  {
+    // Shown on the strength of the Foulad eBooks account alone, exactly as the
+    // drawer row is; launchMidadSync() explains itself when the book carries no
+    // catalog id.
+    const auto& opdsServers = OPDS_STORE.getServers();
+    if (std::any_of(opdsServers.begin(), opdsServers.end(),
+                    [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; })) {
+      items.push_back({MenuAction::MIDAD_SYNC, StrId::STR_SYNC_MIDAD});
+    }
+  }
+  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_KOREADER});
+  items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
+}
+
 void EpubReaderMenuActivity::onEnter() {
   Activity::onEnter();
   requestUpdate();
