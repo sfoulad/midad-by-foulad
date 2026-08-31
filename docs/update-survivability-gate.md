@@ -4,8 +4,10 @@
 until a designated test device has completed every case in the matrix below and
 the results are recorded and signed off.
 
-Enforced in CI by [`.github/workflows/update-survivability-gate.yml`](../.github/workflows/update-survivability-gate.yml)
+Checked in CI by [`.github/workflows/update-survivability-gate.yml`](../.github/workflows/update-survivability-gate.yml)
 via [`scripts/update-survivability-gate.sh`](../scripts/update-survivability-gate.sh).
+The policy is mandatory; the CI check is currently **advisory** and not a
+required status check — see *Live status: operational, but advisory* in §8.
 
 ---
 
@@ -411,9 +413,75 @@ from `github.event.pull_request.head.sha` through `env:`.
 
 **The limit of that measurement, stated plainly:** it was taken on a *same-repo*
 pull request. It has not been verified for a pull request opened from a **fork**.
-Confirm the context appears on a fork PR's head SHA before making this a required
-check. If it does not, a required check that never reports blocks every fork PR,
-and the status-writer route above becomes necessary after all.
+That single open question is the reason the gate is not yet a required check;
+what has and has not been proven, and what would close it, is recorded below.
+
+#### Live status: operational, but advisory
+
+**As of 2026-08-31 this gate is operational but ADVISORY.** It runs on every
+pull request against `develop` and reports a verdict, but it is **not** a
+required status check, so a failing verdict cannot block a merge on its own.
+Merging past a red gate is currently a decision a human makes, not one the
+repository refuses.
+
+**Same-repository behaviour is proven live.** Four real pull requests against
+`develop`, after the gate landed in merge commit `edc5cd65` (PR #216):
+
+| PR | Change | Verdict | Check run |
+| --- | --- | --- | --- |
+| #215 | a real, non-disposable documentation-only PR | Not applicable | **pass** |
+| #217 | documentation-only | Not applicable | **pass** |
+| #218 | comment-only edit to `src/network/OtaUpdater.cpp`, a protected updater path | "Blocked. This PR changes the firmware update path and has no complete hardware validation report" | **fail** |
+| #219 | comment-only edit to `scripts/update-survivability-gate.sh`, the gate's own evaluator | the distinct **gate self-modification** classification: no approving maintainer review on the current head SHA | **fail** |
+
+That covers all three classifications the sections above describe — not
+applicable, protected-path block, and self-modification — and #219 confirms the
+self-modification path is reached by a change that touches no firmware at all.
+
+On #217 and #218 the check run's `head_sha` equalled the PR head SHA, and zero
+commit statuses carried the `update-survivability-gate` context: the verdict
+travels as this job's own check run (app `github-actions`, app id `15368`) and
+the Statuses API is genuinely unused, exactly as designed above.
+
+#217, #218 and #219 were disposable probes; they were closed unmerged and their
+branches deleted. #215 was ordinary project work.
+
+**Fork association remains explicitly unproven.** Every observation above came
+from a same-repository pull request. No fork PR has been tested, because only
+one GitHub account is available here and the existing forks belong to other
+people. The consequence is concrete rather than theoretical: if a fork PR's
+check run does not associate with the fork head SHA, requiring this context
+would block **every** fork PR on a check that never reports.
+
+**The precondition for making it required** is one fork pull request, opened
+from a second GitHub account under the maintainer's control, that demonstrates
+both:
+
+1. an `update-survivability-gate` check run appearing on the **fork PR's head
+   SHA**; and
+2. that check **failing** on a protected path — a comment-only touch of
+   `src/network/OtaUpdater.cpp` is sufficient, as on #218.
+
+**The ruleset entry to add once that holds.** The repository ruleset "Develop
+Branch Protection (Thin-Fork Guard)" (id `20797779`) requires exactly two
+contexts today, `Test Status` and `thin-fork-guard-trusted`. The change is to
+add a third alongside them:
+
+```json
+{"context": "update-survivability-gate", "integration_id": 15368}
+```
+
+The `integration_id` pins the requirement to the `github-actions` check run
+this workflow publishes, rather than to anything else that could claim the same
+context name.
+
+**Until then the ruleset is deliberately unchanged.** Advisory keeps every
+verdict visible on every PR while the fork question is open, at the cost of not
+blocking; requiring it first would risk blocking all external contribution on a
+check that may never report. If the fork test shows the check run does not
+associate with the fork head SHA, the status-writer route discussed above
+becomes necessary after all, and its `SECURITY_BOUNDARY_FILES` cost is then
+paid knowingly rather than by accident.
 
 ### The gate protects itself: gate self-modification
 
