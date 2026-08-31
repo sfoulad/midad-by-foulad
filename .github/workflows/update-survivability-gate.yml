@@ -1,0 +1,318 @@
+name: Update Survivability Gate
+
+# Blocks a pull request that changes the firmware update path -- flasher, OTA
+# client, boot-slot switch, image validators, partition table, release or
+# signing machinery -- unless it carries a hardware validation report proving
+# the device can still install a SECOND update afterwards.
+#
+# The incident this exists for
+# ----------------------------
+# A UI/touch hardware-test RC also moved the firmware installation path and
+# shipped without a two-slot update test. It installed once; the device could
+# then never install again, because firmware_flash::runningPartitionChipId()
+# (src/network/FirmwareFlasher.cpp) misreads chip identity from the running
+# slot and both install paths fail closed on it -- validateImageFile() returns
+# BAD_CHIP, and OtaUpdater::installUpdate() aborts the transfer. The only X4
+# Pro in the field became update-locked with no working recovery channel.
+#
+# Four board builds, 512 host tests, cppcheck, CodeQL and a full CodeRabbit
+# review all passed on that change. None of them runs on hardware, and none of
+# them exercises an install CYCLE. Adding more of the same would not have
+# caught it; only a designated test device completing the matrix in
+# docs/update-survivability-gate.md would have.
+#
+# Design decision 1: classification is DIFF-DERIVED, not metadata-derived
+# ----------------------------------------------------------------------
+# "Is this a UI PR reaching into the updater?" is answered from the changed
+# FILE LIST, never from a label or a title convention. A label can be removed,
+# never applied, or renamed; a title convention can be written any way the
+# author likes. Both are opt-in metadata, and a gate that keys off opt-in
+# metadata is off by default.
+#
+# Label and title ARE read, but only to ESCALATE: when a PR that touches these
+# files also presents as UI work, the failure message says so in the loudest
+# terms available, because that is the exact shape of the incident. Stripping
+# the label changes the wording and nothing else. There is no state in which
+# touching a protected path does not require the report.
+#
+# Failure mode of this choice (stated deliberately, not hidden): the protected
+# list is a hand-maintained inventory, so a dangerous file that matches NONE of
+# its patterns is invisible until a human adds it. That is mitigated, not
+# eliminated, by the broad trailing patterns in the script
+# (src/network/Firmware*, src/network/Ota*, src/Ota*, scripts/*sign*, ...),
+# which cover the naming conventions the update path actually uses so a newly
+# written src/network/FirmwareSignature.cpp is caught on day one. A file that
+# affects updating while matching neither the named nor the broad patterns --
+# say a bootloader change routed through platformio.ini build flags -- still
+# gets through. Reviewers own that residue; the gate covers the shape that
+# actually bit us.
+#
+# Design decision 2: pull_request_target, base-branch scripts only
+# ---------------------------------------------------------------
+# Same reasoning as thin-fork-guard-trusted.yml: on the ordinary
+# `pull_request` event the job would check out and execute the PR's OWN copy
+# of scripts/update-survivability-gate.sh, so a PR could edit the gate to pass
+# itself. This workflow checks out the BASE branch and runs only its copy. It
+# never checks out, builds, or executes anything from PR HEAD -- the diff, the
+# labels, the title, the body and the review list all arrive as inert DATA
+# through the GitHub API and the event payload, and every one of them is
+# routed through `env`
+# rather than `${{ }}` string interpolation (a PR title and body are
+# attacker-controlled free text; inline interpolation into a shell script is
+# the classic Actions injection vector).
+#
+# Design decision 3: fail closed
+# ------------------------------
+# The gate script exits 2 when it cannot DETERMINE a verdict -- unreadable
+# inputs, an empty changed-file list -- and this workflow treats exit 2 as a
+# failure, never as a pass. A truncated file listing or a failed API call must
+# not read as "nothing to check." Fail-open on a value the code could not
+# actually establish is precisely the bug that bricked the device; applying
+# the opposite posture to the CI that guards it is the point.
+#
+# Design decision 4: the required result is THIS JOB'S OWN CHECK RUN
+# ------------------------------------------------------------------
+# The verdict reaches branch protection as the ordinary GitHub Actions check
+# run produced by this job. The job is therefore named exactly
+# `update-survivability-gate`, and that string is the context a ruleset must
+# require.
+#
+# This deliberately does NOT post a commit status via the Statuses API, the
+# way thin-fork-guard-trusted.yml does. Posting one needs `statuses: write`,
+# and the only place to authorise that is the gate-7 allowlist inside
+# scripts/thin-fork-guard.sh -- a SECURITY_BOUNDARY_FILES entry, as is
+# scripts/check-workflow-permissions.rb. Editing either is blocked for an
+# ordinary PR by design, so shipping a status writer here would have required
+# temporarily relaxing branch protection to merge this very workflow, and
+# would have added a second workflow able to write a required status,
+# weakening the invariant that only one known evaluator can. Not worth it for
+# a property the check run already provides.
+#
+# The measured fact this rests on, checked on this repository rather than
+# assumed:
+#
+#   For `pull_request_target`, `GITHUB_SHA` inside the job IS a commit on the
+#   BASE branch -- but the workflow RUN and its CHECK SUITE are associated
+#   with the PR HEAD SHA. Verified against thin-fork-guard-trusted.yml (also
+#   `pull_request_target`) on PR #216: run head_sha, check-suite head_sha and
+#   the PR head SHA were all b186c1e8, while the base was 42802346.
+#
+# So the check run lands on the commit branch protection actually evaluates,
+# and `synchronize` re-runs it on every push. Nothing in this workflow reads
+# `GITHUB_SHA`; where the head SHA is genuinely needed (clearing a gate
+# self-modification requires an approval on the CURRENT head) it comes from
+# `github.event.pull_request.head.sha` via `env:`.
+#
+# The limit of that measurement, stated plainly: it was taken on a SAME-REPO
+# pull request. It has not been verified for a pull request opened from a
+# FORK. Confirm the context appears on a fork PR's head SHA before making this
+# a required check -- if it does not, a required check that never reports
+# blocks every fork PR, and the status-writer route above becomes necessary
+# after all.
+#
+# Permissions: `contents: read` and `pull-requests: read` only -- the
+# base-branch checkout, the changed-file listing, the report content, and the
+# review list that clears a gate self-modification. No write scope of any
+# kind, so this workflow stays off scripts/thin-fork-guard.sh's gate-7
+# allowlist and that allowlist stays exhaustive at one entry.
+#
+# Because `pull_request_target` runs the BASE branch's copy of a workflow,
+# this gate only applies to PRs whose target branch already contains this
+# file. Merge it into develop and into every live release branch.
+
+on:
+  pull_request_target:
+    # `edited` and the label events matter here: the hardware validation
+    # report normally lives in the PR description, so editing the body must
+    # re-run the gate rather than leaving a stale red check.
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled]
+
+# One gate run per PR at a time, newest wins.
+#
+# `edited`, `labeled` and `unlabeled` all start a run WITHOUT changing the head
+# SHA, so several runs can be in flight against the same commit. Branch
+# protection reads the latest check run for this name on that commit, and
+# "latest" is decided by when a run finishes -- so a stale run that started
+# before a blocking edit could finish afterwards and become the result of
+# record, reporting a verdict about evidence that no longer exists.
+#
+# Cancelling supersedes it: a cancelled run's check run is `cancelled`, which is
+# not success, so the fail-closed posture holds while the replacement run
+# produces the real verdict. (This workflow publishes no commit status -- see
+# design decision 4 -- so there is no status context to overwrite; the race that
+# remains is purely about which check run is newest.)
+concurrency:
+  group: update-survivability-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  update-survivability-gate:
+    # Same string as the published status context, on purpose -- see
+    # "Design decision 4" above.
+    name: update-survivability-gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch (trusted scripts only -- never PR HEAD)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Self-test the gate script
+        # A gate whose own matching logic has never been exercised is not
+        # evidence. Synthetic fixtures, no dependency on this repo's history --
+        # same pattern as thin-fork-guard.yml's self-test step.
+        run: |
+          set -euo pipefail
+          chmod +x scripts/update-survivability-gate.sh scripts/test-update-survivability-gate.sh
+          scripts/test-update-survivability-gate.sh
+
+      - name: Collect PR facts (API data only, never executed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels) }}
+        run: |
+          set -euo pipefail
+
+          # Changed files. `--paginate` walks every page; GitHub caps this
+          # endpoint at 3000 files, so a listing at the cap is a TRUNCATED
+          # listing and must fail closed rather than be judged as complete.
+          #
+          # One line per API RECORD, as `filename<TAB>previous_filename`.
+          # `previous_filename` is present ONLY on a rename, where it holds
+          # the SOURCE path while `filename` holds the destination; `// ""`
+          # turns its absence on every other record into an empty second
+          # field. Writing `.filename` alone -- the obvious spelling -- is a
+          # total bypass of this gate: renaming src/network/OtaUpdater.cpp to
+          # src/network/Updater.cpp and rewriting it in the same commit yields
+          # a list matching no protected pattern, so the gate says "Not
+          # applicable" and the updater ships unvalidated. This step only
+          # TRANSPORTS the pair; scripts/update-survivability-gate.sh does all
+          # of the classification and is self-tested against both rename
+          # directions, so the matching logic never lives in un-runnable
+          # inline YAML.
+          #
+          # Still one line per changed file, so the 3000-file cap check below
+          # continues to count API records rather than paths.
+          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' \
+            > changed-files.txt
+          file_count="$(wc -l < changed-files.txt)"
+          if [ "$file_count" -ge 3000 ]; then
+            echo "::error::PR file listing hit the API's 3000-file cap and is truncated; the gate cannot judge it. Failing closed."
+            exit 1
+          fi
+          echo "Changed files: $file_count"
+
+          # Labels come from the event payload, not the API. There is no
+          # `pulls/{n}/labels` route -- it 404s (verified against this repo:
+          # `pulls/214/labels` -> 404, `issues/214/labels` -> the list) -- and
+          # the original spelling swallowed that 404, producing a silently
+          # empty labels.txt. The label-driven UI escalation was therefore
+          # dead in production while the step still reported success.
+          #
+          # The issues endpoint would work but needs an `issues: read` scope
+          # this workflow deliberately does not hold. The payload carries the
+          # same list, already, for free, and stays correct on the `labeled`
+          # and `unlabeled` events that exist precisely to re-run this gate.
+          # Like PR_TITLE and PR_BODY it is untrusted data delivered through
+          # `env:`, never interpolated into this script.
+          if ! printf '%s' "$PR_LABELS" | jq -r '.[].name' > labels.txt; then
+            echo "::warning::could not parse PR labels; continuing without label-based escalation"
+            : > labels.txt
+          fi
+
+          # Evidence = the PR body, plus the content of any hardware
+          # validation report the PR adds or edits. Report content is read
+          # from PR HEAD through the contents API and is only ever scanned as
+          # text -- nothing from HEAD is checked out or run. Paths are
+          # filtered to a strict charset before being used in a URL.
+          # Field 1 of each record is `filename` -- for a rename, the path the
+          # report lives at on PR HEAD, which is the one to read content from.
+          printf '%s\n' "$PR_BODY" > evidence.txt
+          while IFS=$'\t' read -r hv _; do
+            case "$hv" in
+              docs/hardware-validation/*.md) ;;
+              *) continue ;;
+            esac
+            if ! printf '%s' "$hv" | grep -qE '^docs/hardware-validation/[A-Za-z0-9._/-]+\.md$'; then
+              echo "::warning::skipping report path with unexpected characters: $hv"
+              continue
+            fi
+            echo "Reading hardware validation report: $hv"
+            {
+              echo
+              echo "----- $hv -----"
+              gh api "repos/$REPO/contents/$hv?ref=$PR_HEAD_SHA" --jq '.content' \
+                | tr -d '\n' | base64 -d
+            } >> evidence.txt
+          done < changed-files.txt
+
+          printf '%s' "$PR_TITLE" > pr-title.txt
+
+          # Reviews clear the gate-self-modification classification. Only
+          # GitHub can say who has write access, so authorization is read from
+          # `author_association` (which GitHub computes from the reviewer's
+          # permission on this repository) and from `commit_id`, which pins an
+          # approval to the commit it was given against. Nothing the PR author
+          # writes -- body, title, label -- is accepted for this, because the
+          # author controls all three.
+          #
+          # `pulls/{n}/reviews` needs only the `pull-requests: read` scope this
+          # workflow already holds. A run with no reviews yields an empty file,
+          # which the evaluator reads as "nobody has approved", not as an
+          # undetermined input.
+          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '.[] | [.state, .author_association, (.commit_id // "")] | @tsv' \
+            > reviews.txt
+          echo "Reviews: $(wc -l < reviews.txt)"
+
+          printf '%s' "$PR_HEAD_SHA" > pr-head-sha.txt
+
+      - name: Evaluate the gate
+        id: evaluate
+        # Exits non-zero for a blocking verdict, which turns this job's check
+        # run red. That check run IS the required status -- see "Design
+        # decision 4" in the header. `state`/`description` outputs are also
+        # written on every path so the verdict is machine-readable from the run
+        # without re-parsing the summary.
+        run: |
+          set -uo pipefail
+          title="$(cat pr-title.txt)"
+          head_sha="$(cat pr-head-sha.txt)"
+          set +e
+          scripts/update-survivability-gate.sh \
+            changed-files.txt evidence.txt labels.txt "$title" \
+            reviews.txt "$head_sha" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          verdict=${PIPESTATUS[0]}
+          set -e
+
+          case "$verdict" in
+            0)
+              echo "state=success" >>"$GITHUB_OUTPUT"
+              echo "description=update survivability gate passed" >>"$GITHUB_OUTPUT"
+              echo "Update Survivability Gate: pass"
+              ;;
+            1)
+              echo "state=failure" >>"$GITHUB_OUTPUT"
+              echo "description=blocked: hardware validation report and/or maintainer approval missing" >>"$GITHUB_OUTPUT"
+              echo "::error::Update Survivability Gate: blocked. Either this PR changes the firmware update path without a complete hardware validation report, or it modifies the gate itself without an approving maintainer review on the current head SHA. Builds, host tests, cppcheck, CodeQL and CodeRabbit all passed on the change that left the only X4 Pro update-locked -- none of them runs on hardware or exercises an install cycle, so none of them can substitute. See docs/update-survivability-gate.md and the job summary."
+              exit 1
+              ;;
+            *)
+              echo "state=error" >>"$GITHUB_OUTPUT"
+              echo "description=undetermined verdict -- failing closed (see run summary)" >>"$GITHUB_OUTPUT"
+              echo "::error::Update Survivability Gate: could not determine a verdict (script exit $verdict) and is failing closed. An undetermined result is never a pass -- that fail-open reading is the same mistake that caused the incident this gate guards. See docs/update-survivability-gate.md."
+              exit 1
+              ;;
+          esac
