@@ -312,3 +312,5 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   LOG_INF("OTA", "Update completed");
   return OK;
 }
+
+// Disposable gate-wiring proof B: comment-only, never merged.
