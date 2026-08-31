@@ -803,3 +803,5 @@ fi
   echo "Gate definition: \`$GATE_DOC\`"
 }
 exit 1
+
+# Disposable gate-wiring proof C: comment-only, never merged.
