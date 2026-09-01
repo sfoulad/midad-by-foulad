@@ -42,6 +42,7 @@
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "MidadAppSettings.h"
+#include "MidadArabicKeyboard.h"
 #include "OpdsServerStore.h"
 #include "OtaRollbackDetection.h"
 #include "OtaRollbackRecoveryPlan.h"
@@ -713,6 +714,10 @@ void setup() {
 
   SETTINGS.loadFromFile();
   MIDAD_APP_SETTINGS.loadFromFile();
+
+  // Midad's Arabic keyboard layer, through CrossPoint's generic keyboard
+  // extension point. Until this call the keyboard is exactly upstream's.
+  midad_arabic_keyboard::install();
   APP_STATE.loadFromFile();
   RECENT_BOOKS.loadFromFile();
   GAME_SCORES.loadFromFile();

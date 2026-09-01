@@ -4,6 +4,8 @@
 #include <FreeInkUIIcon.h>
 #include <I18n.h>
 
+#include <atomic>
+
 #include "MappedInputManager.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
@@ -14,12 +16,48 @@
 // Shared glue for activities hosting a FreeInkApp: the font-bound render
 // target and the touch snapshot FreeInkApp routing consumes.
 
-// Derive theme tokens from the active UITheme + this target's fonts and copy
-// them into the app (FreeInkApp only exposes a by-value setTheme(); there is
-// no pointer/reference-sharing overload to avoid the per-app ~1.5KB copy).
+// One app-wide ThemeTokens instance shared by every FreeInkApp via
+// setThemeRef, so per-app copies (~1.5KB each, and one per stacked activity)
+// aren't pure heap waste. Refreshed on every screen entry, so theme or font
+// changes between activities re-derive it; live theme changes (Settings)
+// refresh it and every referencing app repaints in the new look.
+//
+// Backed by a small pool + an atomic cell (FreeInkApp::setThemeRef() takes a
+// pointer to the cell, not to a ThemeTokens instance directly) rather than a
+// single instance overwritten in place: refreshSharedUiThemeTokens() below
+// always builds the new tokens into whichever pool slot the cell does NOT
+// currently reference, then does one atomic store. Every app sharing the
+// cell picks up the change on its next theme() call, and nothing ever
+// dereferences an instance mid-overwrite — unlike a plain
+// `sharedTokens = uiThemeTokens(target);` in-place assignment, which a
+// render task reading theme().rowHeight/etc. field-by-field on another task
+// could observe as a torn mix of old and new fields.
+inline std::atomic<const freeink::ui::ThemeTokens*>& sharedUiThemeCell() {
+  static std::atomic<const freeink::ui::ThemeTokens*> cell{nullptr};
+  return cell;
+}
+
+// Rebuilds the shared tokens for `target` and atomically publishes them via
+// sharedUiThemeCell(). Returns the freshly-published instance for callers
+// that also want to read it back immediately (e.g. BaseTheme::drawHeader(),
+// which derives the same tokens as a render-path scratch value instead of
+// stack-allocating its own copy).
+inline const freeink::ui::ThemeTokens& refreshSharedUiThemeTokens(const freeink::ui::GfxRendererTarget& target) {
+  static freeink::ui::ThemeTokens pool[2];
+  auto& cell = sharedUiThemeCell();
+  const auto* current = cell.load(std::memory_order_relaxed);
+  freeink::ui::ThemeTokens* next = (current == &pool[0]) ? &pool[1] : &pool[0];
+  *next = uiThemeTokens(target);
+  cell.store(next, std::memory_order_release);
+  return *next;
+}
+
+// Refresh the shared tokens from the active UITheme + this target's fonts and
+// point the app at them. Replaces the old per-app `app.setTheme(...)` copies.
 template <typename App>
 inline void applySharedUiTheme(App& app, const freeink::ui::GfxRendererTarget& target) {
-  app.setTheme(uiThemeTokens(target));
+  refreshSharedUiThemeTokens(target);
+  app.setThemeRef(&sharedUiThemeCell());
 }
 
 // Bind the uiScale fonts before FreeInkApp's constructor derives its theme
@@ -59,6 +97,8 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
         return freeink::ui::bitmapFromIcon(icon_library_32);
       case UIIcon::Hotspot:
         return freeink::ui::bitmapFromIcon(icon_radio_tower_32);
+      case UIIcon::Usb:
+        return freeink::ui::bitmapFromIcon(icon_usb_32);
       case UIIcon::Bookmark:
         return freeink::ui::bitmapFromIcon(icon_bookmark_32);
       default:
@@ -82,6 +122,8 @@ inline freeink::ui::BitmapRef listIconFor(const UIIcon icon, const int size = 24
       return freeink::ui::bitmapFromIcon(icon_library_24);
     case UIIcon::Hotspot:
       return freeink::ui::bitmapFromIcon(icon_radio_tower_24);
+    case UIIcon::Usb:
+      return freeink::ui::bitmapFromIcon(icon_usb_24);
     case UIIcon::Bookmark:
       return freeink::ui::bitmapFromIcon(icon_bookmark_24);
     default:
@@ -117,18 +159,26 @@ inline void addDialogCancelOk(Screen& screen, const freeink::ui::ActionId cancel
       freeink::ui::Rect{static_cast<int16_t>(band.x + band.width - buttonWidth), band.y, buttonWidth, band.height}, ok);
 }
 
-// withLongPress: rows masked InputLongPress would receive a touchReleased +
-// longPress snapshot at the contact point, mirroring the SDK's long-press-
-// aware fui::snapshotFrom but mapped through the renderer's LIVE orientation
-// (the reader rotates at runtime, which the DeviceContext-based SDK adapter
-// does not track). Currently a no-op: Midad's pinned freeink-sdk InputManager
-// has no long-press classifier (no wasTouchLongPress/suppressTouchContact) to
-// build it from. Wire this up once that lands with the dedicated SDK bump.
+// withLongPress: the SDK touch classifier fires the long-press WHILE the
+// finger is still down (matching the physical-button hold-to-act feel) and
+// suppresses the remainder of the contact, so the finger lift can't also
+// tap-dismiss the popup the long-press opens. Delivered as a touchReleased +
+// longPress snapshot at the contact point; only rows masked InputLongPress
+// receive it. Mirrors the SDK's long-press-aware fui::snapshotFrom, but maps
+// coordinates through the renderer's LIVE orientation (the reader rotates at
+// runtime), which the DeviceContext-based SDK adapter does not track.
 inline freeink::ui::InputSnapshot touchSnapshotFrom(const MappedInputManager& mappedInput,
                                                     const bool withLongPress = false) {
-  (void)withLongPress;
   int tx = 0;
   int ty = 0;
+  if (withLongPress && mappedInput.wasScreenLongPress(tx, ty)) {
+    freeink::ui::InputSnapshot snap{};
+    snap.touchReleased = true;
+    snap.longPress = true;
+    snap.touchX = static_cast<int16_t>(tx);
+    snap.touchY = static_cast<int16_t>(ty);
+    return snap;
+  }
 
   freeink::ui::InputSnapshot snap{};
   // Live contact position: only InputDrag-masked elements (sliders) react, so

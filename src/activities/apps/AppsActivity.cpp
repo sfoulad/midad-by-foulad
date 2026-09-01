@@ -192,6 +192,13 @@ void AppsActivity::loop() {
     return;
   }
 
+  // Index order stays the same under RTL (app 0 is still the first app), but the
+  // grid renders mirrored -- see render()'s column computation -- so increasing
+  // the index moves the visual selection LEFT, not right. Swap which physical
+  // button drives which index direction to match, same idiom RecentBooksActivity
+  // uses for its own mirrored grid.
+  const bool rtl = I18N.isRtl();
+
   // Whole-tile touch target: a tap anywhere on a tile launches it directly (the
   // standard app-grid tap idiom), rather than requiring a select-then-confirm
   // second tap that nothing else in this codebase does for touch. Same
@@ -204,7 +211,6 @@ void AppsActivity::loop() {
   int tapX = 0;
   int tapY = 0;
   if (mappedInput.wasScreenTapped(tapX, tapY)) {
-    const bool rtl = I18N.isRtl();
     const Geometry geometry = computeGeometry();
     const int pageStart = AppsGridLayout::pageStartOf(selectorIndex);
     const int itemsOnPage = std::min(AppsGridLayout::ITEMS_PER_PAGE, count - pageStart);
@@ -219,12 +225,27 @@ void AppsActivity::loop() {
     }
   }
 
-  // Index order stays the same under RTL (app 0 is still the first app), but the
-  // grid renders mirrored -- see render()'s column computation -- so increasing
-  // the index moves the visual selection LEFT, not right. Swap which physical
-  // button drives which index direction to match, same idiom RecentBooksActivity
-  // uses for its own mirrored grid.
-  const bool rtl = I18N.isRtl();
+  // Swipe pagination: a horizontal swipe jumps a full page (see
+  // AppsGridLayout::jumpPage), independent of which cell was selected --
+  // unlike the button Left/Right handling below, which only reaches the next
+  // page as an incidental side effect of stepping past the grid's edge. Left
+  // conventionally advances (same sign ReaderUtils::detectTouchPageTurn and
+  // BmpViewerActivity use for their own swipe paging), mirrored under RTL with
+  // the same flip moveRight/moveLeft apply to the buttons just below. No-ops
+  // on non-touch boards: wasSwipe() only ever reports a real swipe when touch
+  // hardware decoded one.
+  switch (mappedInput.wasSwipe()) {
+    case MappedInputManager::SwipeDir::Left:
+    case MappedInputManager::SwipeDir::Right: {
+      const bool advance = (mappedInput.wasSwipe() == MappedInputManager::SwipeDir::Left) != rtl;
+      selectorIndex = AppsGridLayout::jumpPage(selectorIndex, count, advance ? 1 : -1);
+      requestUpdate();
+      return;
+    }
+    default:
+      break;
+  }
+
   auto moveRight = [this, count] {
     selectorIndex = GridNav::moveHorizontal(selectorIndex, count, true);
     requestUpdate();
