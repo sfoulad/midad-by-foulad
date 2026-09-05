@@ -19,15 +19,41 @@ released in `onExit()` via an ephemeral (non-persisted)
 entirely, not carried forward. See §4's BLE-R2 entry for the corrected
 description and §1 for what's actually on `develop` now.
 
-**BLE-R3 is underway.** `device.info` shipped (PR #158, read-only, no
-WiFi/radio timing involved). `wifi.scan` is explicitly **deferred, requires
-live hardware validation** — see §4's BLE-R3 entry for the two documented
-historical hang modes and the design requirements for whoever picks it up
-with real hardware access. `account.claim`/`device.challenge` remain
-unblocked by that deferral (no WiFi/radio timing of their own) but are their
-own later batch. Any future discovery/claim command must respect that BLE
-now only runs inside `BluetoothActivity`, not in the background — the
-screen-scoped model BLE-R2 established.
+**BLE-R3 is closed for pairing/challenge/autoconnect (PR #168, merged to
+`develop` at `c93d32c1`).** `device.info` shipped earlier (PR #158,
+read-only). `wifi.scan` shipped with real hardware validation (PR #166).
+PR #168 added the hardware-confirmed BLE pairing fix (`mitm=false` — the
+prior `mitm=true` + no-I/O-capability combination was unsatisfiable and hung
+every encrypted Auth write), `device.challenge`, and `wifi.autoconnect`
+(tear-down/reconnect to a saved network, with a mutual-exclusion guard
+against `wifi.scan` after a real hardware race was found and fixed). All
+hardware-validated on a real X3.
+
+**`account.claim` is explicitly DEFERRED, not shipped.** An earlier version
+of PR #168 ported it gated only on `!deviceIsClaimed()`; deeper review found
+this exploitable as an unauthenticated denial-of-service (any BLE-proximate
+attacker, no Midad account needed, could permanently lock an *unclaimed*
+reader into a false-claimed state — `device.challenge` is a stateless echo
+with no session link to `account.claim`). It was removed cleanly (not
+disabled) pending a signed-assertion protocol spanning
+`foulad-ebooks`/`foulad-one`/`foulad-eink` (design: HANDOFF
+`FE-P3-RC-ACCOUNT-CLAIM-SIGNED-PROOF-DESIGN-002`). **Do not re-add an ad-hoc
+`account.claim`** — the next implementation must be that signed-proof
+protocol, verified against the negative hardware test matrix documented in
+that HANDOFF (missing assertion, bad signature, wrong serial, wrong token
+hash, wrong/stale nonce, replayed nonce, valid claim, second claim on an
+already-claimed device) before it can ship.
+
+Also accepted as a known, non-blocking gap from PR #168's review: `device.info`
+returns the currently-connected Wi-Fi SSID to any BLE peer that completes
+pairing, with no ownership check. Tracked follow-up: gate sensitive
+`device.info` fields (starting with the connected SSID) behind an
+owner-authorized BLE session, scoped alongside the signed-proof work above
+rather than as an ad-hoc fix.
+
+Any future discovery/claim command must respect that BLE now only runs
+inside `BluetoothActivity`, not in the background — the screen-scoped model
+BLE-R2 established.
 
 For the historical design/debugging narrative this plan is derived from, see
 [`docs/history/ble-module-tasks-pre-thin-fork.md`](history/ble-module-tasks-pre-thin-fork.md)
