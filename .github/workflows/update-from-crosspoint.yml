@@ -1,13 +1,19 @@
 name: Update from CrossPoint
 
-# Manually triggered fork-sync: mirrors crosspoint-reader/crosspoint-reader's
-# develop branch into `upstream`, merges it into a disposable sync branch off
-# `develop` (a real `git merge`, never a cherry-pick or rebase -- see
-# docs/upstream-sync-architecture.md), runs the exact same CI jobs a normal PR
-# would, and opens a PR. If the merge itself conflicts, this reports which
-# files and stops -- it never attempts to resolve or redesign anything, per
-# docs/upstream-sync-architecture.md's explicit "don't second-guess a clean
-# merge, don't auto-redesign a conflicted one" principle.
+# Automatic detector + manually-triggerable fork sync. On a daily schedule it
+# checks crosspoint-reader/crosspoint-reader's develop branch and, only when
+# Midad has not already adopted that upstream tip and no sync PR is already
+# open, mirrors upstream, performs a real --no-ff merge on a disposable branch,
+# runs CI, and opens a PR for human review. It never auto-merges the PR.
+# Manual workflow_dispatch remains available for dry runs or an explicit ref.
+# If the merge itself conflicts, this reports which files and stops -- it never
+# attempts to resolve or redesign anything, per docs/upstream-sync-architecture.md.
+#
+# CROSSPOINT_SYNC_TOKEN is intentionally separate from GITHUB_TOKEN. CrossPoint
+# may legitimately change files under .github/workflows/, and GitHub refuses a
+# ref update containing those files unless the credential has Workflows write.
+# Scope that fine-grained token to this repository only, with Contents: write
+# and Workflows: write; PR creation continues to use the normal GITHUB_TOKEN.
 
 on:
   workflow_dispatch:
@@ -20,6 +26,12 @@ on:
         description: "Branch on crosspoint-reader/crosspoint-reader to sync from"
         type: string
         default: develop
+  schedule:
+    # 03:17 UTC daily. An odd minute avoids the top-of-hour Actions surge.
+    - cron: "17 3 * * *"
+
+env:
+  UPSTREAM_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_ref || 'develop' }}
 
 permissions:
   contents: write
@@ -29,41 +41,96 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     outputs:
+      changed: ${{ steps.fetch.outputs.changed }}
       conflict: ${{ steps.merge.outputs.conflict }}
       branch: ${{ steps.merge.outputs.branch }}
       upstream_sha: ${{ steps.fetch.outputs.sha }}
     steps:
+      - name: Require scoped CrossPoint sync credential
+        env:
+          CROSSPOINT_SYNC_TOKEN: ${{ secrets.CROSSPOINT_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CROSSPOINT_SYNC_TOKEN" ]; then
+            echo "::error::Repository secret CROSSPOINT_SYNC_TOKEN is required. Use a fine-grained token scoped only to this repo with Contents: write and Workflows: write."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           ref: develop
           fetch-depth: 0
           submodules: recursive
-          token: ${{ github.token }}
+          # Persist this narrowly-scoped credential so both the exact upstream
+          # mirror ref and the disposable sync branch can carry legitimate
+          # CrossPoint workflow-file changes. GITHUB_TOKEN cannot do that.
+          token: ${{ secrets.CROSSPOINT_SYNC_TOKEN }}
 
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch crosspoint-reader
+      - name: Fetch CrossPoint and detect new upstream state
         id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git remote add crosspoint-reader https://github.com/crosspoint-reader/crosspoint-reader.git
-          git fetch crosspoint-reader "${{ inputs.upstream_ref }}"
-          sha=$(git rev-parse crosspoint-reader/${{ inputs.upstream_ref }})
+          git fetch crosspoint-reader "$UPSTREAM_REF"
+          sha=$(git rev-parse "crosspoint-reader/$UPSTREAM_REF")
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "Fetched crosspoint-reader/${{ inputs.upstream_ref }} @ $sha"
+          echo "Fetched crosspoint-reader/$UPSTREAM_REF @ $sha"
+
+          if git merge-base --is-ancestor "$sha" develop; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## CrossPoint detector: already current"
+              echo "Midad develop already contains upstream \`$sha\`; no sync PR needed."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Scheduled runs must not create duplicate sync PRs while a previous
+          # CrossPoint sync is still awaiting human review. Manual runs are
+          # intentionally allowed through for investigation/dry-run purposes.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            existing_pr=$(gh pr list \
+              --repo "${{ github.repository }}" \
+              --base develop \
+              --state open \
+              --search "Sync crosspoint-reader/ in:title" \
+              --json number,title \
+              --jq '.[0] | if . == null then empty else "#\(.number) \(.title)" end')
+            if [ -n "$existing_pr" ]; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              {
+                echo "## CrossPoint detector: sync PR already open"
+                echo "Upstream has moved to \`$sha\`, but $existing_pr is already awaiting human review."
+                echo "No duplicate branch or PR was created. The next scheduled run will check again."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## CrossPoint detector: new upstream state"
+            echo "CrossPoint \`$UPSTREAM_REF\` is at \`$sha\` and is not yet contained in Midad develop."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Update the upstream mirror branch
+        if: steps.fetch.outputs.changed == 'true'
         # Exact mirror, zero Midad commits, force-updated -- see
         # docs/upstream-sync-architecture.md's branch structure. Safe to
         # force-push: this branch has no history of its own to lose.
         run: |
           set -euo pipefail
-          git push origin "crosspoint-reader/${{ inputs.upstream_ref }}:refs/heads/upstream" --force
+          git push origin "crosspoint-reader/$UPSTREAM_REF:refs/heads/upstream" --force
 
       - name: Create sync branch and merge
+        if: steps.fetch.outputs.changed == 'true'
         id: merge
         run: |
           set -euo pipefail
@@ -71,19 +138,19 @@ jobs:
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           git checkout -b "$branch"
 
-          if git merge "crosspoint-reader/${{ inputs.upstream_ref }}" --no-ff \
-              -m "Merge crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ steps.fetch.outputs.sha }}"; then
+          if git merge "crosspoint-reader/$UPSTREAM_REF" --no-ff \
+              -m "Merge crosspoint-reader/$UPSTREAM_REF @ ${{ steps.fetch.outputs.sha }}"; then
             echo "conflict=false" >> "$GITHUB_OUTPUT"
             git push origin "$branch"
             {
               echo "## Merge: clean"
-              echo "Merged crosspoint-reader/${{ inputs.upstream_ref }} @ \`${{ steps.fetch.outputs.sha }}\` into \`$branch\` with no conflicts."
+              echo "Merged crosspoint-reader/$UPSTREAM_REF @ \`${{ steps.fetch.outputs.sha }}\` into \`$branch\` with no conflicts."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "conflict=true" >> "$GITHUB_OUTPUT"
             {
               echo "## Merge: conflict"
-              echo "Merging crosspoint-reader/${{ inputs.upstream_ref }} @ \`${{ steps.fetch.outputs.sha }}\` conflicts in:"
+              echo "Merging crosspoint-reader/$UPSTREAM_REF @ \`${{ steps.fetch.outputs.sha }}\` conflicts in:"
               echo '```'
               git diff --name-only --diff-filter=U
               echo '```'
@@ -103,7 +170,7 @@ jobs:
 
   ci:
     needs: sync
-    if: needs.sync.outputs.conflict == 'false'
+    if: needs.sync.outputs.changed == 'true' && needs.sync.outputs.conflict == 'false'
     uses: ./.github/workflows/ci.yml
     with:
       ref: ${{ needs.sync.outputs.branch }}
@@ -111,7 +178,10 @@ jobs:
 
   open-pr:
     needs: [sync, ci]
-    if: needs.sync.outputs.conflict == 'false' && inputs.dry_run == false
+    if: >-
+      needs.sync.outputs.changed == 'true' &&
+      needs.sync.outputs.conflict == 'false' &&
+      (github.event_name == 'schedule' || inputs.dry_run == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -126,14 +196,14 @@ jobs:
           gh pr create \
             --base develop \
             --head "${{ needs.sync.outputs.branch }}" \
-            --title "Sync crosspoint-reader/${{ inputs.upstream_ref }} @ ${{ needs.sync.outputs.upstream_sha }}" \
+            --title "Sync crosspoint-reader/$UPSTREAM_REF @ ${{ needs.sync.outputs.upstream_sha }}" \
             --body "**MERGE METHOD: Create a merge commit. Do NOT squash/rebase this sync PR** -- squashing or rebasing discards the real merge commit that \`thin-fork-guard.sh\` relies on to recognize this as a genuine sync and to reason about upstream divergence going forward. See CLAUDE.md's \"Midad Thin-Fork Architecture\" section.
 
-          Automated sync from crosspoint-reader/crosspoint-reader (\`${{ inputs.upstream_ref }}\` @ \`${{ needs.sync.outputs.upstream_sha }}\`). Merged cleanly; CI passed on the sync branch before this PR was opened. See docs/upstream-sync-architecture.md for the review checklist -- this still needs a human check for anything touching freeink-sdk/HAL/display code, which CI cannot verify on real hardware."
+          Automatically detected upstream movement from crosspoint-reader/crosspoint-reader (\`$UPSTREAM_REF\` @ \`${{ needs.sync.outputs.upstream_sha }}\`). The workflow performed a real merge and CI passed on the sync branch before this PR was opened. **This PR is intentionally not auto-merged.** Human review is still required, especially for freeink-sdk/HAL/display/power/input/security/Midad-specific overlap. See docs/upstream-sync-architecture.md for the review checklist."
 
   report-conflict:
     needs: sync
-    if: needs.sync.outputs.conflict == 'true'
+    if: needs.sync.outputs.changed == 'true' && needs.sync.outputs.conflict == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Fail with conflict summary already posted
