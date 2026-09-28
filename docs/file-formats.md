@@ -98,12 +98,43 @@ if (parsedSize != fileSize) {
 
 ## `section.bin`
 
+### Version 43
+
+Version 43 keeps the version 42 serialized layout unchanged. It was bumped
+because parse *output* changed, not the format: unclosed HTML void elements
+(`<br>`, `<hr>`, `<img>`, ...) are now closed before expat sees them, so a
+chapter that previously failed to parse — and cached that failure — now lays
+out correctly. Without the bump those caches would never be rebuilt, and the
+fix could not reach any book already opened on the device, which is the case
+it exists for.
+
+### Version 45
+
+Version 45 keeps the version 44 serialized layout unchanged. It was bumped
+because internal EPUB links now preserve CSS superscript and subscript styles,
+changing their cached word-style flags and page layout.
+
+### Version 44
 ### Version 42
 
 Each file in `sections/*.bin` stores one laid-out spine section. The header is
 also the cache-busting key: if any layout-affecting setting differs from the
 current reader settings, the section is discarded and rebuilt.
 
+Version 44 appends the internal-link rectangles produced during text layout to
+each serialized page. The reader uses these rectangles for touch navigation;
+older caches are rebuilt because they contain no link geometry.
+
+Version 43 keeps the version 42 serialized layout unchanged. It was bumped
+because paragraph base direction now excludes direction changes from inline
+elements.
+
+Version 42 keeps the version 41 serialized layout unchanged. It was bumped
+because closing a block now strips inherited vertical margins and padding.
+
+Version 41 keeps the version 40 serialized layout unchanged. It was bumped
+because simple HTML table rows are now laid out as positioned columns rather
+than flattened paragraphs with synthetic row/cell labels.
 Version 42 keeps the version 41 serialized layout unchanged. It was bumped for
 two upstream fixes landing together: ruby groups no longer split across a
 soft text-block flush (#3102), and simple HTML table rows now lay out as
@@ -445,3 +476,101 @@ if (parsedSize != fileSize) {
     std::warning(std::format("Unparsed data detected: {} bytes remaining at offset 0x{:X}", fileSize - parsedSize, parsedSize));
 }
 ```
+
+## CLX1 — library index (`.crosspoint/library.idx`)
+
+Written by `lib/LibraryIndex/LibraryBuilder.cpp`, read by `LibraryIndexFile`. One
+file describing every book on the card, so the shelf can sort and search
+thousands of titles without opening any of them.
+
+Format version 2. An index written by another version fails validation on open
+and is rebuilt; that is the entire migration mechanism.
+
+### Layout
+
+| Section | Offset | Contents |
+|---|---|---|
+| Header | 0 | 64 bytes, `ClixHeader` |
+| Folders | `folderStart` | length-prefixed paths, one per folder |
+| Records | `recordStart` | `bookCount` × 128-byte `ClixRecord` |
+| Permutations | `permStart` | `bookCount` u16 author order, then `bookCount` u16 arrival order |
+| Name blob | `nameStart` | per record: path hash, name, canonical author, title, source author (see below) |
+
+The arrival permutation runs oldest first, keyed by the record's FAT
+modification time (when the file landed on the card); `firstSeen` — the
+build-assigned discovery counter — breaks ties and carries books whose
+filesystem reports no time. Fold version 3 introduced the timestamp key; a
+fold bump rebuilds ranks while preserving `firstSeen`.
+
+Sections are 512-byte aligned so each starts on an SD block boundary.
+
+### Records are exactly 128 bytes
+
+A fixed stride is what lets the reader seek straight to record *n* without an
+offset table, and read a screenful in one 4 KB block. `static_assert` enforces it.
+
+Each record carries `fold[96]`, the title normalised for search and sorting —
+accents stripped, case dropped, leading articles removed — and `authorKey[12]`,
+the author's words folded and sorted so that "Victor Hugo" and "Hugo Victor" group as
+one person. `authorKey` is a GROUPING key, not an ordering one: the shelf orders by
+surname, derived separately from the display name.
+
+The byte before the folded title records metadata extraction status: not
+attempted, extracted, or failed. The final four bytes contain the packed FAT
+modification date and time returned by SdFat. A zero timestamp is not trusted.
+These fields occupy the alignment and reserved bytes from version 1, so the
+record remains exactly 128 bytes.
+
+The header records whether EPUB metadata extraction was enabled for the build.
+This prevents a metadata-disabled rebuild from making filename fallbacks look
+fresh to a later metadata-enabled build.
+
+### The name blob
+
+Per record, at `nameStart + nameOff`:
+
+```text
+[u64 pathHash]    FNV-1a fingerprint of the complete path
+[nameLen bytes]  filename, without the directory
+[u8][author]     display author, one spelling chosen per authorKey across the library
+[u8][title]      the book's own title, or length 0 if it never gave one
+[u8][source]     cleaned author spelling before the library-wide spelling vote
+```
+
+The filename must stay the first textual field and stay the filename: `readPath`
+rebuilds a book's path from it, so writing the display title there makes the book
+impossible to open. That was a real defect, and it is why title has its own field.
+
+The source author is separate from the displayed canonical author so a later
+rebuild can repeat the spelling vote after books are added or removed. Existing
+display reads still stop at the author or title fields and retain their offsets.
+
+### Freshness and unchanged rebuilds
+
+Reconciliation treats the persisted 64-bit complete-path fingerprint as the
+book identity. Metadata is reused only when the fingerprint, size, nonzero FAT
+timestamp, fold version, metadata mode, and expected extraction status agree.
+EPUBs with a zero timestamp or a previous extraction failure are parsed again.
+
+If every current record reuses metadata, the old and new counts agree, and no
+unreadable entry was seen, the staging files are discarded and the live index is
+left byte-for-byte unchanged. A normal rebuild action is therefore a freshness
+check, not a forced metadata reread.
+
+### Header flags
+
+`RANKS_DEGRADED` says one or more orders fell back to walk order because a
+checked sort allocation failed. Title and author each use a phase-local
+`SortKey[bookCount]` allocation (14 bytes per book, 57,344 bytes at the 4,096-book
+format ceiling); the first array is released before the second is requested.
+Sorting is therefore best effort through the full format limit rather than
+being disabled at an arbitrary library size.
+
+`DEDUP_DEGRADED` says a directory exceeded the fixed 1024-entry duplicate-key
+buffer, or that its fallible 8 KiB allocation failed. The walk still indexes
+every enumerated book; it only stops remembering additional identities for
+duplicate-dirent detection, so a damaged FAT may expose duplicates but cannot
+make a real book disappear.
+
+`selfSize` is the expected file size. Comparing it against the real one is a free
+truncation guard: a build cut short by a power failure cannot pass.

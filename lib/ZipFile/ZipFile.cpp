@@ -49,7 +49,10 @@ size_t zipFillCallback(void* vctx, const uint8_t** data) {
   // rather than letting the negative-to-size_t conversion underflow fileRemaining
   // and report a huge bytesRead, which would have the inflate library read past
   // the end of readBuf.
-  if (result < 0) return 0;
+  if (result < 0) {
+    LOG_ERR("ZIP", "Failed to read compressed data: %d", result);
+    return 0;
+  }
   const size_t bytesRead = static_cast<size_t>(result);
   ctx->fileRemaining -= bytesRead;
 
@@ -416,7 +419,7 @@ uint8_t* ZipFile::readFileToMemory(const char* filename, size_t* size, const boo
     // resolve inside it and no 32KB window is allocated.
     InflateStream inflate;
     if (!inflate.init(false)) {
-      LOG_ERR("ZIP", "Failed to init inflate stream");
+      LOG_ERR("ZIP", "Failed to init inflate stream for %s", filename);
       free(fileReadBuffer);
       free(data);
       return nullptr;
@@ -509,7 +512,7 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
 
     InflateStream inflate;
     if (!inflate.init(true)) {
-      LOG_ERR("ZIP", "Failed to init inflate stream");
+      LOG_ERR("ZIP", "Failed to init inflate stream for %s", filename);
       free(outputBuffer);
       free(fileReadBuffer);
       return false;

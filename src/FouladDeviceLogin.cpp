@@ -7,6 +7,7 @@
 
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "network/CoreCaCerts.h"
 #include "network/HttpDownloader.h"
 
 namespace {
@@ -40,7 +41,8 @@ FouladDeviceLogin::StartResult FouladDeviceLogin::start() {
   serializeJson(requestDoc, body);
 
   std::string response;
-  const auto err = HttpDownloader::postJson(FOULAD_EBOOKS_DEVICE_LOGIN_START_URL, body, "", "", response);
+  const auto err = HttpDownloader::postJsonWolf(FOULAD_EBOOKS_DEVICE_LOGIN_START_URL, body,
+                                                core_ca::kMidadCoreCaGtsRootR4, response);
   if (err != HttpDownloader::OK) {
     const auto failure = HttpDownloader::getLastFailure();
     LOG_ERR("QRLOGIN", "start failed: err=%d stage=%d detail=%d", static_cast<int>(err),
@@ -55,10 +57,9 @@ FouladDeviceLogin::StartResult FouladDeviceLogin::start() {
     return result;
   }
 
-  // ArduinoJson unescapes the response for us, which matters more than it looks
-  // here: the server is PHP, so qr_payload arrives on the wire as
-  // "https:\/\/foulad.one\/link\/CODE". Encoding that raw into the QR would put
-  // literal backslashes in the URL and every scan would silently fail.
+  // ArduinoJson unescapes the response for us, which matters more than it looks:
+  // a server that emits "https:\/\/midad.one\/link\/CODE" would otherwise put
+  // literal backslashes in the QR and every scan would silently fail.
   result.sessionToken = doc["session_token"].as<std::string>();
   result.pairingCode = doc["pairing_code"].as<std::string>();
   result.qrPayload = doc["qr_payload"].as<std::string>();
@@ -100,13 +101,18 @@ FouladDeviceLogin::PollResult FouladDeviceLogin::poll(const std::string& session
   serializeJson(requestDoc, body);
 
   std::string response;
-  const auto err = HttpDownloader::postJson(FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL, body, "", "", response);
+  const auto err =
+      HttpDownloader::postJsonWolf(FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL, body, core_ca::kMidadCoreCaGtsRootR4, response);
   if (err != HttpDownloader::OK) {
-    // 404 and 410 both mean "this session is gone" and are the documented,
-    // expected end of an unclaimed session -- not transport failures. Everything
-    // else leaves the session valid, so the caller can simply poll again.
+    // 401 is Core's "invalid_session"; 404/410 are the legacy server's shape for
+    // the same thing. All three mean this session no longer exists, which is the
+    // documented end of an unclaimed session, not a transport failure. Retrying
+    // any of them can only repeat the answer, so end the session here and let the
+    // caller open a fresh one. Everything else leaves the session valid.
     const auto failure = HttpDownloader::getLastFailure();
-    if (failure.stage == HttpDownloader::FailStage::STATUS && (failure.detail == 404 || failure.detail == 410)) {
+    if (failure.stage == HttpDownloader::FailStage::STATUS &&
+        (failure.detail == 401 || failure.detail == 404 || failure.detail == 410)) {
+      LOG_DBG("QRLOGIN", "poll: session no longer valid (HTTP %d)", failure.detail);
       result.status = PollStatus::Expired;
       return result;
     }
@@ -124,18 +130,43 @@ FouladDeviceLogin::PollResult FouladDeviceLogin::poll(const std::string& session
 
   const std::string status = doc["status"].as<std::string>();
   if (status == "approved") {
+    // Core's own name for the credential, with the legacy server's `token` as the
+    // fallback. Redemption is single-use: if this response is misread the token is
+    // gone for good, so read both spellings rather than one.
+    result.token = doc["device_token"].as<std::string>();
+    if (result.token.empty()) result.token = doc["token"].as<std::string>();
+
+    // The Basic user half. Core sends the account id as `username` and repeats it
+    // as `user.id`; either identifies the account well enough, and neither is a
+    // secret. It is NEVER a reason to reject an approval -- Core discards this half
+    // on verification, and treating an absent one as a failure is how a device ends
+    // up polling a session it has already redeemed until it expires.
     result.username = doc["username"].as<std::string>();
-    result.token = doc["token"].as<std::string>();
+    if (result.username.empty()) result.username = doc["user"]["id"].as<std::string>();
+    if (result.username.empty()) result.username = "device";
     result.displayName = doc["user"]["name"].as<std::string>();
-    // An "approved" with nothing usable in it would otherwise store empty
-    // credentials and leave the user apparently signed in but broken.
-    if (result.username.empty() || result.token.empty()) {
-      LOG_ERR("QRLOGIN", "approved but username/token missing");
-      result.status = PollStatus::NetworkError;
+
+    // Only the token can fail this. Without it there is nothing to store, and the
+    // session is spent either way -- so this is terminal, not a retry.
+    if (result.token.empty()) {
+      LOG_ERR("QRLOGIN", "approved but no device token in the response");
+      result.status = PollStatus::Redeemed;
       return result;
     }
+    // Optional: absence is not an error, and every field is read independently so
+    // a partial block provisions what it can rather than nothing.
+    JsonObjectConst kosync = doc["kosync"].as<JsonObjectConst>();
+    if (!kosync.isNull()) {
+      result.koUsername = kosync["username"].as<std::string>();
+      result.koPassword = kosync["password"].as<std::string>();
+      result.koServerUrl = kosync["server_url"].as<std::string>();
+      if (kosync["match_method"].is<int>()) result.koMatchMethod = kosync["match_method"].as<int>();
+      // Never logged: koPassword is the device token by construction.
+      LOG_INF("QRLOGIN", "KOSync provisioning received (match_method=%d)", result.koMatchMethod);
+    }
+
     result.status = PollStatus::Approved;
-    LOG_INF("QRLOGIN", "Approved for user '%s'", result.username.c_str());
+    LOG_INF("QRLOGIN", "Approved for account '%s'", result.username.c_str());
     return result;
   }
   if (status == "denied") {
@@ -146,6 +177,17 @@ FouladDeviceLogin::PollResult FouladDeviceLogin::poll(const std::string& session
     result.status = PollStatus::Expired;
     return result;
   }
+  // Terminal, and the one status a "not pending means keep waiting" client gets
+  // catastrophically wrong: the approval was already redeemed and the one-time
+  // token issued, so no later poll can ever produce it. Treated as Pending, this
+  // is a reader that polls a dead session until expiry and silently never signs in.
+  if (status == "redeemed") {
+    LOG_ERR("QRLOGIN", "session already redeemed -- the token cannot be reissued");
+    result.status = PollStatus::Redeemed;
+    return result;
+  }
+  // "pending" and anything unrecognised. The pairing session's own deadline (see
+  // FouladQrLoginActivity) is what stops an unknown status polling forever.
   result.status = PollStatus::Pending;
   return result;
 }

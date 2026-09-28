@@ -66,6 +66,10 @@ void FouladLogoutActivity::performSignOut() {
   ActivityResult res;
   res.isCancelled = false;
   setResult(std::move(res));
+  if (onFinished) {
+    onFinished(true);
+    return;  // the hook owns navigation from here
+  }
   finish();
 }
 
@@ -84,6 +88,10 @@ void FouladLogoutActivity::loop() {
     ActivityResult res;
     res.isCancelled = true;  // credential stays put
     setResult(std::move(res));
+    if (onFinished) {
+      onFinished(false);
+      return;
+    }
     finish();
   }
 }

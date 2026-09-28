@@ -1,42 +1,31 @@
 #pragma once
+#include <FreeInkUIGfxRenderer.h>
 #include <GfxRenderer.h>
 
+#include <atomic>
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <utility>
 
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
-struct KeyDef {
-  char primary;
-  char secondary;
-};
-
-// Column order of the bottom row. Lang is its own key rather than another stop on
-// Mode's cycle: with three panels behind one key the label can only name the next
-// one, so returning to abc from Arabic meant passing through the symbols -- and a
-// mismatched merge of that cycle against its own labels shipped a key that said ع
-// and gave #@!. Two keys, each meaning exactly one thing, in both directions.
-enum class SpecialKeyType { Shift, Mode, Lang, Space, Del, Ok };
-
 enum class InputType { Text, Password, Url };
 
+// Text entry on the FreeInkUI keyboard component: the SDK layout tables and
+// keyboard() do the key rendering and hit-rect registration, InteractionBuffer
+// routes taps/long-presses, and this activity owns the text field, cursor
+// editing, and the URL snippet layouts.
 class KeyboardEntryActivity : public Activity {
  public:
   explicit KeyboardEntryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                  std::string title = "Enter Text", std::string initialText = "",
-                                 const size_t maxLength = 0, InputType inputType = InputType::Text,
-                                 std::string customTip = "", bool numericOnly = false, bool preferArabic = false)
+                                 const size_t maxLength = 0, InputType inputType = InputType::Text)
       : Activity("KeyboardEntry", renderer, mappedInput),
         title(std::move(title)),
         text(std::move(initialText)),
         maxLength(maxLength),
-        inputType(inputType),
-        customTip(std::move(customTip)),
-        numericOnly(numericOnly),
-        preferArabic(preferArabic) {}
+        inputType(inputType) {}
 
   void onEnter() override;
   void onExit() override;
@@ -48,35 +37,37 @@ class KeyboardEntryActivity : public Activity {
   std::string text;
   size_t maxLength;
   InputType inputType;
-  // When non-empty, shown as the sole "Tips:" line instead of the normal mode-dependent
-  // hints -- lets a specific caller (e.g. Foulad eBooks login) give context-specific
-  // guidance without hardcoding that context into this generic widget.
-  std::string customTip;
-  // Swaps the full QWERTY layout for a compact digit-only keypad (mirrors urlMode's flat
-  // restricted grid). Orthogonal to InputType -- e.g. Foulad eBooks' password field is
-  // both Password (masked) AND numericOnly (foulad-ebooks enforces numeric-only
-  // credentials server-side), which a single enum value couldn't express cleanly.
-  bool numericOnly = false;
   bool passwordVisible = false;
 
   ButtonNavigator buttonNavigator;
 
-  int selectedRow = 0;
-  int selectedCol = 0;
-  int shiftState = 0;
-  bool symMode = false;
-  // Third panel on the Mode key, offered only for plain text entry -- a URL or a
-  // WiFi password is not going to be Arabic, and the numeric pad has nowhere to go.
-  bool arabicMode = false;
-  // Set by the caller when this entry is likely to be Arabic (catalog search from an
-  // Arabic interface). Not a stored setting: it describes the field, not the user.
-  bool preferArabic = false;
+  // Keyboard layers. The letter/symbol layers come from the SDK's builtin
+  // layouts (with the always-visible number row); the URL layers are
+  // app-defined tables in the .cpp.
+  freeink::ui::KeyboardLayoutId layoutId = freeink::ui::KeyboardLayoutId::QwertyEn;
+  bool shifted = false;
+  bool symbols = false;
+  bool urlPanel = false;  // URL snippet panel replaces the letter layer
+  // Downstream-supplied extra layer (see activities/util/KeyboardExtension.h). Always
+  // false when no provider is installed, which is CrossPoint's own default.
+  bool extensionLayer = false;
+
+  // Key hit rects registered by the keyboard component during render();
+  // loop() routes touch snapshots against them. 5-row EN layout registers 41
+  // keys, so 48 leaves headroom.
+  freeink::ui::InteractionBuffer<48> interactions;
+
+  // GPIO selection over the current layout grid (row/col in layout terms;
+  // the bottom action row is just the last row).
+  int selRow = 0;
+  int selCol = 0;
+
   bool confirmHeld = false;
   bool confirmLongHandled = false;
 
   bool cursorMode = false;
   bool togglePos = false;
-  size_t cursorPos = 0;
+  size_t cursorPos = 0;  // byte offset into text (always on a code point boundary)
   bool upHeld = false;
   bool upLongHandled = false;
   bool downHeld = false;
@@ -86,16 +77,22 @@ class KeyboardEntryActivity : public Activity {
   size_t savedCursorPos = 0;
   size_t rightStartCursorPos = 0;
 
-  bool urlMode = false;
-  static constexpr int URL_SNIPPET_COUNT = 9;
-  static constexpr const char* const urlSnippets[URL_SNIPPET_COUNT] = {
-      "https://", "www.", ".com", "http://", "192.168.", ".org", "/opds", ":8080", ".net"};
+  // Tap/hold routing (threshold long-press, release swallow, slide re-arm)
+  // lives in the SDK; loop() feeds it the level-triggered touch state.
+  freeink::ui::TouchHoldRouter touchRouter;
 
-  // Flat 3-column digit grid for InputType::Numeric, same indexing scheme as urlSnippets
-  // (idx = col + row * NUMERIC_COLS): rows of 1-2-3 / 4-5-6 / 7-8-9 / 0.
-  static constexpr int NUMERIC_COLS = 3;
-  static constexpr int NUMERIC_KEY_COUNT = 10;
-  static constexpr char numericKeys[NUMERIC_KEY_COUNT] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'};
+  // loop() runs on the main task while render() rebuilds the interaction
+  // table on the render task; render() opts `interactions` into the SDK's
+  // double-buffered publish cycle (beginPublishCycle()/publish()) so
+  // TouchHoldRouter's routePublished()-based reads in loop() always see a
+  // complete, previously-published table, never one mid-rebuild — no taps
+  // dropped for that reason anymore. interactionsReady itself gates only
+  // before the very first publish (nothing registered yet). Do not clear it
+  // for later renders: the point of retaining the published generation is
+  // that loop() can keep routing a release while the next frame is built.
+  // atomic (not volatile) so the flag also orders the first table publication
+  // on dual-core targets.
+  std::atomic<bool> interactionsReady{false};
 
   int delPressCount = 0;
   bool hintVisible = false;
@@ -103,177 +100,43 @@ class KeyboardEntryActivity : public Activity {
 
   void onComplete(std::string text);
   void onCancel();
+  bool cursorPositionFromPoint(int x, int y, size_t& position) const;
+  std::string displayTextForCurrentState() const;
+  // Advance of s[start, end) measured in place by temporarily null-terminating
+  // at `end` — avoids a substr temporary per measurement.
+  int measureRange(std::string& s, int start, int end) const;
+  // Largest line end in (start, s.length()] whose advance fits maxWidth.
+  // Binary search over the monotonic prefix advance; always advances at least
+  // one byte so an oversized glyph cannot stall the wrap loop.
+  int lineBreakEnd(std::string& s, int start, int maxWidth) const;
+
+  // True when a downstream provider is installed AND offers a layer for the
+  // current shift state. Always false in a stock CrossPoint build.
+  bool extensionLayerAvailable() const;
+  const freeink::ui::KeyboardLayout& currentLayout() const;
+  const freeink::ui::KeyboardKey* selectedKey() const;
+  int selectedLogicalIndex() const;
+  void clampSelection();
+  void moveSelectionRow(int delta);
+  void moveSelectionCol(int delta);
+  bool syncSelectionToValue(int16_t value);
+  // Handles one key activation (by stable key id). Returns true when the
+  // screen needs a repaint; OK/cancel finish the activity instead.
+  bool activateValue(int16_t value, bool longPress);
+  bool clearAllOrAltOnSelected();
+
+  void insertUtf8(const char* out);
+  bool backspaceUtf8();
+  static size_t utf8Prev(const std::string& s, size_t pos);
+  static size_t utf8Next(const std::string& s, size_t pos);
+
+  freeink::ui::Rect keyboardRect() const;
 
   static constexpr uint16_t LONG_PRESS_MS = 500;
   static constexpr uint16_t DEL_LONG_PRESS_MS = 1500;
+  static constexpr uint16_t TOUCH_LONG_PRESS_MS = 350;
+  static constexpr uint16_t TOUCH_DEL_LONG_PRESS_MS = 900;
 
-  static constexpr int COLS = 10;
-  static constexpr int ABC_ROWS = 4;
-  static constexpr int ARA_ROWS = 4;
-  static constexpr int SYM_ROWS = 4;
-  static constexpr int BOTTOM_KEY_COUNT = 6;
-
-  static constexpr KeyDef abcLayout[ABC_ROWS][COLS] = {
-      {{'1', '!'},
-       {'2', '@'},
-       {'3', '#'},
-       {'4', '$'},
-       {'5', '%'},
-       {'6', '^'},
-       {'7', '&'},
-       {'8', '*'},
-       {'9', '('},
-       {'0', ')'}},
-      {{'q', 'Q'},
-       {'w', 'W'},
-       {'e', 'E'},
-       {'r', 'R'},
-       {'t', 'T'},
-       {'y', 'Y'},
-       {'u', 'U'},
-       {'i', 'I'},
-       {'o', 'O'},
-       {'p', 'P'}},
-      {{'a', 'A'},
-       {'s', 'S'},
-       {'d', 'D'},
-       {'f', 'F'},
-       {'g', 'G'},
-       {'h', 'H'},
-       {'j', 'J'},
-       {'k', 'K'},
-       {'l', 'L'},
-       {'-', '_'}},
-      {{'z', 'Z'},
-       {'x', 'X'},
-       {'c', 'C'},
-       {'v', 'V'},
-       {'b', 'B'},
-       {'n', 'N'},
-       {'m', 'M'},
-       {'=', '+'},
-       {'.', '>'},
-       {',', '<'}},
-  };
-
-  // Arabic panel. Separate from KeyDef because that holds two `char`s and every one
-  // of these is a two-byte UTF-8 sequence -- widening KeyDef would touch the shift,
-  // symbol and URL panels for no gain, so the Arabic panel is its own table and its
-  // own branch.
-  //
-  // No shift row: Arabic has no case. All 28 letters, plus the hamza carriers and the
-  // ta marbuta/alef maqsura a reader actually types. Those last ones matter less than
-  // they used to -- the catalog server folds hamza, alef maqsura and ta marbuta before
-  // matching, so someone typing plain ا still finds أ -- but this keyboard is not only
-  // for search, and a keyboard that cannot type إبراهيم is not an Arabic keyboard.
-  static constexpr const char* arabicLayout[ARA_ROWS][COLS] = {
-      {"ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح"},
-      {"ج", "د", "ش", "س", "ي", "ب", "ل", "ا", "ت", "ن"},
-      {"م", "ك", "ط", "ئ", "ء", "ؤ", "ر", "ى", "ة", "و"},
-      {"ز", "ظ", "ذ", "لا", "أ", "إ", "آ", "،", "؟", "."},
-  };
-
-  static constexpr KeyDef urlLayout[ABC_ROWS][COLS] = {
-      {{'1', '!'},
-       {'2', '@'},
-       {'3', '#'},
-       {'4', '$'},
-       {'5', '%'},
-       {'6', '^'},
-       {'7', '&'},
-       {'8', '*'},
-       {'9', '('},
-       {'0', ')'}},
-      {{'q', 'Q'},
-       {'w', 'W'},
-       {'e', 'E'},
-       {'r', 'R'},
-       {'t', 'T'},
-       {'y', 'Y'},
-       {'u', 'U'},
-       {'i', 'I'},
-       {'o', 'O'},
-       {'p', 'P'}},
-      {{'a', 'A'},
-       {'s', 'S'},
-       {'d', 'D'},
-       {'f', 'F'},
-       {'g', 'G'},
-       {'h', 'H'},
-       {'j', 'J'},
-       {'k', 'K'},
-       {'l', 'L'},
-       {'-', '_'}},
-      {{'z', 'Z'},
-       {'x', 'X'},
-       {'c', 'C'},
-       {'v', 'V'},
-       {'b', 'B'},
-       {'n', 'N'},
-       {'m', 'M'},
-       {':', '+'},
-       {'.', '>'},
-       {'/', '<'}},
-  };
-
-  static constexpr KeyDef symLayout[SYM_ROWS][COLS] = {
-      {{'1', '\0'},
-       {'2', '\0'},
-       {'3', '\0'},
-       {'4', '\0'},
-       {'5', '\0'},
-       {'6', '\0'},
-       {'7', '\0'},
-       {'8', '\0'},
-       {'9', '\0'},
-       {'0', '\0'}},
-      {{'!', '\0'},
-       {'@', '\0'},
-       {'#', '\0'},
-       {'$', '\0'},
-       {'%', '\0'},
-       {'^', '\0'},
-       {'&', '\0'},
-       {'*', '\0'},
-       {'(', '\0'},
-       {')', '\0'}},
-      {{'-', '\0'},
-       {'_', '\0'},
-       {'=', '\0'},
-       {'+', '\0'},
-       {'[', '\0'},
-       {']', '\0'},
-       {'{', '\0'},
-       {'}', '\0'},
-       {';', '\0'},
-       {':', '\0'}},
-      {{'\'', '\0'},
-       {'"', '\0'},
-       {'/', '\0'},
-       {'\\', '\0'},
-       {'|', '\0'},
-       {'?', '\0'},
-       {'.', '\0'},
-       {',', '\0'},
-       {'~', '\0'},
-       {'`', '\0'}},
-  };
-
-  static const char* const shiftString[2];
-
-  int getContentRowCount() const;
-  int getContentColCount() const;
-  int getTotalRowCount() const;
-  bool isBottomRow(int row) const;
-  char getSelectedChar() const;
-  char getAlternativeChar() const;
-  // What the selected key inserts. A std::string, not a char: an Arabic key is a
-  // two-byte UTF-8 sequence and one of them ("لا") is two characters.
-  std::string getSelectedKeyText() const;
-  // True when the Mode key has an Arabic panel to offer.
-  bool arabicPanelAvailable() const;
-  bool handleKeyPress();
-  bool insertChar(char c);
-  void insertString(const std::string& str);
-  void mapColContentBottom(int& col, bool goingUp) const;
+  // App-specific key id: toggles the URL snippet panel (URL fields only).
+  static constexpr int16_t URL_PANEL_KEY = -3;
 };

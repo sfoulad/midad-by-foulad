@@ -86,6 +86,17 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   // Whether API calls target the CrossPoint sync server that supports protocol extensions.
   bool usesCrossPointSyncServer() const;
 
+  // True when the configured server is a Midad origin. Midad does not serve the
+  // KOSync protocol at all: account-scoped resume sync lives on
+  // api.midad.one/resume/v1/items/:id/position (see FouladReadingPosition), and
+  // the pre-rename hosts are forbidden origins outright. KOSync requests are
+  // refused for these rather than sent, because this client authenticates with
+  // username + unsalted MD5 over an unverified connection -- see
+  // KOReaderSyncClient. Hostnames intentionally duplicated from
+  // src/FouladEbooksConfig.h (the source of truth); lib/ cannot include src/
+  // on every build environment.
+  bool targetsMidadOrigin() const;
+
   // Document matching method
   void setMatchMethod(DocumentMatchMethod method);
   DocumentMatchMethod getMatchMethod() const { return matchMethod; }

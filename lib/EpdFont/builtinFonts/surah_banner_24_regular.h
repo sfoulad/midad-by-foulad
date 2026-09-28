@@ -2933,10 +2933,17 @@ static const EpdFontData surah_banner_24_regular = {
     true,
     surah_banner_24_regularGroups,
     2,
-    nullptr,
-    nullptr,
-    nullptr,
-    nullptr,
+    nullptr,  // glyphToGroup (contiguous groups)
+    nullptr,  // kernLeftClasses
+    nullptr,  // kernRightClasses
+    nullptr,  // kernLeftCodepoints
+    nullptr,  // kernLeftClassIds
+    nullptr,  // kernRightCodepoints
+    nullptr,  // kernRightClassIds
+    nullptr,  // kernMatrix
+    nullptr,  // kernRowOffsets
+    nullptr,  // kernSparseCols
+    nullptr,  // kernSparseValues
     0,
     0,
     0,

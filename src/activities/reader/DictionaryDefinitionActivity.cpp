@@ -227,7 +227,7 @@ void DictionaryDefinitionActivity::wrapText() {
     const std::string marker = std::string("[") + tr(STR_DEFINITION_TRUNCATED) + "]";
     if (wrappedLines.size() < MAX_WRAPPED_DEFINITION_LINES) {
       wrappedLines.push_back(marker);
-    } else if (!wrappedLines.empty()) {
+    } else {
       wrappedLines.back() = marker;
     }
   }

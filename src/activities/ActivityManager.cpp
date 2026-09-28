@@ -1,11 +1,15 @@
 #include "ActivityManager.h"
 
+#include <BoardConfig.h>
 #include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <HalPowerManager.h>
+#include <HeapTrace.h>
 #include <Memory.h>
+
+#include "SilentRestart.h"
 #ifndef SIMULATOR
 #include <BlePeripheralManager.h>
 #endif
@@ -22,17 +26,20 @@
 #include "apps/GymActivity.h"
 #include "boot_sleep/BootActivity.h"
 #include "boot_sleep/SleepActivity.h"
+#include "browser/FouladLogoutActivity.h"
 #include "browser/FouladQrLoginActivity.h"
 #include "browser/OpdsBookBrowserActivity.h"
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
+#include "library/LibraryListActivity.h"
+#include "network/BluetoothActivity.h"
 #include "network/CrossPointWebServerActivity.h"
+#include "network/UsbDriveActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
-#include "settings/TouchSettingsActivity.h"
 #include "util/BmpViewerActivity.h"
 #include "util/FrontlightPanelActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -69,10 +76,9 @@ void ActivityManager::renderTaskLoop() {
     RenderLock lock;
     if (currentActivity) {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
-      // Night mode inverts only the reading surfaces (appliesNightMode):
-      // resolving the output polarity here, per render, means menus, popups,
-      // and every other activity revert to normal automatically.
-      display.setInverted(SETTINGS.screenInverted != 0 && currentActivity->appliesNightMode());
+      // Night mode is a global output polarity applied to every activity.
+      // The sleep screen forces normal polarity itself (SleepActivity).
+      display.setInverted(SETTINGS.screenInverted != 0);
       currentActivity->render(std::move(lock));
     }
 
@@ -99,6 +105,22 @@ void ActivityManager::renderTaskLoop() {
 }
 
 void ActivityManager::loop() {
+  // Upstream gates the loop on consumeSuppressedRelease() here. This fork's
+  // MappedInputManager has no suppressed-release register -- it suppresses the
+  // post-long-press release per activity (ignoreNextConfirmRelease) instead --
+  // so there is nothing to consume. Revisit if the input layers are unified.
+
+  if (currentActivity && currentActivity->requiresExclusiveStorageLoop()) {
+    currentActivity->loop();
+    // An exclusive-storage activity must restart rather than navigate away:
+    // processing a pending action here could re-enable filesystem users while
+    // the USB host still owns the raw SD card.
+    if (requestedUpdate.exchange(false) && renderTaskHandle) {
+      xTaskNotify(renderTaskHandle, 1, eIncrement);
+    }
+    return;
+  }
+
   if (currentActivity) {
     if (!currentActivity->isHomeActivity() && mappedInput.wasHomeGesture()) {
       if (currentActivity->handleHomeGesture()) {
@@ -108,7 +130,19 @@ void ActivityManager::loop() {
       return;
     }
 
-    if (currentActivity->name != "FrontlightPanel" && mappedInput.wasLightPanelGesture()) {
+    // Tap-first control-center entry: a tap on the status-bar band of the
+    // top-level tab screens opens it, mirroring the top-edge swipe (which some
+    // panels' etched glass makes unreliable). The reader keeps its clean page
+    // (no status bar there to tap). Touch boards only, like the swipe itself.
+    bool statusBarTap = false;
+    if (mappedInput.hasTouch() &&
+        (currentActivity->name == "Home" || currentActivity->name == "FileBrowser" ||
+         currentActivity->name == "Settings" || currentActivity->name == "NetworkModeSelection")) {
+      int tx = 0;
+      int ty = 0;
+      statusBarTap = mappedInput.wasScreenTapped(tx, ty) && ty < 44;
+    }
+    if (currentActivity->name != "FrontlightPanel" && (statusBarTap || mappedInput.wasLightPanelGesture())) {
       auto panel = makeUniqueNoThrow<FrontlightPanelActivity>(renderer, mappedInput);
       if (!panel) {
         LOG_ERR("ACT", "OOM: FrontlightPanelActivity");
@@ -253,21 +287,26 @@ void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
-// The sole dispatch point every Settings entry funnels through. On
-// touch-capable boards this opens TouchSettingsActivity instead of
-// SettingsActivity -- the minimal integration required for the X4 Pro touch
-// UI to be reachable at all, not a new dispatch mechanism: it mirrors the
-// single-branch pattern UITheme::setTheme() already uses for its own
-// board-conditional choice, and SettingsActivity's own storage/business logic
-// is untouched (X3/X4 keep getting the byte-identical activity).
-void ActivityManager::goToSettings() {
-#if FREEINK_CAP_TOUCH
-  if (boardHasTouch()) {
-    replaceActivity(std::make_unique<TouchSettingsActivity>(renderer, mappedInput));
+void ActivityManager::goToPairing() { replaceActivity(std::make_unique<FouladQrLoginActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToBluetooth() { replaceActivity(std::make_unique<BluetoothActivity>(renderer, mappedInput)); }
+
+// One Settings activity for every board. SettingsActivity carries the category
+// landing grid itself (selectCategory/SettingsCategoryGridLayout), so touch
+// boards need no second activity and no board-conditional dispatch here.
+void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToUsbDrive() {
+#if FREEINK_CAP_USB_MSC
+  auto activity = makeUniqueNoThrow<UsbDriveActivity>(renderer, mappedInput);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: USB Drive activity");
     return;
   }
+  replaceActivity(std::move(activity));
+#else
+  LOG_ERR("ACT", "USB Drive requested in a build without USB Drive capability");
 #endif
-  replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToGym() { replaceActivity(std::make_unique<GymActivity>(renderer, mappedInput)); }
@@ -280,6 +319,15 @@ void ActivityManager::goToFileBrowser(std::string path) {
 
 void ActivityManager::goToRecentBooks() {
   replaceActivity(std::make_unique<RecentBooksActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToLibrary() {
+  auto activity = makeUniqueNoThrow<LibraryListActivity>(renderer, mappedInput);
+  if (!activity) {
+    LOG_ERR("ACT", "OOM: library activity");
+    return;
+  }
+  replaceActivity(std::move(activity));
 }
 
 void ActivityManager::goToApps() { replaceActivity(std::make_unique<AppsActivity>(renderer, mappedInput)); }
@@ -317,24 +365,47 @@ void ActivityManager::goToFouladEbooks() {
   replaceActivity(std::make_unique<FouladQrLoginActivity>(renderer, mappedInput));
 }
 
-void ActivityManager::goToNews() {
-  // News is the same browser pointed at a different root, not a second browser:
-  // the feed is ordinary OPDS, so listing, downloading, the 401-to-QR path and the
-  // WiFi handling all come free. Only the empty state differs, and the activity
-  // decides that from the URL (EINK_NEWS_TASKS.md §2).
-  const auto& servers = OPDS_STORE.getServers();
-  const auto it = std::find_if(servers.begin(), servers.end(),
-                               [](const OpdsServer& server) { return server.url == FOULAD_EBOOKS_URL; });
-  if (it == servers.end()) {
-    // Not paired. The QR screen is the correct News state too, per §2 -- same
-    // credential, same pairing, so there is nothing News-specific to sign in to.
-    replaceActivity(std::make_unique<FouladQrLoginActivity>(renderer, mappedInput));
+namespace {
+// Runs when the top-level sign-out finishes. Clearing the stored credential is
+// deliberately gated on the server having confirmed removal: the device must
+// never believe it is signed out while the account still lists it.
+void onLogoutFinished(const bool removed) {
+  if (removed) {
+    auto& servers = OPDS_STORE.getServers();
+    for (size_t i = 0; i < servers.size(); i++) {
+      if (servers[i].url == FOULAD_EBOOKS_URL) {
+        OPDS_STORE.removeServer(i);
+        break;
+      }
+    }
+  }
+  // Back where the user started the sign-out from -- via a restart, because
+  // sign-out brings WiFi up and nothing after it needs the network. Navigating in
+  // place left the radio initialised for the rest of the session, and the ~30KB it
+  // holds puts Home under the 42,768 contiguous bytes its cover snapshot needs,
+  // which turns every Home repaint into a full cover re-render (1,478 ms against
+  // ~15). Same reason BluetoothActivity::onExit() restarts.
+  silentRestartToSettings();  // does not return
+}
+}  // namespace
+
+void ActivityManager::goToLogout() {
+  std::string username;
+  std::string password;
+  for (const auto& server : OPDS_STORE.getServers()) {
+    if (server.url == FOULAD_EBOOKS_URL) {
+      username = server.username;
+      password = server.password;
+      break;
+    }
+  }
+  if (username.empty() || password.empty()) {
+    // Nothing to sign out of -- the entry was already removed, or never existed.
+    goToSettings();
     return;
   }
-  OpdsServer news = *it;
-  news.url = FOULAD_EBOOKS_NEWS_URL;
-  news.name = tr(STR_NEWS);
-  replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, std::move(news)));
+  replaceActivity(std::make_unique<FouladLogoutActivity>(renderer, mappedInput, std::move(username),
+                                                         std::move(password), &onLogoutFinished));
 }
 
 void ActivityManager::goToReader(std::string path, const bool allowFastInitialRefresh) {
@@ -377,6 +448,8 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
     // System), so it falls through to NONE here.
     if (activityName == "RecentBooks") {
       initialMenuItem = HomeMenuItem::RECENTS;
+    } else if (activityName == "Library") {
+      initialMenuItem = HomeMenuItem::LIBRARY;
     } else if (activityName == "Settings") {
       initialMenuItem = HomeMenuItem::SETTINGS_MENU;
     } else if (activityName == "FileBrowser") {
@@ -385,7 +458,11 @@ void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefr
       initialMenuItem = HomeMenuItem::FOULAD_EBOOKS;
     }
   }
+  // TEMP diagnostic: brackets construction only. HomeActivity::onEnter/render carry
+  // their own scopes, so the three appear nested in the log.
+  HEAP_TRACE_MARK("HOME.construct", "BEGIN");
   replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
+  HEAP_TRACE_MARK("HOME.construct", "END");
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
 
@@ -409,6 +486,10 @@ void ActivityManager::popActivity() {
 }
 
 bool ActivityManager::preventAutoSleep() const { return currentActivity && currentActivity->preventAutoSleep(); }
+
+bool ActivityManager::requiresExclusiveStorageLoop() const {
+  return currentActivity && currentActivity->requiresExclusiveStorageLoop();
+}
 
 const char* ActivityManager::currentActivityDebugName() const {
   return currentActivity ? currentActivity->activityDebugName() : "none";

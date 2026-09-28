@@ -45,18 +45,17 @@ class Activity {
   // requestUpdateAndWait() call -- see ActivityManager::consumePressesDuringLastWait()'s own
   // comment. For activities (e.g. games) that need to stay responsive across a blocking
   // render wait; check in addition to normal wasPressed()/onPress() handling, not instead of.
-  uint8_t consumePressesDuringLastWait() { return activityManager.consumePressesDuringLastWait(); }
+  static uint8_t consumePressesDuringLastWait() { return activityManager.consumePressesDuringLastWait(); }
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // Exclusive storage activities suspend global controls and normal activity
+  // transitions so no filesystem code races a raw SD-card owner.
+  virtual bool requiresExclusiveStorageLoop() const { return false; }
   // Class name for diagnostics only (e.g. SleepDiagLog, when preventAutoSleep() is
   // true) -- a literal per override, not RTTI, so it stays meaningful after mangling.
   virtual const char* activityDebugName() const { return "Activity"; }
   virtual bool isReaderActivity() const { return false; }
-  // True for the reading surfaces night mode inverts (EPUB/TXT/XTC). Resolved
-  // per render by ActivityManager, so menus, overlays, and every other screen
-  // keep normal polarity without managing the display flag themselves.
-  virtual bool appliesNightMode() const { return false; }
   // Returns true when the activity schedules its own forced refresh.
   virtual bool handleForcedRefresh() { return false; }
   virtual bool isHomeActivity() const { return false; }
@@ -71,10 +70,10 @@ class Activity {
   void setResult(ActivityResult&& result);
 
   // Finish this activity and return to the previous one on the stack (if any)
-  void finish();
+  static void finish();
 
   // Convenience method to facilitate API transition to ActivityManager
   // TODO: remove this in near future
-  void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
-  void onSelectBook(const std::string& path);
+  static void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
+  static void onSelectBook(const std::string& path);
 };

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-struct DictionaryEntry {
+struct StarDictEntry {
   std::string languageId;
   std::string directoryPath;
   std::string ifoPath;
@@ -65,7 +65,7 @@ class DictionaryStore {
   bool saveConfig() const;
   void scan();
   void ensureScanned();
-  const std::vector<DictionaryEntry>& getEntries() const { return entries; }
+  const std::vector<StarDictEntry>& getEntries() const { return entries; }
   // Gates the reader menu's Look up word / Lookup history rows so they only
   // appear once a dictionary is actually installed. Scans on first call so
   // the row is right the first time the drawer opens, without requiring a
@@ -113,8 +113,8 @@ class DictionaryStore {
   static constexpr size_t MIN_DEFINITION_BYTES = 1024;
   static constexpr size_t MAX_HISTORY_ITEMS = 15;
 
-  std::vector<DictionaryEntry> entries;
-  DictionaryEntry activeOnlyEntry;
+  std::vector<StarDictEntry> entries;
+  StarDictEntry activeOnlyEntry;
   std::string activeIfoPath;
   int activeIndex = -1;
   bool configLoaded = false;
@@ -122,21 +122,21 @@ class DictionaryStore {
   bool activeOnlyLoaded = false;
   uint8_t definitionTextSize = DEF_TEXT_SMALL;
 
-  bool loadEntryFromIfoPath(const std::string& ifoPath, DictionaryEntry& entry) const;
+  bool loadEntryFromIfoPath(const std::string& ifoPath, StarDictEntry& entry) const;
   bool ensureActiveEntryLoaded();
   void clearActiveOnlyEntry();
-  DictionaryEntry* activeEntry();
-  const DictionaryEntry* activeEntry() const;
-  bool ensurePrepared(DictionaryEntry& entry, const std::function<void(int percent)>& onProgress = nullptr);
-  bool loadCheckpointCache(DictionaryEntry& entry);
-  bool saveCheckpointCache(const DictionaryEntry& entry) const;
-  bool findIndexHit(const DictionaryEntry& entry, const std::string& word, IndexHit& hit) const;
-  bool lookupSynonym(const DictionaryEntry& entry, const std::string& word, std::string& canonical) const;
-  std::string headwordAtOrdinal(const DictionaryEntry& entry, uint32_t ordinal) const;
-  std::string readDefinition(const DictionaryEntry& entry, const IndexHit& hit, bool& truncated,
+  StarDictEntry* activeEntry();
+  const StarDictEntry* activeEntry() const;
+  bool ensurePrepared(StarDictEntry& entry, const std::function<void(int percent)>& onProgress = nullptr);
+  bool loadCheckpointCache(StarDictEntry& entry);
+  bool saveCheckpointCache(const StarDictEntry& entry) const;
+  bool findIndexHit(const StarDictEntry& entry, const std::string& word, IndexHit& hit) const;
+  bool lookupSynonym(const StarDictEntry& entry, const std::string& word, std::string& canonical) const;
+  std::string headwordAtOrdinal(const StarDictEntry& entry, uint32_t ordinal) const;
+  std::string readDefinition(const StarDictEntry& entry, const IndexHit& hit, bool& truncated,
                              DictionaryLookupResult::Status* outFailureStatus = nullptr) const;
-  std::vector<std::string> findSuggestions(const DictionaryEntry& entry, const std::string& word, int maxResults) const;
-  std::vector<std::string> getFallbackForms(const DictionaryEntry& entry, const std::string& word) const;
+  std::vector<std::string> findSuggestions(const StarDictEntry& entry, const std::string& word, int maxResults) const;
+  std::vector<std::string> getFallbackForms(const StarDictEntry& entry, const std::string& word) const;
 };
 
 #define DICTIONARIES DictionaryStore::getInstance()

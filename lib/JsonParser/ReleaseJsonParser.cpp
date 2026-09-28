@@ -35,6 +35,8 @@ void ReleaseJsonParser::reset() {
   tagName[0] = '\0';
   firmwareUrl[0] = '\0';
   firmwareSize = 0;
+  firmwareDigest[0] = '\0';
+  currentAssetDigest[0] = '\0';
   tagFound = false;
   firmwareFound = false;
   currentAssetName[0] = '\0';
@@ -49,16 +51,19 @@ bool ReleaseJsonParser::foundFirmware() const { return firmwareFound; }
 const char* ReleaseJsonParser::getTagName() const { return tagName; }
 const char* ReleaseJsonParser::getFirmwareUrl() const { return firmwareUrl; }
 size_t ReleaseJsonParser::getFirmwareSize() const { return firmwareSize; }
+const char* ReleaseJsonParser::getFirmwareDigest() const { return firmwareDigest; }
 
 void ReleaseJsonParser::commitAsset() {
   if (strcmp(currentAssetName, firmwareAssetName) == 0) {
     memcpy(firmwareUrl, currentAssetUrl, sizeof(firmwareUrl));
     firmwareSize = currentAssetSize;
+    memcpy(firmwareDigest, currentAssetDigest, sizeof(firmwareDigest));
     firmwareFound = true;
   }
   currentAssetName[0] = '\0';
   currentAssetUrl[0] = '\0';
   currentAssetSize = 0;
+  currentAssetDigest[0] = '\0';
 }
 
 // -- SAX callbacks (static trampolines) -------------------------------------
@@ -86,6 +91,8 @@ void ReleaseJsonParser::sOnKey(void* ctx, const char* key, size_t len) {
           self->lastKey = LastKey::ASSET_URL;
         else if (len == 4 && memcmp(key, "size", 4) == 0)
           self->lastKey = LastKey::ASSET_SIZE;
+        else if (len == 6 && memcmp(key, "digest", 6) == 0)
+          self->lastKey = LastKey::ASSET_DIGEST;
         else
           self->lastKey = LastKey::NONE;
       }
@@ -113,6 +120,12 @@ void ReleaseJsonParser::sOnString(void* ctx, const char* value, size_t len) {
     case LastKey::ASSET_URL:
       if (self->position == Position::IN_ASSET_OBJECT && self->assetDepth == 1)
         safeCopy(self->currentAssetUrl, sizeof(self->currentAssetUrl), value, len);
+      break;
+    case LastKey::ASSET_DIGEST:
+      // A null digest arrives as a JSON null, which never reaches sOnString, so the
+      // field simply stays empty and the caller fails closed.
+      if (self->position == Position::IN_ASSET_OBJECT && self->assetDepth == 1)
+        safeCopy(self->currentAssetDigest, sizeof(self->currentAssetDigest), value, len);
       break;
     default:
       break;
@@ -155,6 +168,9 @@ void ReleaseJsonParser::sOnObjectStart(void* ctx) {
       self->position = Position::IN_ASSET_OBJECT;
       self->assetDepth = 1;
       self->currentAssetName[0] = '\0';
+      // Cleared per asset: an asset with no digest must never inherit the previous
+      // asset's, which would authenticate the wrong bytes.
+      self->currentAssetDigest[0] = '\0';
       self->currentAssetUrl[0] = '\0';
       self->currentAssetSize = 0;
       self->lastKey = LastKey::NONE;

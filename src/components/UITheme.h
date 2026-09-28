@@ -31,6 +31,11 @@ class UITheme {
                                       TextVerticalAlignment verticalAlignment = TextVerticalAlignment::CENTER);
   void reload();
   void setTheme(CrossPointSettings::UI_THEME type);
+  // Kept after upstream removed it: five Midad screens (Arabic font selection,
+  // Gym browser, Dictionary, font pickers) page their lists through this. The
+  // body already delegates to the theme's getListPageItems(), which is upstream's
+  // replacement -- this is the reserved-height arithmetic those callers need, not
+  // a parallel implementation.
   static int getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader, bool hasTabBar, bool hasButtonHints,
                                      bool hasSubtitle, int extraReservedHeight = 0);
   static std::string getCoverThumbPath(std::string coverBmpPath, int coverHeight);

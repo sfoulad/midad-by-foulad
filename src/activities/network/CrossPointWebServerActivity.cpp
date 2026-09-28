@@ -65,6 +65,24 @@ int barsForRssi(int rssi, int currentBars) {
 }
 }  // namespace
 
+namespace {
+// Consumed by the next onEnter(). A plain flag rather than a constructor argument
+// because the activity is created by ActivityManager after a reboot, so there is
+// no caller left to pass anything to.
+// Must survive a reboot, not just a screen change. files.open sets this and then
+// silent-restarts into File Transfer (the restart is what gives the web server an
+// unfragmented heap), and a plain static is zeroed by that restart -- so the
+// phone-initiated flow still stopped to ask the user to pick a network, which is
+// the one thing it exists to avoid. RTC_NOINIT survives a warm boot; the magic
+// distinguishes a real request from whatever the RTC holds after a cold start.
+RTC_NOINIT_ATTR uint32_t gSkipModeSelectionMagic;
+constexpr uint32_t SKIP_MODE_SELECTION_MAGIC = 0xF11E0A01;
+}  // namespace
+
+void CrossPointWebServerActivity::requestJoinNetworkWithoutPrompt() {
+  gSkipModeSelectionMagic = SKIP_MODE_SELECTION_MAGIC;
+}
+
 void CrossPointWebServerActivity::onEnter() {
   Activity::onEnter();
 
@@ -88,6 +106,14 @@ void CrossPointWebServerActivity::onEnter() {
   connectedSSID.clear();
   lastHandleClientTime = 0;
   requestUpdate();
+
+  // Pre-selected by BLE files.open: go straight to joining the saved network.
+  if (gSkipModeSelectionMagic == SKIP_MODE_SELECTION_MAGIC) {
+    gSkipModeSelectionMagic = 0;  // one entry only; a later manual open still asks
+    LOG_INF("WEBACT", "Mode selection skipped (requested over BLE); joining saved network");
+    onNetworkModeSelected(NetworkMode::JOIN_NETWORK);
+    return;
+  }
 
   // Launch network mode selection subactivity
   LOG_DBG("WEBACT", "Launching NetworkModeSelectionActivity...");
@@ -130,8 +156,19 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
     modeName = "Connect to Calibre";
   } else if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
+#if FREEINK_CAP_USB_MSC
+  } else if (mode == NetworkMode::USB_DRIVE) {
+    modeName = "USB Drive";
+#endif
   }
   LOG_DBG("WEBACT", "Network mode selected: %s", modeName);
+
+#if FREEINK_CAP_USB_MSC
+  if (mode == NetworkMode::USB_DRIVE) {
+    activityManager.goToUsbDrive();
+    return;
+  }
+#endif
 
   networkMode = mode;
   isApMode = (mode == NetworkMode::CREATE_HOTSPOT);
@@ -182,14 +219,6 @@ void CrossPointWebServerActivity::reportDeviceTrackingOnConnect() {
   // independently configured, so this is worth attempting whenever WiFi comes
   // up here, same reasoning as OpdsBookBrowserActivity's version of this call.
   FouladDeviceTracking::flushPendingKOReaderSync();
-
-  const auto& servers = OPDS_STORE.getServers();
-  const auto it =
-      std::find_if(servers.begin(), servers.end(), [](const OpdsServer& s) { return s.url == FOULAD_EBOOKS_URL; });
-  if (it == servers.end()) return;  // no Foulad eBooks account configured -- nothing to register with
-
-  FouladDeviceTracking::registerDevice(it->username, it->password);
-  FouladDeviceTracking::reportDeviceStats(it->username, it->password);
 }
 
 void CrossPointWebServerActivity::onWifiSelectionComplete(const bool connected) {
@@ -313,6 +342,16 @@ void CrossPointWebServerActivity::loop() {
       dnsServer->processNextRequest();
     }
 
+    // The phone asked to end this service (POST /api/session/close). Hand the
+    // radio back to BLE so it can pick another one -- BLE and WiFi cannot be up
+    // together on the C3, so this has to be a full handover, not a mode switch.
+    if (webServer && webServer->sessionCloseDue()) {
+      LOG_INF("WEBACT", "Session closed by phone; returning to Bluetooth");
+      state = WebServerActivityState::SHUTTING_DOWN;
+      silentRestartToBluetooth();  // does not return
+      return;
+    }
+
     // STA mode: Monitor WiFi connection health
     if (!isApMode && webServer && webServer->isRunning()) {
       static unsigned long lastWifiCheck = 0;
@@ -370,11 +409,29 @@ void CrossPointWebServerActivity::loop() {
       // Reset watchdog BEFORE processing - HTTP header parsing can be slow
       resetTaskWatchdogIfSubscribed();
 
-      // Process HTTP requests in tight loop for maximum throughput
-      // More iterations = more data processed per main loop cycle
+      // Process HTTP requests in a tight loop for throughput, but bounded by
+      // WALL-CLOCK time and not just an iteration count.
+      //
+      // handleClient() blocks for up to HTTP_MAX_DATA_WAIT (5000 ms,
+      // WebServer.h:66) whenever a client opens a connection and never completes
+      // its request -- which Safari and macOS do routinely, opening speculative
+      // connections they may never use. At 500 iterations that is potentially tens
+      // of minutes inside this loop: no main loop, no repaint, no [MEM] heartbeat
+      // and no way out, since the Back/Home check below only runs between calls.
+      // The device is not crashed, but it is indistinguishable from frozen and only
+      // a manual reload clears it. Observed twice on the reference X3 opening File
+      // Transfer from an Apple client, the second time with no file listing served
+      // at all -- it stalled on the connection, not on any request.
+      //
+      // The budget caps a stalled client at one blocking wait per main-loop cycle
+      // instead of five hundred. It cannot make a single wait shorter; that is the
+      // library's timeout, not ours.
       constexpr int MAX_ITERATIONS = 500;
+      constexpr unsigned long HANDLE_CLIENT_BUDGET_MS = 200;
+      const unsigned long handleClientStart = millis();
       for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
         webServer->handleClient();
+        if (millis() - handleClientStart >= HANDLE_CLIENT_BUDGET_MS) break;
         // Reset watchdog every 32 iterations
         if ((i & 0x1F) == 0x1F) {
           resetTaskWatchdogIfSubscribed();

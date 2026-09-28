@@ -25,16 +25,17 @@ std::string extractFouladBookId(const std::string& entryId);
 // Defaults to ".epub" for anything else.
 std::string acquisitionExtension(const std::string& acquisitionType);
 
-// True when `serverUrl` is the Foulad eBooks News feed root.
-bool isNewsFeed(const std::string& serverUrl);
-
-// Pure gating decision for pollDeviceTracking(): true only when actually
-// browsing (not loading/downloading), the server is Foulad eBooks, WiFi is
-// connected, and at least `intervalMs` have elapsed since `lastCheckMs`
-// (unsigned subtraction, so this is correct across a millis() rollover the
-// same way the original inline check was). pollDeviceTracking() itself owns
-// the real timer state and the actual registerDevice() call -- this only
-// answers "should it fire right now", so it's host-testable without HAL.
+// Pure gating decision for a periodic device-tracking call: true only when
+// actually browsing (not loading/downloading), the server is Foulad eBooks,
+// WiFi is connected, and at least `intervalMs` have elapsed since
+// `lastCheckMs` (unsigned subtraction, so this is correct across a millis()
+// rollover). Answers only "should it fire right now", so it stays
+// host-testable without HAL.
+//
+// Currently unwired: the registration poll it used to gate is gone, since Core
+// has no such endpoint. Kept because the device heartbeat Core is building
+// needs exactly this cadence decision, and the tests below pin the rollover
+// behaviour that is easy to get wrong when rewriting it from scratch.
 bool shouldPollDeviceTracking(bool isBrowsing, bool isFouladServer, bool wifiConnected, unsigned long nowMs,
                               unsigned long lastCheckMs, unsigned long intervalMs);
 

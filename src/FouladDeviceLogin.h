@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <string>
 
-// Sign in to Foulad eBooks by QR code -- implements the device half of the
-// contract in EINK_QR_LOGIN_TASKS.md (foulad-ebooks repo).
+// Sign in to Midad by QR code -- implements the device half of Midad Core's
+// device-pairing contract (docs/device-auth-contract.md in midad-core).
 //
 // The device asks the server to open a pairing session, renders the returned
 // URL as a QR code, and polls until the user approves it in the Foulad One
@@ -13,11 +13,12 @@
 // FouladDeviceTracking, OpdsBookBrowserActivity, etc. Nothing downstream needs
 // to know a token is being used rather than the account password.
 //
-// Why this exists at all: OPDS runs over plain HTTP on this server (the device's
-// mbedTLS build can't validate foulad.one's certificate chain -- see
-// FouladEbooksConfig.h), so a typed account password travels in cleartext on
-// every request. A device token is per-device, independently revocable, and
-// useless for signing into the website.
+// Why a token rather than the account password: it is per-device, independently
+// revocable from the phone, reaches only the OPDS surface plus its own
+// self-revoke (Core refuses it everywhere else), and is useless for signing into
+// the website. The token is issued exactly once, in the body of the poll that
+// redeems the session, and is never returned again -- a device that mis-reads
+// that one response can only re-pair, never recover it.
 //
 // Both calls are synchronous and block for up to their HTTP timeout, so callers
 // must drive them from a context where that is acceptable and must not call
@@ -43,20 +44,41 @@ struct StartResult {
 };
 
 enum class PollStatus : uint8_t {
-  Pending,       // keep the QR on screen and keep polling
-  Approved,      // credential issued -- stop polling, save it
-  Denied,        // user rejected the request in the app
-  Expired,       // session timed out (or the token is unknown); start over
+  Pending,   // keep the QR on screen and keep polling
+  Approved,  // credential issued -- stop polling, save it
+  Denied,    // user rejected the request in the app
+  Expired,   // session timed out, or the session token is unknown; start over
+  // This session's approval was already redeemed and its one-time token handed
+  // out. Terminal: the token is never reissued, so polling on can only ever
+  // return this again. Distinct from Expired so the log says which happened,
+  // but the caller's move is the same -- open a fresh session.
+  Redeemed,
   NetworkError,  // transport failure; caller may retry, session is still valid
 };
 
 struct PollResult {
   PollStatus status = PollStatus::NetworkError;
+  // The HTTP Basic *user* half. Core discards it on verification (it has no
+  // account passwords and no username namespace), so its only job is to be
+  // stable and non-empty -- never treat a missing one as a failed pairing.
   std::string username;
+  // The credential. HTTP Basic *password* for every authenticated request
+  // afterwards: feeds, covers, acquisition, self-revoke.
   std::string token;
   // user.name from the response, e.g. "Sameh" -- for a "Signed in as ..."
   // confirmation. Empty if the server didn't send one.
   std::string displayName;
+
+  // KOSync provisioning, from the response's optional `kosync` object. Core mints
+  // the KOSync credential at pairing (the password IS the device token), because
+  // there is no other channel: the firmware's only other writer of these is the
+  // Settings UI, and the server-pushed-settings path died with registerDevice.
+  // All empty when the server sends no `kosync` block, which is the pre-R19 case
+  // and must stay harmless.
+  std::string koUsername;
+  std::string koPassword;
+  std::string koServerUrl;
+  int koMatchMethod = -1;  // -1 = not sent; 0 = filename, 1 = binary
 };
 
 // Opens a pairing session. Sends this device's name/serial/model/firmware so

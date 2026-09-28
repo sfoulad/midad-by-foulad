@@ -12,6 +12,17 @@ uint8_t quantizeSimple(int gray);
 uint8_t quantize1bit(int gray, int x, int y);
 int adjustPixel(int gray);
 
+struct GrayPlanePixel {
+  bool write;
+  bool black;
+};
+
+// level: 0=black, 1=dark, 2=light, 3=white. drawPixel(true) clears a bit.
+constexpr GrayPlanePixel grayPlanePixel(uint8_t level, bool msb, bool absolute) {
+  if (absolute) return {true, !(level == 3 || level == (msb ? 2 : 1))};
+  return {msb ? (level == 1 || level == 2) : level == 1, false};
+}
+
 enum class BmpRowOrder { BottomUp, TopDown };
 
 // Populates a 1-bit BMP header in the provided memory.
@@ -30,6 +41,9 @@ class Atkinson1BitDitherer {
     errorRow2 = new (std::nothrow) int16_t[width + 4]();  // Row after next
   }
 
+  // Callers must check row allocation before processing pixels.
+  bool isValid() const { return errorRow0 && errorRow1 && errorRow2; }
+
   ~Atkinson1BitDitherer() {
     delete[] errorRow0;
     delete[] errorRow1;
@@ -44,7 +58,6 @@ class Atkinson1BitDitherer {
 
   // False if any error-row buffer failed to allocate. Caller must check before calling
   // processPixel()/nextRow()/reset() -- they dereference the buffers unconditionally.
-  bool ok() const { return errorRow0 && errorRow1 && errorRow2; }
 
   uint8_t processPixel(int gray, int x) {
     // Apply brightness/contrast/gamma adjustments
@@ -109,11 +122,15 @@ class Atkinson1BitDitherer {
 // Less error buildup = fewer artifacts than Floyd-Steinberg
 class AtkinsonDitherer {
  public:
-  explicit AtkinsonDitherer(int width) : width(width) {
+  explicit AtkinsonDitherer(int width, bool originalThresholds = false)
+      : width(width), originalThresholds(originalThresholds) {
     errorRow0 = new (std::nothrow) int16_t[width + 4]();  // Current row
     errorRow1 = new (std::nothrow) int16_t[width + 4]();  // Next row
     errorRow2 = new (std::nothrow) int16_t[width + 4]();  // Row after next
   }
+
+  // Callers must check row allocation before processing pixels.
+  bool isValid() const { return errorRow0 && errorRow1 && errorRow2; }
 
   ~AtkinsonDitherer() {
     delete[] errorRow0;
@@ -128,7 +145,6 @@ class AtkinsonDitherer {
 
   // False if any error-row buffer failed to allocate. Caller must check before calling
   // processPixel()/nextRow()/reset() -- they dereference the buffers unconditionally.
-  bool ok() const { return errorRow0 && errorRow1 && errorRow2; }
 
   uint8_t processPixel(int gray, int x) {
     // Add accumulated error
@@ -139,7 +155,7 @@ class AtkinsonDitherer {
     // Quantize to 4 levels
     uint8_t quantized;
     int quantizedValue;
-    if (false) {  // original thresholds
+    if (originalThresholds) {
       if (adjusted < 43) {
         quantized = 0;
         quantizedValue = 0;
@@ -153,16 +169,16 @@ class AtkinsonDitherer {
         quantized = 3;
         quantizedValue = 255;
       }
-    } else {  // fine-tuned to X4 eink display
+    } else {  // Legacy panel tuning; slightly darker midtones.
       if (adjusted < 30) {
         quantized = 0;
         quantizedValue = 15;
-      } else if (adjusted < 50) {
+      } else if (adjusted < 55) {
         quantized = 1;
-        quantizedValue = 30;
-      } else if (adjusted < 140) {
+        quantizedValue = 35;
+      } else if (adjusted < 150) {
         quantized = 2;
-        quantizedValue = 80;
+        quantizedValue = 90;
       } else {
         quantized = 3;
         quantizedValue = 210;
@@ -198,10 +214,11 @@ class AtkinsonDitherer {
   }
 
  private:
-  int width;
+  const int width;
   int16_t* errorRow0;
   int16_t* errorRow1;
   int16_t* errorRow2;
+  const bool originalThresholds;
 };
 
 // Floyd-Steinberg error diffusion dithering with serpentine scanning
@@ -214,10 +231,14 @@ class AtkinsonDitherer {
 //      7/16  X
 class FloydSteinbergDitherer {
  public:
-  explicit FloydSteinbergDitherer(int width) : width(width), rowCount(0) {
+  explicit FloydSteinbergDitherer(int width, bool originalThresholds = false)
+      : width(width), rowCount(0), originalThresholds(originalThresholds) {
     errorCurRow = new (std::nothrow) int16_t[width + 2]();  // +2 for boundary handling
     errorNextRow = new (std::nothrow) int16_t[width + 2]();
   }
+
+  // Callers must check row allocation before processing pixels.
+  bool isValid() const { return errorCurRow && errorNextRow; }
 
   ~FloydSteinbergDitherer() {
     delete[] errorCurRow;
@@ -232,7 +253,6 @@ class FloydSteinbergDitherer {
 
   // False if either error-row buffer failed to allocate. Caller must check before calling
   // processPixel()/nextRow() -- they dereference the buffers unconditionally.
-  bool ok() const { return errorCurRow && errorNextRow; }
 
   // Process a single pixel and return quantized 2-bit value
   // x is the logical x position (0 to width-1), direction handled internally
@@ -247,7 +267,7 @@ class FloydSteinbergDitherer {
     // Quantize to 4 levels (0, 85, 170, 255)
     uint8_t quantized;
     int quantizedValue;
-    if (false) {  // original thresholds
+    if (originalThresholds) {
       if (adjusted < 43) {
         quantized = 0;
         quantizedValue = 0;
@@ -261,16 +281,16 @@ class FloydSteinbergDitherer {
         quantized = 3;
         quantizedValue = 255;
       }
-    } else {  // fine-tuned to X4 eink display
+    } else {  // Legacy panel tuning; slightly darker midtones.
       if (adjusted < 30) {
         quantized = 0;
         quantizedValue = 15;
-      } else if (adjusted < 50) {
+      } else if (adjusted < 55) {
         quantized = 1;
-        quantizedValue = 30;
-      } else if (adjusted < 140) {
+        quantizedValue = 35;
+      } else if (adjusted < 150) {
         quantized = 2;
-        quantizedValue = 80;
+        quantizedValue = 90;
       } else {
         quantized = 3;
         quantizedValue = 210;
@@ -328,8 +348,9 @@ class FloydSteinbergDitherer {
   }
 
  private:
-  int width;
+  const int width;
   int rowCount;
   int16_t* errorCurRow;
   int16_t* errorNextRow;
+  const bool originalThresholds;
 };

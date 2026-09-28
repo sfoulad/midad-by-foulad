@@ -1,15 +1,21 @@
 name: Compile Release
 
 # Builds every board's release firmware on tag push, with the .bin named
-# exactly as OtaUpdater requests it from the GitHub release: plain
-# firmware.bin for the C3 X4/X3 binary, firmware-<board>.bin for every other
-# board. Attaches the built .bin files to the release as-is -- CrossPoint's
-# standard unsigned firmware format, no cryptographic firmware authentication.
+# exactly as OtaUpdater requests it from the GitHub release:
+# crosspoint-<version>-<device>.bin, where <version> is the tag without its
+# leading "v" and the combined C3 X4/X3 image uses the device tag x3-x4.
+# Attaches the built .bin files to the release as-is -- CrossPoint's standard
+# unsigned firmware format, no cryptographic firmware authentication.
 
 on:
-  push:
-    tags:
-      - '*'
+  release:
+    types: [published]
+
+env:
+  # Pins the core that the platform installs into its own penv at build time.
+  # See scripts/uv-constraints.txt -- without it the firmware is built by an
+  # unpinned PyPI core fetched after the integrity check has already passed.
+  UV_CONSTRAINT: ${{ github.workspace }}/scripts/uv-constraints.txt
 
 permissions:
   contents: write
@@ -21,19 +27,49 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - pio_env: gh_release
-            asset: firmware.bin
-          - pio_env: sticky-gh_release
-            asset: firmware-sticky.bin
-          - pio_env: x4pro-gh_release
-            asset: firmware-x4pro.bin
-          - pio_env: papermono-gh_release
-            asset: firmware-papermono.bin
+          - release_env: gh_release
+            rc_env: gh_release_rc
+            device: x3-x4
+          - release_env: sticky-gh_release
+            rc_env: sticky-gh_release_rc
+            device: sticky
+          - release_env: x4pro-gh_release
+            rc_env: x4pro-gh_release_rc
+            device: x4pro
+          - release_env: x4c-gh_release
+            rc_env: x4c-gh_release_rc
+            device: x4c
+          - release_env: papermono-gh_release
+            rc_env: papermono-gh_release_rc
+            device: papermono
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           submodules: recursive
+
+      # Adopted from CrossPoint 1.6.5rc's release workflow, adapted to Midad's
+      # tag scheme. Upstream compares the tag to platformio.ini's version and
+      # appends a bare "rc" for prereleases; Midad tags carry a build suffix
+      # (v1.8.58-rc+<sha>), so the suffix is stripped before comparing rather
+      # than the version having "rc" appended to it.
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG#v}"
+          tag_version="${tag%%-*}"
+          configured="$(sed -n 's/^version = //p' platformio.ini | head -n1)"
+          if [ "$tag_version" != "$configured" ]; then
+            echo "Release tag $RELEASE_TAG does not match platformio.ini version $configured" >&2
+            exit 1
+          fi
+          if [ "$IS_PRERELEASE" = "true" ] && [ "$tag" = "$tag_version" ]; then
+            echo "Prerelease $RELEASE_TAG carries no -rc suffix" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
@@ -53,8 +89,11 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          # Every input that decides which packages get installed is in the key, and
+          # there is deliberately no restore-keys: a partial match would layer a new
+          # platform/core over packages resolved for an older one, which is how a
+          # mid-build core migration (and an unverified scons) got in.
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'scripts/requirements-ci.lock', 'scripts/platformio-packages-lock.json', 'scripts/uv-constraints.txt') }}
 
       - name: Verify PlatformIO package integrity
         # Issue #179: PlatformIO's own PackageManager does not checksum-verify
@@ -67,35 +106,40 @@ jobs:
         run: python3 scripts/verify_platformio_packages.py
 
       - name: Build CrossPoint
-        run: pio run -e ${{ matrix.pio_env }} -j1
+        env:
+          PIO_ENV: ${{ github.event.release.prerelease && matrix.rc_env || matrix.release_env }}
+        run: CROSSPOINT_RC_HASH="$(git rev-parse --short=7 HEAD)" pio run -e "$PIO_ENV" -j1
 
-      - name: Name release asset
+      - name: Prepare firmware asset
+        id: asset
+        env:
+          PIO_ENV: ${{ github.event.release.prerelease && matrix.rc_env || matrix.release_env }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ matrix.asset }}" != "firmware.bin" ]; then
-            cp ".pio/build/${{ matrix.pio_env }}/firmware.bin" \
-              ".pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}"
-          fi
+          version="${RELEASE_TAG#v}"
+          asset="crosspoint-${version}-${{ matrix.device }}.bin"
+          cp ".pio/build/${PIO_ENV}/firmware.bin" "$asset"
+          echo "name=$asset" >> "$GITHUB_OUTPUT"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ matrix.asset }}
+          name: ${{ steps.asset.outputs.name }}
           path: |
-            .pio/build/${{ matrix.pio_env }}/bootloader.bin
-            .pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}
-            .pio/build/${{ matrix.pio_env }}/firmware.elf
-            .pio/build/${{ matrix.pio_env }}/firmware.map
-            .pio/build/${{ matrix.pio_env }}/partitions.bin
+            ${{ steps.asset.outputs.name }}
+            .pio/build/${{ github.event.release.prerelease && matrix.rc_env || matrix.release_env }}/bootloader.bin
+            .pio/build/${{ github.event.release.prerelease && matrix.rc_env || matrix.release_env }}/firmware.elf
+            .pio/build/${{ github.event.release.prerelease && matrix.rc_env || matrix.release_env }}/firmware.map
+            .pio/build/${{ github.event.release.prerelease && matrix.rc_env || matrix.release_env }}/partitions.bin
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           # OtaUpdater.cpp looks up releases/latest and matches an asset named
-          # exactly "firmware.bin" (ReleaseJsonParser.cpp:47) for the primary C3
-          # board, and firmware-<board>.bin for every other board -- devices only
-          # see an update once this step runs, the CI artifact above is not enough.
-          # Only the named asset per board is attached here; bootloader.bin/
-          # firmware.elf/firmware.map/partitions.bin are still available via the
-          # CI artifact above for local debugging, just not cluttering the public
-          # release.
-          files: .pio/build/${{ matrix.pio_env }}/${{ matrix.asset }}
+          # exactly crosspoint-<version>-<device>.bin, where <version> is the tag
+          # without its leading "v" -- devices only see an update once this step
+          # runs, the CI artifact above is not enough. Only the named asset per
+          # board is attached here; bootloader.bin/firmware.elf/firmware.map/
+          # partitions.bin are still available via the CI artifact above for local
+          # debugging, just not cluttering the public release.
+          files: ${{ steps.asset.outputs.name }}

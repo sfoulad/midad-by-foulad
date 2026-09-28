@@ -1,6 +1,7 @@
 #include "HttpDownloader.h"
 
 #include <Arduino.h>
+#include <HeapTrace.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <UrlOrigin.h>
@@ -12,8 +13,11 @@
 #include <strings.h>  // strcasecmp, for the case-insensitive response-header match
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -24,6 +28,10 @@
 
 #if defined(FREEINK_NET_WOLFSSL)
 #include <SecureHttpClient.h>
+
+#include "CoreCaCerts.h"
+#include "HttpUrlParts.h"
+#include "VerifiedTlsSession.h"
 
 extern "C" void wolfSSL_Arduino_Serial_Print(const char* const msg) { LOG_DBG("WOLFSSL", "%s", msg); }
 #endif
@@ -107,6 +115,12 @@ void logTlsError(esp_http_client_handle_t client) {
     // (e.g. 0x3000 for MBEDTLS_ERR_X509_FATAL_ERROR, which mbedtls's own headers define
     // as -0x3000) -- print it as mbedTLS's own negative convention for readability.
     LOG_ERR("HTTP", "tls detail: esp_tls_error_code=-0x%X esp_tls_flags=0x%X", tlsErrorCode, tlsFlags);
+    // TEMP diagnostic: a single combined code hides which half is the real cause.
+    // 0x4290 is MBEDTLS_ERROR_ADD(MBEDTLS_ERR_RSA_PUBLIC_FAILED, MBEDTLS_ERR_MPI_ALLOC_FAILED)
+    // -- an out-of-memory inside the signature check, not a rejected certificate.
+    // esp_tls_flags == 0 alongside it says the chain itself verified fine.
+    HEAP_TRACE_REPORT_MBEDTLS("tls detail:", tlsErrorCode);
+    HEAP_TRACE_REPORT_FAILURE("tls failure");
   }
 }
 int httpClientWrite(esp_http_client_handle_t client, const char* data, int len) {
@@ -121,10 +135,35 @@ HttpDownloader::LastFailure gLastFailure;
 
 void setLastFailure(const HttpDownloader::FailStage stage, const int detail) { gLastFailure = {stage, detail}; }
 
+#if defined(FREEINK_NET_WOLFSSL)
+// The client a HttpDownloader::KeepAliveScope holds open, or null when no scope is
+// active. File-scope for the same reason gLastFailure above is: one network task, no
+// concurrent requests. gKeepAliveDepth counts nesting so an inner scope cannot close
+// the connection an outer one is still using.
+std::unique_ptr<freeink::SecureHttpClient> gKeepAliveClient;
+int gKeepAliveDepth = 0;
+// The verified session a KeepAliveScope holds open, with the origin it was
+// negotiated for. One handshake per cover-grid page instead of one per cover:
+// the anchors are the same for every Midad Core request, so only the origin has
+// to match for the session to be reusable.
+std::unique_ptr<VerifiedTlsSession> gKeepAliveVerified;
+std::string gKeepAliveVerifiedOrigin;
+// Below this contiguous block a held session is dropped rather than reused. A
+// kept connection is an optimisation; carrying one through a heap this tight is
+// how a cover grid ends up doing TLS work with nothing left to recover with.
+constexpr uint32_t KEEPALIVE_MIN_CONTIGUOUS_BYTES = 8192;
+
+// Drops any held session. Safe to call when none is held.
+void dropKeepAliveVerified() {
+  gKeepAliveVerified.reset();
+  gKeepAliveVerifiedOrigin.clear();
+}
+#endif
+
 struct Sink {
   std::function<bool(const uint8_t*, size_t)> write;  // returns false to abort the transfer
   HttpDownloader::ProgressCallback progress;
-  bool* cancelFlag = nullptr;
+  const bool* cancelFlag = nullptr;
   size_t total = 0;
   size_t downloaded = 0;
 };
@@ -163,20 +202,54 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
   setLastFailure(HttpDownloader::FailStage::NONE, 0);
   WifiPowerSaveGuard psGuard;
 
+  // One client for the whole request, redirect hops included -- and, inside a
+  // HttpDownloader::KeepAliveScope, for every request the scope spans.
+  // SecureHttpClient keeps its connection open between begin()/GET() pairs to the
+  // same scheme://host:port, so each of those rides the TLS session the first one
+  // negotiated instead of paying another handshake. A per-hop client (what this
+  // used to build) threw that away even for a same-origin redirect, which is the
+  // common shape of a signed cover URL.
+  std::unique_ptr<freeink::SecureHttpClient> owned;
+  freeink::SecureHttpClient* http = gKeepAliveClient.get();
+  if (!http) {
+    owned = makeUniqueNoThrow<freeink::SecureHttpClient>();
+    if (!owned) {
+      LOG_ERR("HTTP", "wolfSSL client alloc failed (free heap: %u bytes)", static_cast<unsigned>(ESP.getFreeHeap()));
+      setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, static_cast<int>(ESP.getFreeHeap()));
+      return HttpDownloader::HTTP_ERROR;
+    }
+    http = owned.get();
+  }
+
+  // Hop 0 gets the same admission check every redirect target gets. A cover or
+  // acquisition href arrives absolute, straight out of the feed (OpdsParser.cpp),
+  // so "https://api.midad.one@evil.example/cover.jpg" can reach here without any
+  // redirect being involved at all.
+  const RedirectVerdict startVerdict = checkRequestUrl(startUrl);
+  if (startVerdict != RedirectVerdict::Follow) {
+    // Deliberately does not log the URL: this is the one case where it may carry
+    // credentials in its authority.
+    LOG_ERR("HTTP", "wolfSSL refusing request URL: %s", describeRedirectVerdict(startVerdict));
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
   std::string url = startUrl;
-  const std::string_view startOrigin = urlOrigin(startUrl);
-  // Unlike runGet(), each hop here builds a fresh SecureHttpClient, so
-  // Authorization isn't "carried over" by a reused handle -- but nothing
-  // stopped it from being unconditionally re-added on every hop regardless of
-  // which host that hop's url now pointed at. Latches permanently once any hop
-  // lands off the original origin, same rule as runGet()'s stripping logic.
-  bool crossOriginSeen = false;
+  // Views startUrl, which outlives this loop -- deliberately not `url`, which is
+  // rewritten on every redirect. See RedirectOriginGuard for the rule itself.
+  RedirectOriginGuard originGuard(startUrl);
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
-    freeink::SecureHttpClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.setInsecure();
-    if (!http.begin(url)) {
+    http->setTimeout(HTTP_TIMEOUT_MS);
+    http->setInsecure();
+    // Redirects are this loop's to follow, never the client's. SecureHttpClient's
+    // own follow loop would move between origins INSIDE one GET() call, where the
+    // origin check below cannot see it and the credentials set for this hop would
+    // still be attached. Zero is its default, but begin() does not reset it and the
+    // client can now outlive a single request, so the invariant is stated per hop
+    // instead of inherited.
+    http->setFollowRedirects(0);
+    if (!http->begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
       setLastFailure(HttpDownloader::FailStage::OPEN, 0);
       return HttpDownloader::HTTP_ERROR;
@@ -184,18 +257,28 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     // setUserAgent replaces SecureHttpClient's built-in UA; addHeader would
     // append a second User-Agent header, which strict servers reject (aiohttp
     // answers 400 "Duplicate 'User-Agent' header found").
-    http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
-    if (!crossOriginSeen && !username.empty() && !password.empty()) {
-      const std::string credentials = username + ":" + password;
-      const String encoded = base64::encode(credentials.c_str());
-      http.addHeader("Authorization", std::string("Basic ") + encoded.c_str());
+    http->setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
+    // setBasicAuth rather than a hand-built Authorization header: the client
+    // formats it straight into the request line buffer, where the manual version
+    // churned a credentials string, an Arduino String from base64::encode, the
+    // "Basic " concatenation and an entry in the header vector -- per hop, per
+    // request, on the heap this path is trying not to fragment.
+    //
+    // Set or CLEARED on every hop, never just omitted: begin() clears _headers but
+    // not _authUser/_authPass (SecureHttpClient.h), so a credential set on an
+    // earlier hop -- or, now that the client can be shared, on an earlier request --
+    // would otherwise still be written into the next request's headers.
+    if (originGuard.credentialsAllowed() && !username.empty() && !password.empty()) {
+      http->setBasicAuth(username, password);
+    } else {
+      http->clearBasicAuth();
     }
 
     LOG_DBG("HTTP", "wolfSSL GET: %s", url.c_str());
-    const int status = http.GET(
-        [&http, &sink](const uint8_t* data, size_t len) {
-          if (http.getStatus() != 200) return true;
-          if (sink.total == 0 && http.hasContentLength()) sink.total = http.getContentLength();
+    const int status = http->GET(
+        [http, &sink](const uint8_t* data, size_t len) {
+          if (http->getStatus() != 200) return true;
+          if (sink.total == 0 && http->hasContentLength()) sink.total = http->getContentLength();
           if (!sink.write(data, len)) return false;
           sink.downloaded += len;
           if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
@@ -203,20 +286,41 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
         },
         [&sink]() { return sink.cancelFlag && *sink.cancelFlag; });
 
-    if (http.aborted()) return HttpDownloader::ABORTED;
+    if (http->aborted()) return HttpDownloader::ABORTED;
     if (status < 0) {
       LOG_ERR("HTTP", "wolfSSL request failed: %s", url.c_str());
       setLastFailure(HttpDownloader::FailStage::OPEN, status);
       return HttpDownloader::HTTP_ERROR;
     }
     if (isRedirect(status)) {
-      const std::string location = http.getHeader("location");
-      if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, url)) {
+      // Every rejection below is a hard stop, never a "follow it anyway without
+      // credentials": a redirect this device refuses to trust is a server that
+      // should not be getting the request either. None of them log the URL --
+      // a rejected Location is exactly the one that may carry credentials.
+      const std::string location = http->getHeader("location");
+      const RedirectVerdict locationVerdict = checkRedirectLocation(location);
+      if (locationVerdict != RedirectVerdict::Follow) {
+        LOG_ERR("HTTP", "wolfSSL refusing redirect (%d): %s", status, describeRedirectVerdict(locationVerdict));
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      // Resolved into its own string, not over `url`: `url` is still needed as the
+      // previous hop for the downgrade check, and nothing should advance to a
+      // target that has not passed it.
+      std::string next;
+      if (!freeink::SecureHttpClient::resolveUrl(url, location, next)) {
         LOG_ERR("HTTP", "wolfSSL bad redirect: %d", status);
         setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
         return HttpDownloader::HTTP_ERROR;
       }
-      if (urlOrigin(url) != startOrigin) crossOriginSeen = true;
+      const RedirectVerdict targetVerdict = checkRedirectTarget(url, next);
+      if (targetVerdict != RedirectVerdict::Follow) {
+        LOG_ERR("HTTP", "wolfSSL refusing redirect (%d): %s", status, describeRedirectVerdict(targetVerdict));
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      url = std::move(next);
+      originGuard.onHop(url);
       continue;
     }
     if (status != 200) {
@@ -224,8 +328,8 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
       setLastFailure(HttpDownloader::FailStage::STATUS, status);
       return HttpDownloader::HTTP_ERROR;
     }
-    if (http.callbackAborted()) return HttpDownloader::FILE_ERROR;
-    if (!http.responseComplete()) {
+    if (http->callbackAborted()) return HttpDownloader::FILE_ERROR;
+    if (!http->responseComplete()) {
       LOG_ERR("HTTP", "wolfSSL incomplete: got %zu of %zu bytes", sink.downloaded, sink.total);
       setLastFailure(HttpDownloader::FailStage::INCOMPLETE,
                      static_cast<int>(std::min<size_t>(sink.downloaded, INT32_MAX)));
@@ -238,6 +342,629 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
   return HttpDownloader::HTTP_ERROR;
 }
 #endif
+
+#if defined(FREEINK_NET_WOLFSSL)
+// --- verified-wolfSSL JSON POST ---------------------------------------------
+//
+// A second POST path, deliberately NOT a variant of runPostJson: it never
+// touches esp_http_client or the ESP-IDF certificate bundle. The chain is
+// checked against the anchors the caller hands in, on wolfSSL, whose ECDSA
+// verification runs through the single-precision P-256/P-384 code
+// (WOLFSSL_HAVE_SP_ECC + WOLFSSL_SP_384) instead of mbedTLS's bignum RSA path.
+//
+// Only what a small JSON exchange needs is implemented: one request, no
+// redirect following (a redirect off the pinned host could not be verified
+// against these anchors anyway, so it is surfaced to the caller as its 3xx
+// status), no connection reuse, no streaming.
+constexpr size_t WOLF_JSON_READ_CHUNK = 512;
+constexpr size_t WOLF_JSON_MAX_RESPONSE = 16384;
+constexpr size_t WOLF_JSON_MAX_LINE = 1024;
+
+// Reads one CRLF-terminated line (CR stripped). False on timeout or a closed
+// connection with nothing pending.
+bool wolfReadLine(VerifiedTlsSession& tls, std::string& line, const uint32_t timeoutMs) {
+  line.clear();
+  uint32_t deadline = millis() + timeoutMs;
+  uint8_t ch = 0;
+  while (static_cast<int32_t>(millis() - deadline) < 0) {
+    const int got = tls.read(&ch, 1);
+    if (got < 0) return false;
+    if (got == 0) {
+      delay(2);
+      continue;
+    }
+    deadline = millis() + timeoutMs;
+    if (ch == '\n') {
+      if (!line.empty() && line.back() == '\r') line.pop_back();
+      return true;
+    }
+    if (line.size() >= WOLF_JSON_MAX_LINE) return false;
+    line += static_cast<char>(ch);
+  }
+  return false;
+}
+
+// Appends exactly `count` bytes to out. False on timeout, close or the cap.
+bool wolfReadFixed(VerifiedTlsSession& tls, const size_t count, std::string& out, uint8_t* buf,
+                   const uint32_t timeoutMs) {
+  size_t remaining = count;
+  uint32_t deadline = millis() + timeoutMs;
+  while (remaining > 0) {
+    const size_t want = remaining < WOLF_JSON_READ_CHUNK ? remaining : WOLF_JSON_READ_CHUNK;
+    const int got = tls.read(buf, want);
+    if (got < 0) return false;
+    if (got == 0) {
+      if (static_cast<int32_t>(millis() - deadline) >= 0) return false;
+      delay(2);
+      continue;
+    }
+    deadline = millis() + timeoutMs;
+    out.append(reinterpret_cast<const char*>(buf), static_cast<size_t>(got));
+    if (out.size() > WOLF_JSON_MAX_RESPONSE) return false;
+    remaining -= static_cast<size_t>(got);
+  }
+  return true;
+}
+
+// Reads until the peer closes: the framing a response with neither
+// Content-Length nor chunked encoding uses.
+bool wolfReadUntilClose(VerifiedTlsSession& tls, std::string& out, uint8_t* buf, const uint32_t timeoutMs) {
+  uint32_t deadline = millis() + timeoutMs;
+  while (true) {
+    const int got = tls.read(buf, WOLF_JSON_READ_CHUNK);
+    if (got < 0) return !tls.connected();  // clean end of stream
+    if (got == 0) {
+      if (static_cast<int32_t>(millis() - deadline) >= 0) return false;
+      delay(2);
+      continue;
+    }
+    deadline = millis() + timeoutMs;
+    out.append(reinterpret_cast<const char*>(buf), static_cast<size_t>(got));
+    if (out.size() > WOLF_JSON_MAX_RESPONSE) return false;
+  }
+}
+
+bool wolfReadChunked(VerifiedTlsSession& tls, std::string& out, uint8_t* buf, const uint32_t timeoutMs) {
+  std::string line;
+  while (true) {
+    if (!wolfReadLine(tls, line, timeoutMs)) return false;
+    const size_t ext = line.find(';');  // chunk extensions are ignored
+    const std::string sizeText = ext == std::string::npos ? line : line.substr(0, ext);
+    char* parseEnd = nullptr;
+    const unsigned long size = strtoul(sizeText.c_str(), &parseEnd, 16);
+    if (parseEnd == sizeText.c_str()) return false;
+    if (size == 0) {
+      while (wolfReadLine(tls, line, timeoutMs) && !line.empty()) {  // drain trailers
+      }
+      return true;
+    }
+    if (!wolfReadFixed(tls, size, out, buf, timeoutMs)) return false;
+    if (!wolfReadLine(tls, line, timeoutMs)) return false;  // chunk's trailing CRLF
+  }
+}
+
+HttpDownloader::DownloadError runPostJsonWolf(const std::string& url, const std::string& jsonBody,
+                                              const char* caAnchorsPem, std::string& outResponse, const int timeoutMs,
+                                              const std::string& username, const std::string& password,
+                                              const char* contentType, const char* method) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
+  outResponse.clear();
+  WifiPowerSaveGuard psGuard;
+
+  HttpUrlParts parts;
+  if (!parseHttpUrl(url, parts)) {
+    LOG_ERR("HTTP", "wolfSSL postJson: unparseable URL");
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  // No plaintext path out of this function: a caller asking for pinned
+  // verification over http:// has asked for something that cannot be delivered.
+  if (!parts.https) {
+    LOG_ERR("HTTP", "wolfSSL postJson refuses a non-https URL");
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  if (!caAnchorsPem || !*caAnchorsPem) {
+    LOG_ERR("HTTP", "wolfSSL postJson called without trust anchors");
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  // One reused read buffer for the whole response; the line reader works a byte
+  // at a time out of wolfSSL's already-decrypted record, so only the body needs it.
+  auto buf = makeUniqueNoThrow<uint8_t[]>(WOLF_JSON_READ_CHUNK);
+  if (!buf) {
+    LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)WOLF_JSON_READ_CHUNK,
+            ESP.getFreeHeap());
+    setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  VerifiedTlsSession tls;
+  if (!tls.connect(parts.host.c_str(), parts.port, caAnchorsPem, static_cast<uint32_t>(timeoutMs))) {
+    setLastFailure(HttpDownloader::FailStage::OPEN, tls.lastError());
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  std::string request;
+  request.reserve(256 + jsonBody.size());
+  request += std::string(method) + " " + parts.path + " HTTP/1.1\r\n";
+  request += "Host: " + parts.host;
+  if (parts.port != 443) request += ":" + std::to_string(parts.port);
+  request += "\r\n";
+  request += "User-Agent: CrossPoint-ESP32-" CROSSPOINT_VERSION "\r\n";
+  request += std::string("Content-Type: ") + (contentType ? contentType : "application/json") + "\r\n";
+  request += "Accept: application/json\r\n";
+  // Same host-gated device identifier every other request carries, so
+  // server-side revocation keeps working on this path too.
+  if (isFouladEbooksUrl(url)) {
+    const std::string serial = FouladDeviceTracking::getSerialNumber();
+    if (!serial.empty()) request += "X-Device-Serial: " + serial + "\r\n";
+  }
+  if (!username.empty() && !password.empty()) {
+    const std::string credentials = username + ":" + password;
+    request += "Authorization: Basic " + std::string(base64::encode(credentials.c_str()).c_str()) + "\r\n";
+  }
+  request += "Content-Length: " + std::to_string(jsonBody.size()) + "\r\n";
+  request += "Connection: close\r\n\r\n";
+  request += jsonBody;
+
+  if (tls.write(reinterpret_cast<const uint8_t*>(request.data()), request.size()) < 0) {
+    LOG_ERR("HTTP", "wolfSSL postJson write failed");
+    setLastFailure(HttpDownloader::FailStage::OPEN, tls.lastError());
+    return HttpDownloader::HTTP_ERROR;
+  }
+  request.clear();
+  request.shrink_to_fit();
+
+  std::string line;
+  if (!wolfReadLine(tls, line, static_cast<uint32_t>(timeoutMs)) || line.size() < 12) {
+    LOG_ERR("HTTP", "wolfSSL postJson: no status line");
+    setLastFailure(HttpDownloader::FailStage::READ, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  const int status = atoi(line.c_str() + 9);  // "HTTP/1.1 201 Created"
+
+  size_t contentLength = 0;
+  bool haveContentLength = false;
+  bool chunked = false;
+  while (wolfReadLine(tls, line, static_cast<uint32_t>(timeoutMs))) {
+    if (line.empty()) break;  // end of headers
+    const size_t colon = line.find(':');
+    if (colon == std::string::npos) continue;
+    std::string name = line.substr(0, colon);
+    std::string value = line.substr(colon + 1);
+    while (!value.empty() && value.front() == ' ') value.erase(value.begin());
+    if (strcasecmp(name.c_str(), "content-length") == 0) {
+      contentLength = static_cast<size_t>(strtoul(value.c_str(), nullptr, 10));
+      haveContentLength = true;
+    } else if (strcasecmp(name.c_str(), "transfer-encoding") == 0) {
+      std::transform(value.begin(), value.end(), value.begin(),
+                     [](unsigned char c) { return static_cast<char>(tolower(c)); });
+      chunked = value.find("chunked") != std::string::npos;
+    }
+  }
+
+  // Any 2xx: /device-login/start answers 201 Created with the pairing payload.
+  if (status < 200 || status > 299) {
+    // Not necessarily worth logging loudly -- a 401 from /device-login/poll is
+    // the documented "this session is gone". Callers read getLastFailure().detail.
+    LOG_DBG("HTTP", "wolfSSL postJson non-2xx status: %d", status);
+    setLastFailure(HttpDownloader::FailStage::STATUS, status);
+    HEAP_TRACE_MARK("HTTP.cleanup", "BEGIN");
+    tls.stop();
+    HEAP_TRACE_MARK("HTTP.cleanup", "END");
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  bool bodyOk;
+  if (chunked)
+    bodyOk = wolfReadChunked(tls, outResponse, buf.get(), static_cast<uint32_t>(timeoutMs));
+  else if (haveContentLength)
+    bodyOk = wolfReadFixed(tls, contentLength, outResponse, buf.get(), static_cast<uint32_t>(timeoutMs));
+  else
+    bodyOk = wolfReadUntilClose(tls, outResponse, buf.get(), static_cast<uint32_t>(timeoutMs));
+
+  HEAP_TRACE_MARK("HTTP.cleanup", "BEGIN");
+  tls.stop();
+  HEAP_TRACE_MARK("HTTP.cleanup", "END");
+
+  if (!bodyOk) {
+    LOG_ERR("HTTP", "wolfSSL postJson body incomplete after %zu bytes", outResponse.size());
+    setLastFailure(HttpDownloader::FailStage::INCOMPLETE,
+                   static_cast<int>(std::min<size_t>(outResponse.size(), INT32_MAX)));
+    return HttpDownloader::HTTP_ERROR;
+  }
+  return HttpDownloader::OK;
+}
+
+// --- Verified GET ---------------------------------------------------------
+//
+// The SDK's SecureHttpClient cannot serve this path. SecureClient::connect()
+// loads a CA when one is set, but never raises WOLFSSL_VERIFY_PEER and never
+// calls wolfSSL_check_domain_name() -- and it exposes no WOLFSSL handle for a
+// caller to add the check on top (VerifiedTlsSession.h states the same). SNI
+// only tells the server which certificate to send; it proves nothing. So every
+// request to a Midad Core host runs here, on a session whose verification
+// cannot be switched off, rather than on setInsecure().
+//
+// Bodies stream straight to the sink. A cover is tens of KB and this device has
+// neither the free heap nor the contiguous block to hold one as a std::string.
+
+bool wolfStreamFixed(VerifiedTlsSession& tls, const size_t count, Sink& sink, uint8_t* buf, const uint32_t timeoutMs) {
+  size_t remaining = count;
+  uint32_t deadline = millis() + timeoutMs;
+  while (remaining > 0) {
+    if (sink.cancelFlag && *sink.cancelFlag) return false;
+    const size_t want = remaining < WOLF_JSON_READ_CHUNK ? remaining : WOLF_JSON_READ_CHUNK;
+    const int got = tls.read(buf, want);
+    if (got < 0) return false;
+    if (got == 0) {
+      if (static_cast<int32_t>(millis() - deadline) >= 0) return false;
+      delay(1);
+      continue;
+    }
+    if (!sink.write(buf, static_cast<size_t>(got))) return false;
+    sink.downloaded += static_cast<size_t>(got);
+    if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+    remaining -= static_cast<size_t>(got);
+    deadline = millis() + timeoutMs;
+  }
+  return true;
+}
+
+bool wolfStreamUntilClose(VerifiedTlsSession& tls, Sink& sink, uint8_t* buf, const uint32_t timeoutMs) {
+  uint32_t deadline = millis() + timeoutMs;
+  for (;;) {
+    if (sink.cancelFlag && *sink.cancelFlag) return false;
+    const int got = tls.read(buf, WOLF_JSON_READ_CHUNK);
+    if (got < 0) return true;  // clean end of stream: the close IS the terminator
+    if (got == 0) {
+      if (!tls.connected()) return true;
+      if (static_cast<int32_t>(millis() - deadline) >= 0) return false;
+      delay(1);
+      continue;
+    }
+    if (!sink.write(buf, static_cast<size_t>(got))) return false;
+    sink.downloaded += static_cast<size_t>(got);
+    if (sink.progress && sink.total > 0) sink.progress(sink.downloaded, sink.total);
+    deadline = millis() + timeoutMs;
+  }
+}
+
+bool wolfStreamChunked(VerifiedTlsSession& tls, Sink& sink, uint8_t* buf, const uint32_t timeoutMs) {
+  std::string line;
+  for (;;) {
+    if (!wolfReadLine(tls, line, timeoutMs)) return false;
+    if (line.empty()) continue;  // trailing CRLF of the previous chunk
+    const size_t size = static_cast<size_t>(strtoul(line.c_str(), nullptr, 16));
+    if (size == 0) return true;  // last chunk; trailers are not read back
+    if (!wolfStreamFixed(tls, size, sink, buf, timeoutMs)) return false;
+    if (!wolfReadLine(tls, line, timeoutMs)) return false;  // chunk terminator
+  }
+}
+
+// --- Ranged download ------------------------------------------------------
+//
+// A whole-file GET fails mid-stream on this device. Measured: a book download died at
+// 49% with wolfSSL MEMORY_E, and the instrumented run showed why -- MaxAlloc was 10,740
+// when the transfer started and 3,444 at its lowest DURING it. The transfer itself
+// erodes the contiguous block, so no amount of freeing beforehand can rescue it, and
+// wolfSSL sizes its receive buffer to whatever record arrives.
+//
+// So the response is bounded at the source instead of hoping the peer negotiates a
+// small record: each request asks for RANGE_CHUNK_BYTES and nothing larger can come
+// back. A 206 and a well-formed Content-Range are REQUIRED -- a server that answers 200
+// would stream the whole body and put us back where we started, so that is a failure
+// here, not a fallback.
+//
+// Bytes land in a temp file and the destination is only created by rename() once the
+// byte count matches the total the server declared. A partial download therefore never
+// appears as a book.
+constexpr size_t RANGE_CHUNK_BYTES = 4096;
+constexpr int RANGE_MAX_CHUNK_RETRIES = 2;
+
+// Parses "bytes <start>-<end>/<total>". Returns false on any shape that is not exactly
+// that, including "*" totals -- an unknown total cannot be validated against.
+bool parseContentRange(const std::string& value, size_t& outStart, size_t& outEnd, size_t& outTotal) {
+  const char* p = value.c_str();
+  while (*p == ' ') p++;
+  if (strncasecmp(p, "bytes", 5) != 0) return false;
+  p += 5;
+  while (*p == ' ') p++;
+  char* end = nullptr;
+  const unsigned long start = strtoul(p, &end, 10);
+  if (end == p || *end != '-') return false;
+  p = end + 1;
+  const unsigned long last = strtoul(p, &end, 10);
+  if (end == p || *end != '/') return false;
+  p = end + 1;
+  if (*p == '*') return false;
+  const unsigned long total = strtoul(p, &end, 10);
+  if (end == p || total == 0 || last < start || last >= total) return false;
+  outStart = start;
+  outEnd = last;
+  outTotal = total;
+  return true;
+}
+
+// rangeHeader, when non-null, is sent as `Range:` and makes a 206 with a well-formed
+// Content-Range MANDATORY -- a 200 means the peer ignored the range and would stream the
+// whole body, which is the exact failure this exists to prevent, so it is refused.
+HttpDownloader::DownloadError runGetVerified(const std::string& startUrl, const std::string& username,
+                                             const std::string& password, Sink& sink, const char* anchorsPem,
+                                             const char* rangeHeader = nullptr, size_t* outRangeStart = nullptr,
+                                             size_t* outRangeEnd = nullptr, size_t* outRangeTotal = nullptr) {
+  setLastFailure(HttpDownloader::FailStage::NONE, 0);
+  WifiPowerSaveGuard psGuard;
+
+  if (!anchorsPem || !*anchorsPem) {
+    LOG_ERR("HTTP", "verified GET called without trust anchors");
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+  // Hop 0 gets the same admission check every redirect target gets: a cover href
+  // arrives absolute out of the feed, so a userinfo authority can reach here with
+  // no redirect involved at all.
+  const RedirectVerdict startVerdict = checkRequestUrl(startUrl);
+  if (startVerdict != RedirectVerdict::Follow) {
+    LOG_ERR("HTTP", "verified GET refusing request URL: %s", describeRedirectVerdict(startVerdict));
+    setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  auto buf = makeUniqueNoThrow<uint8_t[]>(WOLF_JSON_READ_CHUNK);
+  if (!buf) {
+    LOG_ERR("HTTP", "OOM: %u byte read buffer (free heap: %u bytes)", (unsigned)WOLF_JSON_READ_CHUNK,
+            ESP.getFreeHeap());
+    setLastFailure(HttpDownloader::FailStage::BUFFER_OOM, static_cast<int>(ESP.getFreeHeap()));
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  std::string url = startUrl;
+  RedirectOriginGuard originGuard(startUrl);
+  const uint32_t timeoutMs = static_cast<uint32_t>(HTTP_TIMEOUT_MS);
+  // The hop a reused session has already been retried on, so one stale keep-alive
+  // costs one extra handshake and never loops.
+  int retriedHop = -1;
+
+  for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
+    HttpUrlParts parts;
+    if (!parseHttpUrl(url, parts)) {
+      LOG_ERR("HTTP", "verified GET: unparseable URL");
+      setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    // There is no plaintext way out of this function. An https -> http redirect
+    // is refused by checkRedirectTarget below, and a caller asking for pinned
+    // verification over http:// has asked for something undeliverable.
+    if (!parts.https) {
+      LOG_ERR("HTTP", "verified GET refuses a non-https URL");
+      setLastFailure(HttpDownloader::FailStage::OPEN, 0);
+      return HttpDownloader::HTTP_ERROR;
+    }
+
+    const std::string origin = parts.host + ":" + std::to_string(parts.port);
+    const bool keepAlive = gKeepAliveDepth > 0;
+
+    // Reuse the held session only for the same origin. A different origin gets a
+    // fresh handshake -- a TLS session is never carried across origins.
+    VerifiedTlsSession* tls = nullptr;
+    std::unique_ptr<VerifiedTlsSession> owned;
+    bool reusedSession = false;
+    // A held session is reusable only when it is for this exact origin, has
+    // never taken a fatal error, is still connected, AND the heap can still
+    // afford the fresh handshake a failed reuse would need.
+    if (keepAlive && gKeepAliveVerified && gKeepAliveVerifiedOrigin == origin && !gKeepAliveVerified->poisoned() &&
+        gKeepAliveVerified->connected() && ESP.getMaxAllocHeap() >= KEEPALIVE_MIN_CONTIGUOUS_BYTES) {
+      tls = gKeepAliveVerified.get();
+      reusedSession = true;
+    } else {
+      if (keepAlive) dropKeepAliveVerified();
+      owned = makeUniqueNoThrow<VerifiedTlsSession>();
+      if (!owned) {
+        LOG_ERR("HTTP", "verified session alloc failed (free heap: %u bytes)",
+                static_cast<unsigned>(ESP.getFreeHeap()));
+        setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, static_cast<int>(ESP.getFreeHeap()));
+        return HttpDownloader::HTTP_ERROR;
+      }
+      if (!owned->connect(parts.host.c_str(), parts.port, anchorsPem, timeoutMs)) {
+        LOG_ERR("HTTP", "verified handshake failed: %d (free heap: %u bytes)", owned->lastError(),
+                static_cast<unsigned>(ESP.getFreeHeap()));
+        setLastFailure(HttpDownloader::FailStage::OPEN, owned->lastError());
+        return HttpDownloader::HTTP_ERROR;
+      }
+      if (keepAlive) {
+        gKeepAliveVerified = std::move(owned);
+        gKeepAliveVerifiedOrigin = origin;
+        tls = gKeepAliveVerified.get();
+      } else {
+        tls = owned.get();
+      }
+    }
+
+    std::string request;
+    request.reserve(320);
+    request += "GET " + parts.path + " HTTP/1.1\r\n";
+    request += "Host: " + parts.host;
+    if (parts.port != 443) request += ":" + std::to_string(parts.port);
+    request += "\r\n";
+    request += "User-Agent: CrossPoint-ESP32-" CROSSPOINT_VERSION "\r\n";
+    // Credentials follow the same rule as every other path: never written once the
+    // chain has left the origin they were issued for.
+    if (originGuard.credentialsAllowed() && !username.empty() && !password.empty()) {
+      request +=
+          "Authorization: Basic " + std::string(base64::encode((username + ":" + password).c_str()).c_str()) + "\r\n";
+      if (isFouladEbooksUrl(url)) {
+        const std::string serial = FouladDeviceTracking::getSerialNumber();
+        if (!serial.empty()) request += "X-Device-Serial: " + serial + "\r\n";
+      }
+    }
+    if (rangeHeader != nullptr) {
+      request += "Range: ";
+      request += rangeHeader;
+      request += "\r\n";
+    }
+    request += keepAlive ? "Connection: keep-alive\r\n\r\n" : "Connection: close\r\n\r\n";
+
+    if (tls->write(reinterpret_cast<const uint8_t*>(request.data()), request.size()) < 0) {
+      // A held connection the server closed while idle fails here, on a socket
+      // that looked alive. That is not a request failure, so a REUSED session
+      // gets one fresh handshake before the request is given up on. A session
+      // this function opened itself has no such excuse.
+      if (reusedSession && retriedHop != hop) {
+        retriedHop = hop;
+        dropKeepAliveVerified();
+        --hop;
+        continue;
+      }
+      LOG_ERR("HTTP", "verified GET write failed");
+      setLastFailure(HttpDownloader::FailStage::OPEN, tls->lastError());
+      if (keepAlive) dropKeepAliveVerified();
+      return HttpDownloader::HTTP_ERROR;
+    }
+    request.clear();
+    request.shrink_to_fit();
+
+    std::string line;
+    if (!wolfReadLine(*tls, line, timeoutMs) || line.size() < 12) {
+      // Same one-shot retry as the write above: a closed keep-alive connection
+      // most often surfaces here, with the request written into a dead socket
+      // and no status line coming back.
+      if (reusedSession && retriedHop != hop) {
+        retriedHop = hop;
+        dropKeepAliveVerified();
+        --hop;
+        continue;
+      }
+      LOG_ERR("HTTP", "verified GET: no status line");
+      setLastFailure(HttpDownloader::FailStage::READ, 0);
+      if (keepAlive) dropKeepAliveVerified();
+      return HttpDownloader::HTTP_ERROR;
+    }
+    const int status = atoi(line.c_str() + 9);
+
+    std::string location;
+    std::string contentRange;
+    size_t contentLength = 0;
+    bool haveContentLength = false;
+    bool chunked = false;
+    bool serverCloses = false;
+    while (wolfReadLine(*tls, line, timeoutMs)) {
+      if (line.empty()) break;
+      const size_t colon = line.find(':');
+      if (colon == std::string::npos) continue;
+      const std::string name = line.substr(0, colon);
+      std::string value = line.substr(colon + 1);
+      while (!value.empty() && value.front() == ' ') value.erase(value.begin());
+      if (strcasecmp(name.c_str(), "content-length") == 0) {
+        contentLength = static_cast<size_t>(strtoul(value.c_str(), nullptr, 10));
+        haveContentLength = true;
+      } else if (strcasecmp(name.c_str(), "content-range") == 0) {
+        contentRange = value;
+      } else if (strcasecmp(name.c_str(), "location") == 0) {
+        location = value;
+      } else if (strcasecmp(name.c_str(), "transfer-encoding") == 0) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char c) { return static_cast<char>(tolower(c)); });
+        chunked = value.find("chunked") != std::string::npos;
+      } else if (strcasecmp(name.c_str(), "connection") == 0) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char c) { return static_cast<char>(tolower(c)); });
+        serverCloses = value.find("close") != std::string::npos;
+      }
+    }
+
+    if (isRedirect(status)) {
+      if (location.empty()) {
+        LOG_ERR("HTTP", "verified GET: %d with no Location", status);
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      const RedirectVerdict locationVerdict = checkRedirectLocation(location);
+      if (locationVerdict != RedirectVerdict::Follow) {
+        LOG_ERR("HTTP", "verified GET refusing redirect (%d): %s", status, describeRedirectVerdict(locationVerdict));
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      std::string resolved;
+      if (!freeink::SecureHttpClient::resolveUrl(url, location, resolved)) {
+        LOG_ERR("HTTP", "verified GET: bad redirect target (%d)", status);
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      const RedirectVerdict targetVerdict = checkRedirectTarget(url, resolved);
+      if (targetVerdict != RedirectVerdict::Follow) {
+        LOG_ERR("HTTP", "verified GET refusing redirect (%d): %s", status, describeRedirectVerdict(targetVerdict));
+        setLastFailure(HttpDownloader::FailStage::REDIRECT, status);
+        return HttpDownloader::HTTP_ERROR;
+      }
+      // Drain the redirect body so a kept-alive connection stays in sync.
+      if (haveContentLength && contentLength > 0) {
+        Sink discard;
+        discard.write = [](const uint8_t*, size_t) { return true; };
+        wolfStreamFixed(*tls, contentLength, discard, buf.get(), timeoutMs);
+      } else if (chunked) {
+        Sink discard;
+        discard.write = [](const uint8_t*, size_t) { return true; };
+        wolfStreamChunked(*tls, discard, buf.get(), timeoutMs);
+      } else if (keepAlive) {
+        dropKeepAliveVerified();  // body length unknown: the session cannot be reused
+      }
+      url = std::move(resolved);
+      originGuard.onHop(url);
+      continue;
+    }
+
+    if (rangeHeader != nullptr) {
+      if (status != 206) {
+        LOG_ERR("HTTP", "ranged request answered %d, not 206", status);
+        setLastFailure(HttpDownloader::FailStage::STATUS, status);
+        if (keepAlive) dropKeepAliveVerified();
+        return HttpDownloader::HTTP_ERROR;
+      }
+      size_t rs = 0, re = 0, rt = 0;
+      if (!parseContentRange(contentRange, rs, re, rt)) {
+        LOG_ERR("HTTP", "ranged request: unusable Content-Range");
+        setLastFailure(HttpDownloader::FailStage::STATUS, status);
+        if (keepAlive) dropKeepAliveVerified();
+        return HttpDownloader::HTTP_ERROR;
+      }
+      if (outRangeStart) *outRangeStart = rs;
+      if (outRangeEnd) *outRangeEnd = re;
+      if (outRangeTotal) *outRangeTotal = rt;
+    } else if (status != 200) {
+      LOG_DBG("HTTP", "verified GET non-200 status: %d", status);
+      setLastFailure(HttpDownloader::FailStage::STATUS, status);
+      if (keepAlive && !haveContentLength && !chunked) dropKeepAliveVerified();
+      return HttpDownloader::HTTP_ERROR;
+    }
+
+    if (haveContentLength) sink.total = contentLength;
+    bool ok;
+    if (chunked) {
+      ok = wolfStreamChunked(*tls, sink, buf.get(), timeoutMs);
+    } else if (haveContentLength) {
+      ok = wolfStreamFixed(*tls, contentLength, sink, buf.get(), timeoutMs);
+    } else {
+      ok = wolfStreamUntilClose(*tls, sink, buf.get(), timeoutMs);
+      serverCloses = true;
+    }
+    if (!ok) {
+      setLastFailure(HttpDownloader::FailStage::READ, 0);
+      if (keepAlive) dropKeepAliveVerified();
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (keepAlive && serverCloses) dropKeepAliveVerified();
+    return HttpDownloader::OK;
+  }
+
+  LOG_ERR("HTTP", "verified GET: too many redirects");
+  setLastFailure(HttpDownloader::FailStage::REDIRECT, MAX_REDIRECTS);
+  return HttpDownloader::HTTP_ERROR;
+}
+
+#endif  // FREEINK_NET_WOLFSSL
 
 // Streams a GET body through sink.write in READ_CHUNK pieces. Uses the manual
 // open/fetch_headers/read path rather than esp_http_client_perform(): perform()
@@ -303,14 +1030,20 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // servers over plain http (esp_http_client picks the transport from the URL
   // scheme, so http:// needs no cert config). The prior setInsecure() worked
   // only because Arduino's ssl_client drives mbedtls directly.
+  // TEMP diagnostic: see the matching note in runPostJson -- the bundle is parsed
+  // inside the handshake, not here.
+  HEAP_TRACE_MARK("HTTP.bundleAttach", "BEGIN");
   config.crt_bundle_attach = esp_crt_bundle_attach;
+  HEAP_TRACE_MARK("HTTP.bundleAttach", "END");
   config.keep_alive_enable = true;
   if (conditional) {
     config.event_handler = captureResponseEtag;
     config.user_data = conditional;
   }
 
+  HEAP_TRACE_MARK("HTTP.clientInit", "BEGIN");
   esp_http_client_handle_t client = esp_http_client_init(&config);
+  HEAP_TRACE_MARK("HTTP.clientInit", "END");
   if (!client) {
     LOG_ERR("HTTP", "client init failed");
     setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
@@ -334,7 +1067,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   // open()/read() does not auto-follow redirects (only perform() does), so step
   // 30x responses manually. OPDS download endpoints and the GitHub release CDN
   // both redirect.
+  HEAP_TRACE_MARK("TLS.handshake", "BEGIN");
   esp_err_t err = esp_http_client_open(client, 0);
+  HEAP_TRACE_MARK("TLS.handshake", err == ESP_OK ? "END-OK" : "END-FAIL");
   if (err != ESP_OK) {
     // ESP_ERR_HTTP_CONNECT alone doesn't say whether this was heap pressure, DNS
     // failure, TCP-level rejection/timeout, or a TLS handshake problem, so also
@@ -344,8 +1079,11 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     LOG_ERR("HTTP", "open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err), getHttpClientErrno(client),
             ESP.getFreeHeap());
     logTlsError(client);
+    HEAP_TRACE_REPORT_FAILURE("get open");
     setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
+    HEAP_TRACE_MARK("HTTP.cleanup", "BEGIN");
     esp_http_client_cleanup(client);
+    HEAP_TRACE_MARK("HTTP.cleanup", "END");
     return HttpDownloader::HTTP_ERROR;
   }
   int64_t contentLength = esp_http_client_fetch_headers(client);
@@ -403,13 +1141,18 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
     }
 
     esp_http_client_close(client);
+    HEAP_TRACE_MARK("TLS.handshake.redirect", "BEGIN");
     err = esp_http_client_open(client, 0);
+    HEAP_TRACE_MARK("TLS.handshake.redirect", err == ESP_OK ? "END-OK" : "END-FAIL");
     if (err != ESP_OK) {
       LOG_ERR("HTTP", "redirect open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
               getHttpClientErrno(client), ESP.getFreeHeap());
       logTlsError(client);
+      HEAP_TRACE_REPORT_FAILURE("redirect open");
       setLastFailure(HttpDownloader::FailStage::REDIRECT, static_cast<int>(err));
+      HEAP_TRACE_MARK("HTTP.cleanup", "BEGIN");
       esp_http_client_cleanup(client);
+      HEAP_TRACE_MARK("HTTP.cleanup", "END");
       return HttpDownloader::HTTP_ERROR;
     }
     contentLength = esp_http_client_fetch_headers(client);
@@ -550,10 +1293,16 @@ HttpDownloader::DownloadError runPostFile(const std::string& url,
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
   config.timeout_ms = timeoutMs;
+  // TEMP diagnostic: assigning the hook costs nothing; esp-tls parses the bundle
+  // inside the handshake, so the cost shows up under TLS.handshake, not here.
+  HEAP_TRACE_MARK("HTTP.bundleAttach", "BEGIN");
   config.crt_bundle_attach = esp_crt_bundle_attach;
+  HEAP_TRACE_MARK("HTTP.bundleAttach", "END");
   config.keep_alive_enable = true;
 
+  HEAP_TRACE_MARK("HTTP.clientInit", "BEGIN");
   esp_http_client_handle_t client = esp_http_client_init(&config);
+  HEAP_TRACE_MARK("HTTP.clientInit", "END");
   if (!client) {
     LOG_ERR("HTTP", "client init failed");
     setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
@@ -791,10 +1540,16 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
   config.timeout_ms = timeoutMs;
+  // TEMP diagnostic: assigning the hook costs nothing; esp-tls parses the bundle
+  // inside the handshake, so the cost shows up under TLS.handshake, not here.
+  HEAP_TRACE_MARK("HTTP.bundleAttach", "BEGIN");
   config.crt_bundle_attach = esp_crt_bundle_attach;
+  HEAP_TRACE_MARK("HTTP.bundleAttach", "END");
   config.keep_alive_enable = true;
 
+  HEAP_TRACE_MARK("HTTP.clientInit", "BEGIN");
   esp_http_client_handle_t client = esp_http_client_init(&config);
+  HEAP_TRACE_MARK("HTTP.clientInit", "END");
   if (!client) {
     LOG_ERR("HTTP", "client init failed");
     setLastFailure(HttpDownloader::FailStage::CLIENT_INIT, 0);
@@ -811,13 +1566,23 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
     esp_http_client_set_header(client, "Authorization", header.c_str());
   }
 
+  // TEMP diagnostic: esp_http_client_open() is where the TCP connect, the CA
+  // bundle parse and the whole TLS handshake happen. Bracketed BEFORE and AFTER
+  // deliberately -- a heap reading taken after esp_http_client_cleanup() describes
+  // a heap that has already been handed the evidence back, which is exactly what
+  // made an out-of-memory look like a trust failure.
+  HEAP_TRACE_MARK("TLS.handshake", "BEGIN");
   esp_err_t err = esp_http_client_open(client, static_cast<int>(jsonBody.size()));
+  HEAP_TRACE_MARK("TLS.handshake", err == ESP_OK ? "END-OK" : "END-FAIL");
   if (err != ESP_OK) {
     LOG_ERR("HTTP", "postJson open failed: %s (errno=%d, free heap: %u bytes)", esp_err_to_name(err),
             getHttpClientErrno(client), ESP.getFreeHeap());
     logTlsError(client);
+    HEAP_TRACE_REPORT_FAILURE("postJson open");
     setLastFailure(HttpDownloader::FailStage::OPEN, static_cast<int>(err));
+    HEAP_TRACE_MARK("HTTP.cleanup", "BEGIN");
     esp_http_client_cleanup(client);
+    HEAP_TRACE_MARK("HTTP.cleanup", "END");
     return HttpDownloader::HTTP_ERROR;
   }
 
@@ -878,7 +1643,9 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
     }
   }
 
+  HEAP_TRACE_MARK("HTTP.cleanup", "BEGIN");
   esp_http_client_cleanup(client);
+  HEAP_TRACE_MARK("HTTP.cleanup", "END");
   return HttpDownloader::OK;
 }
 
@@ -886,9 +1653,118 @@ HttpDownloader::DownloadError runPostJson(const std::string& url, const std::str
 // speaks TLS 1.3 and reads large bodies from servers where the esp_http_client/
 // mbedTLS path fails to connect or stalls mid-stream. Plain-http URLs still use a
 // WiFiClient inside runGetWolf, so this is safe for non-TLS targets too.
+// Downloads `url` to `destPath` in RANGE_CHUNK_BYTES pieces over one verified session.
+// Every response is bounded by the range we asked for, so no single TLS record can grow
+// past it. Returns OK only after the written byte count matches the server's declared
+// total and the temp file has been renamed into place.
+HttpDownloader::DownloadError runDownloadRangedVerified(const std::string& url, const std::string& username,
+                                                        const std::string& password, const std::string& destPath,
+                                                        const HttpDownloader::ProgressCallback& progress,
+                                                        const bool* cancelFlag, const char* anchorsPem) {
+  const std::string tmpPath = destPath + ".part";
+  Storage.remove(tmpPath.c_str());
+
+  // One chunk staged in RAM, then appended only once the slice has been validated. The
+  // file therefore never holds bytes from a failed attempt, which matters because
+  // HalStorage has no truncate() to roll one back.
+  auto chunk = makeUniqueNoThrow<uint8_t[]>(RANGE_CHUNK_BYTES);
+  if (!chunk) {
+    LOG_ERR("HTTP", "ranged: OOM staging %u bytes", static_cast<unsigned>(RANGE_CHUNK_BYTES));
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  // One scope for the whole file: every chunk rides the session the first one opened,
+  // otherwise a 450KB book would pay ~110 handshakes.
+  const HttpDownloader::KeepAliveScope rangeSession;
+
+  size_t offset = 0;
+  size_t total = 0;
+  bool haveTotal = false;
+  uint32_t minMaxAlloc = ESP.getMaxAllocHeap();
+
+  while (!haveTotal || offset < total) {
+    if (cancelFlag && *cancelFlag) {
+      Storage.remove(tmpPath.c_str());
+      return HttpDownloader::ABORTED;
+    }
+
+    char rangeHeader[64];
+    snprintf(rangeHeader, sizeof(rangeHeader), "bytes=%u-%u", static_cast<unsigned>(offset),
+             static_cast<unsigned>(offset + RANGE_CHUNK_BYTES - 1));
+
+    size_t staged = 0;
+    size_t cStart = 0, cEnd = 0, cTotal = 0;
+    HttpDownloader::DownloadError r = HttpDownloader::HTTP_ERROR;
+
+    for (int attempt = 0; attempt <= RANGE_MAX_CHUNK_RETRIES; ++attempt) {
+      staged = 0;
+      Sink sink;
+      sink.write = [&chunk, &staged](const uint8_t* data, const size_t len) {
+        if (staged + len > RANGE_CHUNK_BYTES) return false;  // more than we asked for
+        memcpy(chunk.get() + staged, data, len);
+        staged += len;
+        return true;
+      };
+      r = runGetVerified(url, username, password, sink, anchorsPem, rangeHeader, &cStart, &cEnd, &cTotal);
+      if (r == HttpDownloader::OK) break;
+    }
+
+    if (r != HttpDownloader::OK) {
+      LOG_ERR("HTTP", "ranged: chunk at %u failed after retries", static_cast<unsigned>(offset));
+      Storage.remove(tmpPath.c_str());
+      return r;
+    }
+    if (cStart != offset || staged != cEnd - cStart + 1) {
+      LOG_ERR("HTTP", "ranged: wrong slice (want %u, got %u..%u, %u bytes)", static_cast<unsigned>(offset),
+              static_cast<unsigned>(cStart), static_cast<unsigned>(cEnd), static_cast<unsigned>(staged));
+      Storage.remove(tmpPath.c_str());
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (haveTotal && cTotal != total) {
+      LOG_ERR("HTTP", "ranged: total changed mid-download");
+      Storage.remove(tmpPath.c_str());
+      return HttpDownloader::HTTP_ERROR;
+    }
+    total = cTotal;
+    haveTotal = true;
+
+    HalFile out = Storage.open(tmpPath.c_str(), O_WRITE | O_CREAT | O_APPEND);
+    if (!out || out.write(chunk.get(), staged) != staged) {
+      LOG_ERR("HTTP", "ranged: temp write failed at %u", static_cast<unsigned>(offset));
+      Storage.remove(tmpPath.c_str());
+      return HttpDownloader::FILE_ERROR;
+    }
+    out.close();
+
+    offset += staged;
+    const uint32_t nowMaxAlloc = ESP.getMaxAllocHeap();
+    if (nowMaxAlloc < minMaxAlloc) minMaxAlloc = nowMaxAlloc;
+    if (progress) progress(offset, total);
+  }
+
+  // Only now does the destination exist. Anything short never gets the name.
+  Storage.remove(destPath.c_str());
+  if (!Storage.rename(tmpPath.c_str(), destPath.c_str())) {
+    LOG_ERR("HTTP", "ranged: rename failed");
+    Storage.remove(tmpPath.c_str());
+    return HttpDownloader::FILE_ERROR;
+  }
+  LOG_INF("HTTP", "ranged ok: %u bytes / %u chunks, minMaxAllocDuring=%u", static_cast<unsigned>(total),
+          static_cast<unsigned>((total + RANGE_CHUNK_BYTES - 1) / RANGE_CHUNK_BYTES),
+          static_cast<unsigned>(minMaxAlloc));
+  return HttpDownloader::OK;
+}
+
 HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::string& username,
                                            const std::string& password, Sink& sink) {
 #if defined(FREEINK_NET_WOLFSSL)
+  // Every Midad Core request -- feed, cover, download -- runs verified, anchored
+  // at GTS Root R4. Host-gated, not path-gated: covers live outside /opds
+  // (/library/items/:id/cover, /store/books/:id/cover) and must not fall through
+  // to the unverified path because of their path prefix.
+  if (isFouladEbooksUrl(url)) {
+    return runGetVerified(url, username, password, sink, core_ca::kMidadCoreCaGtsRootR4);
+  }
   return runGetWolf(url, username, password, sink);
 #else
   return runGet(url, username, password, sink);
@@ -897,6 +1773,29 @@ HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::st
 }  // namespace
 
 HttpDownloader::LastFailure HttpDownloader::getLastFailure() { return gLastFailure; }
+
+HttpDownloader::KeepAliveScope::KeepAliveScope() {
+#if defined(FREEINK_NET_WOLFSSL)
+  if (gKeepAliveDepth++ > 0) return;  // an inner scope rides the outer one's client
+  gKeepAliveVerifiedOrigin.clear();
+  gKeepAliveClient = makeUniqueNoThrow<freeink::SecureHttpClient>();
+  if (!gKeepAliveClient) {
+    // Not an error the caller has to handle: with no shared client every request
+    // falls back to building its own, i.e. connection-per-request as before.
+    LOG_ERR("HTTP", "keep-alive client alloc failed, falling back (free heap: %u bytes)",
+            static_cast<unsigned>(ESP.getFreeHeap()));
+  }
+#endif
+}
+
+HttpDownloader::KeepAliveScope::~KeepAliveScope() {
+#if defined(FREEINK_NET_WOLFSSL)
+  if (--gKeepAliveDepth > 0) return;
+  gKeepAliveClient.reset();  // closes the socket and frees the TLS session
+  gKeepAliveVerified.reset();
+  gKeepAliveVerifiedOrigin.clear();
+#endif
+}
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
                               const std::string& password) {
@@ -924,6 +1823,22 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
   Sink sink;
   sink.write = onData;
   return runGetSecure(url, username, password, sink) == OK;
+}
+
+bool HttpDownloader::fetchUrlPinned(const std::string& url, const DataCallback& onData, const char* anchorsPem) {
+#if defined(FREEINK_NET_WOLFSSL)
+  Sink sink;
+  sink.write = onData;
+  // runGetVerified refuses a non-https URL and every non-https redirect target
+  // itself, and never forwards credentials once the chain leaves its start origin.
+  return runGetVerified(url, "", "", sink, anchorsPem) == OK;
+#else
+  (void)url;
+  (void)onData;
+  (void)anchorsPem;
+  LOG_ERR("HTTP", "pinned fetch needs the wolfSSL stack");
+  return false;
+#endif
 }
 
 bool HttpDownloader::fetchUrlVerified(const std::string& url, const DataCallback& onData, const std::string& username,
@@ -957,9 +1872,28 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 }
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
-                                                             ProgressCallback progress, bool* cancelFlag,
+                                                             ProgressCallback progress, const bool* cancelFlag,
                                                              const std::string& username, const std::string& password) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
+
+#if defined(FREEINK_NET_WOLFSSL)
+  // Midad Core downloads go out in bounded ranges. A whole-file GET died at 49% with
+  // MEMORY_E because the transfer itself erodes the contiguous block (MaxAlloc 10,740 at
+  // the start, 3,444 at its lowest during), and wolfSSL sizes its receive buffer to
+  // whatever record arrives -- so the response is capped at the request instead.
+  // Third-party hosts keep the streaming path: they are not guaranteed to honour Range,
+  // and a 200 there is normal rather than a failure.
+  // Book acquisitions only. Core's cover route serves the object body with a plain 200
+  // and implements no Range at all, so sending one there makes every cover fail the
+  // mandatory-206 check -- measured as 18 refusals and 6 lost covers. Covers are ~4KB
+  // and were never the problem: a single response that size cannot produce the oversized
+  // record this exists to prevent.
+  const bool isCoverUrl = url.find("/cover") != std::string::npos;
+  if (isFouladEbooksUrl(url) && !isCoverUrl) {
+    return runDownloadRangedVerified(url, username, password, destPath, progress, cancelFlag,
+                                     core_ca::kMidadCoreCaGtsRootR4);
+  }
+#endif
 
   if (Storage.exists(destPath.c_str())) {
     Storage.remove(destPath.c_str());
@@ -1016,6 +1950,50 @@ HttpDownloader::DownloadError HttpDownloader::postJson(const std::string& url, c
                                                        std::string& outResponse, int timeoutMs) {
   LOG_DBG("HTTP", "Posting JSON: %s", url.c_str());
   return runPostJson(url, jsonBody, username, password, outResponse, timeoutMs);
+}
+
+HttpDownloader::DownloadError HttpDownloader::postJsonWolf(const std::string& url, const std::string& jsonBody,
+                                                           const char* caAnchorsPem, std::string& outResponse,
+                                                           int timeoutMs, const std::string& username,
+                                                           const std::string& password, const char* contentType) {
+#if defined(FREEINK_NET_WOLFSSL)
+  LOG_DBG("HTTP", "Posting (wolfSSL, pinned anchors): %s", url.c_str());
+  return runPostJsonWolf(url, jsonBody, caAnchorsPem, outResponse, timeoutMs, username, password, contentType, "POST");
+#else
+  // Fail closed. Falling back to the bundle path would silently answer a
+  // request for these anchors with a different trust decision.
+  (void)jsonBody;
+  (void)caAnchorsPem;
+  (void)timeoutMs;
+  (void)username;
+  (void)password;
+  (void)contentType;
+  outResponse.clear();
+  LOG_ERR("HTTP", "wolfSSL transport not built in; refusing pinned POST: %s", url.c_str());
+  return HTTP_ERROR;
+#endif
+}
+
+HttpDownloader::DownloadError HttpDownloader::putJsonWolf(const std::string& url, const std::string& jsonBody,
+                                                          const char* caAnchorsPem, std::string& outResponse,
+                                                          int timeoutMs, const std::string& username,
+                                                          const std::string& password, const char* contentType) {
+#if defined(FREEINK_NET_WOLFSSL)
+  LOG_DBG("HTTP", "PUT (wolfSSL, pinned anchors): %s", url.c_str());
+  return runPostJsonWolf(url, jsonBody, caAnchorsPem, outResponse, timeoutMs, username, password, contentType, "PUT");
+#else
+  // Fail closed. Falling back to the bundle path would silently answer a
+  // request for these anchors with a different trust decision.
+  (void)jsonBody;
+  (void)caAnchorsPem;
+  (void)timeoutMs;
+  (void)username;
+  (void)password;
+  (void)contentType;
+  outResponse.clear();
+  LOG_ERR("HTTP", "wolfSSL transport not built in; refusing pinned POST: %s", url.c_str());
+  return HTTP_ERROR;
+#endif
 }
 
 HttpDownloader::DownloadError HttpDownloader::deleteRequest(const std::string& url, const std::string& username,

@@ -11,7 +11,7 @@
  * This one is PER ACCOUNT and answers "where am I in this book". They do not share
  * a row, and both are sent on close.
  *
- * The shared currency is progress_percent. A page number computed for a 5-inch
+ * Reported to Core's resume contract (B1). The shared currency is progressPercent. A page number computed for a 5-inch
  * e-ink panel is not something a phone paginating with epub.js can act on, so page
  * and totalPages travel for display only and never drive a jump.
  */
@@ -62,9 +62,13 @@ struct Position {
 // from a real timestamp and the device never needs to know the date. If both are sent
 // the age wins, which is why an unset RTC's 1970 alongside a good age does no harm.
 // 0 omits it, and omitting is now correct rather than a silent fallback (spec 4.2).
+// bookPath: the EPUB on SD. Core's contract requires contentSha256 -- the whole
+// file's hash -- so a position is bound to the exact bytes it was taken against.
+// FouladContentHash caches it per book, so this costs one read pass per book, not
+// one per call.
 bool sync(const std::string& username, const std::string& password, const std::string& fouladBookId,
-          float progressPercent, int page, int totalPages, uint32_t readAtEpochSeconds, uint32_t readAtAgeSeconds,
-          Position& out);
+          const std::string& bookPath, float progressPercent, int page, int totalPages, uint32_t readAtEpochSeconds,
+          uint32_t readAtAgeSeconds, Position& out);
 
 // Looks without reporting.
 //
@@ -72,6 +76,7 @@ bool sync(const std::string& username, const std::string& password, const std::s
 // Posting page 1 there would drag the account back to the start of a book somebody
 // is halfway through on their phone -- the one way this feature can actively make
 // things worse.
-bool fetch(const std::string& username, const std::string& password, const std::string& fouladBookId, Position& out);
+bool fetch(const std::string& username, const std::string& password, const std::string& fouladBookId,
+           const std::string& bookPath, Position& out);
 
 }  // namespace FouladReadingPosition

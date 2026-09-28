@@ -1010,7 +1010,7 @@ bool startsWithAsciiPrefix(const std::string& text, const std::string& prefix) {
   return text.size() >= prefix.size() && compareWords(text.substr(0, prefix.size()), prefix) == 0;
 }
 
-bool isSpanishLanguage(const DictionaryEntry& entry) {
+bool isSpanishLanguage(const StarDictEntry& entry) {
   const std::string id = foldLatinUtf8ToAscii(entry.languageId);
   const std::string lang = foldLatinUtf8ToAscii(entry.lang);
   return id == "spanish" || id == "es" || id == "espanol" || startsWithAsciiPrefix(lang, "es");
@@ -1125,14 +1125,14 @@ bool DictionaryStore::saveConfig() const {
 }
 
 void DictionaryStore::clearActiveOnlyEntry() {
-  activeOnlyEntry = DictionaryEntry{};
+  activeOnlyEntry = StarDictEntry{};
   activeOnlyLoaded = false;
 }
 
-bool DictionaryStore::loadEntryFromIfoPath(const std::string& ifoPath, DictionaryEntry& entry) const {
+bool DictionaryStore::loadEntryFromIfoPath(const std::string& ifoPath, StarDictEntry& entry) const {
   if (!hasExtension(ifoPath, ".ifo") || !Storage.exists(ifoPath.c_str())) return false;
 
-  entry = DictionaryEntry{};
+  entry = StarDictEntry{};
   entry.ifoPath = ifoPath;
   entry.directoryPath = parentDirectory(ifoPath);
   entry.languageId = limitMetadataText(pathBaseName(entry.directoryPath), 48);
@@ -1200,14 +1200,14 @@ bool DictionaryStore::loadEntryFromIfoPath(const std::string& ifoPath, Dictionar
 void DictionaryStore::scan() {
   if (!configLoaded) loadConfig();
   clearActiveOnlyEntry();
-  std::vector<DictionaryEntry>().swap(entries);
+  std::vector<StarDictEntry>().swap(entries);
   activeIndex = -1;
   scanned = true;
 
   bool scanLimitReached = false;
   auto containsIfo = [this](const std::string& ifoPath) {
     return std::find_if(entries.begin(), entries.end(),
-                        [&ifoPath](const DictionaryEntry& entry) { return entry.ifoPath == ifoPath; }) != entries.end();
+                        [&ifoPath](const StarDictEntry& entry) { return entry.ifoPath == ifoPath; }) != entries.end();
   };
 
   auto ensureEntryCapacity = [this](const size_t desiredSize) {
@@ -1215,7 +1215,7 @@ void DictionaryStore::scan() {
     size_t nextCapacity = entries.capacity() == 0 ? 8 : entries.capacity() * 2;
     nextCapacity = std::min<size_t>(nextCapacity, MAX_SCAN_ENTRIES);
     nextCapacity = std::max(nextCapacity, desiredSize);
-    const size_t bytes = nextCapacity * sizeof(DictionaryEntry);
+    const size_t bytes = nextCapacity * sizeof(StarDictEntry);
     if (!hasHeapHeadroom(bytes, HEAP_SCAN_GUARD_BYTES)) {
       LOG_INF("DICT", "Skipping remaining dictionaries: heap too low for list growth free=%u largest=%u need=%u",
               ESP.getFreeHeap(), largestFreeBlock(), static_cast<unsigned>(bytes));
@@ -1225,7 +1225,7 @@ void DictionaryStore::scan() {
     return true;
   };
 
-  auto appendEntry = [&](DictionaryEntry&& entry) {
+  auto appendEntry = [&](StarDictEntry&& entry) {
     if (entries.size() >= MAX_SCAN_ENTRIES) {
       scanLimitReached = true;
       return false;
@@ -1239,7 +1239,7 @@ void DictionaryStore::scan() {
   };
 
   if (!activeIfoPath.empty()) {
-    DictionaryEntry activeEntry;
+    StarDictEntry activeEntry;
     if (loadEntryFromIfoPath(activeIfoPath, activeEntry)) {
       appendEntry(std::move(activeEntry));
     }
@@ -1279,7 +1279,7 @@ void DictionaryStore::scan() {
       const std::string ifoName = fileName;
       if (!hasExtension(ifoName, ".ifo")) continue;
 
-      DictionaryEntry entry;
+      StarDictEntry entry;
       const std::string ifoPath = joinPath(dirPath, ifoName);
       if (containsIfo(ifoPath) || !loadEntryFromIfoPath(ifoPath, entry)) continue;
       entry.languageId = limitMetadataText(languageId, 48);
@@ -1290,7 +1290,7 @@ void DictionaryStore::scan() {
   }
   root.close();
 
-  std::sort(entries.begin(), entries.end(), [](const DictionaryEntry& a, const DictionaryEntry& b) {
+  std::sort(entries.begin(), entries.end(), [](const StarDictEntry& a, const StarDictEntry& b) {
     if (a.languageId != b.languageId) return a.languageId < b.languageId;
     return a.name < b.name;
   });
@@ -1329,7 +1329,7 @@ void DictionaryStore::clearActiveIfMatches(const std::string& ifoPath) {
 }
 
 std::string DictionaryStore::getActiveLabel() const {
-  const DictionaryEntry* entry = activeEntry();
+  const StarDictEntry* entry = activeEntry();
   if (!entry) return "";
   return entry->languageId + " - " + entry->name;
 }
@@ -1380,13 +1380,13 @@ bool DictionaryStore::ensureActiveEntryLoaded() {
   return activeEntry() != nullptr;
 }
 
-DictionaryEntry* DictionaryStore::activeEntry() {
+StarDictEntry* DictionaryStore::activeEntry() {
   if (activeIndex >= 0 && activeIndex < static_cast<int>(entries.size())) return &entries[activeIndex];
   if (activeOnlyLoaded) return &activeOnlyEntry;
   return nullptr;
 }
 
-const DictionaryEntry* DictionaryStore::activeEntry() const {
+const StarDictEntry* DictionaryStore::activeEntry() const {
   if (activeIndex >= 0 && activeIndex < static_cast<int>(entries.size())) return &entries[activeIndex];
   if (activeOnlyLoaded) return &activeOnlyEntry;
   return nullptr;
@@ -1394,12 +1394,12 @@ const DictionaryEntry* DictionaryStore::activeEntry() const {
 
 bool DictionaryStore::prepareActive(const std::function<void(int percent)>& onProgress) {
   ensureActiveEntryLoaded();
-  DictionaryEntry* entry = activeEntry();
+  StarDictEntry* entry = activeEntry();
   if (!entry) return false;
   return ensurePrepared(*entry, onProgress);
 }
 
-bool DictionaryStore::loadCheckpointCache(DictionaryEntry& entry) {
+bool DictionaryStore::loadCheckpointCache(StarDictEntry& entry) {
   entry.checkpoints.clear();
   entry.ordinals.clear();
   entry.totalWords = 0;
@@ -1450,7 +1450,7 @@ bool DictionaryStore::loadCheckpointCache(DictionaryEntry& entry) {
   return entry.checkpoints.size() == entry.ordinals.size();
 }
 
-bool DictionaryStore::saveCheckpointCache(const DictionaryEntry& entry) const {
+bool DictionaryStore::saveCheckpointCache(const StarDictEntry& entry) const {
   if (entry.checkpoints.empty() || entry.checkpoints.size() != entry.ordinals.size()) return false;
   const std::string tempPath = entry.cachePath + ".tmp";
   Storage.remove(tempPath.c_str());
@@ -1497,7 +1497,7 @@ bool DictionaryStore::saveCheckpointCache(const DictionaryEntry& entry) const {
   return true;
 }
 
-bool DictionaryStore::ensurePrepared(DictionaryEntry& entry, const std::function<void(int percent)>& onProgress) {
+bool DictionaryStore::ensurePrepared(StarDictEntry& entry, const std::function<void(int percent)>& onProgress) {
   // compressed is NOT a rejection here: index preparation only reads entry.idxPath
   // (always plain), never entry.dictPath -- readDefinition() is what handles .dz.
   if (entry.missingFiles || entry.unsupportedFormat) return false;
@@ -1625,7 +1625,7 @@ bool DictionaryStore::ensurePrepared(DictionaryEntry& entry, const std::function
   return true;
 }
 
-bool DictionaryStore::findIndexHit(const DictionaryEntry& entry, const std::string& word, IndexHit& hit) const {
+bool DictionaryStore::findIndexHit(const StarDictEntry& entry, const std::string& word, IndexHit& hit) const {
   if (entry.checkpoints.empty()) return false;
 
   HalFile idx;
@@ -1676,7 +1676,7 @@ bool DictionaryStore::findIndexHit(const DictionaryEntry& entry, const std::stri
   return false;
 }
 
-std::string DictionaryStore::headwordAtOrdinal(const DictionaryEntry& entry, uint32_t ordinal) const {
+std::string DictionaryStore::headwordAtOrdinal(const StarDictEntry& entry, uint32_t ordinal) const {
   if (entry.checkpoints.empty() || entry.checkpoints.size() != entry.ordinals.size()) return "";
   size_t lo = 0;
   size_t hi = entry.ordinals.size();
@@ -1711,8 +1711,7 @@ std::string DictionaryStore::headwordAtOrdinal(const DictionaryEntry& entry, uin
   return headword;
 }
 
-bool DictionaryStore::lookupSynonym(const DictionaryEntry& entry, const std::string& word,
-                                    std::string& canonical) const {
+bool DictionaryStore::lookupSynonym(const StarDictEntry& entry, const std::string& word, std::string& canonical) const {
   if (entry.synPath.empty()) return false;
   HalFile syn;
   if (!Storage.openFileForRead("DICT", entry.synPath, syn)) return false;
@@ -1785,7 +1784,7 @@ linearSyn:
   return !canonical.empty();
 }
 
-std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const IndexHit& hit, bool& truncated,
+std::string DictionaryStore::readDefinition(const StarDictEntry& entry, const IndexHit& hit, bool& truncated,
                                             DictionaryLookupResult::Status* outFailureStatus) const {
   const auto fail = [&](DictionaryLookupResult::Status status) {
     if (outFailureStatus) *outFailureStatus = status;
@@ -1885,8 +1884,7 @@ std::string DictionaryStore::readDefinition(const DictionaryEntry& entry, const 
   return stripHtmlAndEntities(decoded);
 }
 
-std::vector<std::string> DictionaryStore::getFallbackForms(const DictionaryEntry& entry,
-                                                           const std::string& word) const {
+std::vector<std::string> DictionaryStore::getFallbackForms(const StarDictEntry& entry, const std::string& word) const {
   std::vector<std::string> forms;
   const std::string lower = lowercaseLatinUtf8(word);
   if (lower != word) forms.push_back(lower);
@@ -2035,7 +2033,7 @@ DictionaryLookupResult DictionaryStore::lookup(const std::string& rawWord, const
     return result;
   }
 
-  DictionaryEntry* entry = activeEntry();
+  StarDictEntry* entry = activeEntry();
   if (!entry) {
     result.status = DictionaryLookupResult::Status::NoDictionary;
     return result;
@@ -2109,7 +2107,7 @@ DictionaryLookupResult DictionaryStore::lookup(const std::string& rawWord, const
   return result;
 }
 
-std::vector<std::string> DictionaryStore::findSuggestions(const DictionaryEntry& entry, const std::string& word,
+std::vector<std::string> DictionaryStore::findSuggestions(const StarDictEntry& entry, const std::string& word,
                                                           const int maxResults) const {
   std::vector<std::string> results;
   if (entry.checkpoints.empty()) return results;

@@ -69,8 +69,32 @@ void finishConnect(State result) {
     // here too; centralizing removes the second place this could be forgotten.
     lastConnected = false;
     WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_MODE_NULL);
+    state = result;
+    return;
   }
-  WiFi.mode(WIFI_MODE_NULL);
+
+  // SUCCESS: leave the radio on WiFi.
+  //
+  // This used to power WiFi off on every path, success included, so a
+  // wifi.autoconnect from the phone connected to the network and then dropped it
+  // milliseconds later -- and BLE, still requested by the on-screen Bluetooth
+  // activity, immediately took the radio back. The phone was then told the reader
+  // was connected while the reader had no network at all, so "Files on your
+  // reader" could never reach it. Observed on the X3: "connected: ssid=Green
+  // rssi=-47" followed 700ms later by BLE advertising again.
+  //
+  // Powering down is right for a SCAN (BleWifiScanCache::finishScan does it, and
+  // only results are wanted). It is wrong for a connect, whose entire purpose is
+  // to leave the device reachable.
+  //
+  // Releasing the BLE request is what makes it stick: the mutual-exclusion gate
+  // in main.cpp would otherwise re-take the radio on its next iteration. The BLE
+  // link is already gone by this point -- bringing WiFi up terminates it -- which
+  // is exactly what the phone's own UI describes: "looking for Wi-Fi ends the
+  // Bluetooth connection. That's expected -- reconnect afterwards."
+  BlePeripheral.setUserRequested(false);
+  LOG_DBG(TAG, "WiFi connected and kept; BLE released so it is not reclaimed");
   state = result;
 }
 }  // namespace

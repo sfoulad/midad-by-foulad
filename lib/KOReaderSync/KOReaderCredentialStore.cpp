@@ -4,6 +4,8 @@
 #include <MD5Builder.h>
 #include <ObfuscationUtils.h>
 
+#include "KOReaderServerOrigin.h"
+
 namespace {
 // Default sync server URL. crosspoint-sync speaks the full KOSync protocol, so
 // pointing at any other kosync server (e.g. https://sync.koreader.rocks:443)
@@ -168,6 +170,8 @@ std::string KOReaderCredentialStore::getBaseUrl() const {
 }
 
 bool KOReaderCredentialStore::usesCrossPointSyncServer() const { return getBaseUrl() == DEFAULT_SERVER_URL; }
+
+bool KOReaderCredentialStore::targetsMidadOrigin() const { return koreader_sync::isMidadSyncOrigin(getBaseUrl()); }
 
 void KOReaderCredentialStore::setMatchMethod(DocumentMatchMethod method) {
   matchMethod = method;

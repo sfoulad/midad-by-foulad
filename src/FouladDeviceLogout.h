@@ -24,14 +24,14 @@ enum class Result : uint8_t {
   Failed,
 };
 
-// Looks this device up by its own serial number and deletes it.
+// Revokes this device's own token.
 //
-// Two round trips, because the delete addresses the device by its server-side id
-// and the firmware only knows its serial: GET the account's device list, match on
-// serial_number, then DELETE that id. Blocking; expect a couple of seconds.
+// One round trip, and the request names no target: Core revokes whichever token
+// authenticated the call, so there is no id or serial to send and no way to reach a
+// sibling reader's credential. Blocking; expect a second or two.
 //
-// `username`/`password` are the stored Foulad eBooks OPDS credentials -- the app API
-// sits behind the same Basic Auth (see FOULAD_EBOOKS_APP_DEVICES_URL).
+// `username`/`password` are the stored credentials, sent as Basic auth exactly as
+// the feed and download requests send them.
 Result removeThisDevice(const std::string& username, const std::string& password);
 
 }  // namespace FouladDeviceLogout

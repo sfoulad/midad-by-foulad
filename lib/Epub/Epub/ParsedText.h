@@ -36,6 +36,11 @@ class ParsedText {
   // 0 = none. An annotation rather than a token split, so the hyphenator and line breaker still
   // see whole words; TextBlock stores emphasis the same way, so extractLine passes it through.
   std::vector<uint8_t> wordFocusBoundary;
+  // Internal-link identity through tokenization, hyphenation and BiDi reorder.
+  // Zero means plain text; non-zero indexes linkTargets. Kept at one byte per
+  // token and discarded after layout, never added to the page-cache TextBlock.
+  std::vector<uint8_t> wordLinkIds;
+  std::vector<std::string> linkTargets;
   // Zero-based visible Unicode-codepoint offsets in the spine body, stored as
   // uint16_t deltas from a shared base to keep this layout-only metadata small.
   // Pathological spans wider than uint16_t use sparse rebases; rendered
@@ -82,7 +87,7 @@ class ParsedText {
   void extractLine(size_t breakIndex, int pageWidth, const std::vector<uint16_t>& wordWidths,
                    const std::vector<bool>& continuesVec, const std::vector<bool>& noSpaceBeforeVec,
                    const std::vector<size_t>& lineBreakIndices,
-                   const std::function<void(std::shared_ptr<TextBlock>, uint32_t)>& processLine,
+                   const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processLine,
                    const GfxRenderer& renderer, int fontId);
   std::vector<uint16_t> calculateWordWidths(const GfxRenderer& renderer, int fontId);
 
@@ -98,7 +103,9 @@ class ParsedText {
   ~ParsedText() = default;
 
   void addWord(std::string word, EpdFontFamily::Style fontStyle, bool underline = false, bool attachToPrevious = false,
-               uint32_t visibleTextOffset = 0);
+               uint32_t visibleTextOffset = 0, uint8_t linkId = 0);
+  uint8_t addLinkTarget(const char* href);
+  bool linkTargetMatches(uint8_t linkId, const char* href) const;
   // True when the block holds exactly one word equal to `word`. Used by the HTML
   // parser to detect a list-item block that so far contains only the synthetic
   // bullet marker, so a nested block tag (<li><p>...) can continue in the same
@@ -116,6 +123,6 @@ class ParsedText {
   size_t size() const { return words.size(); }
   bool isEmpty() const { return words.empty(); }
   void layoutAndExtractLines(const GfxRenderer& renderer, int fontId, uint16_t viewportWidth,
-                             const std::function<void(std::shared_ptr<TextBlock>, uint32_t)>& processLine,
+                             const std::function<void(std::unique_ptr<TextBlock>, uint32_t)>& processLine,
                              bool includeLastLine = true);
 };

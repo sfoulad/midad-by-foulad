@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <string>
 
@@ -193,12 +194,26 @@ void CrossPointSettings::toJson(JsonDocument& doc) const {
   if (sdFontFamilyName[0] != '\0') {
     doc["sdFontFamilyName"] = sdFontFamilyName;
   }
+  if (dictionaryName[0] != '\0') {
+    doc["dictionaryName"] = dictionaryName;
+  }
   if (sdArabicFontFamilyName[0] != '\0') {
     doc["sdArabicFontFamilyName"] = sdArabicFontFamilyName;
   }
+  // Built-in Arabic reading family. Its row (buildArabicFontFamilySetting) is a
+  // dynamic getter/setter entry contributed by the Settings extension, so the
+  // generic loop above never sees it -- without this the picked family would be
+  // forgotten on the next boot.
+  doc["arabicFontFamily"] = arabicFontFamily;
   // Language -- managed by LanguageSelectActivity, not in SettingsList.
   // Stored as ISO code string ("EN", "DE", ...) for stability across enum reorders.
   doc["language"] = (language < getLanguageCount()) ? LANGUAGE_CODES[language] : "EN";
+
+  // A uint16_t mask, so it does not fit the uint8_t generic loop. Omitted while
+  // unconfigured, so the default keeps following the UI language.
+  if (keyboardLayouts != 0) {
+    doc["keyboardLayouts"] = keyboardLayouts;
+  }
 }
 
 bool CrossPointSettings::fromJson(JsonVariantConst doc) {
@@ -306,10 +321,18 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   // SD card font family name — not in SettingsList, load manually
   const char* sfn = doc["sdFontFamilyName"] | "";
   strncpy(sdFontFamilyName, sfn, sizeof(sdFontFamilyName) - 1);
+  const char* dn = doc["dictionaryName"] | "";
+  strncpy(dictionaryName, dn, sizeof(dictionaryName) - 1);
   sdFontFamilyName[sizeof(sdFontFamilyName) - 1] = '\0';
   const char* safn = doc["sdArabicFontFamilyName"] | "";
   strncpy(sdArabicFontFamilyName, safn, sizeof(sdArabicFontFamilyName) - 1);
   sdArabicFontFamilyName[sizeof(sdArabicFontFamilyName) - 1] = '\0';
+  // Counterpart to the manual write in toJson(); AMIRI (1) is still a valid
+  // stored value even though it is no longer offered -- ArabicFontSystem aliases
+  // it to Naskh, so it is clamped by ARABIC_FONT_FAMILY_COUNT, not by the
+  // shorter picker list.
+  arabicFontFamily =
+      clamp(doc["arabicFontFamily"] | (uint8_t)NOTONASKHARABIC, ARABIC_FONT_FAMILY_COUNT, (uint8_t)NOTONASKHARABIC);
   if (storedFontFamily == LEGACY_OPENDYSLEXIC && sdFontFamilyName[0] == '\0') {
     fontFamily = LEXENDDECA;
     strncpy(sdFontFamilyName, "OpenDyslexic", sizeof(sdFontFamilyName) - 1);
@@ -321,6 +344,11 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
   // Language -- stored as code string for stability across enum reorders.
   if (doc["language"].is<const char*>()) {
     language = static_cast<uint8_t>(I18n::languageFromCode(doc["language"].as<const char*>()));
+  }
+
+  // Absent means unconfigured, which is the default.
+  if (doc["keyboardLayouts"].is<uint16_t>()) {
+    keyboardLayouts = doc["keyboardLayouts"].as<uint16_t>();
   }
 
   if (needsResave) {
@@ -586,6 +614,10 @@ int CrossPointSettings::getRefreshFrequency() const {
       return 15;
     case REFRESH_30:
       return 30;
+    case REFRESH_NEVER:
+      // Effectively disables the periodic full refresh; the page counter
+      // counts down from here and never reaches the threshold in practice.
+      return std::numeric_limits<int>::max();
   }
 }
 

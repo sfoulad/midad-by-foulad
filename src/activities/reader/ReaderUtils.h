@@ -59,16 +59,21 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
   const bool swapFront = input.isNavDirectionSwapped();
   const auto prevButton = swapFront ? MappedInputManager::Button::Right : MappedInputManager::Button::Left;
   const auto nextButton = swapFront ? MappedInputManager::Button::Left : MappedInputManager::Button::Right;
+  // Long-press skips pages when longPressButtonBehavior is on; the merge kept
+  // the call sites but not this helper, which the convergence RC introduced.
+  const auto pageButtonTriggered = [&](const MappedInputManager::Button button) {
+    if (usePress) return input.wasPressed(button);
+    return input.wasLongPressed(button, SKIP_HOLD_MS) || input.wasReleased(button);
+  };
   const bool prev =
-      tiltPrev ||
-      (usePress ? (input.wasPressed(MappedInputManager::Button::PageBack) || input.wasPressed(prevButton))
-                : (input.wasReleased(MappedInputManager::Button::PageBack) || input.wasReleased(prevButton)));
+      tiltPrev || (pageButtonTriggered(MappedInputManager::Button::PageBack) || pageButtonTriggered(prevButton));
+  // wasShortPowerClick(), not wasReleased(Power): on X4 Pro the power button is
+  // routed through X4ProPowerButtonGesture, which only reports a click once the
+  // hold/double-click window has closed. A raw release edge fires on every hold.
   const bool powerTurn =
       SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN && input.wasShortPowerClick();
-  const bool next = tiltNext || (usePress ? (input.wasPressed(MappedInputManager::Button::PageForward) || powerTurn ||
-                                             input.wasPressed(nextButton))
-                                          : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
-                                             input.wasReleased(nextButton)));
+  const bool next = tiltNext || pageButtonTriggered(MappedInputManager::Button::PageForward) || powerTurn ||
+                    pageButtonTriggered(nextButton);
   return {prev, next, tiltPrev || tiltNext};
 }
 
@@ -78,7 +83,7 @@ struct TouchPageTurn {
   unsigned long heldMs;
 };
 
-inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInputManager& input) {
+inline TouchPageTurn detectTouchPageTurn(const GfxRenderer& renderer, const MappedInputManager& input) {
   TouchPageTurn result{false, false, 0};
   if (!SETTINGS.touchReaderControls || !input.hasTouch()) {
     return result;
@@ -136,7 +141,11 @@ inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer, const MappedInpu
 // through the key's long-press function.
 inline bool isTouchMenuTap(const GfxRenderer& renderer, const MappedInputManager& input) {
   if (!input.hasTouch()) return false;
-  if (!SETTINGS.tapForReaderMenu) return false;
+  // Upstream renamed this in the 1.6.22 sync: tapForReaderMenu -> showReaderMenu,
+  // widened from a 0/1 toggle to off / centre-tap / bottom-edge-swipe. 0 and 1 kept
+  // their old meaning, so this test is unchanged in behaviour; READER_MENU_TAP is
+  // still the default on the boards this path runs on.
+  if (SETTINGS.showReaderMenu != CrossPointSettings::READER_MENU_TAP) return false;
   int x = 0;
   int y = 0;
   if (!input.wasScreenTapped(x, y)) return false;
@@ -191,7 +200,7 @@ inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntil
 // re-drive the whole text body (a visible flash). Other panels display
 // normally. Same refresh-cadence bookkeeping as displayWithRefreshCycle.
 inline void displayBaseWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {
-  if (!renderer.combinesGrayscaleBase()) {
+  if (renderer.grayscaleCapabilities().base != HalDisplay::GrayscaleBase::Combined) {
     displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
     return;
   }
@@ -214,7 +223,8 @@ void renderAntiAliased(GfxRenderer& renderer, RenderFn&& renderFn) {
     LOG_ERR("READER", "Failed to store BW buffer for anti-aliasing");
     // A combined-base panel may still hold a deferred B/W activation; flush it
     // so the page reaches the panel even without its grays.
-    if (renderer.combinesGrayscaleBase()) renderer.cleanupGrayscaleWithFrameBuffer();
+    if (renderer.grayscaleCapabilities().base == HalDisplay::GrayscaleBase::Combined)
+      renderer.cleanupGrayscaleWithFrameBuffer();
     return;
   }
 

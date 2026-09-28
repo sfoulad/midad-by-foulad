@@ -25,6 +25,13 @@ class HttpDownloader {
     ABORTED,
   };
 
+  // Pre-flight floor for starting a TLS transfer. Below this the session or
+  // its ~17KB record buffer fails mid-stream (wolfSSL MEMORY_E) -- or an
+  // interior allocation abort()s the device. Callers should check before
+  // downloadToFile() and fail into their error UI instead.
+  static constexpr uint32_t MIN_TLS_FREE_HEAP = 40000;
+  static constexpr uint32_t MIN_TLS_MAX_ALLOC = 20000;
+
   // Which stage of the last failed request produced its HTTP_ERROR/FILE_ERROR,
   // plus a stage-specific detail code -- lets a caller-facing diagnostic (e.g. the
   // OTA "Update Failed" screen) show what actually went wrong (DNS/connect/TLS vs.
@@ -66,6 +73,41 @@ class HttpDownloader {
     bool notModified = false;  // out: server answered 304, no body was delivered
   };
 
+  /**
+   * Keeps ONE connection -- and on https, ONE negotiated TLS session -- open
+   * across a burst of requests, instead of handshaking per request.
+   *
+   * Construct one around a run of fetches and every fetchUrl/downloadToFile made
+   * while it is alive shares the same client; the connection is dropped when the
+   * outermost scope goes out of scope. Nothing else changes: a request to a
+   * different scheme://host:port transparently reconnects, so a mixed burst is
+   * still correct, it just saves nothing.
+   *
+   * What it saves. A wolfSSL handshake is the largest transient allocation on
+   * this device's network path -- certificate chain buffers, a DecodedCert, and
+   * the ECC verify's bignums, allocated and freed in a burst -- and on a heap a
+   * long catalogue walk has already fragmented it is the step that fails. A grid
+   * page of OPDS covers is six back-to-back GETs to one origin, so without this
+   * it pays that six times over to fetch six thumbnails.
+   *
+   * Why a scope and not always-on: an idle session still holds a few KB, which a
+   * caller doing heavy work BETWEEN requests (an image decode, a page layout)
+   * would rather have back. Callers that fetch back-to-back opt in; everything
+   * else keeps connection-per-request.
+   *
+   * Not thread-safe, by the same assumption getLastFailure() already makes: one
+   * network task, no concurrent requests. Nesting is safe -- only the outermost
+   * scope opens and closes the shared client. On a build without wolfSSL this is
+   * an empty object; the esp_http_client path is unaffected.
+   */
+  class KeepAliveScope {
+   public:
+    KeepAliveScope();
+    ~KeepAliveScope();
+    KeepAliveScope(const KeepAliveScope&) = delete;
+    KeepAliveScope& operator=(const KeepAliveScope&) = delete;
+  };
+
   static bool fetchUrl(const std::string& url, const DataCallback& onData, ConditionalGet& conditional,
                        const std::string& username = "", const std::string& password = "");
 
@@ -93,6 +135,13 @@ class HttpDownloader {
    * OTA firmware downloads, which don't need wolfSSL's TLS 1.3 support since
    * GitHub's release CDN doesn't require it.
    */
+  /**
+   * Verified GET against an explicit PEM trust anchor set: chain built to one of
+   * those anchors and the certificate must name the host. https:// only. Used for
+   * release metadata, where the response decides which firmware gets installed.
+   */
+  static bool fetchUrlPinned(const std::string& url, const DataCallback& onData, const char* anchorsPem);
+
   static bool fetchUrlVerified(const std::string& url, const DataCallback& onData, const std::string& username = "",
                                const std::string& password = "");
 
@@ -100,7 +149,7 @@ class HttpDownloader {
    * Download a file to the SD card with optional credentials.
    */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
-                                      ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
+                                      ProgressCallback progress = nullptr, const bool* cancelFlag = nullptr,
                                       const std::string& username = "", const std::string& password = "");
 
   /**
@@ -142,6 +191,43 @@ class HttpDownloader {
    */
   static DownloadError postJson(const std::string& url, const std::string& jsonBody, const std::string& username,
                                 const std::string& password, std::string& outResponse, int timeoutMs = 15000);
+
+  /**
+   * POST a small pre-serialized JSON body over the wolfSSL transport, verified
+   * against caAnchorsPem -- one or more concatenated PEM certificates supplied
+   * by the caller -- instead of ESP-IDF's certificate bundle. Same return
+   * convention as postJson (any 2xx succeeds; getLastFailure()'s STATUS detail
+   * carries the raw status code).
+   *
+   * What it buys over postJson, and why a caller would choose it: mbedTLS
+   * anchors whatever the server sent at the TOP of the presented chain, so a
+   * chain whose last link is a cross-certificate signed by an RSA root has to
+   * be verified with an RSA modular exponentiation -- an allocation that fails
+   * outright at the free heap this device has left mid-session. Handing wolfSSL
+   * a trust store that terminates one link earlier lets the same chain verify
+   * on pure ECDSA. Verification is stricter here, not weaker: the chain must
+   * reach one of these anchors AND the certificate must name the URL's host
+   * (see VerifiedTlsSession), with no bundle fallback and no plaintext path --
+   * a non-https URL, an empty anchor set, or a build without wolfSSL is
+   * refused rather than downgraded.
+   *
+   * Deliberately not the default for every POST: the anchor set is the
+   * caller's to choose and get right, which only makes sense for an endpoint
+   * whose operator this firmware knows.
+   */
+  static DownloadError postJsonWolf(const std::string& url, const std::string& jsonBody, const char* caAnchorsPem,
+                                    std::string& outResponse, int timeoutMs = 15000, const std::string& username = {},
+                                    const std::string& password = {}, const char* contentType = "application/json");
+
+  /**
+   * PUT with the same verified, pinned-anchor wolfSSL path as postJsonWolf.
+   * Core's resume-position route is a PUT, and it carries a device credential --
+   * so it must not fall back to the broad system CA bundle the plain postJson
+   * path uses.
+   */
+  static DownloadError putJsonWolf(const std::string& url, const std::string& jsonBody, const char* caAnchorsPem,
+                                   std::string& outResponse, int timeoutMs = 15000, const std::string& username = {},
+                                   const std::string& password = {}, const char* contentType = "application/json");
 
   /**
    * HTTP DELETE with optional Basic Auth, buffering any (expected-small) response

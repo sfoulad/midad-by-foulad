@@ -1,11 +1,13 @@
 #include "FouladQrLoginActivity.h"
 
 #include <GfxRenderer.h>
+#include <HeapTrace.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <WiFi.h>
 
 #include "FouladEbooksConfig.h"
+#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "SilentRestart.h"
@@ -15,6 +17,7 @@
 #include "util/QrUtils.h"
 
 void FouladQrLoginActivity::onEnter() {
+  HEAP_TRACE_SCOPE("QRLOGIN.construct");
   Activity::onEnter();
   state = State::ConnectingWifi;
   WiFi.mode(WIFI_STA);
@@ -22,7 +25,23 @@ void FouladQrLoginActivity::onEnter() {
                          [this](const ActivityResult& result) { onWifiSelectionComplete(!result.isCancelled); });
 }
 
-void FouladQrLoginActivity::onExit() { Activity::onExit(); }
+// Cancelling leaves WiFi initialised, and the user feels it immediately: the
+// radio holds ~20KB, dropping the largest contiguous block below the 42,768
+// bytes Home needs for its cover snapshot, so Home re-renders every cover on
+// every paint -- measured at 1,478 ms per repaint against ~15 ms with the
+// snapshot. The success path already escapes this by silent-restarting into the
+// catalog; cancel had no equivalent and returned to a Home it had just made slow.
+//
+// Restart rather than WiFi.mode(WIFI_OFF): freeing the radio does not
+// de-fragment what its allocations left behind (upstream issue #3343). Only a
+// reboot restores the contiguous block.
+void FouladQrLoginActivity::onExit() {
+  Activity::onExit();
+  if (result.isCancelled && WiFi.getMode() != WIFI_MODE_NULL) {
+    LOG_DBG("QRLOGIN", "Cancelled with WiFi up; restarting to give Home a clean heap");
+    silentRestart();  // does not return
+  }
+}
 
 void FouladQrLoginActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {
@@ -40,6 +59,9 @@ void FouladQrLoginActivity::onWifiSelectionComplete(const bool success) {
 }
 
 void FouladQrLoginActivity::beginSession() {
+  // TEMP diagnostic: everything the HTTPS session-start costs -- client init, CA
+  // bundle attach, TLS handshake, response read, cleanup -- falls inside here.
+  HEAP_TRACE_SCOPE("QRLOGIN.beginSession");
   session = FouladDeviceLogin::start();
   if (!session.ok) {
     state = State::Failed;
@@ -80,6 +102,20 @@ void FouladQrLoginActivity::pollOnce() {
       server.isDeviceToken = true;
       OPDS_STORE.addServer(server);  // persists to SD before the restart below
 
+      // KOSync, when Core provisioned it in the approval. Written here rather than
+      // inside the login module so that module stays a pure "get a credential"
+      // step. Self-revoke kills both credentials at once server-side, so they are
+      // deliberately established together.
+      if (!poll.koPassword.empty() && !poll.koServerUrl.empty()) {
+        KOREADER_STORE.setCredentials(poll.koUsername, poll.koPassword);
+        KOREADER_STORE.setServerUrl(poll.koServerUrl);
+        if (poll.koMatchMethod == 0 || poll.koMatchMethod == 1) {
+          KOREADER_STORE.setMatchMethod(static_cast<DocumentMatchMethod>(poll.koMatchMethod));
+        }
+        KOREADER_STORE.saveToFile();
+        LOG_INF("QRLOGIN", "KOSync configured for this account");
+      }
+
       LOG_INF("QRLOGIN", "Signed in as '%s'", poll.username.c_str());
       // Same fresh-heap handoff the typed-password path uses: boot routes into
       // goToFouladEbooks(), which finds the account just stored.
@@ -93,10 +129,13 @@ void FouladQrLoginActivity::pollOnce() {
       return;
 
     case FouladDeviceLogin::PollStatus::Expired:
+    case FouladDeviceLogin::PollStatus::Redeemed:
       // Auto-restart rather than making the user press something: the code is
       // dead and a fresh one is one request away. beginSession() sets Failed if
-      // that request fails, so this cannot spin.
-      LOG_DBG("QRLOGIN", "Pairing code expired, requesting a new one");
+      // that request fails, so this cannot spin. Redeemed lands here for the same
+      // reason -- its one-time token is spent and will never be reissued, so
+      // polling on would wait out the full window for an answer that cannot come.
+      LOG_DBG("QRLOGIN", "Pairing session is spent, requesting a new one");
       beginSession();
       return;
 
@@ -140,9 +179,23 @@ void FouladQrLoginActivity::loop() {
 
   if (state != State::ShowingQr) return;
 
-  // Poll on a millis() gate rather than blocking, so the two buttons above stay
-  // responsive across the whole five-minute window.
+  // The session's own deadline, enforced locally. The server expires a pairing
+  // session after `expires_in` and answers "expired" from then on, but only if it
+  // is reachable and only if it recognises the session at all -- a status this
+  // build does not know is treated as Pending, so without a local clock a single
+  // unexpected response shape means polling a dead code forever. `expires_in` is
+  // the server's own figure, plus one poll interval of slack so the server's
+  // "expired" (which auto-restarts with a fresh code) normally wins the race.
   const unsigned long intervalMs = static_cast<unsigned long>(session.pollIntervalSeconds) * 1000UL;
+  const unsigned long deadlineMs = static_cast<unsigned long>(session.expiresInSeconds) * 1000UL + intervalMs;
+  if (session.expiresInSeconds > 0 && millis() - sessionStartedMs >= deadlineMs) {
+    LOG_DBG("QRLOGIN", "Pairing window elapsed locally, requesting a new code");
+    beginSession();
+    return;
+  }
+
+  // Poll on a millis() gate rather than blocking, so the two buttons above stay
+  // responsive across the whole window.
   if (millis() - lastPollMs < intervalMs) return;
   lastPollMs = millis();
   pollOnce();

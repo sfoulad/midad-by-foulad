@@ -24,11 +24,19 @@ class FouladLogoutActivity final : public Activity {
   std::string username;
   std::string password;
   State state = State::Working;
+  // Called with the outcome just before finishing. Set when this activity is the
+  // top of the stack (entered by silentRestartToLogout), where there is no parent
+  // handler to act on the result. Plain function pointer: one call per sign-out,
+  // and std::function would heap-allocate its closure for no benefit.
+  void (*onFinished)(bool removed) = nullptr;
 
  public:
   explicit FouladLogoutActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string username,
-                                std::string password)
-      : Activity("FouladLogout", renderer, mappedInput), username(std::move(username)), password(std::move(password)) {}
+                                std::string password, void (*onFinished)(bool removed) = nullptr)
+      : Activity("FouladLogout", renderer, mappedInput),
+        username(std::move(username)),
+        password(std::move(password)),
+        onFinished(onFinished) {}
 
   void onEnter() override;
   void loop() override;

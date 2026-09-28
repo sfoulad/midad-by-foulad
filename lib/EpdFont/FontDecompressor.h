@@ -2,6 +2,7 @@
 
 #include <InflateReader.h>
 
+#include "AllocFloor.h"
 #include "EpdFontData.h"
 
 class FontDecompressor {
@@ -114,17 +115,27 @@ class FontDecompressor {
   // ensureCapacity() returns false on OOM so the caller can skip the glyph gracefully.
   const EpdFontData* hotGroupFont = nullptr;
   uint16_t hotGroupIndex = UINT16_MAX;
-  // Last (font, group) whose decompression buffer could not be allocated. getBitmap()
-  // runs per glyph, so without this a group that fails once is retried by every
-  // remaining glyph on the line -- observed as eleven attempts at the same 10,667
-  // bytes in 23ms on a device already down to 18.7KB free. Each retry cannot succeed
-  // and fragments a little further on the way out.
-  //
-  // Cleared on any successful allocation and by clearCache(), so it suppresses a
-  // hopeless burst rather than permanently blacklisting a group: once memory is
-  // freed, the next attempt goes through.
-  const EpdFontData* failedGroupFont = nullptr;
-  uint16_t failedGroupIndex = UINT16_MAX;
+  // Suppression window for a heap that has already refused a block this size.
+  // getBitmap() runs per glyph, so a group whose buffer cannot be allocated is
+  // otherwise retried by every remaining glyph on the line. Keying this on the
+  // request SIZE rather than on the (font, group) pair is what makes the burst
+  // converge: a line mixing several fonts/groups evicts a pair-keyed latch on
+  // every glyph and re-attempts each hopeless malloc (144 failures across five
+  // distinct sizes, 18 inside one millisecond, on an X3 down to ~4KB free),
+  // whereas a size floor only ever re-attempts a STRICTLY SMALLER request.
+  // Shared by every malloc in this class -- hot group, glyph scratch, page
+  // buffer, prewarm temp buffers -- because they all draw on the same heap.
+  // See AllocFloor.h.
+  AllocFloor allocFloor;
+#if defined(X3_HEAP_TRACE) && X3_HEAP_TRACE
+  // TEMP diagnostic counters -- remove with the rest of the heap trace. Split so
+  // a hardware run can show the burst converging: reached-malloc failures are the
+  // only ones that cost anything, suppressed calls are the ones AllocFloor turned
+  // away without touching the allocator.
+  uint32_t traceReachedMallocFailures = 0;
+  uint32_t traceSuppressedCalls = 0;
+  void resetTraceBurst();
+#endif
   uint8_t* hotGroup = nullptr;  // owned; freed in freeHotGroup()/dtor
   uint32_t hotGroupCapacity = 0;
 
@@ -134,7 +145,13 @@ class FontDecompressor {
   uint32_t hotGlyphBufCapacity = 0;
 
   // Grow (never shrink) an owned buffer to at least `needed` bytes; false on OOM, buffer freed.
-  static bool ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_t needed);
+  // Honours (and updates) allocFloor, so a request the heap has already refused at
+  // this size or larger is skipped without calling malloc at all.
+  bool ensureCapacity(uint8_t*& buf, uint32_t& capacity, uint32_t needed);
+
+  // malloc() routed through allocFloor. Returns nullptr (without calling malloc)
+  // when the floor already proves the request cannot be served.
+  void* allocGuarded(uint32_t bytes);
 
   void freePageBuffer();
   void freeHotGroup();

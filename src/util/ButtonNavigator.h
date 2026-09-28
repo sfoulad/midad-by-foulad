@@ -26,9 +26,9 @@ class ButtonNavigator final {
   void onPrevious(const Callback& callback);
   void onPressAndContinuous(const Buttons& buttons, const Callback& callback);
 
-  void onNextPress(const Callback& callback);
-  void onPreviousPress(const Callback& callback);
-  void onPress(const Buttons& buttons, const Callback& callback);
+  static void onNextPress(const Callback& callback);
+  static void onPreviousPress(const Callback& callback);
+  static void onPress(const Buttons& buttons, const Callback& callback);
 
   void onNextRelease(const Callback& callback);
   void onPreviousRelease(const Callback& callback);
@@ -45,8 +45,8 @@ class ButtonNavigator final {
   // that must skip NavNext/NavPrevious's RTL horizontal flip).
   void onScrollNext(const Callback& callback);
   void onScrollPrevious(const Callback& callback);
-  void onScrollNextPress(const Callback& callback);
-  void onScrollPreviousPress(const Callback& callback);
+  static void onScrollNextPress(const Callback& callback);
+  static void onScrollPreviousPress(const Callback& callback);
   void onScrollNextRelease(const Callback& callback);
   void onScrollPreviousRelease(const Callback& callback);
   void onScrollNextContinuous(const Callback& callback);

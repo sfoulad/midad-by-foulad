@@ -14,6 +14,7 @@
 #include <string_view>
 
 #include "FontCacheManager.h"
+#include "RegionGeometry.h"
 
 namespace {
 
@@ -201,11 +202,13 @@ int GfxRenderer::resolveTextFontId(const int fontId, const char* text, const Epd
   const char* cursor = text;
   uint32_t cp;
   while ((cp = utf8NextCodepoint(reinterpret_cast<const uint8_t**>(&cursor)))) {
-    // Only redirect for CJK the primary font cannot draw but the fallback can.
-    // Latin/symbol strings the built-in UI fonts already cover are left
-    // untouched, and a partial-coverage fallback (e.g. kana-only) is not worth
+    // Redirect whenever the primary font cannot draw a codepoint the fallback
+    // can — otherwise the string renders with holes. Not just CJK: Greek,
+    // Cyrillic, or any script the built-in UI fonts lack qualifies. ASCII is
+    // skipped outright (every registered font covers it), keeping Latin
+    // strings on the fast path, and a partial-coverage fallback is not worth
     // dragging the whole string into for glyphs it would also miss.
-    if (utf8IsCjkCodepoint(cp) && !primary.hasCodepoint(cp, style) && fallback.hasCodepoint(cp, style)) {
+    if (cp >= 0x80 && !primary.hasCodepoint(cp, style) && fallback.hasCodepoint(cp, style)) {
       return fallbackFontId;
     }
   }
@@ -280,36 +283,19 @@ void GfxRenderer::ensureSdGlyphsResident(const int fontId, const char* text, con
 
 // Translate logical (x,y) coordinates to physical panel coordinates based on current orientation
 // This should always be inlined for better performance
+// The rotation itself lives in RegionGeometry so the region-snapshot sizing math
+// built on it stays host-testable (see RegionGeometry.h).
+static_assert(static_cast<int>(GfxRenderer::Portrait) == RegionGeometry::Portrait, "orientation enums must match");
+static_assert(static_cast<int>(GfxRenderer::LandscapeClockwise) == RegionGeometry::LandscapeClockwise,
+              "orientation enums must match");
+static_assert(static_cast<int>(GfxRenderer::PortraitInverted) == RegionGeometry::PortraitInverted,
+              "orientation enums must match");
+static_assert(static_cast<int>(GfxRenderer::LandscapeCounterClockwise) == RegionGeometry::LandscapeCounterClockwise,
+              "orientation enums must match");
+
 static inline void rotateCoordinates(const GfxRenderer::Orientation orientation, const int x, const int y, int* phyX,
                                      int* phyY, const uint16_t panelWidth, const uint16_t panelHeight) {
-  switch (orientation) {
-    case GfxRenderer::Portrait: {
-      // Logical portrait (480x800) → panel (800x480)
-      // Rotation: 90 degrees clockwise
-      *phyX = y;
-      *phyY = panelHeight - 1 - x;
-      break;
-    }
-    case GfxRenderer::LandscapeClockwise: {
-      // Logical landscape (800x480) rotated 180 degrees (swap top/bottom and left/right)
-      *phyX = panelWidth - 1 - x;
-      *phyY = panelHeight - 1 - y;
-      break;
-    }
-    case GfxRenderer::PortraitInverted: {
-      // Logical portrait (480x800) → panel (800x480)
-      // Rotation: 90 degrees counter-clockwise
-      *phyX = panelWidth - 1 - y;
-      *phyY = x;
-      break;
-    }
-    case GfxRenderer::LandscapeCounterClockwise: {
-      // Logical landscape (800x480) aligned with panel orientation
-      *phyX = x;
-      *phyY = y;
-      break;
-    }
-  }
+  RegionGeometry::rotate(static_cast<int>(orientation), x, y, phyX, phyY, panelWidth, panelHeight);
 }
 
 // Output of screenRectToAlignedMemRect: a rectangle in panel-memory
@@ -381,6 +367,7 @@ enum class TextRotation { None, Rotated90CW };
 static void renderCharScaled(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                              const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                              const bool pixelState, const EpdFontFamily::Style style) {
+  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
   const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
   if (!glyph) return;
 
@@ -541,6 +528,7 @@ template <TextRotation rotation = TextRotation::None>
 static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode renderMode,
                            const EpdFontFamily& fontFamily, const uint32_t cp, int cursorX, int cursorY,
                            const bool pixelState, const EpdFontFamily::Style style) {
+  if (renderer.grayPlanesAreAbsolute()) renderMode = GfxRenderer::BW;
   const EpdGlyph* glyph = fontFamily.getGlyph(cp, style);
   if (!glyph) {
     LOG_ERR("GFX", "No glyph for codepoint %d", cp);
@@ -649,6 +637,7 @@ static void renderCharImpl(const GfxRenderer& renderer, GfxRenderer::RenderMode 
 // IMPORTANT: This function is in critical rendering path and is called for every pixel. Please keep it as simple and
 // efficient as possible.
 void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
+  if (x < clipLeft_ || y < clipTop_ || x >= clipRight_ || y >= clipBottom_) return;
   int phyX = 0;
   int phyY = 0;
 
@@ -1206,16 +1195,6 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
 
   const int resolvedArabicFontId = resolveArabicFontId(fontId);
   const auto fontIt = fontMap.find(resolvedArabicFontId);
-
-  // Diagnostics only: real-device logs showed the Arabic prewarm scan capturing 0
-  // bytes on every single Quran page turn, with no way to tell whether this function
-  // is even being entered during the scan pass, or entered but bailing out below
-  // before ever reaching recordArabicText(). Counted unconditionally, before the
-  // early return, so it can't itself be skipped by whatever's causing the mismatch.
-  if (fontCacheManager_ && fontCacheManager_->isScanning()) {
-    fontCacheManager_->noteArabicScanEntry(fontIt != fontMap.end(), resolvedArabicFontId);
-  }
-
   if (fontIt == fontMap.end()) {
     // No Arabic font loaded -- nothing we can draw with. Matches the width path above.
     return;
@@ -1258,7 +1237,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     if (parseBismillahMarker(text)) {
       std::string bismillahShaped;
       appendUtf8(bismillahShaped, 0xFDFD);
-      fontCacheManager_->recordArabicText(bismillahShaped.c_str(), bismillahFontId_);
+      fontCacheManager_->recordText(bismillahShaped.c_str(), bismillahFontId_, EpdFontFamily::REGULAR);
       return;
     }
 
@@ -1273,7 +1252,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
         std::string bannerGlyphs;
         appendUtf8(bannerGlyphs, bannerNameCp);
         appendUtf8(bannerGlyphs, SURAH_BANNER_ORNAMENT_CP);
-        fontCacheManager_->recordArabicText(bannerGlyphs.c_str(), surahBannerFontId_);
+        fontCacheManager_->recordText(bannerGlyphs.c_str(), surahBannerFontId_, EpdFontFamily::REGULAR);
 
         // Both labels (word + digits) come from surahBannerLabelFontId_, a
         // DIFFERENT font than resolvedArabicFontId (see its own comment) --
@@ -1287,7 +1266,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
             if (cp != CARTOUCHE_SPACE_CP) appendUtf8(labelShaped, cp);
           }
         }
-        fontCacheManager_->recordArabicText(labelShaped.c_str(), surahBannerLabelFontId_);
+        fontCacheManager_->recordText(labelShaped.c_str(), surahBannerLabelFontId_, EpdFontFamily::REGULAR);
         return;
       }
     }
@@ -1307,7 +1286,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
         // in this scan.
         std::string digitsShaped;
         for (int i = 0; i < digitCount; i++) appendUtf8(digitsShaped, digits[i]);
-        fontCacheManager_->recordArabicText(digitsShaped.c_str(), arabicDigitFallbackFontId_);
+        fontCacheManager_->recordText(digitsShaped.c_str(), arabicDigitFallbackFontId_, EpdFontFamily::REGULAR);
       }
       // else: digits come from arabicDigitFallbackFontId_, nothing to record here.
     } else if (parseSurahMedallionMarker(text, digits, digitCount)) {
@@ -1319,7 +1298,7 @@ void GfxRenderer::drawArabicText(const int fontId, const int x, const int y, con
     } else {
       for (const uint32_t cp : ArabicShaper::shapeText(text, fontHasGlyph)) appendUtf8(shaped, cp);
     }
-    fontCacheManager_->recordArabicText(shaped.c_str(), resolvedArabicFontId);
+    fontCacheManager_->recordText(shaped.c_str(), resolvedArabicFontId, EpdFontFamily::REGULAR);
     return;
   }
 
@@ -2029,10 +2008,10 @@ void GfxRenderer::fillRectImpl(const int x, const int y, const int width, const 
   // Clip in logical space.
   const int screenW = getScreenWidth();
   const int screenH = getScreenHeight();
-  const int lx0 = std::max(0, x);
-  const int ly0 = std::max(0, y);
-  const int lx1 = std::min(screenW, x + width);
-  const int ly1 = std::min(screenH, y + height);
+  const int lx0 = std::max({0, x, clipLeft_});
+  const int ly0 = std::max({0, y, clipTop_});
+  const int lx1 = std::min({screenW, x + width, clipRight_});
+  const int ly1 = std::min({screenH, y + height, clipBottom_});
   if (lx0 >= lx1 || ly0 >= ly1) return;
 
   // Rotate the two opposing logical corners into physical-framebuffer space.
@@ -2380,13 +2359,15 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
   }
 }
 
-void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,
-                             const float cropX, const float cropY) const {
-  if (fontCacheManager_ && fontCacheManager_->isScanning()) return;
+bool GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,
+                             const float cropX, const float cropY, const bool whiteAsTransparent) const {
+  if (fontCacheManager_ && fontCacheManager_->isScanning()) {
+    LOG_ERR("GFX", "!! Bitmap draw skipped: font cache scan in progress");
+    return false;
+  }
   // For 1-bit bitmaps, use optimized 1-bit rendering path (no crop support for 1-bit)
   if (bitmap.is1Bit() && cropX == 0.0f && cropY == 0.0f) {
-    drawBitmap1Bit(bitmap, x, y, maxWidth, maxHeight);
-    return;
+    return drawBitmap1Bit(bitmap, x, y, maxWidth, maxHeight);
   }
 
   float scale = 1.0f;
@@ -2428,7 +2409,7 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
     LOG_ERR("GFX", "!! Failed to allocate BMP row buffers");
     free(outputRow);
     free(rowBytes);
-    return;
+    return false;
   }
 
   for (int bmpY = 0; bmpY < (bitmap.getHeight() - cropPixY); bmpY++) {
@@ -2447,7 +2428,7 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
       LOG_ERR("GFX", "Failed to read row %d from bitmap", bmpY);
       free(outputRow);
       free(rowBytes);
-      return;
+      return false;
     }
 
     if (screenY < 0) {
@@ -2473,6 +2454,9 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
       }
 
       const uint8_t rawVal = outputRow[bmpX / 4] >> (6 - ((bmpX * 2) % 8)) & 0x3;
+      // Tested before the dark-mode inversion below: transparency is a property of
+      // the source image, and after inverting, 3 would mean source black instead.
+      if (whiteAsTransparent && rawVal == 3) continue;
       // Dark mode: draw the bitmap PRE-INVERTED so the global panel-push
       // inversion (see setDarkMode) cancels out and photographic content --
       // covers, sleep images -- keeps its true polarity while the chrome
@@ -2481,10 +2465,9 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
 
       if (renderMode == BW && val < 3) {
         drawPixel(screenX, screenY);
-      } else if (renderMode == GRAYSCALE_MSB && (val == 1 || val == 2)) {
-        drawPixel(screenX, screenY, false);
-      } else if (renderMode == GRAYSCALE_LSB && val == 1) {
-        drawPixel(screenX, screenY, false);
+      } else if (renderMode == GRAYSCALE_LSB || renderMode == GRAYSCALE_MSB) {
+        const auto pixel = grayPlanePixel(val, renderMode == GRAYSCALE_MSB, absoluteGrayPlanes);
+        if (pixel.write) drawPixel(screenX, screenY, pixel.black);
       }
     }
   }
@@ -2497,9 +2480,10 @@ void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, con
   const int renderedWidth = isScaled ? static_cast<int>(std::floor((sourceWidth - 1) * scale)) + 1 : sourceWidth;
   const int renderedHeight = isScaled ? static_cast<int>(std::floor((sourceHeight - 1) * scale)) + 1 : sourceHeight;
   preserveImagePolarity(x, y, renderedWidth, renderedHeight);
+  return true;
 }
 
-void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
+bool GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y, const int maxWidth,
                                  const int maxHeight) const {
   float scale = 1.0f;
   bool isScaled = false;
@@ -2539,7 +2523,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
     free(rowBytes);
     free(blackCount);
     free(totalCount);
-    return;
+    return false;
   }
 
   // Emit one accumulated destination row: 3-tone re-dither of the bucket
@@ -2575,7 +2559,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
       free(rowBytes);
       free(blackCount);
       free(totalCount);
-      return;
+      return false;
     }
 
     // Calculate screen Y based on whether BMP is top-down or bottom-up
@@ -2643,6 +2627,7 @@ void GfxRenderer::drawBitmap1Bit(const Bitmap& bitmap, const int x, const int y,
   const int renderedHeight =
       isScaled ? static_cast<int>(std::floor((bitmap.getHeight() - 1) * scale)) + 1 : bitmap.getHeight();
   preserveImagePolarity(x, y, renderedWidth, renderedHeight);
+  return true;
 }
 
 void GfxRenderer::preserveImagePolarity(const int x, const int y, const int width, const int height) const {
@@ -2650,9 +2635,15 @@ void GfxRenderer::preserveImagePolarity(const int x, const int y, const int widt
     return;
   }
 
+  const int lx0 = std::max(x, clipLeft_);
+  const int ly0 = std::max(y, clipTop_);
+  const int lx1 = std::min(x + width, clipRight_);
+  const int ly1 = std::min(y + height, clipBottom_);
+  if (lx0 >= lx1 || ly0 >= ly1) return;
+
   int ax, ay, bx, by;
-  rotateCoordinates(orientation, x, y, &ax, &ay, panelWidth, panelHeight);
-  rotateCoordinates(orientation, x + width - 1, y + height - 1, &bx, &by, panelWidth, panelHeight);
+  rotateCoordinates(orientation, lx0, ly0, &ax, &ay, panelWidth, panelHeight);
+  rotateCoordinates(orientation, lx1 - 1, ly1 - 1, &bx, &by, panelWidth, panelHeight);
 
   int left = std::max(0, std::min(ax, bx));
   int right = std::min(static_cast<int>(panelWidth) - 1, std::max(ax, bx));
@@ -2790,9 +2781,16 @@ void GfxRenderer::invertScreen() const {
   }
 }
 
-void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
+HalDisplay::RefreshMode GfxRenderer::applyPromotedRefresh(const HalDisplay::RefreshMode refreshMode) const {
+  if (!promotedRefreshPending_) return refreshMode;
+  promotedRefreshPending_ = false;
+  return promotedRefresh_;
+}
+
+void GfxRenderer::displayBuffer(HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
+  refreshMode = applyPromotedRefresh(refreshMode);
   // Dark mode inverts only for the panel push, then restores -- everything
   // that reads the framebuffer afterwards sees normal polarity (see
   // setDarkMode). Two 48KB XOR passes ~= 1-2ms at 160MHz, negligible next to
@@ -2802,7 +2800,8 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode, const
   if (darkMode_) invertScreen();
 }
 
-void GfxRenderer::displayBufferAsync(const HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
+void GfxRenderer::displayBufferAsync(HalDisplay::RefreshMode refreshMode, const bool forceCleanBaseOnHalf) const {
+  refreshMode = applyPromotedRefresh(refreshMode);
   // Fading fix relies on turnOffScreen, which the async SDK primitive has no
   // hook for at all -- keep those users on the blocking path unconditionally.
   if (fadingFix) {
@@ -2823,6 +2822,14 @@ void GfxRenderer::displayBufferAsync(const HalDisplay::RefreshMode refreshMode, 
 void GfxRenderer::waitRefreshComplete() const { display.waitRefreshComplete(); }
 
 bool GfxRenderer::supportsAsyncRefresh() const { return !fadingFix && display.supportsAsyncRefresh(); }
+
+HalDisplay::GrayscaleCapabilities GfxRenderer::grayscaleCapabilities(HalDisplay::GrayscaleMode mode) const {
+  auto caps = display.grayscaleCapabilities(mode);
+  if (fadingFix) caps.asyncBase = false;
+  return caps;
+}
+
+bool GfxRenderer::supportsAsyncGrayscaleBase() const { return grayscaleCapabilities().asyncBase; }
 
 size_t GfxRenderer::readFramebufferRegion(int x, int y, int w, int h, uint8_t* dst, size_t dstCapacity) const {
   if (dst == nullptr || w <= 0 || h <= 0 || !frameBuffer) return 0;
@@ -2911,26 +2918,28 @@ std::vector<std::string> GfxRenderer::wrappedText(const int fontId, const char* 
 
     if (getTextWidth(fontId, testLine.c_str(), style) <= maxWidth) {
       currentLine = testLine;
+    } else if (!currentLine.empty()) {
+      lines.push_back(currentLine);
+      currentLine.clear();
+      // Requeue the word instead of deciding its fate here: the loop top then
+      // applies the last-line ellipsis or the overlong split with the correct
+      // remaining line budget.
+      remaining = remaining.empty() ? word : word + " " + remaining;
     } else {
-      if (!currentLine.empty()) {
-        lines.push_back(currentLine);
-        // If the carried-over word itself exceeds maxWidth, truncate it and
-        // push it as a complete line immediately — storing it in currentLine
-        // would allow a subsequent short word to be appended after the ellipsis.
-        if (getTextWidth(fontId, word.c_str(), style) > maxWidth) {
-          lines.push_back(truncatedText(fontId, word.c_str(), maxWidth, style));
-          currentLine.clear();
-          if (static_cast<int>(lines.size()) >= maxLines) return lines;
-        } else {
-          currentLine = word;
-        }
-      } else {
-        // Single word wider than maxWidth: truncate and stop to avoid complicated
-        // splitting rules (different between languages). Results in an aesthetically
-        // pleasing end.
-        lines.push_back(truncatedText(fontId, word.c_str(), maxWidth, style));
-        return lines;
+      // Single word wider than the line — a no-space filename or a CJK run,
+      // which has no space boundaries at all. Hard-split at the widest UTF-8
+      // prefix that fits (never below one codepoint, so the loop advances) and
+      // requeue the rest to keep wrapping.
+      size_t fit = 0;
+      while (fit < word.size()) {
+        size_t next = fit + 1;
+        while (next < word.size() && (static_cast<unsigned char>(word[next]) & 0xC0) == 0x80) next++;
+        if (fit > 0 && getTextWidth(fontId, word.substr(0, next).c_str(), style) > maxWidth) break;
+        fit = next;
       }
+      lines.push_back(word.substr(0, fit));
+      const std::string rest = word.substr(fit);
+      if (!rest.empty()) remaining = remaining.empty() ? rest : rest + " " + remaining;
     }
   }
 
@@ -2999,51 +3008,18 @@ void GfxRenderer::tapToLogical(float nx, float ny, int& outX, int& outY) const {
   }
 }
 
-// Translate a logical rect through rotateCoordinates and take the bounding
+// Translate a logical rect through the panel rotation and take the bounding
 // box of its four corners on the physical panel. Output coords are inclusive
 // and clamped. Returns false if the rect ends up fully off-panel.
 static bool logicalRectToPhysicalBounds(GfxRenderer::Orientation orientation, int lx, int ly, int lw, int lh,
                                         uint16_t panelWidth, uint16_t panelHeight, int* outX0, int* outY0, int* outX1,
                                         int* outY1) {
-  if (lw <= 0 || lh <= 0) return false;
-  int minX = INT32_MAX;
-  int minY = INT32_MAX;
-  int maxX = INT32_MIN;
-  int maxY = INT32_MIN;
-  const int corners[4][2] = {{lx, ly}, {lx + lw - 1, ly}, {lx, ly + lh - 1}, {lx + lw - 1, ly + lh - 1}};
-  for (auto& c : corners) {
-    int phyX;
-    int phyY;
-    rotateCoordinates(orientation, c[0], c[1], &phyX, &phyY, panelWidth, panelHeight);
-    if (phyX < minX) minX = phyX;
-    if (phyY < minY) minY = phyY;
-    if (phyX > maxX) maxX = phyX;
-    if (phyY > maxY) maxY = phyY;
-  }
-  if (minX < 0) minX = 0;
-  if (minY < 0) minY = 0;
-  if (maxX >= panelWidth) maxX = panelWidth - 1;
-  if (maxY >= panelHeight) maxY = panelHeight - 1;
-  if (minX > maxX || minY > maxY) return false;
-  *outX0 = minX;
-  *outY0 = minY;
-  *outX1 = maxX;
-  *outY1 = maxY;
-  return true;
+  return RegionGeometry::physicalBounds(static_cast<int>(orientation), lx, ly, lw, lh, panelWidth, panelHeight, outX0,
+                                        outY0, outX1, outY1);
 }
 
 size_t GfxRenderer::getRegionByteSize(int lx, int ly, int lw, int lh) const {
-  int x0, y0, x1, y1;
-  if (!logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
-    return 0;
-  }
-  // x bounds are in pixels; widen to byte boundaries on either side so per-row
-  // memcpy stays byte-aligned even when the logical rect doesn't.
-  const int byteX0 = x0 / 8;
-  const int byteX1 = x1 / 8;
-  const int bytesPerRow = byteX1 - byteX0 + 1;
-  const int rowCount = y1 - y0 + 1;
-  return static_cast<size_t>(bytesPerRow) * static_cast<size_t>(rowCount);
+  return RegionGeometry::byteSize(static_cast<int>(orientation), lx, ly, lw, lh, panelWidth, panelHeight);
 }
 
 bool GfxRenderer::copyRegionToBuffer(int lx, int ly, int lw, int lh, uint8_t* buf, size_t bufSize) const {
@@ -3386,9 +3362,17 @@ size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
 // void GfxRenderer::grayscaleRevert() const { display.grayscaleRevert(); }
 
 void GfxRenderer::displayGrayscaleBase(HalDisplay::RefreshMode fallback) const {
+  absoluteGrayPlanes = false;
   if (darkMode_) invertScreen();
   display.displayGrayscaleBase(fallback, fadingFix);
   if (darkMode_) invertScreen();
+}
+
+bool GfxRenderer::displayGrayscaleBase(HalDisplay::GrayscaleMode mode, HalDisplay::RefreshMode fallback) const {
+  absoluteGrayPlanes = false;
+  if (!display.displayGrayscaleBase(mode, fallback, fadingFix)) return false;
+  absoluteGrayPlanes = mode != HalDisplay::GrayscaleMode::Overlay;
+  return true;
 }
 
 void GfxRenderer::preconditionGrayscale() const { display.preconditionGrayscale(); }
@@ -3423,7 +3407,18 @@ void GfxRenderer::copyGrayscaleMsbBuffers() const {
   if (darkMode_) invertScreen();
 }
 
-void GfxRenderer::displayGrayBuffer() const { display.displayGrayBuffer(fadingFix); }
+void GfxRenderer::displayGrayBuffer() const {
+  display.displayGrayBuffer(fadingFix);
+  absoluteGrayPlanes = false;
+}
+
+void GfxRenderer::setRenderMode(RenderMode mode) {
+  if (mode == BW && absoluteGrayPlanes) {
+    display.cleanupGrayscaleBuffers(nullptr);  // cancel an unfinished absolute pass
+    absoluteGrayPlanes = false;
+  }
+  renderMode = mode;
+}
 
 void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch, int yStart, int numRows) const {
   // Guard the uint16_t casts below: a negative would wrap to a huge length.
@@ -3441,9 +3436,11 @@ void GfxRenderer::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* scratch
   display.writeGrayscalePlaneStrip(lsbPlane, scratch, static_cast<uint16_t>(yStart), static_cast<uint16_t>(numRows));
 }
 
-bool GfxRenderer::supportsStripGrayscale() const { return display.supportsStripGrayscale(); }
+bool GfxRenderer::supportsStripGrayscale() const { return grayscaleCapabilities().stripUploads; }
 
-bool GfxRenderer::combinesGrayscaleBase() const { return display.combinesGrayscaleBase(); }
+bool GfxRenderer::combinesGrayscaleBase() const {
+  return grayscaleCapabilities().base == HalDisplay::GrayscaleBase::Combined;
+}
 
 void GfxRenderer::freeBwBufferChunks() {
   for (auto& bwBufferChunk : bwBufferChunks) {
@@ -3493,7 +3490,7 @@ bool GfxRenderer::storeBwBuffer() {
  * It should be called to restore the BW buffer state after grayscale rendering is complete.
  * Uses chunked restoration to match chunked storage.
  */
-void GfxRenderer::restoreBwBuffer() {
+void GfxRenderer::restoreBwBuffer(const bool resyncPanelBaseline) {
   // Check if all chunks are allocated
   bool missingChunks = false;
   for (const auto& bwBufferChunk : bwBufferChunks) {
@@ -3514,7 +3511,9 @@ void GfxRenderer::restoreBwBuffer() {
     memcpy(frameBuffer + offset, bwBufferChunks[i], chunkSize);
   }
 
-  display.cleanupGrayscaleBuffers(frameBuffer);
+  if (resyncPanelBaseline) {
+    display.cleanupGrayscaleBuffers(frameBuffer);
+  }
 
   freeBwBufferChunks();
   LOG_DBG("GFX", "Restored and freed BW buffer chunks");

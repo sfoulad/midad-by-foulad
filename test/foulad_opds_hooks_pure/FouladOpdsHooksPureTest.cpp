@@ -41,14 +41,6 @@ TEST(AcquisitionExtension, AnythingElseDefaultsToEpub) {
   EXPECT_EQ(FouladOpdsHooks::acquisitionExtension(""), ".epub");
 }
 
-TEST(IsNewsFeed, MatchesTheNewsUrlExactly) { EXPECT_TRUE(FouladOpdsHooks::isNewsFeed(FOULAD_EBOOKS_NEWS_URL)); }
-
-TEST(IsNewsFeed, DoesNotMatchTheCatalogUrl) { EXPECT_FALSE(FouladOpdsHooks::isNewsFeed(FOULAD_EBOOKS_URL)); }
-
-TEST(IsNewsFeed, DoesNotMatchAnUnrelatedServer) {
-  EXPECT_FALSE(FouladOpdsHooks::isNewsFeed("https://example.com/opds"));
-}
-
 TEST(ShouldPollDeviceTracking, FiresWhenBrowsingFouladAndIntervalElapsed) {
   EXPECT_TRUE(FouladOpdsHooks::shouldPollDeviceTracking(
       /*isBrowsing=*/true, /*isFouladServer=*/true, /*wifiConnected=*/true,

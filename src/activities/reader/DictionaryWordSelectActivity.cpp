@@ -54,10 +54,10 @@ void DictionaryWordSelectActivity::extractWords() {
   prepareReaderFontMetrics();
 
   for (const auto& element : page->elements) {
-    if (!element || element->getTag() != TAG_PageLine) continue;
-    const auto& line = static_cast<const PageLine&>(*element);
-    const auto& block = line.getBlock();
-    if (!block) continue;
+    if (element->getTag() != TAG_PageLine) continue;
+    const auto* line = static_cast<const PageLine*>(element.get());
+    const auto* block = line->getBlock();
+    if (!block || !block->valid()) continue;
 
     // Foulad fork: TextBlock exposes a compact accessor API (wordCount/
     // wordText/wordXpos) instead of vcodex's vector getters. wordText() is the
@@ -67,8 +67,8 @@ void DictionaryWordSelectActivity::extractWords() {
       const std::string wordStr = block->wordText(i);
       const std::string cleaned = DictionaryStore::cleanWord(wordStr);
       if (cleaned.empty()) continue;
-      const int16_t x = static_cast<int16_t>(line.xPos + block->wordXpos(i) + marginLeft);
-      const int16_t y = static_cast<int16_t>(line.yPos + marginTop);
+      const int16_t x = static_cast<int16_t>(line->xPos + block->wordXpos(i) + marginLeft);
+      const int16_t y = static_cast<int16_t>(line->yPos + marginTop);
       const uint16_t kashida = block->kashidaExtraPx(i);
       const int16_t width = static_cast<int16_t>(std::max(1, measureWordWidth(wordStr.c_str()) + kashida));
       words.push_back(WordInfo{wordStr, cleaned, x, y, width, 0, -1, -1, kashida});

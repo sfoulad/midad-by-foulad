@@ -301,7 +301,11 @@ void ReadingStatsStore::endSession(const uint32_t estimatedTimeLeftSeconds, cons
     return;
   }
   auto& book = books[0];
-  if (session.accumulatedMs >= static_cast<uint64_t>(MIN_SESSION_SECONDS) * 1000ULL) {
+  // Any session with time on it counts. There used to be a 60-second floor, which
+  // meant a genuine short read registered as nothing at all -- bad for a streak
+  // feature, where the daily goal starts at 15 minutes and a 50-second pickup
+  // should contribute 50 seconds rather than zero.
+  if (session.accumulatedMs > 0) {
     book.sessions++;
     book.lastSessionMs = static_cast<uint32_t>(std::min<uint64_t>(session.accumulatedMs, UINT32_MAX));
     dirty = true;

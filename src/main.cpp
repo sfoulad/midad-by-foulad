@@ -10,10 +10,12 @@
 #include <HalDisplay.h>
 #include <HalFrontlight.h>
 #include <HalGPIO.h>
+#include <HalMemory.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
+#include <HeapTrace.h>
 #include <I18n.h>
 #include <Logging.h>
 #ifndef SIMULATOR
@@ -36,12 +38,16 @@
 #include "BleWifiScanCache.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "FouladDeviceTracking.h"
 #include "GameHighScoresStore.h"
 #include "GymLogStore.h"
 #include "GymPlanStore.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderSyncClient.h"
 #include "MappedInputManager.h"
 #include "MidadAppSettings.h"
+#include "MidadArabicKeyboard.h"
+#include "MidadSettingsExtension.h"
 #include "OpdsServerStore.h"
 #include "OtaRollbackDetection.h"
 #include "OtaRollbackRecoveryPlan.h"
@@ -60,6 +66,7 @@
 #endif
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
+#include "platform/UsbSerialJtagHandoff.h"
 #include "util/BatteryDiagLog.h"
 #include "util/BleDiagLog.h"
 #include "util/ButtonNavigator.h"
@@ -79,6 +86,8 @@ static unsigned long allowSleepAt = 0;
 namespace {
 constexpr unsigned long X4PRO_RECOVERY_SETTLE_MS = 20;
 constexpr unsigned long DEFAULT_RECOVERY_SETTLE_MS = 500;
+constexpr unsigned long X4PRO_POWER_DOUBLE_CLICK_MS = 500;
+constexpr unsigned long X4PRO_POWER_CLICK_MAX_HOLD_MS = 300;
 }  // namespace
 
 // A wake hold must never become an in-app power-button action.  Boot may continue
@@ -228,8 +237,11 @@ constexpr uint32_t SILENT_REBOOT_TARGET_FOULAD_EBOOKS = 5;
 constexpr uint32_t SILENT_REBOOT_TARGET_GYM = 6;
 constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 7;
 constexpr uint32_t SILENT_REBOOT_TARGET_DICTIONARY = 8;
-constexpr uint32_t SILENT_REBOOT_TARGET_NEWS = 9;
-constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_NEWS;
+constexpr uint32_t SILENT_REBOOT_TARGET_LOGOUT = 10;
+constexpr uint32_t SILENT_REBOOT_TARGET_PAIRING = 11;
+constexpr uint32_t SILENT_REBOOT_TARGET_BLUETOOTH = 12;
+constexpr uint32_t SILENT_REBOOT_TARGET_APPS = 13;
+constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_APPS;
 // Must always name the highest target above. The boot-time range check below uses it
 // to reject uninitialised RTC memory on a cold boot, and a target outside the range
 // is silently treated as 0 -- which is HOME. Adding a target without moving this
@@ -301,6 +313,17 @@ void silentRestartToReader() {
   ESP.restart();
 }
 
+void restartToHomeAfterStorageHandoff() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the storage handoff reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Restart after storage handoff (target=home)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  handoffUsbOtgToSerialJtag();
+  ESP.restart();
+}
+
 void silentRestartToOtaInstall() {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
   silentRebootTarget = SILENT_REBOOT_TARGET_OTA_INSTALL;
@@ -335,11 +358,46 @@ void silentRestartToFileTransfer() {
   ESP.restart();
 }
 
-void silentRestartToNews() {
+void silentRestartToApps() {
   if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
-  silentRebootTarget = SILENT_REBOOT_TARGET_NEWS;
+  silentRebootTarget = SILENT_REBOOT_TARGET_APPS;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=news)");
+  LOG_DBG("MAIN", "Silent restart (target=apps)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToPairing() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_PAIRING;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=pairing)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+// Back to the Bluetooth screen after a WiFi service closes. BLE and WiFi cannot
+// both be up on the C3 (NimBLE is ~57KB resident and the radio gate requires
+// WIFI_MODE_NULL), so returning to BLE means tearing WiFi down -- and a reboot
+// is the only way to get the heap back to a state where NimBLE's allocation
+// reliably succeeds after a web-server session has run.
+void silentRestartToBluetooth() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_BLUETOOTH;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=bluetooth)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToLogout() {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_LOGOUT;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_DBG("MAIN", "Silent restart (target=logout)");
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -524,6 +582,7 @@ void enterDeepSleep(bool fromTimeout = false) {
 
   halTiltSensor.deepSleep();
   display.deepSleep();
+  Storage.prepareForDeepSleep();
   LOG_DBG("MAIN", "Entering deep sleep");
 
   powerManager.startDeepSleep(gpio);
@@ -611,6 +670,13 @@ void setupDisplayAndFonts(bool seamless = false, bool uiOnlyFonts = false) {
     QuranBook::ensureExtracted();
   }
 
+  // Give KOSync this unit's real identity before anything can sync. The library
+  // defaults are the historical compile-time constants, identical on every
+  // device; the serial is stable, unique, and the same string sent as the
+  // reading-position deviceId.
+  KOReaderSyncClient::setDeviceIdentity(FouladDeviceTracking::getSerialNumber(),
+                                        gpio.deviceIsX3() ? "Xteink X3" : "Xteink X4");
+
   LOG_DBG("MAIN", "Fonts setup");
 }
 
@@ -619,20 +685,21 @@ void setup() {
   BoardConfig::holdPowerRails();
 #endif
 
-  t1 = millis();
-
 #ifdef ENABLE_SERIAL_LOG
-  // Earliest possible Serial setup. The 250 ms stall before begin() lets the
-  // USB Serial/JTAG peripheral finish power-on and lets the host complete USB
-  // enumeration before we touch the CDC state — otherwise cold boot races
-  // and the host has to be physically replugged for logs to flow. Warm reboot
-  // worked without the delay because USB was already enumerated.
+#ifdef CROSSPOINT_WAIT_FOR_USB_SERIAL
+  // Development builds preserve reliable early CDC logs; release builds let
+  // enumeration proceed asynchronously so users do not pay this startup cost.
   delay(250);
+#endif
   Serial.begin(115200);
 #if LOG_SERIAL_HAS_TX_TIMEOUT
   logSerial.setTxTimeoutMs(1);  // This is a load-bearing 1. Do not modify.
 #endif
 #endif
+
+  // TEMP diagnostic: arms the failed-allocation callback before anything else
+  // in setup() can allocate. No-op unless X3_HEAP_TRACE is defined.
+  HEAP_TRACE_BEGIN();
 
   HalSystem::begin();
   // checkPanic() clears the watchdog capture marker after a successful SD
@@ -656,8 +723,6 @@ void setup() {
 
   gpio.begin();
   powerManager.begin();
-  halTiltSensor.begin();
-  halClock.begin();
 
   // First of two USB samples (second below, before display bring-up): the SOF
   // verdict needs two samples a frame apart, and it must be settled before the
@@ -673,25 +738,21 @@ void setup() {
       [](int8_t busyPin, uint8_t busyLevel) { return powerManager.onEinkBusyWaitSlice(busyPin, busyLevel); });
 
   const auto wakeupReason = gpio.getWakeupReason();
+  // Sample the wake hold now — a click wake is released within milliseconds of
+  // boot — but defer the sleep-or-boot decision until SETTINGS is loaded below:
+  // click-to-wake is a setting, and an X4 battery power-off cuts all power, so
+  // only SD state survives to the next boot.
+  const bool wakeHoldVerified = wakeupReason != HalGPIO::WakeupReason::PowerButton || gpio.verifyPowerButtonWakeup();
 
-  // Latch the recovery chord before SD and settings I/O. X4 Pro uses a plain
-  // digital button with 5 ms debounce; other Xteink inputs retain their legacy
-  // settling window. BTN_DOWN avoids the X4 Pro's GPIO0 boot-strap pin.
-  bool recoveryFirmwareMode = false;
-  if (wakeupReason == HalGPIO::WakeupReason::PowerButton) {
-    const unsigned long settleMs = BoardConfig::isX4Pro() ? X4PRO_RECOVERY_SETTLE_MS : DEFAULT_RECOVERY_SETTLE_MS;
-    const unsigned long settleStart = millis();
-    while (millis() - settleStart < settleMs) {
-      gpio.update();
-      delay(10);
-    }
+  // X4 Pro and X4 Classic both map BTN_UP to GPIO0 — an ESP32-S3 boot strap — so
+  // gate recovery on the non-strap Down key (GPIO7) to avoid a stuck-in-recovery loop.
+  const auto recoveryButton = (BoardConfig::isX4Pro() || BoardConfig::isX4Classic()) ? MappedInputManager::Button::Down
+                                                                                     : MappedInputManager::Button::Up;
+  const bool recoveryFirmwareMode = wakeupReason == HalGPIO::WakeupReason::PowerButton && !BoardConfig::isPaperMono() &&
+                                    mappedInputManager.isPressed(recoveryButton);
 
-    const uint8_t recoveryButton = BoardConfig::isX4Pro() ? HalGPIO::BTN_DOWN : HalGPIO::BTN_UP;
-    if (gpio.isPressed(recoveryButton)) {
-      recoveryFirmwareMode = true;
-      LOG_INF("MAIN", "Recovery firmware mode (%s + POWER held at boot)", BoardConfig::isX4Pro() ? "DOWN" : "UP");
-    }
-  }
+  halTiltSensor.begin();
+  halClock.begin();
 
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X3
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
@@ -713,7 +774,37 @@ void setup() {
 
   SETTINGS.loadFromFile();
   MIDAD_APP_SETTINGS.loadFromFile();
+
+  // Midad's Arabic keyboard layer, through CrossPoint's generic keyboard
+  // extension point. Until this call the keyboard is exactly upstream's.
+  midad_arabic_keyboard::install();
   APP_STATE.loadFromFile();
+  const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
+  const bool isPersistedSleepWake = isSleepWake && !APP_STATE.showBootScreen;
+
+  if (recoveryFirmwareMode) {
+    LOG_INF("MAIN", "Recovery firmware mode (%s + POWER held at boot)",
+            (BoardConfig::isX4Pro() || BoardConfig::isX4Classic()) ? "DOWN" : "UP");
+  }
+
+  // Touch boards default the reader menu to the toolbar overlay instead of the
+  // full-screen list. Seeded before the load: fromJson() falls back to the
+  // in-memory value only when the file carries no readerMenuStyle key, so a
+  // user's saved choice (either style) still wins.
+  if (gpio.hasTouch()) {
+    SETTINGS.readerMenuStyle = CrossPointSettings::READER_MENU_TOOLBAR;
+  }
+  SETTINGS.loadFromFile();
+  MIDAD_APP_SETTINGS.loadFromFile();
+
+  // Midad's Arabic keyboard layer, through CrossPoint's generic keyboard
+  // extension point. Until this call the keyboard is exactly upstream's.
+  midad_arabic_keyboard::install();
+
+  // Midad's Apps tab and its actions, contributed through CrossPoint's generic
+  // Settings extension provider (PR #3274). Until this call SettingsActivity
+  // shows exactly upstream's built-in categories.
+  registerMidadSettingsExtension();
   RECENT_BOOKS.loadFromFile();
   GAME_SCORES.loadFromFile();
   TASBIH.loadFromFile();
@@ -733,21 +824,28 @@ void setup() {
 
   switch (wakeupReason) {
     case HalGPIO::WakeupReason::PowerButton:
-      LOG_DBG("MAIN", "Verifying power button press duration");
-      if (!gpio.verifyPowerButtonWakeup(SETTINGS.getPowerButtonDuration(),
-                                        SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP)) {
+      // With Short Power Button Press = Sleep, a single click wakes on any
+      // device; otherwise the button must still be held (ghost-wake debounce).
+      if (!wakeHoldVerified && SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::SLEEP) {
+        LOG_DBG("MAIN", "Power-button wake not held through verification, sleeping");
+        Storage.prepareForDeepSleep();
         powerManager.startDeepSleep(gpio);
       }
       wakePowerReleasePending = true;
       break;
     case HalGPIO::WakeupReason::AfterUSBPower:
-      // If USB power caused a cold boot, go back to sleep
+      // Most devices return to sleep after a USB-powered cold boot.
       LOG_DBG("MAIN", "Wakeup reason: After USB Power");
-#if FREEINK_DEVICE_PAPERMONO
-      // There is no armable GPIO wake because the button is behind the PMIC.
-      // Sleeping here would strand the device in a USB-replug boot loop.
+#if FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_EEGO_A4
+      // X4 Pro must stay awake so USB Serial/JTAG remains available after leaving
+      // USB Drive and reconnecting the cable. Paper Mono has no armable GPIO wake
+      // (its button is behind the PMIC). EEGO A4's post-flash reset reads as
+      // POWERON (native-USB), so a flash would otherwise be misclassified as a
+      // USB-power cold boot and sleep. Sleeping any of these here would strand
+      // the device in a USB-replug boot loop (or sleep right after a flash).
       break;
 #else
+      Storage.prepareForDeepSleep();
       powerManager.startDeepSleep(gpio);
       break;
 #endif
@@ -758,7 +856,6 @@ void setup() {
       break;
   }
 
-  // First serial output only here to avoid timing inconsistencies for power button press duration verification
   LOG_DBG("MAIN", "Starting CrossPoint version " CROSSPOINT_VERSION);
   {
     // Record what the loaded auto-sleep timeout actually resolves to -- separates "the
@@ -776,10 +873,9 @@ void setup() {
   // retained frame and input dispatches against a visible UI.
   // Only a verified deep-sleep wake may use the one-shot persisted flag.
   // Otherwise a stale flag could suppress the splash on a cold boot.
-  const bool isSleepWake = wakeupReason == HalGPIO::WakeupReason::PowerButton;
-  const BootResume resume = isSilentReboot                             ? BootResume::Silent
-                            : isSleepWake && !APP_STATE.showBootScreen ? BootResume::SplashlessWake
-                                                                       : BootResume::Splash;
+  const BootResume resume = isSilentReboot         ? BootResume::Silent
+                            : isPersistedSleepWake ? BootResume::SplashlessWake
+                                                   : BootResume::Splash;
   bool allowFastInitialReaderRefresh = false;
   bool needsWakeRefresh = false;
 
@@ -887,10 +983,22 @@ void setup() {
     // allocations for the WiFi driver and TCP buffers, and a fragmented heap
     // makes page loads crawl. Settings reboots here before starting it.
     activityManager.goToFileTransfer();
-  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_NEWS) {
-    // Same fresh-heap treatment as the catalog, for the same reasons: WiFi, feed
-    // parsing and an EPUB download stacked on one session's heap.
-    activityManager.goToNews();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_APPS) {
+    // Return-to-caller: the Bluetooth screen reboots here rather than restoring
+    // WiFi in place, so the user lands back in Apps on a clean heap.
+    activityManager.goToApps();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_PAIRING) {
+    // Phone asked the reader to sign in (BLE account.register). The pairing code
+    // is generated and displayed here, on the panel -- it is never carried over
+    // BLE, so a peripheral impersonating this reader cannot mint one.
+    activityManager.goToPairing();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_BLUETOOTH) {
+    // A WiFi service was closed from the phone; hand the radio back to BLE so the
+    // next service can be chosen -- see silentRestartToBluetooth().
+    activityManager.goToBluetooth();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_LOGOUT) {
+    // Fresh heap for the sign-out handshake -- see silentRestartToLogout().
+    activityManager.goToLogout();
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_FOULAD_EBOOKS) {
     // Same fresh-heap treatment: OPDS browsing stacks WiFi + feed parsing +
     // cover download/decode allocations; started from a fragmented session
@@ -962,7 +1070,24 @@ void loop() {
   unsigned long lastHeapSample = 0;
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
-  gpio.update();
+  mappedInputManager.update();
+
+  if (activityManager.requiresExclusiveStorageLoop()) {
+    // USB Drive handed the raw SD card to the host. Do not run screenshots,
+    // sleep, shortcuts, or normal navigation while its filesystem is detached.
+    activityManager.loop();
+    if (activityManager.preventAutoSleep()) {
+      powerManager.setPowerSaving(false);
+      delay(10);
+    } else {
+      // No host is active, so a slower loop is safe. The activity itself times
+      // out the raw-storage handoff rather than entering deep sleep detached.
+      powerManager.setPowerSaving(true);
+      delay(50);
+    }
+    return;
+  }
+
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
 #ifdef SIMULATOR
@@ -1006,6 +1131,27 @@ void loop() {
     BlePeripheral.begin();
   } else if (BlePeripheral.isActive()) {
     BlePeripheral.end();
+  }
+  // A request that the gate refuses used to be completely silent: the diagnostic
+  // below only fires when bleAllowedNow CHANGES, and a refusal that holds from the
+  // first tick never changes. That is what a user sees as "Starting Bluetooth..."
+  // with nothing in the log at all. Latched on the reason so it says why once,
+  // rather than every tick.
+  {
+    static int lastBlockReason = -1;
+    const int reason = !BlePeripheral.isUserRequested()     ? 0
+                       : WiFi.getMode() != WIFI_MODE_NULL   ? 1
+                       : activityManager.isReaderActivity() ? 2
+                                                            : 0;
+    if (reason != lastBlockReason) {
+      if (reason == 1) {
+        LOG_ERR("BLEDIAG", "BLE requested but refused: WiFi is up (mode=%d); it must be off",
+                static_cast<int>(WiFi.getMode()));
+      } else if (reason == 2) {
+        LOG_ERR("BLEDIAG", "BLE requested but refused: reader activity is active");
+      }
+      lastBlockReason = reason;
+    }
   }
   BlePeripheral.poll();
   BleCommandDispatcher::pump();
@@ -1059,8 +1205,14 @@ void loop() {
 #endif
 
   if (Serial && millis() - lastMemPrint >= 10000) {
-    LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
-            ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+    const auto heap = HalMemory::getInternalHeap();
+    LOG_INF("MEM", "Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes", heap.freeBytes,
+            heap.totalBytes, heap.minFreeBytes, heap.largestBlockBytes);
+#ifdef BOARD_HAS_PSRAM
+    const auto psram = HalMemory::getPsramHeap();
+    LOG_INF("MEM", "PSRAM: Free: %zu bytes, Total: %zu bytes, Min Free: %zu bytes, MaxAlloc: %zu bytes",
+            psram.freeBytes, psram.totalBytes, psram.minFreeBytes, psram.largestBlockBytes);
+#endif
     lastMemPrint = millis();
   }
 
@@ -1243,6 +1395,7 @@ void loop() {
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
       return;
     }
+    LOG_DBG("MAIN", "Power button held %lums, sleeping", gpio.getPowerButtonHeldTime());
     enterDeepSleep();
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
     return;
@@ -1272,7 +1425,11 @@ void loop() {
 
   // Refresh the battery icon when USB is plugged or unplugged.
   // Placed after sleep guards so we never queue a render that won't be processed.
-  if (gpio.wasUsbStateChanged()) {
+  // Not while reading: there a repaint is a full page re-render (visible
+  // flash, the AA pass re-running, and a frontlight dip under the refresh
+  // load); the reader's status bar picks the charging state up on the next
+  // page turn instead.
+  if (gpio.wasUsbStateChanged() && !activityManager.isReaderActivity()) {
     activityManager.requestUpdate();
   }
 

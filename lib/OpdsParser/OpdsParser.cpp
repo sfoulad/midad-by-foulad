@@ -74,9 +74,29 @@ OpdsParser::OpdsParser() {
   // allocator for `entries`, tracked separately; this is the same class of bug as
   // OpdsBookBrowserActivity.cpp's hasHeapForNavigation() gate and buildUrl()'s abort,
   // just recalibrated with newer evidence rather than newly discovered.
-  constexpr uint32_t kMinFreeHeapForReserve = 32 * 1024;
-  if (ESP.getFreeHeap() >= kMinFreeHeapForReserve) {
-    entries.reserve(32);
+  // Recalibrated again, on measurement rather than estimate. Device browsing logs put
+  // free heap at 25,180-31,844 bytes through every feed of a real session -- entirely
+  // BELOW the 32KB gate, so the reserve was skipped on every single feed and the vector
+  // fell back to the doubling growth this block exists to prevent. That is the failure
+  // the paragraph above predicts ("low enough to skip the reserve AND fail a later
+  // doubling step"), now observed rather than feared: MaxAlloc fell 8-19KB per feed
+  // parse and a Store page eventually loaded at 5,620 bytes largest block, below the
+  // floor its own cover decode needs, so that page rendered no covers at all.
+  //
+  // Two changes. The size is matched to what a device feed actually returns -- Core caps
+  // a device page at 12 entries (DEVICE_PAGE_SIZE) and the navigation feeds are smaller
+  // still, so 16 covers every real case with headroom while asking for a block a
+  // quarter the size of reserve(32)'s. And the gate now tests the largest CONTIGUOUS
+  // block, which is what a single reserve actually needs, instead of total free heap,
+  // which can look healthy while no block large enough exists. 2x the requested block
+  // keeps the proportional margin the original author established empirically.
+  //
+  // A feed larger than 16 still grows from there, but from a reserved base rather than
+  // from empty, so the doubling chain it can reach is far shorter.
+  constexpr size_t kReserveEntries = 16;
+  const uint32_t reserveBytes = static_cast<uint32_t>(kReserveEntries * sizeof(OpdsEntry));
+  if (ESP.getMaxAllocHeap() >= reserveBytes * 2) {
+    entries.reserve(kReserveEntries);
   }
   XML_SetUserData(parser, this);
   XML_SetElementHandler(parser, startElement, endElement);

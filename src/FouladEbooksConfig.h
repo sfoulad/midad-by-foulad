@@ -6,33 +6,23 @@
 // Credentials are issued by QR sign-in on first use (FouladQrLoginActivity)
 // and stored via OpdsServerStore — never hardcoded here, since this repo is public.
 constexpr char FOULAD_EBOOKS_NAME[] = "Midad";
-// http://, and Basic Auth credentials travel in cleartext as a result. That is a
-// known, unresolved exposure -- not a settled design -- and it should not reach a
-// production release unrevisited.
+// Midad Core's OPDS root. HTTPS only: Core is a Cloudflare Worker on
+// api.midad.one and does not answer plain http, and a POST would not follow the
+// redirect that answered it anyway.
 //
-// The original reason recorded here was that ESP-IDF's trust bundle could not
-// resolve the certificate chain. That was wrong, and worth correcting so nobody
-// re-derives it: the server presents the full cross-signed chain, so ISRG Root X1
-// alone verifies it (checked with `openssl s_client -CAfile isrgrootx1.pem`:
-// return code 0). At ~1.9KB pinned, versus the ~250KB bundle that genuinely did
-// drive free heap to ~5KB, the memory objection does not apply either.
+// Two feeds hang off this one root and the device needs no knowledge of either.
+// Anonymous, the root is the public Store catalogue, byte-for-byte what shipped.
+// With a device credential it is a pure-navigation feed offering "My Library"
+// (/opds/library), "Midad Store" (/opds/store) and, for a reader who has any,
+// "Shelves" (/opds/library/collections) -- all absolute hrefs, all reached by
+// the ordinary browser. Library search, categories, pagination, covers and
+// acquisition are advertised on those feeds as ordinary OPDS links, so nothing
+// below this line has to know Library exists.
 //
-// https was nevertheless tried and reverted (v1.8.14-rc): the first device to run
-// it could not fetch the feed. All twelve endpoints were switched at once, so the
-// failure took out catalog, sign-in, covers, fonts and gym together with nothing to
-// compare against -- the shape of the change was as wrong as anything in it.
-//
-// For the next attempt: switch ONE endpoint, and suspect the clock first.
-// Certificate validity checking needs a roughly correct date, and neither the X3's
-// DS3231 (hour/minute, no calendar) nor the X4 (no RTC) keeps one across a reboot.
-// http never cared; https does. That is testable before writing any code -- compare
-// a freshly NTP-synced device against one that has been offline.
-constexpr char FOULAD_EBOOKS_URL[] = "http://midad.one/opds";
-// News feeds (EINK_NEWS_TASKS.md). A normal OPDS acquisition feed, one entry per
-// subscription, browsed by the same activity as the catalog -- News is a different
-// root, not a different browser. Entry ids live in their own namespace
-// ("urn:midad:feed:<id>"), which is why extractFouladBookId checks the prefix.
-constexpr char FOULAD_EBOOKS_NEWS_URL[] = "http://midad.one/opds/news";
+// Page size is the server's to choose and is never assumed here: an
+// authenticated device feed pages at 12 while the public Store stays at 25, and
+// the browser only ever follows rel="next"/rel="previous".
+constexpr char FOULAD_EBOOKS_URL[] = "https://api.midad.one/opds";
 
 // Downloaded news lives in its own folder rather than beside the books at the SD
 // root. It is not a book: it has no author, it is replaced wholesale every time you
@@ -45,58 +35,71 @@ inline bool isNewsBookPath(const std::string_view path) { return path.rfind("/Ne
 
 // Font-conversion relay endpoint (Settings/File Transfer portal -> Fonts ->
 // Convert a Font): the device uploads a raw TTF/OTF plus a language choice,
-// foulad-ebooks converts it into the device's .cpfont SD-font format (4 sizes)
-// and responds with download URLs. Open endpoint, no auth -- foulad-ebooks is
-// expected to rate-limit this server-side. Plain http:// for the same reason
-// as FOULAD_EBOOKS_URL above (foulad.one's current certificate chain isn't in
-// ESP-IDF's trust bundle); revisit alongside that fix.
-constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "http://midad.one/api/fonts/convert";
+// the legacy host converts it into the device's .cpfont SD-format (4 sizes)
+// and responds with download URLs. Open endpoint, no auth -- rate-limited
+// server-side. Stays on the legacy host deliberately: the converter is a Python
+// service, so Core has no equivalent and will not gain one.
+constexpr char FOULAD_EBOOKS_FONT_CONVERT_URL[] = "https://api.midad.one/api/fonts/convert";
 
 // QR-code sign-in (see FouladDeviceLogin.h). Unauthenticated JSON POSTs, no
-// cookies/CSRF. Plain http:// is deliberate and expected here for the same
-// certificate-chain reason as FOULAD_EBOOKS_URL above -- these two endpoints sit
-// outside the server's HTTPS-forced group precisely so the device can reach them.
-// Nothing secret is sent TO these endpoints; the token they return is what
-// replaces the account password on the wire, so this flow strictly reduces what
-// is exposed rather than adding to it.
-constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "http://midad.one/api/device-login/start";
-constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "http://midad.one/api/device-login/poll";
-
-// Device-facing sign-out: "remove me", identified by this device's own serial.
-// On the OPDS surface rather than the app API below, because that one sits behind
-// RejectDeviceTokenAuth and answers a QR-issued device token 403 -- deliberately, since
-// it can delete any device, change settings and manage fonts. Removing only itself is a
-// far narrower capability, so a token may reach this. Contract:
-// docs/ebooks-device-signout-endpoint.md.
-constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "http://midad.one/opds/device/signout";
-
-// Foulad One's app JSON API, used by signing out to remove this device from the
-// account (see FouladDeviceLogout). Behind the SAME opds.auth Basic-Auth middleware
-// as the OPDS routes above, so the credential already stored for Foulad eBooks
-// authenticates here unchanged -- no separate login, and no new server endpoint was
-// needed for the device to remove itself.
+// cookies/CSRF. Nothing secret is sent TO these endpoints; the token they return
+// is what replaces the account password on the wire.
 //
-// GET  <base>       -> this account's devices, each carrying id and serial_number
-// DELETE <base>/{id} -> remove one
-// Cross-device reading position (EINK_PAGE_SYNC_TASKS.md). POST reports where this
-// device is and returns where the ACCOUNT is in one round trip; GET only looks, for
-// when there is nothing honest to report yet. Same opds.auth Basic Auth as the feed.
-//
-// The shared currency is progress_percent, not page: the phone paginates with
-// epub.js at its own font size and cannot act on a page number computed for a
-// 5-inch panel. page/total_pages are sent for display only.
-constexpr char FOULAD_EBOOKS_READING_POSITION_URL[] = "http://midad.one/opds/reading-position";
+// Both run through HttpDownloader::postJsonWolf: wolfSSL, verified against the
+// pinned api.midad.one anchor (src/network/CoreCaCerts.h) rather than the
+// esp_crt_bundle, with the certificate's hostname checked against the URL's.
+// Every other endpoint here still uses postJson/esp_http_client unchanged.
+// Certificate validity needs a roughly correct clock, which is why the WiFi
+// connect path syncs NTP before any HTTPS call.
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_START_URL[] = "https://api.midad.one/device-login/start";
+constexpr char FOULAD_EBOOKS_DEVICE_LOGIN_POLL_URL[] = "https://api.midad.one/device-login/poll";
 
-constexpr char FOULAD_EBOOKS_APP_DEVICES_URL[] = "http://midad.one/api/app/devices";
+// Device-facing sign-out: "remove me". The request names no target at all -- Core
+// revokes the token that authenticated the call -- so a stolen reader can destroy
+// exactly the access it already had and not a sibling's. It is the one write a
+// device credential may perform; every other account mutation answers it 401.
+// Answers 204 on success and 401 when the token is already dead.
+constexpr char FOULAD_EBOOKS_DEVICE_SIGNOUT_URL[] = "https://api.midad.one/device-login/self-revoke";
 
-// The one host every URL above points at. Matched on the host rather than on a
+// Crash-report upload. Legacy, like reading-position above and for the same
+// reason: the route lives on midad.one and was never carried over to Core, so
+// building it from FOULAD_EBOOKS_URL (now api.midad.one) addressed a host that
+// has no such endpoint and 404'd every time. Core replaces it with
+// /devices/v1/logs; repointed here rather than removed so crash diagnostics keep
+// working in the meantime.
+// Core device telemetry (R18, live 2026-09-04, contract version
+// c1173627-bcb9-47d3-8f78-8c5f6e5672eb). Both take the device credential as Basic
+// auth and both go over the PINNED wolfSSL transport, never the certificate
+// bundle: api.midad.one's chain is ECDSA, and verifying it through the bundle
+// makes mbedTLS attempt an RSA modexp it cannot allocate (0x4290) -- the failure
+// that broke sign-out. Logs deliberately use the text/plain envelope rather than
+// multipart for the same reason: multipart only exists on the bundle path.
+// Core resume position (B1). PUT/GET /resume/v1/items/{ref}/position, where {ref}
+// is the Store book id the reader downloaded -- Core resolves it to the caller's
+// own library item. Accepts the device token, so it replaces legacy
+// /opds/reading-position, which resolves device credentials in a store Core's
+// tokens have never been written to.
+constexpr char FOULAD_CORE_RESUME_ITEM_URL[] = "https://api.midad.one/resume/v1/items/";
+
+constexpr char FOULAD_CORE_HEARTBEAT_URL[] = "https://api.midad.one/devices/v1/heartbeat";
+constexpr char FOULAD_CORE_LOGS_URL[] = "https://api.midad.one/devices/v1/logs";
+// Server-side cap; a larger body is rejected 413 before it is read.
+constexpr size_t FOULAD_CORE_LOG_MAX_BYTES = 65536;
+
+// Midad's own hosts. Matched on the host rather than on a
 // URL prefix because the requests that must carry the device serial header are
 // spread across several path roots -- /opds/*, /books/{id}/download, /xtc, cover
 // images -- and the acquisition/cover links additionally arrive as absolute URLs
 // straight out of the feed (some carrying ?signature=), so no single prefix
-// covers them. Kept scheme-agnostic so this keeps working when the beta http://
-// above goes back to https:// (see FOULAD_EBOOKS_URL).
+// covers them. Kept scheme-agnostic so a legacy http:// entry still on an SD card
+// is recognised until OpdsServerStore::fromJson rewrites it.
 constexpr char FOULAD_EBOOKS_HOST[] = "midad.one";
+
+// Midad Core's API host. A separate hostname from the site above, not a path on
+// it, so recognising only FOULAD_EBOOKS_HOST would silently drop the device
+// serial header from every catalog, cover and download request and leave remote
+// removal reporting nothing.
+constexpr char FOULAD_CORE_HOST[] = "api.midad.one";
 
 // The pre-rename host. Every device paired before Midad has "http://foulad.one/opds"
 // written into its own OpdsServerStore entry, and that entry -- not the constant above
@@ -144,5 +147,6 @@ constexpr bool isFouladEbooksUrl(std::string_view url) {
   // Hostnames are case-insensitive per RFC 3986; ours are lowercase in practice,
   // but a mismatch here would silently disable revocation rather than fail
   // loudly, so don't rely on that.
-  return hostEquals(host, FOULAD_EBOOKS_HOST) || hostEquals(host, FOULAD_EBOOKS_LEGACY_HOST);
+  return hostEquals(host, FOULAD_CORE_HOST) || hostEquals(host, FOULAD_EBOOKS_HOST) ||
+         hostEquals(host, FOULAD_EBOOKS_LEGACY_HOST);
 }

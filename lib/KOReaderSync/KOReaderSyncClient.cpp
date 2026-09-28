@@ -1,6 +1,7 @@
 #include "KOReaderSyncClient.h"
 
 #include <ArduinoJson.h>
+#include <HalMemory.h>
 #include <Logging.h>
 #include <SecureHttpClient.h>
 #include <base64.h>
@@ -12,37 +13,15 @@
 int KOReaderSyncClient::lastHttpCode = 0;
 
 namespace {
-// Device identifier for CrossPoint reader
-constexpr char DEVICE_NAME[] = "CrossPoint";
-constexpr char DEVICE_ID[] = "crosspoint-reader";
+// Defaults preserve the historical values for any build that never calls
+// setDeviceIdentity(); main.cpp replaces them with this unit's serial at boot.
+std::string gDeviceName = "CrossPoint";       // NOLINT(runtime/string)
+std::string gDeviceId = "crosspoint-reader";  // NOLINT(runtime/string)
 
-// KOSync's TLS-1.3 servers can't be reached through the precompiled system
-// mbedTLS (TLS 1.3 is stubbed out), so requests run over wolfSSL via
-// SecureHttpClient. The handshake still needs working heap; gate on it. wolfSSL's
-// footprint is smaller than mbedTLS's old ~48KB peak, but keep a conservative
-// floor. Check both total free heap and largest contiguous block so fragmented
-// heap does not fall through into a failed TLS allocation path.
-// MEMFIX-PORT: TLS heap gate; portable
-// Field data (July 2026): launching sync from a reader session lands at
-// 51.9-58.2 KB free / 42-53 KB maxAlloc after WiFi comes up. wolfSSL handles
-// allocation failure by returning MEMORY_E (no abort under -fno-exceptions),
-// so an optimistic attempt degrades to the same clean "sync failed" as the
-// gate — the gate only needs to keep out states where a doomed handshake
-// would waste tens of seconds, not guarantee success.
-//
-// Free and largest-block have separate requirements: with SP ECC
-// (WOLFSSL_HAVE_SP_ECC) the handshake's crypto uses fixed 256-bit arrays, so
-// the largest single TLS allocation is the ~17 KB wolfSSL record buffer, not
-// a run of fast-math bignums. A handshake was measured succeeding inside a
-// 43 KB largest block; requiring 50 KB contiguous refused syncs that fit.
-//
-// The 35 KB free floor covers the measured peak of what remains after the SP
-// ECC + X25519 work: session object plus record buffer plus RSA cert-verify
-// temps (2 KB apiece at FP_MAX_BITS 8192) totals ~30-40 KB transient. The old
-// 50 KB floor was calibrated against the fast-math bignum failure mode that
-// SP ECC removed, and sat inside the 51.9-58.2 KB band a reading session
-// normally leaves, refusing syncs that would have succeeded. A wrong guess
-// here fails soft: MEMORY_E aborts the handshake within its 15 s deadline.
+// wolfSSL uses the default allocator, which can use PSRAM on supported builds.
+// Keep a free-space floor and room for a full TLS record when the server does
+// not negotiate our smaller record limit. These are preflight margins, not a
+// guarantee that a handshake will fit.
 constexpr uint32_t MIN_FREE_FOR_TLS = 35000;
 constexpr uint32_t MIN_BLOCK_FOR_TLS = 20000;
 
@@ -59,19 +38,33 @@ void applyAuthHeaders(freeink::SecureHttpClient& http) {
 
 // True when free heap is too low to risk a TLS handshake.
 bool insufficientHeap() {
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  const uint32_t maxAllocHeap = ESP.getMaxAllocHeap();
-  if (freeHeap < MIN_FREE_FOR_TLS || maxAllocHeap < MIN_BLOCK_FOR_TLS) {
-    LOG_ERR("KOSync", "Insufficient heap for TLS handshake: %u bytes free (need %u), %u max alloc (need %u)", freeHeap,
-            MIN_FREE_FOR_TLS, maxAllocHeap, MIN_BLOCK_FOR_TLS);
+  const auto heap = HalMemory::getDefaultHeap();
+  if (heap.freeBytes < MIN_FREE_FOR_TLS || heap.largestBlockBytes < MIN_BLOCK_FOR_TLS) {
+    LOG_ERR("KOSync",
+            "Insufficient allocatable heap for TLS handshake: %zu bytes free (need %u), %zu max alloc (need %u)",
+            heap.freeBytes, MIN_FREE_FOR_TLS, heap.largestBlockBytes, MIN_BLOCK_FOR_TLS);
     return true;
   }
   return false;
 }
 }  // namespace
 
+void KOReaderSyncClient::setDeviceIdentity(const std::string& deviceId, const std::string& deviceName) {
+  if (!deviceId.empty()) gDeviceId = deviceId;
+  if (!deviceName.empty()) gDeviceName = deviceName;
+}
+
 KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   lastHttpCode = 0;
+  // Refused before any credential is assembled or any socket opened: Midad does
+  // not implement this protocol, and this client would otherwise send the
+  // username and an unsalted MD5 of the password over an unverified connection.
+  // Stored configuration is deliberately left untouched -- this reports
+  // unavailable, it does not sign the user out.
+  if (KOREADER_STORE.targetsMidadOrigin()) {
+    LOG_ERR("KOSync", "refusing: Midad origin does not serve KOSync (use /resume/v1 on api.midad.one)");
+    return MIDAD_ORIGIN_UNSUPPORTED;
+  }
   if (!KOREADER_STORE.hasCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
@@ -105,6 +98,15 @@ KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
 
 KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
   lastHttpCode = 0;
+  // Refused before any credential is assembled or any socket opened: Midad does
+  // not implement this protocol, and this client would otherwise send the
+  // username and an unsalted MD5 of the password over an unverified connection.
+  // Stored configuration is deliberately left untouched -- this reports
+  // unavailable, it does not sign the user out.
+  if (KOREADER_STORE.targetsMidadOrigin()) {
+    LOG_ERR("KOSync", "refusing: Midad origin does not serve KOSync (use /resume/v1 on api.midad.one)");
+    return MIDAD_ORIGIN_UNSUPPORTED;
+  }
   if (!KOREADER_STORE.hasCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
@@ -143,6 +145,15 @@ KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
 KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& documentHash,
                                                           KOReaderProgress& outProgress) {
   lastHttpCode = 0;
+  // Refused before any credential is assembled or any socket opened: Midad does
+  // not implement this protocol, and this client would otherwise send the
+  // username and an unsalted MD5 of the password over an unverified connection.
+  // Stored configuration is deliberately left untouched -- this reports
+  // unavailable, it does not sign the user out.
+  if (KOREADER_STORE.targetsMidadOrigin()) {
+    LOG_ERR("KOSync", "refusing: Midad origin does not serve KOSync (use /resume/v1 on api.midad.one)");
+    return MIDAD_ORIGIN_UNSUPPORTED;
+  }
   if (!KOREADER_STORE.hasCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
@@ -226,6 +237,15 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
 
 KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgress& progress) {
   lastHttpCode = 0;
+  // Refused before any credential is assembled or any socket opened: Midad does
+  // not implement this protocol, and this client would otherwise send the
+  // username and an unsalted MD5 of the password over an unverified connection.
+  // Stored configuration is deliberately left untouched -- this reports
+  // unavailable, it does not sign the user out.
+  if (KOREADER_STORE.targetsMidadOrigin()) {
+    LOG_ERR("KOSync", "refusing: Midad origin does not serve KOSync (use /resume/v1 on api.midad.one)");
+    return MIDAD_ORIGIN_UNSUPPORTED;
+  }
   if (!KOREADER_STORE.hasCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
@@ -246,8 +266,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   }
   doc["progress"] = progress.progress;
   doc["percentage"] = progress.percentage;
-  doc["device"] = DEVICE_NAME;
-  doc["device_id"] = DEVICE_ID;
+  doc["device"] = gDeviceName;
+  doc["device_id"] = gDeviceId;
   if (progress.position.has_value() && KOREADER_STORE.usesCrossPointSyncServer()) {
     // CrossPoint-specific extension: do not send it to third-party KOSync servers.
     const auto& p = *progress.position;
@@ -292,6 +312,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
 
 const char* KOReaderSyncClient::errorString(Error error) {
   switch (error) {
+    case MIDAD_ORIGIN_UNSUPPORTED:
+      return "Sync is not available for Midad accounts on this server";
     case OK:
       return "Success";
     case NO_CREDENTIALS:

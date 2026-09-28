@@ -74,6 +74,12 @@ class CrossPointWebServerActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool skipLoopDelay() override { return webServer && webServer->isRunning(); }
+
+  // One-shot: the next entry joins the saved network without asking. Set by the
+  // BLE files.open command, whose whole point is that the phone has already made
+  // the choice -- a mode prompt on the reader would turn one tap into two, with
+  // the second one out of reach of whoever tapped.
+  static void requestJoinNetworkWithoutPrompt();
   bool preventAutoSleep() override { return webServer && webServer->isRunning(); }
   const char* activityDebugName() const override { return "CrossPointWebServerActivity"; }
 };

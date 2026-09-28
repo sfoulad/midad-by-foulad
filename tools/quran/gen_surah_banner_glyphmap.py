@@ -15,7 +15,11 @@ import sys
 
 # Must match GfxRenderer.cpp's SURAH_BANNER_NAME_BASE_CP / SURAH_BANNER_ORNAMENT_CP.
 NAME_BASE_CP = 0xE010  # surah 1's name glyph; surah n -> NAME_BASE_CP + (n - 1)
-ORNAMENT_CP = 0xE010 + 114  # 0xE086, immediately after the 114th name codepoint
+# REGENERATE: python3 tools/quran/gen_surah_banner_glyphmap.py > surah_banner_glyphmap.tsv
+# then pass that file to fontconvert.py --glyph-map. The recorded build command in
+# surah_banner_24_regular.h once pointed at a /var/folders tmp path, which made the
+# recipe look unreproducible; it never was -- this script is deterministic.
+ORNAMENT_CP = 0xE010 + 114  # 0xE082, immediately after the 114th name codepoint
 
 
 def main():

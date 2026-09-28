@@ -89,7 +89,7 @@ bool HalClock::isSystemTimeValid() {
   return time(nullptr) >= MIN_PLAUSIBLE_EPOCH;
 }
 
-bool HalClock::quickSyncSystemTime() {
+bool HalClock::beginSystemTimeSync() {
   if (WiFi.status() != WL_CONNECTED) {
     LOG_ERR("CLK", "WiFi not connected, cannot sync NTP");
     return false;
@@ -97,11 +97,20 @@ bool HalClock::quickSyncSystemTime() {
 
   LOG_INF("CLK", "Starting NTP sync...");
   configTzTime("UTC0", "pool.ntp.org", "time.nist.gov");
+  return true;
+}
+
+bool HalClock::isSystemTimeSyncComplete() { return sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED; }
+
+bool HalClock::quickSyncSystemTime() {
+  if (!beginSystemTimeSync()) {
+    return false;
+  }
 
   // Wait for SNTP sync to complete (up to 5 seconds)
   constexpr int maxAttempts = 50;
   for (int i = 0; i < maxAttempts; i++) {
-    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+    if (isSystemTimeSyncComplete()) {
       return true;
     }
     delay(100);

@@ -20,6 +20,12 @@ on:
     # changed -- the reason a scheduled CodeQL run exists at all.
     - cron: '27 4 * * 1'
 
+env:
+  # Pins the core that the platform installs into its own penv at build time.
+  # See scripts/uv-constraints.txt -- without it the firmware is built by an
+  # unpinned PyPI core fetched after the integrity check has already passed.
+  UV_CONSTRAINT: ${{ github.workspace }}/scripts/uv-constraints.txt
+
 permissions:
   contents: read
 
@@ -54,8 +60,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-${{ runner.os }}-
+          # Every input that decides which packages get installed is in the key, and
+          # there is deliberately no restore-keys: a partial match would layer a new
+          # platform/core over packages resolved for an older one, which is how a
+          # mid-build core migration (and an unverified scons) got in.
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'scripts/requirements-ci.lock', 'scripts/platformio-packages-lock.json', 'scripts/uv-constraints.txt') }}
 
       # build-mode: manual is required here. Autobuild inspects the repo for a
       # recognisable build system (make/cmake/configure) and finds none -- this

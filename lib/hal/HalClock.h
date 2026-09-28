@@ -56,6 +56,16 @@ class HalClock {
   // whenever isSystemTimeValid() is false; a no-op if WiFi isn't connected yet.
   static bool quickSyncSystemTime();
 
+  // Non-blocking half of quickSyncSystemTime(): starts the SNTP client and returns at
+  // once, so a caller that has nothing to do with the clock (WifiSelectionActivity, which
+  // only needs it valid before its *consumers* make HTTPS requests) can poll
+  // isSystemTimeSyncComplete() from its own loop instead of sitting in a 5s delay chain.
+  // Returns false if WiFi isn't connected.
+  static bool beginSystemTimeSync();
+
+  // Whether the SNTP client started by beginSystemTimeSync() has landed a response.
+  static bool isSystemTimeSyncComplete();
+
   // Stops the SNTP client in place, if running. A no-op otherwise. Used when tearing
   // down the network stack without a full chip reset (touch devices skip the reset
   // to keep externally powered peripherals from cycling) -- see

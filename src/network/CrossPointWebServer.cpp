@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 #include "CrossPointSettings.h"
 #include "DictionaryStore.h"
@@ -231,6 +232,7 @@ void CrossPointWebServer::begin() {
   server->on("/js/jszip.min.js", HTTP_GET, [this] { handleJszip(); });
 
   server->on("/api/status", HTTP_GET, [this] { handleStatus(); });
+  server->on("/api/session/close", HTTP_POST, [this] { handleSessionClose(); });
   server->on("/api/files", HTTP_GET, [this] { handleFileListData(); });
   server->on("/download", HTTP_GET, [this] { handleDownload(); });
 
@@ -285,8 +287,10 @@ void CrossPointWebServer::begin() {
   WebDiagLog::append("free heap after route setup=" + std::to_string(ESP.getFreeHeap()));
 
   // Collect WebDAV headers and register handler
-  const char* davHeaders[] = {"Depth", "Destination", "Overwrite", "If", "Lock-Token", "Timeout"};
-  server->collectHeaders(davHeaders, 6);
+  // If-None-Match is collected so the static-page handlers can answer conditional GETs with 304
+  const char* collectedHeaders[] = {"Depth",      "Destination", "Overwrite",    "If",
+                                    "Lock-Token", "Timeout",     "If-None-Match"};
+  server->collectHeaders(collectedHeaders, 7);
   // `new (std::nothrow)`, not makeUniqueNoThrow: addHandler() takes ownership and deletes
   // this itself when the server stops (see the comment it used to carry), so a unique_ptr
   // here would double-free. On OOM, skip registering WebDAV rather than crash -- the rest
@@ -466,19 +470,32 @@ CrossPointWebServer::WsUploadStatus CrossPointWebServer::getWsUploadStatus() con
   return status;
 }
 
-static void sendHtmlContent(WebServer* server, const char* data, size_t len) {
+static void sendStaticContent(WebServer* server, const char* data, size_t len, const char* etag,
+                              const char* contentType) {
+  // Content is baked into flash at build time, so the ETag is stable for the
+  // lifetime of a firmware image. Honor If-None-Match with a 304 so browsers
+  // reuse their cache instead of re-downloading on every navigation.
+  if (server->header("If-None-Match") == etag) {
+    server->sendHeader("ETag", etag);
+    server->sendHeader("Cache-Control", "no-cache");
+    server->send(304);
+    return;
+  }
   server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "text/html", data, len);
+  server->sendHeader("ETag", etag);
+  // no-cache: the browser may cache, but must revalidate (conditional GET)
+  // before reuse — this is what unlocks 304 responses.
+  server->sendHeader("Cache-Control", "no-cache");
+  server->send_P(200, contentType, data, len);
 }
 
 void CrossPointWebServer::handleRoot() const {
-  sendHtmlContent(server.get(), HomePageHtml, sizeof(HomePageHtml));
+  sendStaticContent(server.get(), HomePageHtml, sizeof(HomePageHtml), HomePageHtmlETag, "text/html");
   LOG_DBG("WEB", "Served root page");
 }
 
 void CrossPointWebServer::handleJszip() const {
-  server->sendHeader("Content-Encoding", "gzip");
-  server->send_P(200, "application/javascript", jszip_minJs, jszip_minJsCompressedSize);
+  sendStaticContent(server.get(), jszip_minJs, jszip_minJsCompressedSize, jszip_minJsETag, "application/javascript");
   LOG_DBG("WEB", "Served jszip.min.js");
 }
 
@@ -547,7 +564,7 @@ void CrossPointWebServer::handleStatus() const {
   server->send(200, "application/json", response);
 }
 
-void CrossPointWebServer::scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const {
+void CrossPointWebServer::scanFiles(const char* path, const std::function<bool(const FileInfo&)>& callback) const {
   HalFile root = Storage.open(path);
   if (!root) {
     LOG_DBG("WEB", "Failed to open directory: %s", path);
@@ -566,15 +583,17 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
   char name[500];
   while (file) {
     file.getName(name, sizeof(name));
-    auto fileName = String(name);
 
-    // Skip hidden items (starting with ".")
-    bool shouldHide = !SETTINGS.showHiddenFiles && fileName.startsWith(".");
+    // Hidden checks run on the raw buffer: this loop is the hottest allocation
+    // site the web server has, and building an Arduino String per entry just to
+    // ask two questions about it churned the heap that the file listing itself
+    // then needs. Measured free heap during a root listing bottomed at 2,804
+    // bytes on an X3.
+    bool shouldHide = !SETTINGS.showHiddenFiles && name[0] == '.';
 
-    // Check against explicitly hidden items list
     if (!shouldHide) {
       for (const auto* item : HIDDEN_ITEMS) {
-        if (fileName.equals(item)) {
+        if (strcmp(name, item) == 0) {
           shouldHide = true;
           break;
         }
@@ -583,7 +602,7 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
 
     if (!shouldHide) {
       FileInfo info;
-      info.name = fileName;
+      info.name = name;  // the one String this entry needs
       info.isDirectory = file.isDirectory();
 
       if (info.isDirectory) {
@@ -594,7 +613,11 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
         info.isEpub = isEpubFile(info.name);
       }
 
-      callback(info);
+      if (!callback(info)) {
+        file.close();
+        root.close();
+        return;
+      }
     }
 
     file.close();
@@ -608,57 +631,143 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
 bool CrossPointWebServer::isEpubFile(const String& filename) const { return FsHelpers::hasEpubExtension(filename); }
 
 void CrossPointWebServer::handleFileList() const {
-  sendHtmlContent(server.get(), FilesPageHtml, sizeof(FilesPageHtml));
+  sendStaticContent(server.get(), FilesPageHtml, sizeof(FilesPageHtml), FilesPageHtmlETag, "text/html");
 }
+
+// Floor below which a listing stops rather than continuing toward the point where
+// the device stops answering entirely. Chosen above the 1,248 bytes a real root
+// listing was measured bottoming at, with room for the response still to be
+// written and the connection closed cleanly.
+constexpr uint32_t LISTING_MIN_FREE_HEAP = 6144;
 
 void CrossPointWebServer::handleFileListData() const {
   // Get current path from query string (default to root)
   String currentPath = "/";
   if (server->hasArg("path")) {
-    currentPath = server->arg("path");
-    // Ensure path starts with /
-    if (!currentPath.startsWith("/")) {
-      currentPath = "/" + currentPath;
-    }
-    // Remove trailing slash unless it's root
-    if (currentPath.length() > 1 && currentPath.endsWith("/")) {
-      currentPath = currentPath.substring(0, currentPath.length() - 1);
-    }
+    currentPath = normalizeWebPath(server->arg("path"));
   }
+
+  // Opt-in envelope. Without it the body is the bare array it has always been, so
+  // the built-in Files page is untouched; with it the answer carries its own
+  // trustworthiness.
+  //
+  // This exists because an abandoned listing was INVISIBLE: the array was still
+  // closed correctly, so a caller received valid, well-formed JSON that was simply
+  // short, and could not tell "this directory has four files" from "we gave up
+  // after four". A count nobody measured, presented as though somebody had.
+  //
+  // The flag rides the same body rather than a second /api/status read: it is
+  // atomic (the answer and its trustworthiness arrive together), it costs no extra
+  // request on a path with ~21KB to spare, and it cannot be misattributed the way
+  // a shared "last listing" field could when two callers overlap.
+  const bool envelope = server->hasArg("envelope");
 
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
-  server->sendContent("[");
+  if (envelope) server->sendContent("{\"entries\":", 11);
+  server->sendContent("[", 1);
+
+  // Deliberately allocation-free per entry.
+  //
+  // This loop runs with the least heap the device ever has: WiFi takes ~64KB and
+  // the web server another ~27KB, so serving a listing starts from ~21KB free and
+  // one request's own parsing spends half of that. Measured on an X3: free heap was
+  // 11,680 bytes at the first entry, and the device died there. A JsonDocument per
+  // entry plus two sendContent(const char*) calls -- each of which constructs a
+  // temporary Arduino String -- put three heap allocations in the hot path for
+  // every file. The JSON here is four fixed keys; building it by hand costs a
+  // snprintf and nothing else.
   char output[512];
-  constexpr size_t outputSize = sizeof(output);
+  size_t entries = 0;
+  // Which of the three real abandon paths fired, if any. Deliberately three
+  // distinct causes rather than one "failed": running out of memory and a peer
+  // that stopped reading need different sentences from whoever shows this.
+  const char* abortReason = nullptr;
+  uint32_t abortFreeHeap = 0;
   bool seenFirst = false;
-  JsonDocument doc;
+  const unsigned long listingStart = millis();
+  // A stalled-but-connected peer blocks sendContent() for up to 10 s per call
+  // (WIFI_CLIENT_MAX_WRITE_RETRY x WIFI_CLIENT_SELECT_TIMEOUT_US, neither
+  // configurable), so bound the whole listing rather than trusting each write.
+  constexpr unsigned long LISTING_BUDGET_MS = 8000;
 
-  scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
-    doc.clear();
-    doc["name"] = info.name;
-    doc["size"] = info.size;
-    doc["isDirectory"] = info.isDirectory;
-    doc["isEpub"] = info.isEpub;
+  scanFiles(currentPath.c_str(),
+            [this, &output, &entries, &seenFirst, &abortReason, &abortFreeHeap, listingStart](const FileInfo& info) {
+              if (!server->client().connected()) {
+                LOG_DBG("WEB", "Client gone after %u entries; abandoning listing", (unsigned)entries);
+                abortReason = "client_gone";
+                return false;
+              }
+              // Stop while a truthful short answer is still deliverable. Without this the
+              // device simply runs out and dies mid-listing -- measured bottoming at 1,248
+              // bytes free -- which gives the caller no answer at all rather than a short
+              // one it can be told about.
+              if ((entries & 0x07) == 0 && ESP.getFreeHeap() < LISTING_MIN_FREE_HEAP) {
+                abortFreeHeap = ESP.getFreeHeap();
+                LOG_ERR("WEB", "Listing abandoned for low heap after %u entries (free=%u)", (unsigned)entries,
+                        (unsigned)abortFreeHeap);
+                abortReason = "low_memory";
+                return false;
+              }
+              if (millis() - listingStart > LISTING_BUDGET_MS) {
+                LOG_ERR("WEB", "Listing stalled after %u entries (%lu ms); client not reading, abandoning",
+                        (unsigned)entries, millis() - listingStart);
+                abortReason = "client_stalled";
+                return false;
+              }
+              if ((entries & 0x0F) == 0) {
+                LOG_DBG("WEB", "listing entry %u, free heap %u", (unsigned)entries, (unsigned)ESP.getFreeHeap());
+              }
 
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) {
-      // JSON output truncated; skip this entry to avoid sending malformed JSON
-      LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name.c_str());
-      return;
-    }
+              // Escape into the same buffer the record is built in. Only '"', '\\' and the
+              // control range need escaping; UTF-8 above 0x7F is valid inside a JSON string
+              // and passes through byte for byte, which matters for the Arabic filenames
+              // this device is full of.
+              char escaped[300];
+              size_t e = 0;
+              for (const char* c = info.name.c_str(); *c && e + 7 < sizeof(escaped); ++c) {
+                const unsigned char ch = static_cast<unsigned char>(*c);
+                if (ch == '"' || ch == '\\') {
+                  escaped[e++] = '\\';
+                  escaped[e++] = static_cast<char>(ch);
+                } else if (ch < 0x20) {
+                  e += snprintf(escaped + e, sizeof(escaped) - e, "\\u%04x", ch);
+                } else {
+                  escaped[e++] = static_cast<char>(ch);
+                }
+              }
+              escaped[e] = '\0';
 
-    if (seenFirst) {
-      server->sendContent(",");
+              const int written =
+                  snprintf(output, sizeof(output), "%s{\"name\":\"%s\",\"size\":%u,\"isDirectory\":%s,\"isEpub\":%s}",
+                           seenFirst ? "," : "", escaped, (unsigned)info.size, info.isDirectory ? "true" : "false",
+                           info.isEpub ? "true" : "false");
+              if (written <= 0 || static_cast<size_t>(written) >= sizeof(output)) {
+                LOG_DBG("WEB", "Skipping entry with oversized JSON");
+                return true;
+              }
+              seenFirst = true;
+              entries++;
+              // The (const char*, size_t) overload: the String one would allocate per entry.
+              server->sendContent(output, static_cast<size_t>(written));
+              return true;
+            });
+
+  server->sendContent("]", 1);
+  if (envelope) {
+    char tail[160];
+    int n;
+    if (abortReason) {
+      n = snprintf(tail, sizeof(tail),
+                   ",\"complete\":false,\"entries_returned\":%u,\"reason\":\"%s\",\"free_heap\":%u}", (unsigned)entries,
+                   abortReason, (unsigned)(abortFreeHeap ? abortFreeHeap : ESP.getFreeHeap()));
     } else {
-      seenFirst = true;
+      n = snprintf(tail, sizeof(tail), ",\"complete\":true,\"entries_returned\":%u}", (unsigned)entries);
     }
-    server->sendContent(output);
-  });
-  server->sendContent("]");
-  // End of streamed response, empty chunk to signal client
-  server->sendContent("");
-  LOG_DBG("WEB", "Served file listing page for path: %s", currentPath.c_str());
+    if (n > 0 && static_cast<size_t>(n) < sizeof(tail)) server->sendContent(tail, static_cast<size_t>(n));
+  }
+  server->sendContent("", 0);  // terminating empty chunk
+  LOG_DBG("WEB", "Served file listing page for path: %s (%u entries)", currentPath.c_str(), (unsigned)entries);
 }
 
 void CrossPointWebServer::handleDownload() const {
@@ -667,13 +776,10 @@ void CrossPointWebServer::handleDownload() const {
     return;
   }
 
-  String itemPath = server->arg("path");
+  String itemPath = normalizeWebPath(server->arg("path"));
   if (itemPath.isEmpty() || itemPath == "/") {
     server->send(400, "text/plain", "Invalid path");
     return;
-  }
-  if (!itemPath.startsWith("/")) {
-    itemPath = "/" + itemPath;
   }
 
   const String itemName = itemPath.substring(itemPath.lastIndexOf('/') + 1);
@@ -797,19 +903,17 @@ void CrossPointWebServer::handleUpload(UploadState& state) const {
     totalWriteTime = 0;
     writeCount = 0;
 
+    if (!FsHelpers::isSafePathComponent(state.fileName)) {
+      state.error = "Invalid file name";
+      LOG_DBG("WEB", "[UPLOAD] Rejected unsafe filename: %s", state.fileName.c_str());
+      return;
+    }
+
     // Get upload path from query parameter (defaults to root if not specified)
     // Note: We use query parameter instead of form data because multipart form
     // fields aren't available until after file upload completes
     if (server->hasArg("path")) {
-      state.path = server->arg("path");
-      // Ensure path starts with /
-      if (!state.path.startsWith("/")) {
-        state.path = "/" + state.path;
-      }
-      // Remove trailing slash unless it's root
-      if (state.path.length() > 1 && state.path.endsWith("/")) {
-        state.path = state.path.substring(0, state.path.length() - 1);
-      }
+      state.path = normalizeWebPath(server->arg("path"));
     } else {
       state.path = "/";
     }
@@ -944,17 +1048,21 @@ void CrossPointWebServer::handleCreateFolder() const {
     server->send(400, "text/plain", "Folder name cannot be empty");
     return;
   }
+  if (!FsHelpers::isSafePathComponent(folderName)) {
+    LOG_DBG("WEB", "Rejected unsafe folder name: %s", folderName.c_str());
+    server->send(400, "text/plain", "Invalid folder name");
+    return;
+  }
+  if (isProtectedItemName(folderName)) {
+    LOG_DBG("WEB", "Rejected protected folder name: %s", folderName.c_str());
+    server->send(403, "text/plain", "Cannot create protected item");
+    return;
+  }
 
   // Get parent path
   String parentPath = "/";
   if (server->hasArg("path")) {
-    parentPath = server->arg("path");
-    if (!parentPath.startsWith("/")) {
-      parentPath = "/" + parentPath;
-    }
-    if (parentPath.length() > 1 && parentPath.endsWith("/")) {
-      parentPath = parentPath.substring(0, parentPath.length() - 1);
-    }
+    parentPath = normalizeWebPath(server->arg("path"));
   }
 
   // Build full folder path
@@ -1197,18 +1305,13 @@ void CrossPointWebServer::handleDelete() const {
   String failedItems;
 
   for (const auto& p : paths) {
-    auto itemPath = p.as<String>();
+    auto itemPath = normalizeWebPath(p.as<String>());
 
     // Validate path
     if (itemPath.isEmpty() || itemPath == "/") {
       failedItems += itemPath + " (cannot delete root); ";
       allSuccess = false;
       continue;
-    }
-
-    // Ensure path starts with /
-    if (!itemPath.startsWith("/")) {
-      itemPath = "/" + itemPath;
     }
 
     // Security check: prevent deletion of protected items
@@ -1278,7 +1381,7 @@ void CrossPointWebServer::handleDelete() const {
 }
 
 void CrossPointWebServer::handleSettingsPage() const {
-  sendHtmlContent(server.get(), SettingsPageHtml, sizeof(SettingsPageHtml));
+  sendStaticContent(server.get(), SettingsPageHtml, sizeof(SettingsPageHtml), SettingsPageHtmlETag, "text/html");
   LOG_DBG("WEB", "Served settings page");
 }
 
@@ -1775,6 +1878,11 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 
         if (firstColon > 0 && secondColon > 0) {
           wsUploadFileName = msg.substring(6, firstColon);
+          if (!FsHelpers::isSafePathComponent(wsUploadFileName)) {
+            LOG_DBG("WS", "START rejected: invalid filename '%s'", wsUploadFileName.c_str());
+            wsServer->sendTXT(num, "ERROR:Invalid file name");
+            return;
+          }
           String sizeToken = msg.substring(firstColon + 1, secondColon);
           bool sizeValid = sizeToken.length() > 0;
           int digitStart = (sizeValid && sizeToken[0] == '+') ? 1 : 0;
@@ -1788,16 +1896,10 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
             return;
           }
           wsUploadSize = sizeToken.toInt();
-          wsUploadPath = msg.substring(secondColon + 1);
+          wsUploadPath = normalizeWebPath(msg.substring(secondColon + 1));
           wsUploadReceived = 0;
           wsLastProgressSent = 0;
           wsUploadStartTime = millis();
-
-          // Ensure path is valid
-          if (!wsUploadPath.startsWith("/")) wsUploadPath = "/" + wsUploadPath;
-          if (wsUploadPath.length() > 1 && wsUploadPath.endsWith("/")) {
-            wsUploadPath = wsUploadPath.substring(0, wsUploadPath.length() - 1);
-          }
 
           String filePath = wsUploadPath;
           if (!filePath.endsWith("/")) filePath += "/";
@@ -1916,7 +2018,7 @@ void CrossPointWebServer::onWebSocketEvent(uint8_t num, WStype_t type, uint8_t* 
 // --- Font management handlers ---
 
 void CrossPointWebServer::handleFontsPage() const {
-  sendHtmlContent(server.get(), FontsPageHtml, sizeof(FontsPageHtml));
+  sendStaticContent(server.get(), FontsPageHtml, sizeof(FontsPageHtml), FontsPageHtmlETag, "text/html");
   LOG_DBG("WEB", "Served fonts page");
 }
 
@@ -2390,7 +2492,7 @@ void CrossPointWebServer::handleFontConvert() {
 }
 
 void CrossPointWebServer::handleDictionariesPage() const {
-  sendHtmlContent(server.get(), DictionaryPageHtml, sizeof(DictionaryPageHtml));
+  sendStaticContent(server.get(), DictionaryPageHtml, sizeof(DictionaryPageHtml), DictionaryPageHtmlETag, "text/html");
   LOG_DBG("WEB", "Served dictionaries page");
 }
 
@@ -2560,7 +2662,7 @@ void CrossPointWebServer::handleDictionaryDelete() {
 
   const std::string ifoPath = doc["ifoPath"].as<const char*>();
   DICTIONARIES.scan();
-  const DictionaryEntry* target = nullptr;
+  const StarDictEntry* target = nullptr;
   for (const auto& entry : DICTIONARIES.getEntries()) {
     if (entry.ifoPath == ifoPath) {
       target = &entry;
@@ -2593,4 +2695,22 @@ void CrossPointWebServer::handleDictionaryDelete() {
     server->send(500, "application/json", "{\"error\":\"Delete failed\"}");
     LOG_ERR("WEB", "Failed to delete dictionary: %s", ifoPath.c_str());
   }
+}
+
+// POST /api/session/close -- the phone is done with this WiFi service and wants
+// the reader back on Bluetooth so another service can be chosen.
+//
+// Only the intent is recorded here. The restart happens in the activity loop
+// after the grace period, so this response is fully written to the socket first:
+// the app needs to distinguish a clean close from a crash, and it can only do
+// that if it actually receives the 200.
+void CrossPointWebServer::handleSessionClose() {
+  sessionClosePending = true;
+  sessionCloseAtMs = millis() + 600;
+  LOG_INF("WEBSRV", "session close requested; returning to Bluetooth shortly");
+  server->send(200, "application/json", "{\"ok\":true,\"closing\":true,\"returning_to\":\"bluetooth\"}");
+}
+
+bool CrossPointWebServer::sessionCloseDue() const {
+  return sessionClosePending && static_cast<long>(millis() - sessionCloseAtMs) >= 0;
 }

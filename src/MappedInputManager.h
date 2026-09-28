@@ -46,7 +46,7 @@ class MappedInputManager {
 
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(renderer) {}
 
-  void update() const { gpio.update(); }
+  void update() const;
   // Drives the X4 Pro power-button double-click gesture for one input frame;
   // a no-op on other boards. The main loop calls this once per iteration,
   // right after gpio.update(), every frame regardless of whether a release
@@ -60,10 +60,20 @@ class MappedInputManager {
   bool wasShortPowerClick() const;
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
+  // One-shot threshold event while the button is down; consumes its release.
+  bool wasLongPressed(Button button, unsigned long thresholdMs) const;
+  bool consumeSuppressedRelease() const;
   bool isPressed(Button button) const;
   bool hasTouch() const;
   bool wasScreenTapped(int& x, int& y) const;
   bool wasScreenTouchDown(int& x, int& y) const;
+  // One-shot long-press from the SDK touch classifier, fired WHILE the finger
+  // is still down (stationary contact held past the SDK threshold). Consuming
+  // it suppresses the remainder of the contact — its continued hold and its
+  // release edge — so the ensuing finger lift can't also tap-dismiss the popup
+  // the long-press opened. The SDK owns that latch and self-clears it once the
+  // contact ends.
+  bool wasScreenLongPress(int& x, int& y) const;
   bool isScreenTouchHeld(int& x, int& y) const;
   // Raw release edge, also true when the contact ended in a swipe or drag-off
   // (which wasScreenTapped never reports). InputSnapshot builders forward it
@@ -145,10 +155,22 @@ class MappedInputManager {
   bool wasPowerConfirmClick() const;
 #endif
   void rememberTouchHeldTime() const;
+  void suppressNextRelease(Button button) const;
 
   mutable bool touchHeldOverrideValid = false;
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
+  // One bit per Button value. Button::ScreenDown must stay the highest
+  // enumerator: both latch masks and the update()/consumeSuppressedRelease()
+  // sweeps are sized from it. Inserting a Button without widening ButtonMask
+  // would make `1u << value` truncate to 0, so the long-press latch could
+  // never trip (wasLongPressed would fire every frame) and the release it
+  // suppresses could never be consumed -- hence the static_assert.
+  using ButtonMask = uint32_t;
+  static constexpr uint8_t BUTTON_LAST = static_cast<uint8_t>(Button::ScreenDown);
+  static_assert(BUTTON_LAST < sizeof(ButtonMask) * 8, "Button enum outgrew ButtonMask; widen ButtonMask");
+  mutable ButtonMask longPressFiredButtons = 0;
+  mutable ButtonMask suppressedReleaseButtons = 0;
   // X4 Pro's power-button gesture state; harmless, near-zero-cost on other
   // boards (never armed there since updateX4ProPowerGesture() no-ops for
   // !BoardConfig::isX4Pro()).

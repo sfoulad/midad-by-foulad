@@ -116,42 +116,34 @@ static const EpdFontGroup stopwatch_32_boldGroups[] = {
     { 0, 1327, 4504, 11, 0 },
 };
 
-static const EpdKernClassEntry stopwatch_32_boldKernLeftClasses[] = {
-    { 0x0030, 1 }, // 0
-    { 0x0031, 2 }, // 1
-    { 0x0032, 3 }, // 2
-    { 0x0033, 4 }, // 3
-    { 0x0034, 5 }, // 4
-    { 0x0035, 6 }, // 5
-    { 0x0036, 7 }, // 6
-    { 0x0037, 8 }, // 7
-    { 0x0038, 4 }, // 8
-    { 0x0039, 9 }, // 9
+static const uint16_t stopwatch_32_boldKernLeftCodepoints[] = {
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039,
 };
 
-static const EpdKernClassEntry stopwatch_32_boldKernRightClasses[] = {
-    { 0x0030, 1 }, // 0
-    { 0x0031, 2 }, // 1
-    { 0x0032, 3 }, // 2
-    { 0x0033, 4 }, // 3
-    { 0x0034, 5 }, // 4
-    { 0x0035, 6 }, // 5
-    { 0x0036, 7 }, // 6
-    { 0x0037, 8 }, // 7
-    { 0x0038, 9 }, // 8
-    { 0x0039, 10 }, // 9
+static const uint8_t stopwatch_32_boldKernLeftClassIds[] = {
+      1,   2,   3,   4,   5,   6,   7,   8,   4,   9,
 };
 
-static const int8_t stopwatch_32_boldKernMatrix[] = {
-       0,   -7,    0,    0,    0,    0,    0,    0,    0,    0,
-       0,    0,    0,    0,    0,    0,    0,  -11,    0,    0,
-       0,    0,    0,    0,    0,    0,    0,   -5,    0,    0,
-       0,    0,    0,  -18,    0,    0,    0,    0,    0,    0,
-       0,    0,    0,    0,   11,    0,    0,  -13,    0,    0,
-       0,  -14,  -14,  -29,    0,    0,    0,  -21,    0,  -11,
-       0,  -14,  -11,   -7,    7,  -18,    0,  -16,    0,    0,
-     -18,   14,   -3,  -16,  -14,  -14,  -13,    7,  -14,   -9,
-       0,    0,    0,  -21,    0,    0,    0,  -16,    0,    0,
+static const uint16_t stopwatch_32_boldKernRightCodepoints[] = {
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039,
+};
+
+static const uint8_t stopwatch_32_boldKernRightClassIds[] = {
+      1,   2,   3,   4,   5,   6,   7,   8,   9,  10,
+};
+
+static const uint16_t stopwatch_32_boldKernRowOffsets[] = {
+        0,     1,     2,     3,     4,     6,    11,    17,    27,    29,
+};
+
+static const uint8_t stopwatch_32_boldKernSparseCols[] = {
+      1,   7,   7,   3,   4,   7,   1,   2,   3,   7,   9,   1,   2,   3,   4,   5,
+      7,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   3,   7,
+};
+
+static const int8_t stopwatch_32_boldKernSparseValues[] = {
+      -7,  -11,   -5,  -18,   11,  -13,  -14,  -14,  -29,  -21,  -11,  -14,  -11,   -7,    7,  -18,
+     -16,  -18,   14,   -3,  -16,  -14,  -14,  -13,    7,  -14,   -9,  -21,  -16,
 };
 
 static const EpdFontData stopwatch_32_bold = {
@@ -166,9 +158,16 @@ static const EpdFontData stopwatch_32_bold = {
     stopwatch_32_boldGroups,
     1,
     nullptr,
-    stopwatch_32_boldKernLeftClasses,
-    stopwatch_32_boldKernRightClasses,
-    stopwatch_32_boldKernMatrix,
+    nullptr,  // kernLeftClasses: built-in fonts use the split arrays below
+    nullptr,  // kernRightClasses
+    stopwatch_32_boldKernLeftCodepoints,
+    stopwatch_32_boldKernLeftClassIds,
+    stopwatch_32_boldKernRightCodepoints,
+    stopwatch_32_boldKernRightClassIds,
+    nullptr,  // kernMatrix: built-in fonts use the sparse form below
+    stopwatch_32_boldKernRowOffsets,
+    stopwatch_32_boldKernSparseCols,
+    stopwatch_32_boldKernSparseValues,
     10,
     10,
     9,

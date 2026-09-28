@@ -1,0 +1,27 @@
+# Pins the PlatformIO Core that actually BUILDS the firmware.
+#
+# scripts/requirements-ci.lock pins the distribution `pioarduino-core` (a hash-
+# verified git archive) and CI installs it. That is NOT what compiles anything.
+# The platform's builder/penv_setup.py creates $PLATFORMIO_CORE_DIR/penv and
+# runs `uv pip install` for its own dependency set, which declares:
+#
+#     python_deps = { "pioarduino": ">=6.1.19", ... }
+#
+# `pioarduino` is a *different* PyPI distribution from `pioarduino-core`, the
+# spec is an open lower bound, and the install happens during `pio run` --
+# i.e. after scripts/verify_platformio_packages.py has already passed. Left
+# unconstrained it resolves to the newest release, so the build runs on an
+# unpinned, unverified core that also pulls its own (unverified) tool-scons.
+#
+# Observed consequence: the outer pinned core (6.1.19) records last_version,
+# the inner PyPI core (6.2.0) then treats that as an upgrade, runs
+# update_core_packages() mid-build and swaps tool-scons 4.8.1 -> 4.11.1 under
+# the running build, failing it with
+# "ModuleNotFoundError: No module named 'SCons.Tool.FortranCommon'".
+#
+# Pinning it to the same version as the hash-verified core makes inner and
+# outer agree: no migration, no package replacement after verification, and
+# tool-scons stays at the 4.40801.0 (4.8.1) the manifest records.
+#
+# Keep this version in step with the pioarduino-core pin in requirements-ci.lock.
+pioarduino==6.1.19

@@ -10,6 +10,7 @@
 #include <Xtc.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 
 #include "CrossPointSettings.h"
@@ -23,6 +24,7 @@
 #include "components/UITheme.h"
 #include "components/icons/book.h"
 #include "fontIds.h"
+#include "util/CoverDiagnostics.h"
 #include "util/CoverThumbs.h"
 #include "util/DebugLog.h"
 #include "util/DebugLogging.h"
@@ -254,6 +256,71 @@ void RecentBooksActivity::loop() {
   const int listSize = static_cast<int>(recentBooks.size());
   const GridGeometry geometry = computeGridGeometry();
 
+  // Touch: hit-test against the exact cell geometry render() draws
+  // (gridStartX/contentTop/cell steps, RTL column mirroring included).
+  // Touch-down moves the selection ring; a tap released on a cell opens that
+  // book; swipe up/down pages the grid. The home gesture stays global
+  // (ActivityManager) and book removal stays on the Confirm long-press.
+  {
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+    const int titleHeight = getGridTitleHeight();
+    const int totalGridWidth = geometry.columns * (geometry.coverWidth + GRID_GUTTER) - GRID_GUTTER;
+    const int gridStartX = std::max(0, (static_cast<int>(renderer.getScreenWidth()) - totalGridWidth) / 2);
+    const int cellStepX = geometry.coverWidth + GRID_GUTTER;
+    const int cellStepY = geometry.coverHeight + titleHeight + GRID_GUTTER;
+    const int gridPageStart = (static_cast<int>(selectorIndex) / geometry.itemsPerPage) * geometry.itemsPerPage;
+    const bool rtlGrid = I18N.isRtl();
+
+    const auto hitCell = [&](const int x, const int y, int& outIdx) {
+      if (x < gridStartX || y < contentTop) return false;
+      const int col = (x - gridStartX) / cellStepX;
+      const int row = (y - contentTop) / cellStepY;
+      if (col >= geometry.columns) return false;
+      // Cover + caption band only, not the gutter around the cell.
+      if ((x - gridStartX) % cellStepX >= geometry.coverWidth) return false;
+      if ((y - contentTop) % cellStepY >= geometry.coverHeight + titleHeight) return false;
+      // Columns render mirrored under RTL (see render()); undo the mirror to
+      // recover the logical index.
+      const int logicalCol = rtlGrid ? geometry.columns - 1 - col : col;
+      const int pageOffset = row * geometry.columns + logicalCol;
+      if (pageOffset >= geometry.itemsPerPage) return false;
+      const int idx = gridPageStart + pageOffset;
+      if (idx >= listSize) return false;
+      outIdx = idx;
+      return true;
+    };
+
+    int touchX = 0;
+    int touchY = 0;
+    int touchedIdx = -1;
+    if (mappedInput.wasScreenTouchDown(touchX, touchY) && hitCell(touchX, touchY, touchedIdx)) {
+      if (static_cast<int>(selectorIndex) != touchedIdx) {
+        selectorIndex = touchedIdx;
+        requestUpdate();
+      }
+    } else if (mappedInput.wasScreenTapped(touchX, touchY) && hitCell(touchX, touchY, touchedIdx)) {
+      selectorIndex = touchedIdx;
+      LOG_DBG("RBA", "Tapped recent book: %s", recentBooks[touchedIdx].path.c_str());
+      onSelectBook(recentBooks[touchedIdx].path);
+      return;
+    }
+
+    const auto swipe = mappedInput.wasSwipe();
+    if (swipe == MappedInputManager::SwipeDir::Up || swipe == MappedInputManager::SwipeDir::Down) {
+      // Swipe up = next grid page, down = previous (content follows the
+      // finger). Selection lands on the first cell of the new page.
+      const int pageCount = (listSize + geometry.itemsPerPage - 1) / geometry.itemsPerPage;
+      const int currentPage = gridPageStart / geometry.itemsPerPage;
+      const int targetPage = swipe == MappedInputManager::SwipeDir::Up ? currentPage + 1 : currentPage - 1;
+      if (targetPage >= 0 && targetPage < pageCount) {
+        selectorIndex = static_cast<size_t>(targetPage * geometry.itemsPerPage);
+        requestUpdate();
+        return;
+      }
+    }
+  }
+
   auto moveUp = [this, listSize, geometry] {
     selectorIndex = GridNav::moveVertical(static_cast<int>(selectorIndex), listSize, geometry.columns,
                                           geometry.itemsPerPage, false);
@@ -394,7 +461,8 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
     // historically succeeded where Home's attempt failed -- gating it behind
     // Home's failed attempt turned "grid rescues the covers" into "nothing
     // does" (confirmed on device after a cache clear).
-    if (!Bitmap::isValidCachedBmp(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight))) {
+    if (!CoverThumbs::isUsableThumb(UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight),
+                                    geometry.thumbHeight)) {
       needsGeneration = true;
       break;
     }
@@ -419,7 +487,7 @@ void RecentBooksActivity::loadGridPageCovers(const int pageStart) {
       // comment above) but still records the attempt so HOME's once-per-boot
       // gate stays quiet for a book the grid itself couldn't generate. Failure
       // leaves book.coverBmpPath untouched (not cleared to "") for the same reason.
-      if (!Bitmap::isValidCachedBmp(coverPath)) {
+      if (!CoverThumbs::isUsableThumb(coverPath, geometry.thumbHeight)) {
         CoverThumbs::markAttempted(coverPath);
         if (FsHelpers::hasEpubExtension(book.path)) {
           Epub epub(book.path, "/.crosspoint");
@@ -567,16 +635,36 @@ void RecentBooksActivity::render(RenderLock&&) {
         // Read from the shared canonical-height thumb (see computeGridGeometry);
         // drawBitmap scales it down to this grid cell's own display size.
         const std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, geometry.thumbHeight);
-        if (Storage.exists(coverPath.c_str())) {
-          HalFile file;
-          if (Storage.openFileForRead("RBA", coverPath, file)) {
-            Bitmap bitmap(file);
-            if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-              renderer.drawBitmap(bitmap, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
-              drawn = true;
+        // Named-fault reporting, same as the Home hero (see FouladTheme's
+        // drawCoverAt): every route to the placeholder book icon says which one
+        // it took, so a card that stays blank is diagnosable from a log instead
+        // of being indistinguishable from every other cause.
+        CoverDiag::Fault fault = CoverDiag::Fault::Missing;
+        char detail[48] = {0};
+        HalFile file;
+        if (Storage.openFileForRead("RBA", coverPath, file)) {
+          Bitmap bitmap(file);
+          const BmpReaderError err = bitmap.parseHeaders();
+          if (err != BmpReaderError::Ok) {
+            fault = CoverDiag::Fault::Invalid;
+            snprintf(detail, sizeof(detail), "%s", Bitmap::errorToString(err));
+          } else if (bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) {
+            // Headers parsed cleanly and it is the dimensions that are
+            // unusable, so the detail must name them -- reporting
+            // errorToString(Ok) here made the log blame the parser for a fault
+            // the parser did not find.
+            fault = CoverDiag::Fault::Invalid;
+            snprintf(detail, sizeof(detail), "degenerate dimensions %dx%d", bitmap.getWidth(), bitmap.getHeight());
+          } else {
+            drawn = renderer.drawBitmap(bitmap, cellX, cellY, geometry.coverWidth, geometry.coverHeight);
+            if (!drawn) {
+              fault = CoverDiag::Fault::NotPainted;
+              snprintf(detail, sizeof(detail), "%dx%d into %dx%d", bitmap.getWidth(), bitmap.getHeight(),
+                       geometry.coverWidth, geometry.coverHeight);
             }
           }
         }
+        if (!drawn) CoverThumbs::reportFault("MYBOOKS", fault, coverPath, geometry.thumbHeight, detail);
       }
       renderer.drawRect(cellX, cellY, geometry.coverWidth, geometry.coverHeight);
       if (!drawn) {

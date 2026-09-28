@@ -12,6 +12,8 @@
 #include <WiFi.h>
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <memory>
 
 #include "CrossPointState.h"
@@ -19,6 +21,7 @@
 #include "FouladEbooksConfig.h"
 #include "FouladOpdsHooks.h"
 #include "MappedInputManager.h"
+#include "MidadArabicKeyboard.h"
 #include "OpdsCoverCache.h"
 #include "OpdsServerStore.h"
 #include "SilentRestart.h"
@@ -89,6 +92,39 @@ void saveOpdsDiagnosticLog(const std::string& context, bool force = false) {
   LOG_INF("OPDS", "Saved diagnostic log to %s", DebugLog::PATH);
 }
 
+// What the heap guards below log through, instead of saveOpdsDiagnosticLog().
+//
+// Those guards fire exactly where RollingSdLog::append() refuses to write (free heap
+// under its MIN_SAFE_HEAP_BYTES floor), and building the std::string that call wants
+// is itself the throwing-`new` hazard the guard just declined -- so the one event
+// worth a log line was the one most likely to be dropped. Real capture, from a device
+// that hit both arms: "[OPDS] Skipped FETCH diagnostic log, low heap: free=28992".
+//
+// One stack buffer, one snprintf, one O_APPEND write: the line always lands. The
+// rolling-buffer tail is an upgrade added on top only when the heap can take it,
+// since getLastLogs() is the expensive half.
+__attribute__((format(printf, 1, 2))) void saveHeapGuardLog(const char* fmt, ...) {
+  char line[224];
+  int len = snprintf(line, sizeof(line), "[OPDS-ERROR] " CROSSPOINT_VERSION " free=%u largest=%u | ",
+                     static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  if (len < 0) return;
+  if (static_cast<size_t>(len) < sizeof(line)) {
+    va_list args;
+    va_start(args, fmt);
+    const int extra = vsnprintf(line + len, sizeof(line) - static_cast<size_t>(len), fmt, args);
+    va_end(args);
+    if (extra > 0) len += extra;
+  }
+  // snprintf reports the length it WOULD have written; clamp to what is in the buffer.
+  if (static_cast<size_t>(len) >= sizeof(line)) len = static_cast<int>(sizeof(line)) - 1;
+  RollingSdLog::appendRaw(DebugLog::PATH, line, static_cast<size_t>(len), DebugLog::MAX_LINES, /*force=*/true);
+  LOG_ERR("OPDS", "%s", line);
+
+  if (ESP.getFreeHeap() >= RollingSdLog::MIN_SAFE_HEAP_BYTES) {
+    RollingSdLog::append(DebugLog::PATH, "Last logs:\n" + getLastLogs(), DebugLog::MAX_LINES, /*force=*/true);
+  }
+}
+
 // Rolling browse trace, tagged into the shared debug log (see util/DebugLog.h):
 // one line per feed fetch (URL, entry/book counts, the pagination links the
 // parser captured) and per grid auto-advance decision. Diagnoses pagination
@@ -154,34 +190,11 @@ void OpdsBookBrowserActivity::onExit() {
 }
 
 void OpdsBookBrowserActivity::loop() {
-  if (state == BrowserState::UPDATE_PROMPT) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
-      // Reboots into the OTA flow rather than downloading here: this session has an
-      // OPDS feed and its cover cache resident, and the firmware download needs more
-      // contiguous heap than that leaves. Does not return.
-      silentRestartToOtaCheck();
-      return;
-    }
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
-      state = BrowserState::BROWSING;  // declined; carry on browsing
-      requestUpdate();
-      return;
-    }
-    return;  // nothing else acts while the offer is up
-  }
-
-  maybeOfferFirmwareUpdate();
-  // The offer can go up mid-frame; hand this frame to it rather than letting a
-  // keypress fall through to the catalog underneath.
-  if (state == BrowserState::UPDATE_PROMPT) return;
-
   if (state == BrowserState::WIFI_SELECTION || state == BrowserState::SEARCH_INPUT) {
     return;
   }
 
   // Re-check for a pushed settings change every ~30s while sitting on the
-  // catalog -- see FouladOpdsHooks::pollDeviceTracking().
-  FouladOpdsHooks::pollDeviceTracking(server, state == BrowserState::BROWSING);
 
   if (consumeConfirm && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     consumeConfirm = false;
@@ -376,25 +389,6 @@ void OpdsBookBrowserActivity::loop() {
 }
 
 void OpdsBookBrowserActivity::render(RenderLock&&) {
-  if (state == BrowserState::BROWSING && browsingFramesRendered < 2) browsingFramesRendered++;
-
-  if (state == BrowserState::UPDATE_PROMPT) {
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
-    const int top = (renderer.getScreenHeight() - lineHeight * 3) / 2;
-    renderer.clearScreen();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
-                   tr(STR_UPDATE));
-    renderer.drawCenteredText(UI_10_FONT_ID, top, tr(STR_NEW_UPDATE), true, EpdFontFamily::BOLD);
-    renderer.drawCenteredText(
-        UI_10_FONT_ID, top + lineHeight + metrics.verticalSpacing,
-        (std::string(tr(STR_NEW_VERSION)) + FouladDeviceTracking::pendingFirmwareUpdate()).c_str());
-    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), tr(STR_UPDATE), "", "");
-    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-    renderer.displayBuffer();
-    return;
-  }
-
   // Selector fast path. Moving the selection one cell changes two frames' worth of pixels,
   // but a full repaint re-opens and re-decodes EVERY cover on the page from the SD card
   // (see drawGridCell) -- on a page of covers that re-read is essentially the entire cost
@@ -690,7 +684,7 @@ void OpdsBookBrowserActivity::drawGridCell(const GridLayout& layout, const int p
     }
   }
   renderer.drawRect(cellX, cellY, layout.coverWidth, layout.coverHeight);
-  if (!drawn && (FouladOpdsHooks::isNewsFeed(server.url) || entry.type == OpdsEntryType::NAVIGATION)) {
+  if (!drawn && entry.type == OpdsEntryType::NAVIGATION) {
     // News entries carry no cover art -- there is no image link in the feed, so
     // nothing failed to download and nothing is going to appear later. The generic
     // book icon reads as a book that did not load; the feed's own name on a
@@ -804,10 +798,25 @@ OpdsBookBrowserActivity::GridLayout OpdsBookBrowserActivity::computeGridLayout()
 // Below the floor, covers are skipped and the placeholder icon is drawn. A grid with
 // grey boxes in it is a bad page; an abort is a lost session and a crash report. The
 // same trade is already made for the reading-stats snapshot in FouladDeviceTracking.
-static bool hasHeapForCoverWork() {
-  constexpr uint32_t COVER_MIN_FREE_HEAP = 32 * 1024;
-  constexpr uint32_t COVER_MIN_FREE_BLOCK = 12 * 1024;
-  return ESP.getFreeHeap() > COVER_MIN_FREE_HEAP && ESP.getMaxAllocHeap() > COVER_MIN_FREE_BLOCK;
+// Sized to the cover the entry actually advertises, mirroring
+// OpdsCoverCache::hasHeapForCoverDecode(). This is the PRE-LOOP gate: it runs before a
+// cover is requested, so judging an e-ink derivative by the JPEG decoder's appetite
+// stops the page before anything is fetched. Measured on an X3 with Core serving the
+// derivative: refused at largest=10,228 and 10,740 against a 12,288 floor, so
+// route=eink was never requested once and every tile drew a placeholder.
+//
+// A 160x240 1-bit PNG decompresses to ~5,040 bytes and PngToBmpConverter falls back to a
+// one-shot decode needing no 32KB window; the JPEG decoder still wants ~52KB. Unknown
+// type keeps the JPEG floor -- the conservative side is the one that cannot be decoded.
+static bool hasHeapForCoverWork(const bool isPng) {
+  constexpr uint32_t JPEG_MIN_FREE_HEAP = 32 * 1024;
+  constexpr uint32_t JPEG_MIN_FREE_BLOCK = 12 * 1024;
+  constexpr uint32_t PNG_MIN_FREE_HEAP = 12 * 1024;
+  constexpr uint32_t PNG_MIN_FREE_BLOCK = 6 * 1024;
+
+  const uint32_t minFree = isPng ? PNG_MIN_FREE_HEAP : JPEG_MIN_FREE_HEAP;
+  const uint32_t minBlock = isPng ? PNG_MIN_FREE_BLOCK : JPEG_MIN_FREE_BLOCK;
+  return ESP.getFreeHeap() > minFree && ESP.getMaxAllocHeap() > minBlock;
 }
 
 // Crash report from 1.8.40-rc: confirming a collection tile aborted with a BLANK panic
@@ -857,6 +866,13 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
   // same way a feed fetch failure already does via saveOpdsDiagnosticLog().
   int coverFailures = 0;
 
+  // One TLS session for the whole page. These are up to itemsPerPage back-to-back GETs
+  // to a single origin, and since the catalogue moved to https every one of them was
+  // paying its own wolfSSL handshake -- the largest transient allocation on this path,
+  // on a heap this walk has already fragmented. Held only while covers are actually
+  // being fetched, and closed before the grid is drawn.
+  const HttpDownloader::KeepAliveScope coverSession;
+
   for (int i = pageStart; i < pageEnd; i++) {
     const auto& entry = entries[layout.bookStart + i];
     if (!entry.coverUrl.empty() &&
@@ -866,16 +882,19 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
         popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       }
       GUI.fillPopupProgress(renderer, popupRect, 10 + (processedCount * 90) / totalToProcess);
-      if (!hasHeapForCoverWork()) {
+      // The feed's declared type decides, plus the route as a fallback: Core marks the
+      // derivative link type="image/png", and a Library entry may carry no type at all
+      // (its cover resolves in two tiers, so naming the media type would cost a query
+      // per entry) -- in which case the /cover/eink route still identifies it.
+      const bool coverIsPng =
+          entry.coverType.find("png") != std::string::npos || entry.coverUrl.find("/cover/eink") != std::string::npos;
+      if (!hasHeapForCoverWork(coverIsPng)) {
         // Stop for this page rather than skipping one and trying the next: heap this
         // low does not recover within a loop, and each further attempt is another
         // chance to abort. The uncached covers stay uncached and are picked up on a
         // later visit, when the walk that fragmented the heap is behind us.
-        saveOpdsDiagnosticLog("Cover fetch stopped early, low heap: free=" + std::to_string(ESP.getFreeHeap()) +
-                                  " largest=" + std::to_string(ESP.getMaxAllocHeap()) + " at book " +
-                                  std::to_string(i - pageStart + 1) + "/" + std::to_string(totalToProcess),
-                              /*force=*/true);
-        LOG_ERR("OPDS", "Cover fetch stopped early (free heap %u)", static_cast<unsigned>(ESP.getFreeHeap()));
+        saveHeapGuardLog("Cover fetch stopped early at book %d/%d (png=%d)", i - pageStart + 1, totalToProcess,
+                         coverIsPng ? 1 : 0);
         break;
       }
       if (!ensureOpdsCoverCached(entry, server.username, server.password, layout.coverWidth, layout.coverHeight)) {
@@ -898,6 +917,31 @@ void OpdsBookBrowserActivity::loadGridPageCovers(const GridLayout& layout, const
 
 void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   loadedGridPageStart = NO_GRID_PAGE_LOADED;
+
+  // Free the PREVIOUS feed before fetching and parsing the next one.
+  //
+  // `entries = std::move(*parser).getEntries()` below only destroys the old vector at
+  // the assignment, i.e. after the parser has already built the whole new one -- so the
+  // peak is old entries + parser + new entries, every level down. On an X3 that showed
+  // as MaxAlloc falling 38,900 -> 26,612 -> 13,300 -> 10,228 across just three feeds
+  // (root, /store/lang/ar, .../books) with free heap still a healthy ~36KB: pure
+  // fragmentation, and low enough that the cover loop then refused at book 1 of 6 and
+  // no cover was ever requested.
+  //
+  // Only the feed BODY goes. navigationHistory is a vector of path strings and
+  // currentPath is one string -- Back rebuilds a level by re-fetching it, which is what
+  // the history is for, so there is nothing heavier worth keeping.
+  const uint32_t navMaxAllocBefore = ESP.getMaxAllocHeap();
+  entries.clear();
+  entries.shrink_to_fit();
+  feedNextUrl.clear();
+  feedNextUrl.shrink_to_fit();
+  feedPrevUrl.clear();
+  feedPrevUrl.shrink_to_fit();
+  LOG_INF("OPDS", "feed release: maxalloc %u -> %u (%+d), free=%u", static_cast<unsigned>(navMaxAllocBefore),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()),
+          static_cast<int>(ESP.getMaxAllocHeap()) - static_cast<int>(navMaxAllocBefore),
+          static_cast<unsigned>(ESP.getFreeHeap()));
   // Consume the auto-advance landing hint up front so a failed fetch can't
   // leave it armed for a later, unrelated navigation.
   const PendingGridSelect pendingSelect = pendingGridSelect;
@@ -1009,10 +1053,11 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   // On the News root the advertised search is the BOOK search (/opds/search), which
   // would put a row inside News that returns books. Wrong answer to the wrong
   // question, so News does not offer it.
-  if (FouladOpdsHooks::isNewsFeed(server.url)) searchTemplate.clear();
   feedNextUrl = parser->getNextPageUrl();
   feedPrevUrl = parser->getPrevPageUrl();
   entries = std::move(*parser).getEntries();
+  LOG_INF("OPDS", "feed loaded: entries=%u maxalloc=%u free=%u", static_cast<unsigned>(entries.size()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()), static_cast<unsigned>(ESP.getFreeHeap()));
 
   // Whether the FEED was empty, captured before the synthetic rows go in. The empty
   // state has to be decided on what the server actually sent: a page carrying only a
@@ -1061,7 +1106,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
     // An empty feed is the normal, successful answer to "this account has no
     // subscriptions" -- not an error (EINK_NEWS_TASKS.md §2). Say what to do next
     // instead, because the thing to do is on the phone and nothing here can do it.
-    errorMessage = FouladOpdsHooks::isNewsFeed(server.url) ? tr(STR_NEWS_EMPTY) : tr(STR_NO_ENTRIES);
+    errorMessage = tr(STR_NO_ENTRIES);
   }
 
   // Crash report: a heap-corruption abort (multi_heap assert_valid_block) landed inside
@@ -1078,10 +1123,7 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
               " next=" + (feedNextUrl.empty() ? "-" : feedNextUrl) +
               " prev=" + (feedPrevUrl.empty() ? "-" : feedPrevUrl));
   } else {
-    LOG_ERR("OPDS", "Skipped FETCH diagnostic log, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
-    saveOpdsDiagnosticLog(
-        "Skipped FETCH diagnostic log, low heap: free=" + std::to_string(ESP.getFreeHeap()) + " url=" + url,
-        /*force=*/true);
+    saveHeapGuardLog("Skipped FETCH diagnostic log, url=%s", url.c_str());
   }
   requestUpdate();
 }
@@ -1091,10 +1133,7 @@ void OpdsBookBrowserActivity::navigateToEntry(const OpdsEntry& entry) {
   // (navigationHistory.push_back, both buildUrl() calls), which has no OOM-safe fallback
   // the way explicit buffers do. Declining up front beats a silent abort mid-navigation.
   if (!hasHeapForNavigation()) {
-    LOG_ERR("OPDS", "Navigation stopped early, low heap: free=%u", static_cast<unsigned>(ESP.getFreeHeap()));
-    saveOpdsDiagnosticLog(
-        "Navigation stopped early, low heap: free=" + std::to_string(ESP.getFreeHeap()) + " entry=" + entry.id,
-        /*force=*/true);
+    saveHeapGuardLog("Navigation stopped early, entry=%s", entry.id.c_str());
     state = BrowserState::ERROR;
     errorMessage = tr(STR_MEMORY_ERROR);
     requestUpdate();
@@ -1129,19 +1168,57 @@ void OpdsBookBrowserActivity::navigateBack() {
   }
 }
 
-void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
+// Frees the feed working set before a transfer that needs one large contiguous
+// allocation. A book download runs with Wi-Fi necessarily UP, so the ~87KB the radio
+// holds is not reclaimable here (upstream #3343 is a separate, Home-side concern) --
+// what IS reclaimable is everything the browser accumulated while paging. Measured on
+// an X3: MaxAlloc 38,900 on a fresh connect vs 15,860 after browsing, both with the
+// radio up, so 23,040 bytes were lost to the browser's own working set. wolfSSL sizes
+// its receive buffer per TLS record and a 16KB record needs ~17,000 contiguous, which
+// is what a download at 15,860 fails on, mid-stream, with MEMORY_E.
+//
+// Deliberately NOT a Wi-Fi teardown/re-init: that adds delay and reconnection risk and
+// is not known to compact anything. Called "release", not "defragmentation" -- how much
+// contiguous memory it actually returns is the measurement, not the claim.
+uint32_t OpdsBookBrowserActivity::releaseWorkingMemoryForDownload() {
+  const uint32_t before = ESP.getMaxAllocHeap();
+  const uint32_t freeBefore = ESP.getFreeHeap();
+
+  // shrink_to_fit on each: clear() alone keeps the capacity, which is the whole point
+  // of doing this -- the bytes have to actually go back to the allocator.
+  entries.clear();
+  entries.shrink_to_fit();
+  navigationHistory.clear();
+  navigationHistory.shrink_to_fit();
+  searchTemplate.clear();
+  searchTemplate.shrink_to_fit();
+  feedNextUrl.clear();
+  feedNextUrl.shrink_to_fit();
+  feedPrevUrl.clear();
+  feedPrevUrl.shrink_to_fit();
+  errorMessage.clear();
+  errorMessage.shrink_to_fit();
+
+  const uint32_t after = ESP.getMaxAllocHeap();
+  LOG_INF("OPDS", "pre-download release: maxalloc %u -> %u (%+d), free %u -> %u", static_cast<unsigned>(before),
+          static_cast<unsigned>(after), static_cast<int>(after) - static_cast<int>(before),
+          static_cast<unsigned>(freeBefore), static_cast<unsigned>(ESP.getFreeHeap()));
+  return after;
+}
+
+void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& bookRef) {
+  // Owned copy FIRST: bookRef points into `entries`, which the release below frees.
+  // One entry is the minimum the rest of this function needs (href, title, author,
+  // acquisitionType, coverUrl, coverType, and the whole entry for tagFouladBookId).
+  const OpdsEntry book = bookRef;
   // Extension/folder/replace policy is Foulad eBooks catalog-specific (XTC-only
   // books, News' own folder and replace-not-accumulate rule) -- see FouladOpdsHooks.h.
   const std::string extension = FouladOpdsHooks::acquisitionExtension(book.acquisitionType);
-  const bool isNewsFeed = FouladOpdsHooks::isNewsFeed(server.url);
-  if (isNewsFeed) Storage.mkdir(FOULAD_NEWS_DIR);
   const std::string filename =
-      (isNewsFeed ? std::string(FOULAD_NEWS_DIR) + "/" : std::string("/")) +
-      StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) + extension;
+      std::string("/") + StringUtils::sanitizeFilename((book.author.empty() ? "" : book.author + " - ") + book.title) +
+      extension;
 
-  if (isNewsFeed) FouladOpdsHooks::removeExistingNewsDownload(filename);
-
-  if (!isNewsFeed && Storage.exists(filename.c_str())) {
+  if (Storage.exists(filename.c_str())) {
     // Already downloaded -- open it directly rather than downloading again.
     FouladOpdsHooks::tagFouladBookId(filename, book, server);
     pendingReaderPath = filename;
@@ -1167,9 +1244,16 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
   // refresh on every single 2KB HTTP chunk, making a multi-MB book look stuck for minutes).
   constexpr size_t UNKNOWN_TOTAL_REDRAW_STEP = 32 * 1024;
 
+  releaseWorkingMemoryForDownload();
+  uint32_t minMaxAllocDuring = ESP.getMaxAllocHeap();
+
   const auto result = HttpDownloader::downloadToFile(
       downloadUrl, filename,
-      [this](const size_t downloaded, const size_t total) {
+      [this, &minMaxAllocDuring](const size_t downloaded, const size_t total) {
+        // Sampled on every callback, not only on a redraw: the point is the floor the
+        // transfer actually reaches, and the redraw throttle would hide it.
+        const uint32_t nowMaxAlloc = ESP.getMaxAllocHeap();
+        if (nowMaxAlloc < minMaxAllocDuring) minMaxAllocDuring = nowMaxAlloc;
         downloadProgress = downloaded;
         downloadTotal = total;
         if (total > 0) {
@@ -1183,6 +1267,10 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
         requestUpdate(true);
       },
       nullptr, server.username, server.password);
+
+  LOG_INF("OPDS", "download %s: bytes=%u minMaxAllocDuring=%u free=%u", result == HttpDownloader::OK ? "ok" : "FAILED",
+          static_cast<unsigned>(downloadProgress), static_cast<unsigned>(minMaxAllocDuring),
+          static_cast<unsigned>(ESP.getFreeHeap()));
 
   if (result == HttpDownloader::OK) {
     clearBookCache(filename);
@@ -1208,9 +1296,12 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
     activityManager.goToReader(filename);
     return;
   }
+  // The feed was released above, so the browser has nothing to draw. Reload it rather
+  // than showing an empty list behind the error; Back then returns to a real page.
   state = BrowserState::ERROR;
   errorMessage = tr(STR_DOWNLOAD_FAILED);
   requestUpdate();
+  fetchFeed(currentPath);
 }
 
 void OpdsBookBrowserActivity::launchSearch() {
@@ -1221,9 +1312,9 @@ void OpdsBookBrowserActivity::launchSearch() {
   // Opens on the Arabic panel when the interface is Arabic: this catalog is mostly
   // Arabic books, and making an Arabic reader press Mode twice before typing a title
   // is the same discoverability failure the search row itself just fixed.
-  auto keyboard = std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH), "", 0, InputType::Text,
-                                                          "", /*numericOnly=*/false,
-                                                          /*preferArabic=*/I18N.isRtl());
+  if (I18N.isRtl()) midad_arabic_keyboard::preferForNextEntry();
+  auto keyboard =
+      std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_SEARCH), "", 0, InputType::Text);
   startActivityForResult(std::move(keyboard), [this](const ActivityResult& result) {
     state = BrowserState::BROWSING;
     if (!result.isCancelled) {
@@ -1268,30 +1359,6 @@ void OpdsBookBrowserActivity::performSearch(const std::string& query) {
   statusMessage = tr(STR_LOADING);
   requestUpdate(true);
   fetchFeed(url);
-}
-
-// Once per boot, not once per Library entry: declining should stick for the session
-// rather than being asked again on every visit. File-scope because the activity is
-// destroyed and rebuilt each time.
-static bool gFirmwareOfferShownThisBoot = false;
-
-void OpdsBookBrowserActivity::maybeOfferFirmwareUpdate() {
-  if (gFirmwareOfferShownThisBoot) return;
-  if (state != BrowserState::BROWSING || browsingFramesRendered == 0) return;
-  // The catalog goes up first and the offer follows. Not a memory precaution -- this
-  // costs nothing -- simply that a popup arriving before the list has painted hides
-  // the thing the user opened Library to see.
-  if (FouladDeviceTracking::pendingFirmwareUpdate().empty()) return;
-
-  // Note what this does NOT do: contact GitHub. The version was parsed out of the
-  // registerDevice() response earlier in this same connect, so raising the offer is
-  // a string comparison. The previous attempt ran OtaUpdater::checkForUpdate() here
-  // and the TLS handshake aborted the device at ~52KB free (v1.8.17-rc); the ~32KB
-  // of mbedTLS record buffers do not fit beside a loaded feed. Nothing in this
-  // function may become a network call without moving it off this path entirely.
-  gFirmwareOfferShownThisBoot = true;
-  state = BrowserState::UPDATE_PROMPT;
-  requestUpdate();
 }
 
 void OpdsBookBrowserActivity::checkAndConnectWifi() {

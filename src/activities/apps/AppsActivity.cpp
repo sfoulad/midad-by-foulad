@@ -69,12 +69,12 @@ const std::vector<AppsActivity::AppEntry>& AppsActivity::entries() {
          MIDAD_APP_SETTINGS.tasbihEnabled = v;
          MIDAD_APP_SETTINGS.saveToFile();
        }},
-      // News is deliberately absent: the server removed /opds/news (foulad-ebooks
-      // PR #113, live 2026-08-05) after News-as-EPUB kept producing on-device parse
-      // crashes -- News is an app-only feature now (the phone app renders native
-      // article cards). A tile here would only ever reach a permanent 404. The
-      // launch plumbing (AppId::News, goToNews) stays for a possible future
-      // device-facing endpoint, but nothing routes to it.
+      // News is gone, not hidden: the server removed /opds/news (foulad-ebooks
+      // PR #113, live 2026-08-05) after News-as-EPUB kept producing on-device
+      // parse crashes, and Core confirmed it will never serve News -- the phone
+      // app renders native article cards instead. The plumbing that was left
+      // unreachable for a later cleanup pass has been removed with it. /News on
+      // the SD card is still recognised so existing downloads stay out of My Books.
       {AppId::Stopwatch, StrId::STR_STOPWATCH, StopwatchIcon, [] { return MIDAD_APP_SETTINGS.stopwatchEnabled; },
        [](uint8_t v) {
          MIDAD_APP_SETTINGS.stopwatchEnabled = v;
@@ -145,12 +145,6 @@ bool AppsActivity::launch(const AppEntry& entry) {
     case AppId::Tasbih:
       startActivityForResult(std::make_unique<TasbihActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       return true;
-    case AppId::News:
-      // Reboots in, like the Library does: News browses OPDS over WiFi and then
-      // downloads an EPUB, the same stack of allocations that made
-      // goToFouladEbooks() restart first. Does not return.
-      silentRestartToNews();
-      return true;
     case AppId::Stopwatch:
       startActivityForResult(std::make_unique<StopwatchActivity>(renderer, mappedInput), [](const ActivityResult&) {});
       return true;
@@ -171,7 +165,8 @@ bool AppsActivity::launch(const AppEntry& entry) {
       // clears the heap gate as measured on real hardware, since Apps itself has
       // nothing comparable to Home's retained cover buffer. Back correctly returns
       // to Apps, not Home.
-      startActivityForResult(std::make_unique<BluetoothActivity>(renderer, mappedInput), [](const ActivityResult&) {});
+      startActivityForResult(std::make_unique<BluetoothActivity>(renderer, mappedInput, /*returnToApps=*/true),
+                             [](const ActivityResult&) {});
       return true;
   }
   return false;
@@ -192,6 +187,13 @@ void AppsActivity::loop() {
     return;
   }
 
+  // Index order stays the same under RTL (app 0 is still the first app), but the
+  // grid renders mirrored -- see render()'s column computation -- so increasing
+  // the index moves the visual selection LEFT, not right. Swap which physical
+  // button drives which index direction to match, same idiom RecentBooksActivity
+  // uses for its own mirrored grid.
+  const bool rtl = I18N.isRtl();
+
   // Whole-tile touch target: a tap anywhere on a tile launches it directly (the
   // standard app-grid tap idiom), rather than requiring a select-then-confirm
   // second tap that nothing else in this codebase does for touch. Same
@@ -204,7 +206,6 @@ void AppsActivity::loop() {
   int tapX = 0;
   int tapY = 0;
   if (mappedInput.wasScreenTapped(tapX, tapY)) {
-    const bool rtl = I18N.isRtl();
     const Geometry geometry = computeGeometry();
     const int pageStart = AppsGridLayout::pageStartOf(selectorIndex);
     const int itemsOnPage = std::min(AppsGridLayout::ITEMS_PER_PAGE, count - pageStart);
@@ -219,12 +220,27 @@ void AppsActivity::loop() {
     }
   }
 
-  // Index order stays the same under RTL (app 0 is still the first app), but the
-  // grid renders mirrored -- see render()'s column computation -- so increasing
-  // the index moves the visual selection LEFT, not right. Swap which physical
-  // button drives which index direction to match, same idiom RecentBooksActivity
-  // uses for its own mirrored grid.
-  const bool rtl = I18N.isRtl();
+  // Swipe pagination: a horizontal swipe jumps a full page (see
+  // AppsGridLayout::jumpPage), independent of which cell was selected --
+  // unlike the button Left/Right handling below, which only reaches the next
+  // page as an incidental side effect of stepping past the grid's edge. Left
+  // conventionally advances (same sign ReaderUtils::detectTouchPageTurn and
+  // BmpViewerActivity use for their own swipe paging), mirrored under RTL with
+  // the same flip moveRight/moveLeft apply to the buttons just below. No-ops
+  // on non-touch boards: wasSwipe() only ever reports a real swipe when touch
+  // hardware decoded one.
+  switch (mappedInput.wasSwipe()) {
+    case MappedInputManager::SwipeDir::Left:
+    case MappedInputManager::SwipeDir::Right: {
+      const bool advance = (mappedInput.wasSwipe() == MappedInputManager::SwipeDir::Left) != rtl;
+      selectorIndex = AppsGridLayout::jumpPage(selectorIndex, count, advance ? 1 : -1);
+      requestUpdate();
+      return;
+    }
+    default:
+      break;
+  }
+
   auto moveRight = [this, count] {
     selectorIndex = GridNav::moveHorizontal(selectorIndex, count, true);
     requestUpdate();

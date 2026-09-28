@@ -25,11 +25,18 @@ enum class HomeMenuItem {
   FILE_BROWSER,
   RECENTS,
   FOULAD_EBOOKS,
+  // Upstream CrossPoint's name for the same destination -- Midad renamed the
+  // catalog browser to Foulad eBooks. Alias keeps byte-identical upstream files
+  // (OpdsServerListActivity) compiling and every value below its number.
+  OPDS_BROWSER = FOULAD_EBOOKS,
   FILE_TRANSFER,
   SETTINGS_MENU,
   CHECK_UPDATE,
   STATS,
-  APPS
+  APPS,
+  // Appended rather than slotted in at upstream's position: the values above are
+  // relied on by saved state, so none of them may shift.
+  LIBRARY
 };
 
 /**
@@ -137,14 +144,21 @@ class ActivityManager {
 
   // goTo... functions are convenient wrapper for replaceActivity()
   void goToFileTransfer();
+  void goToPairing();
+  void goToBluetooth();
+  void goToUsbDrive();
   void goToSettings();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToApps();
+  void goToLibrary();
   void goToBrowser();
   void goToFouladEbooks();
   // Apps -> News: the OPDS browser rooted at the account's feed subscriptions.
-  void goToNews();
+  // Entered only by silentRestartToLogout(), so the sign-out handshake gets a
+  // fresh heap. Owns credential lookup and clearing, since there is no parent
+  // activity to hand the result back to.
+  void goToLogout();
   void goToGym();
   void goToDictionary();
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
@@ -162,6 +176,7 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  bool requiresExclusiveStorageLoop() const;
   const char* currentActivityDebugName() const;
   bool isReaderActivity() const;
   bool handleForcedRefresh();

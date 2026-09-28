@@ -1,11 +1,12 @@
 #include "HomeActivity.h"
 
-#include <Bitmap.h>
 #include <Epub.h>
+#include <FontCacheManager.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
 #include <HalStorage.h>
+#include <HeapTrace.h>
 #include <I18n.h>
 #include <Utf8.h>
 #include <Xtc.h>
@@ -16,6 +17,7 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "HomeCoverBudget.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "SilentRestart.h"
@@ -73,7 +75,10 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   for (const RecentBook& book : recentBooks) {
     if (book.coverBmpPath.empty()) continue;
     const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-    if (Bitmap::isValidCachedBmp(thumbPath) || CoverThumbs::wasAttemptedThisBoot(thumbPath)) continue;
+    // Same "is this cache usable?" decision as before, but it now names WHY a
+    // thumb was rejected (missing / corrupt / marker / wrong size) in the log
+    // instead of collapsing every cause into the same silent placeholder.
+    if (CoverThumbs::isUsableThumb(thumbPath, coverHeight) || CoverThumbs::wasAttemptedThisBoot(thumbPath)) continue;
     anyToGenerate = true;
     if (!Storage.exists(thumbPath.c_str())) anyNeverAttempted = true;
   }
@@ -87,6 +92,15 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     freeCoverBuffer();
     coverRendered = false;
     READING_STATS.releaseMemory();
+    // The font decompressor's per-group glyph buffers (up to ~12KB for one group,
+    // plus the whole-font aligned-offset table) are allocated lazily by the very
+    // first glyph Home renders and then held for the process lifetime: nothing
+    // outside the reader/dictionary screens runs a PrewarmScope, and those scopes
+    // are the only thing that ever calls clearCache(). Release them here for the
+    // same reason the snapshot and the stats vectors go: this is the one path on
+    // Home that needs every spare block. They are rebuilt on demand afterwards.
+    if (auto* fcm = renderer.getFontCacheManager()) fcm->clearCache();
+    coverBufferDenied = false;
   }
 
   // Fresh-boot rule, learned the hard way across three on-device iterations:
@@ -118,12 +132,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   for (RecentBook& book : recentBooks) {
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      // Bitmap::isValidCachedBmp (not a plain existence check) so a stale marker
-      // from a PRIOR failed attempt doesn't permanently block a retry once the
+      // isUsableThumb (not a plain existence check) so a stale marker from a
+      // PRIOR failed attempt doesn't permanently block a retry once the
       // underlying failure is fixed; CoverThumbs bounds those retries to once
       // per boot so a genuinely coverless book doesn't re-attempt (and re-show
       // the loading popup) on every Home entry.
-      if (!Bitmap::isValidCachedBmp(coverPath) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
+      if (!CoverThumbs::isUsableThumb(coverPath, coverHeight) && !CoverThumbs::wasAttemptedThisBoot(coverPath)) {
         CoverThumbs::markAttempted(coverPath);
         // If epub, try to load the metadata for title/author and cover
         if (FsHelpers::hasEpubExtension(book.path)) {
@@ -155,7 +169,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
             // Failure leaves book.coverBmpPath untouched (not cleared to "") --
-            // see the isValidCachedBmp comment above for why a retry must stay
+            // see the isUsableThumb comment above for why a retry must stay
             // possible instead of being disabled forever.
             generated = epub.generateThumbBmp(coverHeight);
             coverRendered = false;
@@ -192,6 +206,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 }
 
 void HomeActivity::onEnter() {
+  HEAP_TRACE_SCOPE("HOME.onEnter");
   Activity::onEnter();
 
   // Drop entries whose files were deleted since the store was loaded, so the
@@ -212,6 +227,10 @@ void HomeActivity::onEnter() {
   lockNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
 
   lastIdleWhitenMs = millis();
+  coverBufferDenied = false;
+#if defined(X3_HEAP_TRACE) && X3_HEAP_TRACE
+  traceSnapshotAttempts = 0;
+#endif
 
   // Trigger first update
   requestUpdate();
@@ -228,35 +247,120 @@ bool HomeActivity::storeCoverBuffer() {
   // render() must have already set the cover rect; without it we'd be back to
   // cloning the whole framebuffer.
   if (coverRectW <= 0 || coverRectH <= 0) return false;
-  freeCoverBuffer();
+  if (coverBufferDenied) return false;
+#if defined(X3_HEAP_TRACE) && X3_HEAP_TRACE
+  // TEMP diagnostic: proves the latch. On an X3 this must print exactly once per
+  // Home entry (attempt=1, followed by the "declined" line) and never again --
+  // the pre-fix behaviour was one attempt, and one OOM line, per render.
+  ++traceSnapshotAttempts;
+  HEAP_TRACE_EVENT("HOME.snapshot", "attempt=%u", (unsigned)traceSnapshotAttempts);
+#endif
   const size_t needed = renderer.getRegionByteSize(coverRectX, coverRectY, coverRectW, coverRectH);
   if (needed == 0) return false;
-  coverBuffer = static_cast<uint8_t*>(malloc(needed));
-  if (!coverBuffer) {
-    LOG_ERR("HOME", "OOM: cover buffer (%u bytes)", (unsigned)needed);
+
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t maxAlloc = ESP.getMaxAllocHeap();
+
+  // Total cost is the same whatever the split, so refuse on that first.
+  if (!HomeCoverBudget::fitsTotal(needed, freeHeap)) {
+    coverBufferDenied = true;
+    LOG_ERR("HOME", "Cover snapshot declined: %u bytes, free %u, maxAlloc %u", (unsigned)needed, (unsigned)freeHeap,
+            (unsigned)maxAlloc);
     return false;
   }
-  coverBufferSize = needed;
-  if (!renderer.copyRegionToBuffer(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize)) {
-    free(coverBuffer);
-    coverBuffer = nullptr;
-    coverBufferSize = 0;
+
+  // Fewest bands whose individual allocations fit the largest free block. One
+  // block is preferred and usually impossible on an X3: the whole tile is ~42KB
+  // against a largest block of about the same, which leaves the allocator nothing
+  // and is refused by design. Two bands of ~21KB fit the same heap comfortably.
+  int bands = 0;
+  for (const int candidate : {1, 2, 4}) {
+    const int bandH = (coverRectH + candidate - 1) / candidate;
+    size_t worst = 0;
+    for (int i = 0; i < candidate; i++) {
+      const int y = coverRectY + i * bandH;
+      const int h = std::min(bandH, coverRectY + coverRectH - y);
+      if (h <= 0) continue;
+      worst = std::max(worst, renderer.getRegionByteSize(coverRectX, y, coverRectW, h));
+    }
+    if (HomeCoverBudget::fitsBlock(worst, maxAlloc)) {
+      bands = candidate;
+      break;
+    }
+  }
+  if (bands == 0) {
+    coverBufferDenied = true;
+    LOG_ERR("HOME", "Cover snapshot declined: %u bytes in <=%d bands, free %u, maxAlloc %u", (unsigned)needed,
+            MAX_COVER_BANDS, (unsigned)freeHeap, (unsigned)maxAlloc);
     return false;
+  }
+
+  // Reuse before reallocating: the geometry only changes with orientation, so on
+  // an ordinary redraw the bands already on hand are the right shape, and
+  // free/malloc of tens of KB per repaint is pure fragmentation.
+  const int bandH = (coverRectH + bands - 1) / bands;
+  bool reusable = coverBandCount == bands;
+  for (int i = 0; reusable && i < bands; i++) {
+    const int y = coverRectY + i * bandH;
+    const int h = std::min(bandH, coverRectY + coverRectH - y);
+    reusable = coverBands[i] != nullptr && coverBandY[i] == y && coverBandH[i] == h;
+  }
+  if (!reusable) {
+    freeCoverBuffer();
+    for (int i = 0; i < bands; i++) {
+      const int y = coverRectY + i * bandH;
+      const int h = std::min(bandH, coverRectY + coverRectH - y);
+      if (h <= 0) break;
+      const size_t size = renderer.getRegionByteSize(coverRectX, y, coverRectW, h);
+      auto* buf = static_cast<uint8_t*>(malloc(size));
+      if (!buf) {
+        LOG_ERR("HOME", "OOM: cover band %d (%u bytes)", i, (unsigned)size);
+        freeCoverBuffer();
+        coverBufferDenied = true;
+        return false;
+      }
+      coverBands[i] = buf;
+      coverBandSizes[i] = size;
+      coverBandY[i] = y;
+      coverBandH[i] = h;
+      coverBandCount = i + 1;
+    }
+    LOG_DBG("HOME", "Cover snapshot: %u bytes in %d band(s), maxAlloc %u", (unsigned)needed, coverBandCount,
+            (unsigned)maxAlloc);
+  }
+
+  for (int i = 0; i < coverBandCount; i++) {
+    if (!renderer.copyRegionToBuffer(coverRectX, coverBandY[i], coverRectW, coverBandH[i], coverBands[i],
+                                     coverBandSizes[i])) {
+      freeCoverBuffer();
+      return false;
+    }
   }
   return true;
 }
 
 bool HomeActivity::restoreCoverBuffer() {
-  if (!coverBuffer || coverRectW <= 0 || coverRectH <= 0) return false;
-  return renderer.copyBufferToRegion(coverRectX, coverRectY, coverRectW, coverRectH, coverBuffer, coverBufferSize);
+  if (coverBandCount == 0 || coverRectW <= 0 || coverRectH <= 0) return false;
+  for (int i = 0; i < coverBandCount; i++) {
+    if (!renderer.copyBufferToRegion(coverRectX, coverBandY[i], coverRectW, coverBandH[i], coverBands[i],
+                                     coverBandSizes[i])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void HomeActivity::freeCoverBuffer() {
-  if (coverBuffer) {
-    free(coverBuffer);
-    coverBuffer = nullptr;
+  for (int i = 0; i < MAX_COVER_BANDS; i++) {
+    if (coverBands[i]) {
+      free(coverBands[i]);
+      coverBands[i] = nullptr;
+    }
+    coverBandSizes[i] = 0;
+    coverBandY[i] = 0;
+    coverBandH[i] = 0;
   }
-  coverBufferSize = 0;
+  coverBandCount = 0;
   coverBufferStored = false;
 }
 
@@ -295,7 +399,7 @@ void HomeActivity::loop() {
   //
   // replaceActivity(), not startActivityForResult(): measured on real hardware
   // (BLE-R2 correction 3) that push-based entry left Home fully resident on
-  // ActivityManager's stack -- onExit() never fires, so HomeActivity::coverBuffer
+  // ActivityManager's stack -- onExit() never fires, so HomeActivity's cover bands
   // (~42KB) stays allocated for BluetoothActivity's entire lifetime, and the
   // radio's 70KB heap gate reliably failed to clear (measured: capped at ~62.6KB
   // free vs. the gate's 71.7KB). replaceActivity() destroys this HomeActivity
@@ -427,8 +531,6 @@ void HomeActivity::loop() {
   }
 
   const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
-  const int renderedMenuSelection =
-      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size();
   const int renderedMenuCount =
       menuCount - (metrics.homeContinueReadingInMenu ? 0 : static_cast<int>(recentBooks.size()));
   // Hit-test through the theme, not a fixed row grid: FouladTheme draws this
@@ -467,6 +569,7 @@ void HomeActivity::loop() {
 }
 
 void HomeActivity::render(RenderLock&&) {
+  HEAP_TRACE_SCOPE("HOME.render");
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
@@ -486,9 +589,16 @@ void HomeActivity::render(RenderLock&&) {
   coverRectW = pageWidth;
   coverRectH = metrics.homeCoverTileHeight;
 
+  // TEMP diagnostic: with the snapshot declined, restored=0 on every render and the
+  // covers are redrawn from the cached thumb BMPs instead -- the fallback path.
+  // coverRendered flipping to 1 afterwards is the proof they actually drew.
+  HEAP_TRACE_EVENT("HOME.cover", "draw restored=%d stored=%d rendered(before)=%d books=%u", bufferRestored ? 1 : 0,
+                   coverBufferStored ? 1 : 0, coverRendered ? 1 : 0, (unsigned)recentBooks.size());
   GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
+  HEAP_TRACE_EVENT("HOME.cover", "drawn rendered(after)=%d stored=%d", coverRendered ? 1 : 0,
+                   coverBufferStored ? 1 : 0);
 
   // Order: eBooks, Stats, Files, Settings -- matches menuItemToIndex/indexToMenuItem.
   // Short labels chosen to fit the bottom icon bar tiles. Recent Books has no
@@ -545,9 +655,11 @@ void HomeActivity::render(RenderLock&&) {
   }
 }
 
-void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }
-
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+
+void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
+
+void HomeActivity::onLibraryOpen() { activityManager.goToLibrary(); }
 
 void HomeActivity::onStatsOpen() {
   startActivityForResult(std::make_unique<StatsActivity>(renderer, mappedInput), [](const ActivityResult&) {});

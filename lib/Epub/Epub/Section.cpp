@@ -1,5 +1,6 @@
 #include "Section.h"
 
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
@@ -58,7 +59,57 @@ namespace {
 // positioned columns (this fork's earlier #980/#372 table support upgraded to
 // upstream's column layout) instead of flattened paragraphs with synthetic
 // row/cell labels (#2654). Both change layout output for affected books.
-constexpr uint8_t SECTION_FILE_VERSION = 42;
+// v43: unclosed HTML void elements (<br>, <hr>, <img>) are now closed before the
+// XML parser sees them, so a document that previously failed to parse at all now
+// lays out. Existing caches for such a book hold the failed layout and would
+// otherwise never be rebuilt -- the whole point of the fix is to reach books
+// already on the card.
+//
+// --- UPSTREAM'S OWN NUMBERING, merged in at 1.6.22 ---
+// v28: text decoration bits now include line-through in serialized wordStyles.
+// v29: TextBlock word data stored as one flat arena (offset table + NUL-terminated
+// text blob) instead of length-prefixed strings and per-field arrays.
+// v30: Arabic shaping changed both drawing and measurement (getTextAdvanceX now
+//      measures the shaped visual text); cached word positions from v29 no longer
+//      match what drawText renders.
+// v32: ImageBlock serializes the book-internal source href after the cache path
+//      (lazy extraction: images are header-probed at build time and extracted on
+//      first render).
+// v33: Support <ruby> and <rt> tags. Skip <rp> tags
+// v34: Word gaps are only suppressed for tokens glued in the source, so spaces between
+//      Hangul words survive again; ruby element boundaries carry the continuation flag
+//      instead. Invalidates v33 caches, whose word positions have the spaces collapsed.
+
+// v34: <br> handling changed layout — a <br> after text is now a margin-stripped
+//      line break (browser-like) and only a <br> whose block stays empty injects
+//      the scene-break gap, so cached pages laid out by older versions no longer
+//      match. Keeps <br>-per-paragraph books (common CJK formatting) from
+//      re-adding container spacing at every paragraph.
+// v35: Persist a uint32_t visible-text start offset for every page.
+// v36: Ruby and CJK justification layout changes invalidate cached word positions.
+// v37: Footnote href records grew from 96 to 256 bytes.
+// v38: Focus Reading line breaking changed — a visible hyphen/dash inside a word is now a
+//      break opportunity, and hyphenation of a focus-split word considers the whole word
+//      instead of only its regular-weight suffix. Pages cached by older versions were laid
+//      out with the previous, more restrictive break set and no longer match.
+// v39: Image top margin is clamped so a full-viewport-height image cannot
+//      overflow the page bottom; older caches can hold placements that panels
+//      with no bottom inset refuse to draw.
+// v40: Ruby groups remain intact when a large text block is soft-flushed.
+// v41: Simple HTML table rows are laid out as positioned columns instead of
+//      flattened paragraphs with synthetic row/cell labels.
+// v42: Closing a block strips inherited vertical margins and padding.
+// v43: Paragraph base direction excludes direction changes from inline elements.
+// v44: Persist internal-link rectangles with each page for touch navigation.
+// v45: Internal EPUB links preserve CSS superscript/subscript positioning.
+//
+// v46: Ordered lists number their items, list-style-type: none suppresses markers,
+//      and <ul>/<ol> containers contribute their own margins/padding to child insets.
+//      THE TWO LINES ALSO MEET HERE: this fork independently reached v42 (RC: v43)
+//      while upstream reached v45, so those numbers name different formats on the
+//      two sides -- reading the wrong one produces plausible-looking rubbish rather
+//      than an error. Every pre-merge cache, from either line, is rejected and rebuilt.
+constexpr uint8_t SECTION_FILE_VERSION = 46;
 // Written into the version field while a build is in progress; patched to
 // SECTION_FILE_VERSION only when the build is finalized. An abandoned /
 // crash-interrupted .bin therefore carries version 0, which loadSectionFile rejects
@@ -74,8 +125,8 @@ constexpr uint8_t SECTION_FILE_INCOMPLETE_VERSION = 0;
 // MUST change in lockstep with SECTION_FILE_VERSION: the sentinel IS the partial's
 // format version, so a stale-format partial otherwise passes the header check and
 // only fails (noisily, via the block-decode error path) when a page is loaded.
-// Derived so the pairing can't be forgotten (0xF0 for this fork's v42); the derived
-// value must never collide with a real version this fork has shipped (29-42 so far).
+// Derived so the pairing can't be forgotten (0xEF for this fork's v43); the derived
+// value must never collide with a real version this fork has shipped (29-43 so far).
 constexpr uint8_t SECTION_FILE_PARTIAL_VERSION = 0xFE - (SECTION_FILE_VERSION - 28);
 // Upstream's header plus this fork's arabicFontId int after fontId.
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(int) + sizeof(float) + sizeof(bool) +
@@ -279,6 +330,10 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
     LOG_ERR("SCT", "startBuild called while a build is already active");
     return false;
   }
+  // Reclaim rebuildable font caches before CSS and layout allocations.
+  if (auto* fontCache = renderer.getFontCacheManager()) {
+    fontCache->releaseSdFontCaches();
+  }
   buildComplete_ = false;
   builtPageCount_ = 0;
   // Pages from a loaded partial stay readable (from filePath) while this build writes
@@ -396,8 +451,19 @@ bool Section::startBuild(const ReaderRenderSpec& spec, const std::function<void(
 
   if (spec.embeddedStyle) {
     ctx->cssParser = epub->getCssParser();
-    if (ctx->cssParser && !ctx->cssParser->loadFromCache()) {
-      LOG_ERR("SCT", "Failed to load CSS from cache");
+    if (ctx->cssParser) {
+      const CssParser::CacheLoadResult cacheResult = ctx->cssParser->loadFromCache();
+      if (cacheResult == CssParser::CacheLoadResult::LowMemory) {
+        LOG_ERR("SCT", "Insufficient heap to hydrate CSS; section build deferred");
+        ctx->cssParser->clear();
+        file.close();
+        Storage.remove(binTmpPath().c_str());
+        if (!ctx->reusedHtml) Storage.remove(ctx->tmpHtmlPath.c_str());
+        return false;
+      }
+      if (cacheResult == CssParser::CacheLoadResult::Invalid) {
+        LOG_ERR("SCT", "Failed to load CSS from cache");
+      }
     }
   }
 

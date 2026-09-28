@@ -40,8 +40,8 @@ struct ReadingBookStats {
   std::string author;
   // Foulad eBooks catalog id, empty for a side-loaded file. Lives here rather
   // than only in RecentBooksStore because that list is capped at 10 and evicts:
-  // a catalog book read a while ago used to lose its id entirely, so
-  // flushPendingReadingStats() could never report it and the server never got a
+  // a catalog book read a while ago used to lose its id entirely, so the
+  // reading-stats flush could never report it and the server never got a
   // library_reading row for it (see INSTRUCTIONS-14). Here it has exactly the
   // lifetime of the reading it describes.
   //
@@ -73,7 +73,6 @@ class ReadingStatsStore {
   static constexpr size_t MAX_DAYS_PER_BOOK = 90;
   static constexpr size_t MAX_AGGREGATE_DAYS = 750;
   static constexpr unsigned long DEFERRED_SAVE_INTERVAL_MS = 5UL * 60UL * 1000UL;
-  static constexpr uint32_t MIN_SESSION_SECONDS = 60;
 
   struct SessionState {
     bool active = false;
@@ -101,7 +100,7 @@ class ReadingStatsStore {
   size_t findBookIndex(const std::string& path) const;
   // Find-or-create at index 0 (moves an existing entry to the front).
   void touchBook(const std::string& path, const std::string& title, const std::string& author);
-  void addDayMs(std::vector<ReadingDayStats>& days, uint32_t dayOrdinal, uint32_t ms, size_t maxDays);
+  static void addDayMs(std::vector<ReadingDayStats>& days, uint32_t dayOrdinal, uint32_t ms, size_t maxDays);
   void rebuildAggregatedDays();
   void updateStreaksAfterWrite();
   void saveDeferred();

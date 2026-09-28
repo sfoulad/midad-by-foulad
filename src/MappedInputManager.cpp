@@ -57,6 +57,13 @@ bool classifyEdgeSwipe(const MappedInputManager::ScreenEdge edge, const int sx, 
 
 }  // namespace
 
+void MappedInputManager::update() const {
+  gpio.update();
+  for (uint8_t value = 0; value <= BUTTON_LAST; ++value) {
+    if (!isPressed(static_cast<Button>(value))) longPressFiredButtons &= ~(static_cast<ButtonMask>(1u) << value);
+  }
+}
+
 bool MappedInputManager::isNavDirectionSwapped() const {
   // Key the swap on the orientation the screen is *actually* rendered at, not the persisted reader
   // setting. The reader (and its modal menus) render rotated, so navigation/labels flip there; the
@@ -226,6 +233,17 @@ bool MappedInputManager::wasScreenTouchDown(int& x, int& y) const {
   return true;
 }
 
+bool MappedInputManager::wasScreenLongPress(int& x, int& y) const {
+  float nx = 0.0f;
+  float ny = 0.0f;
+  if (!gpio.wasTouchLongPress(nx, ny)) return false;
+  // Consuming the long-press implies acting on it: suppress the rest of the
+  // contact so the finger lift can't also tap whatever the action opened.
+  gpio.suppressTouchContact();
+  renderer.tapToLogical(nx, ny, x, y);
+  return true;
+}
+
 bool MappedInputManager::isScreenTouchHeld(int& x, int& y) const {
   // Live contact position while the finger is down (no tap-slop gate) — drag tracking.
   float nx = 0.0f;
@@ -386,6 +404,31 @@ bool MappedInputManager::wasReleased(const Button button) const {
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;
 #endif
   return mapButton(button, &HalGPIO::wasReleased);
+}
+
+bool MappedInputManager::wasLongPressed(const Button button, const unsigned long thresholdMs) const {
+  if (!isPressed(button)) return false;
+  const ButtonMask bit = static_cast<ButtonMask>(1u) << static_cast<uint8_t>(button);
+  if ((longPressFiredButtons & bit) != 0 || getHeldTime() < thresholdMs) return false;
+  longPressFiredButtons |= bit;
+  suppressNextRelease(button);
+  return true;
+}
+
+void MappedInputManager::suppressNextRelease(const Button button) const {
+  suppressedReleaseButtons |= static_cast<ButtonMask>(1u) << static_cast<uint8_t>(button);
+}
+
+bool MappedInputManager::consumeSuppressedRelease() const {
+  ButtonMask released = 0;
+  for (uint8_t value = 0; value <= BUTTON_LAST; ++value) {
+    const ButtonMask bit = static_cast<ButtonMask>(1u) << value;
+    if ((suppressedReleaseButtons & bit) != 0 && mapButton(static_cast<Button>(value), &HalGPIO::wasReleased)) {
+      released |= bit;
+    }
+  }
+  suppressedReleaseButtons &= ~released;
+  return released != 0;
 }
 
 bool MappedInputManager::isPressed(const Button button) const { return mapButton(button, &HalGPIO::isPressed); }

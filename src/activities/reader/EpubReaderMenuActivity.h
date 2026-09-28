@@ -51,8 +51,24 @@ class EpubReaderMenuActivity final : public Activity {
     LINE_SPACING,
     RESET_BOOK_SETTINGS,
     NIGHT_MODE,
-    FRONTLIGHT
+    FRONTLIGHT,
+    // Appended last so the enumerators above keep their values. Only produced by
+    // buildMenuItems() for the toolbar's More panel, which filters it out again
+    // (Text has its own tool). The drawer edits the text settings in place
+    // instead, through the FONT_* / TEXT_ALIGN rows above.
+    TEXT_SETTINGS
   };
+
+  // Row list for the toolbar reader menu's More panel (see ReaderToolbarUi):
+  // the same actions this drawer offers, in CrossPoint's flat order, built
+  // without constructing the activity. SELECT_CHAPTER / TEXT_SETTINGS are
+  // filtered out by the caller, which gives them their own tools.
+  struct MenuItem {
+    MenuAction action;
+    StrId labelId;
+  };
+  static constexpr size_t MAX_MENU_ITEMS = 20;
+  static void buildMenuItems(std::vector<MenuItem>& items, bool hasFootnotes, bool hasBookmarks);
 
   // `epub` is non-owning: the reader keeps the Epub alive for the whole time
   // this (child) activity exists. Used for the in-drawer TOC list.
@@ -71,11 +87,6 @@ class EpubReaderMenuActivity final : public Activity {
   // drill-down reached from a row in the Reading tab (Back returns to
   // READING, not to a "MAIN" state -- there is no third tab).
   enum class View : uint8_t { READING, SETTINGS_TAB, CHAPTERS };
-
-  struct MenuItem {
-    MenuAction action;
-    StrId labelId;
-  };
 
   std::vector<MenuItem> buildReadingItems(bool hasBookmarks) const;
   std::vector<MenuItem> buildSettingsItems(bool hasFootnotes) const;

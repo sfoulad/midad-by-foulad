@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 // Pure grid math for the Apps launcher's static 2-column x 3-row layout.
 // Header-only and GfxRenderer/MappedInputManager-free (same convention as
 // util/GridNav.h) so it can be exercised directly by a host gtest target --
@@ -18,6 +20,24 @@ inline int pageCount(const int totalItems) {
 inline int pageIndexOf(const int selectorIndex) { return selectorIndex > 0 ? selectorIndex / ITEMS_PER_PAGE : 0; }
 
 inline int pageStartOf(const int selectorIndex) { return pageIndexOf(selectorIndex) * ITEMS_PER_PAGE; }
+
+// Jumps directly to the adjacent page (wrapping around), preserving the same
+// index-within-page when the target page has an item there, else landing on
+// the target page's last item. For swipe-to-page navigation, where the
+// gesture should move a full page regardless of which cell was selected --
+// unlike button Left/Right/Up/Down, which step one cell and only cross a
+// page edge incidentally.
+inline int jumpPage(const int selectorIndex, const int totalItems, const int pageDelta) {
+  if (totalItems <= 0) return 0;
+  const int pages = pageCount(totalItems);
+  if (pages <= 1) return selectorIndex;
+  const int indexInPage = selectorIndex - pageStartOf(selectorIndex);
+  const int targetPage = ((pageIndexOf(selectorIndex) + pageDelta) % pages + pages) % pages;
+  const int targetPageStart = targetPage * ITEMS_PER_PAGE;
+  const int targetPageCount = std::min(ITEMS_PER_PAGE, totalItems - targetPageStart);
+  if (targetPageCount <= 0) return selectorIndex;
+  return targetPageStart + std::min(indexInPage, targetPageCount - 1);
+}
 
 inline int rowInPage(const int indexInPage) { return indexInPage / COLUMNS; }
 inline int colInPage(const int indexInPage) { return indexInPage % COLUMNS; }

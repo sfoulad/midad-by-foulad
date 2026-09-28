@@ -6,15 +6,10 @@
 
 #include "FouladDeviceTracking.h"
 #include "FouladEbooksConfig.h"
+#include "FouladTelemetryGate.h"
 #include "RecentBooksStore.h"
 
-namespace {
-// Owned here, not by the caller (see FouladOpdsHooks.h's pollDeviceTracking()
-// comment) -- persists for the program's lifetime rather than resetting each
-// time a new OpdsBookBrowserActivity is constructed.
-constexpr unsigned long DEVICE_TRACKING_RECHECK_MS = 30000;
-unsigned long lastDeviceTrackingCheckMs = 0;
-}  // namespace
+namespace {}  // namespace
 
 namespace FouladOpdsHooks {
 
@@ -26,54 +21,23 @@ void reportDeviceTrackingOnConnect(const OpdsServer& server) {
   FouladDeviceTracking::flushPendingKOReaderSync();
 
   if (server.url != FOULAD_EBOOKS_URL) return;
-  FouladDeviceTracking::registerDevice(server.username, server.password);
-  // Reading itself never keeps WiFi connected, so this is the one reliable
-  // moment to sync any progress accumulated since the last time the device
-  // was online.
-  FouladDeviceTracking::flushPendingReadingStats(server.username, server.password);
-  // Crash reports go the same way, and for a stronger reason: until now the only
-  // path was the user tapping Send on the crash screen. A device that panics and
-  // reboots cleanly never shows that screen, so nobody taps it -- which is why
-  // zero crash reports have ever reached the server while nine debug logs have.
-  // The very failures worth seeing were the ones that reported nothing.
+
+  // One heartbeat per connect. Since registerDevice was deleted this is the only
+  // thing that refreshes device_tokens.firmware_version, so an account otherwise
+  // shows whatever version the device paired with, forever. Cheap: a small JSON
+  // body, well inside Core's 30/min.
   //
-  // Queued instead: the report sits on the SD card until the next time the device
-  // is online with an account, then uploads unattended and is deleted so it is
-  // sent once. Unconditional -- unlike the debug log below it, this is not gated
-  // on Settings -> Apps -> Debug, because a crash is not routine logging and the
-  // people whose devices crash are the least likely to have opted into anything.
-  FouladDeviceTracking::flushPendingCrashReport(server.username, server.password);
-  // Same reasoning: uploading the debug log here (rather than at the moment
-  // a book is opened, when WiFi is already gone) is what actually delivers
-  // it. No-op unless Settings -> Apps -> Debug is on.
-  FouladDeviceTracking::uploadDebugLog(server.username, server.password);
-  // Device/reading-stats snapshot for the "My Devices" web page's Device
-  // Stats / Reading Stats tabs -- same reliable-moment reasoning.
-  FouladDeviceTracking::reportDeviceStats(server.username, server.password);
-}
-
-void pollDeviceTracking(const OpdsServer& server, const bool isBrowsing) {
-  const unsigned long nowMs = millis();
-  const bool shouldPoll =
-      shouldPollDeviceTracking(isBrowsing, server.url == FOULAD_EBOOKS_URL, WiFi.status() == WL_CONNECTED, nowMs,
-                               lastDeviceTrackingCheckMs, DEVICE_TRACKING_RECHECK_MS);
-  if (!shouldPoll) return;
-  lastDeviceTrackingCheckMs = nowMs;
-  FouladDeviceTracking::registerDevice(server.username, server.password);
-}
-
-void removeExistingNewsDownload(const std::string& filename) {
-  if (!Storage.exists(filename.c_str())) return;
-  Storage.remove(filename.c_str());
-  // The cache directory is keyed on the FILE PATH (Epub.h: "epub_" +
-  // hash(filepath)) and is only validated against the cache format version --
-  // never against the file's size or contents. A feed keeps the same path
-  // every time, so without this the reader would find yesterday's book.bin
-  // and rendered sections still valid and read the old articles out of
-  // cache, no matter how fresh the download was. Progress goes too, which is
-  // correct: page 4 of yesterday's articles means nothing in today's.
-  const std::string cacheDir = Epub(filename, "/.crosspoint").getCachePath();
-  if (Storage.exists(cacheDir.c_str())) Storage.removeDir(cacheDir.c_str());
+  // Reading stats and the debug-log upload are NOT restored here. Their Core
+  // replacements (/reading/v1/events, /devices/v1/logs) need work this change
+  // does not do -- events need a trustworthy wall clock the X3 does not have.
+  FouladTelemetryGate::resetForNewConnection();
+  if (!FouladTelemetryGate::allow(millis())) {
+    // Silence here meant a heartbeat that never fired looked identical to one
+    // that succeeded, since the success path only wrote to the SD debug log.
+    LOG_DBG("FOPDS", "heartbeat skipped: telemetry gate closed");
+    return;
+  }
+  FouladDeviceTracking::sendHeartbeat(server.username, server.password);
 }
 
 void tagFouladBookId(const std::string& filename, const OpdsEntry& book, const OpdsServer& server) {

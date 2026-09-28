@@ -15,18 +15,7 @@
  */
 class OpdsBookBrowserActivity final : public Activity {
  public:
-  enum class BrowserState {
-    CHECK_WIFI,
-    WIFI_SELECTION,
-    LOADING,
-    BROWSING,
-    DOWNLOADING,
-    ERROR,
-    SEARCH_INPUT,
-    // A newer firmware build was named by the catalog server. Not a step in
-    // browsing -- an offer laid over it, which Cancel returns from.
-    UPDATE_PROMPT
-  };
+  enum class BrowserState { CHECK_WIFI, WIFI_SELECTION, LOADING, BROWSING, DOWNLOADING, ERROR, SEARCH_INPUT };
 
   explicit OpdsBookBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, OpdsServer server)
       : Activity("OpdsBookBrowser", renderer, mappedInput), buttonNavigator(), server(std::move(server)) {}
@@ -202,17 +191,12 @@ class OpdsBookBrowserActivity final : public Activity {
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);
-  // Raises the update offer if registration came back naming a newer build. Reads a
-  // cached string; makes no request. An earlier version of this asked GitHub from
-  // here and aborted the device -- see the implementation.
-  void maybeOfferFirmwareUpdate();
-  // Counts painted BROWSING frames, so the offer waits until the catalog it covers
-  // is actually on screen.
-  uint8_t browsingFramesRendered = 0;
   void fetchFeed(const std::string& path);
   void navigateToEntry(const OpdsEntry& entry);
   void navigateBack();
   void downloadBook(const OpdsEntry& book);
+  // Frees the feed working set before a download. Returns MaxAlloc afterwards.
+  uint32_t releaseWorkingMemoryForDownload();
   void launchSearch();
   void performSearch(const std::string& query);
   // Only actually in-flight network work should block auto-sleep -- a page
@@ -221,10 +205,6 @@ class OpdsBookBrowserActivity final : public Activity {
   // kept the device (and its WiFi radio) awake for as long as Foulad
   // eBooks/OPDS stayed the foreground activity, even fully idle -- a real
   // battery-drain path (user report).
-  bool preventAutoSleep() override {
-    // UPDATE_PROMPT holds the device awake for the same reason OtaUpdateActivity
-    // does: sleeping on an unanswered question loses the answer.
-    return state == BrowserState::LOADING || state == BrowserState::DOWNLOADING || state == BrowserState::UPDATE_PROMPT;
-  }
+  bool preventAutoSleep() override { return state == BrowserState::LOADING || state == BrowserState::DOWNLOADING; }
   const char* activityDebugName() const override { return "OpdsBookBrowserActivity"; }
 };
